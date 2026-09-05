@@ -1,6 +1,6 @@
 # Kainos Player
 
-A Material 3 music player for **Android** and **Linux** with one search, one library, one queue, and one player across Spotify, YouTube Music, and SoundCloud.
+A Material 3 music player for **Android** and **Linux** with one search, one library, one queue, and one player across local files, Spotify, YouTube Music, and SoundCloud.
 
 Search once. Matching recordings are grouped. The highest-quality playable source starts automatically. The queue stores unified tracks, so the provider can change without rebuilding the queue.
 
@@ -15,7 +15,7 @@ UI (Compose Multiplatform)
 Domain   Track, Queue, MusicProvider, TrackMatcher, SourceResolver
         │
         ▼
-Data     SpotifyProvider · YouTubeMusicProvider · SoundCloudProvider · sample catalog
+Data     LocalMusicProvider · SpotifyProvider · YouTubeMusicProvider · SoundCloudProvider · sample catalog
         │
         ▼
 Platform Android Media3 · Linux desktop player · Spotify Connect
@@ -40,10 +40,18 @@ Keyboard shortcuts:
 | Ctrl+F / Ctrl+K | Open Search |
 | Ctrl+Q | Toggle the queue panel |
 
-Install `mpv` or `ffplay` to play HTTP sample/SoundCloud streams. Spotify playback uses Connect and needs the official Spotify client running on a Premium account.
+Install `mpv` for in-app local-file and HTTP playback on Linux (headless, no extra window). Pause/seek use mpv’s IPC. Spotify playback uses Connect and needs the official Spotify client running on a Premium account.
 
 ```bash
-sudo apt install mpv
+sudo pacman -S mpv
+```
+
+The local library scans `~/Music` by default whenever the app starts and when you choose **Refresh** in Settings or Library. On Linux you can add or remove folders in **Settings → Local library → Add folder**. Choices are saved in `~/.universal-music-player/settings.json`.
+
+You can still add extra folders for a single launch with `KAINOS_MUSIC_DIRS` (colon-separated). Those are merged with the folders configured in Settings:
+
+```bash
+KAINOS_MUSIC_DIRS="$HOME/Downloads/Music:/mnt/media/audio" ./gradlew :desktopApp:run
 ```
 
 ## Run on Android
@@ -55,6 +63,8 @@ Open the project in Android Studio, or:
 ```
 
 Install the debug APK. Background playback uses Media3 / ExoPlayer for HTTP sources and Spotify Connect for Spotify. Lock-screen and Bluetooth controls follow the Media3 session when a URL is playing.
+
+On first launch, allow music and audio access. The app reads the Android MediaStore index and refreshes the local library after permission is granted; it does not copy audio into the app.
 
 ## Connect providers
 

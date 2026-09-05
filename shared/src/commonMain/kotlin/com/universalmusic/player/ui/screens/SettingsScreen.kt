@@ -27,9 +27,11 @@ import com.universalmusic.player.data.settings.ThemeMode
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
+import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.listenForOAuthRedirect
 import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.platform.supportsMusicFolderPicker
 import com.universalmusic.player.platform.usesLocalOAuthListener
 import kotlinx.coroutines.launch
 
@@ -39,7 +41,13 @@ fun SettingsScreen(container: AppContainer) {
     val spotify by container.spotify.state.collectAsState()
     val youtube by container.youtube.state.collectAsState()
     val soundcloud by container.soundcloud.state.collectAsState()
+    val local by container.local.state.collectAsState()
+    val localTracks by container.local.libraryTracks.collectAsState()
     val scope = rememberCoroutineScope()
+    val localFolders = settings.localMusicFolders.ifEmpty {
+        listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+    }
+    val usingDefaultFolder = settings.localMusicFolders.isEmpty()
 
     Column(
         Modifier
@@ -68,14 +76,68 @@ fun SettingsScreen(container: AppContainer) {
                 Text(mode.label(), modifier = Modifier.padding(start = 8.dp))
             }
         }
-        SettingToggle("Gapless playback", settings.gapless) {
-            scope.launch { container.updateSettings { current -> current.copy(gapless = it) } }
-        }
-        SettingToggle("Normalize volume", settings.normalizeVolume) {
-            scope.launch { container.updateSettings { current -> current.copy(normalizeVolume = it) } }
-        }
+        Text(
+            "Gapless playback and volume normalization are not available yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Text("Providers", style = MaterialTheme.typography.titleMedium)
+        ProviderAccountRow(
+            name = "Local library",
+            state = local,
+            configured = true,
+            connected = local == ProviderState.AVAILABLE,
+            onConnect = container::refreshLocalLibrary,
+            onDisconnect = {},
+            showButtons = false,
+            detail = if (supportsMusicFolderPicker()) {
+                "${localTracks.size} tracks in your music folders."
+            } else {
+                "${localTracks.size} tracks. Android reads the device media library after permission is granted."
+            },
+        )
+        if (supportsMusicFolderPicker()) {
+            Text("Music folders", style = MaterialTheme.typography.labelLarge)
+            if (usingDefaultFolder) {
+                Text(
+                    "Using the default Music folder until you add or change folders.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            localFolders.forEach { folder ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        folder,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    OutlinedButton(
+                        onClick = { container.removeLocalMusicFolder(folder) },
+                        enabled = !usingDefaultFolder,
+                    ) {
+                        Text("Remove")
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = container::addLocalMusicFolderFromPicker) {
+                    Text("Add folder")
+                }
+                OutlinedButton(onClick = container::refreshLocalLibrary, enabled = local != ProviderState.LOADING) {
+                    Text(if (local == ProviderState.LOADING) "Scanning…" else "Refresh")
+                }
+            }
+        } else {
+            OutlinedButton(onClick = container::refreshLocalLibrary, enabled = local != ProviderState.LOADING) {
+                Text(if (local == ProviderState.LOADING) "Scanning…" else "Refresh local library")
+            }
+        }
         ProviderAccountRow(
             name = "Spotify",
             state = spotify,
@@ -95,7 +157,7 @@ fun SettingsScreen(container: AppContainer) {
             detail = if (!container.config.hasSpotifyCredentials) {
                 "Set SPOTIFY_CLIENT_ID in secrets.properties. Official OAuth + Web API only. Playback uses Spotify Connect on a Premium device."
             } else {
-                "Official Spotify Web API. Playback is Spotify Connect, not a raw stream."
+                "Spotify integration is in progress. Playback requires Spotify Premium and an active device in the Spotify app."
             },
         )
         ProviderAccountRow(
@@ -106,7 +168,7 @@ fun SettingsScreen(container: AppContainer) {
             onConnect = {},
             onDisconnect = {},
             showButtons = false,
-            detail = "Uses the official YouTube Data API v3 for search and metadata. There is no supported third-party YouTube Music playback API, so playback stays disabled instead of using unofficial clients.",
+            detail = "Search and track information only. YouTube Music playback and library sync are not available.",
         )
         ProviderAccountRow(
             name = "SoundCloud",
@@ -135,9 +197,6 @@ fun SettingsScreen(container: AppContainer) {
                 Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }, modifier = Modifier.padding(start = 8.dp))
             }
         }
-        SettingToggle("Compact mode", settings.compactMode) {
-            scope.launch { container.updateSettings { current -> current.copy(compactMode = it) } }
-        }
         SettingToggle("Include sample catalog in search", settings.sampleCatalogEnabled) {
             scope.launch { container.updateSettings { current -> current.copy(sampleCatalogEnabled = it) } }
         }
@@ -159,7 +218,7 @@ private fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label)
+        Text(label, modifier = Modifier.weight(1f).padding(end = 12.dp))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }

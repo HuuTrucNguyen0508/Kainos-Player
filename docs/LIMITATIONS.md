@@ -4,7 +4,7 @@ Kainos Player isolates every catalog behind `MusicProvider`. When a service cann
 
 ## Spotify
 
-Implemented with the official Authorization Code + PKCE flow and Web API.
+The implementation includes the official Authorization Code + PKCE flow and Web API. The end-to-end Spotify experience is still in progress; these code paths do not mean the integration is complete.
 
 Supported when `SPOTIFY_CLIENT_ID` is configured and the user signs in:
 

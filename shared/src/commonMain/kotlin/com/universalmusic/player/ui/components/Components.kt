@@ -2,6 +2,8 @@ package com.universalmusic.player.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,7 +78,7 @@ fun ProviderChips(
     modifier: Modifier = Modifier,
     available: Collection<ProviderId> = providers,
 ) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(modifier = modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         providers.distinct().forEach { provider ->
             val active = provider in available
             Text(
@@ -95,7 +97,7 @@ fun ProviderStatusRow(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -152,7 +154,7 @@ fun TrackRow(
                 overflow = TextOverflow.Ellipsis,
             )
             ProviderChips(
-                providers = track.sources.map { it.provider }.filter { it != ProviderId.SAMPLE },
+                providers = track.sources.map { it.provider },
                 available = track.playableSources().map { it.provider },
                 modifier = Modifier.padding(top = 4.dp),
             )

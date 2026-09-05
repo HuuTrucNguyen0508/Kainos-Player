@@ -41,9 +41,11 @@ fun HomeScreen(
     val spotifyState by container.spotify.state.collectAsState()
     val youtubeState by container.youtube.state.collectAsState()
     val soundcloudState by container.soundcloud.state.collectAsState()
+    val localState by container.local.state.collectAsState()
+    val localTracks by container.local.libraryTracks.collectAsState()
     val albums = container.sample.homeAlbums
     val playlists = container.sample.homePlaylists
-    val continueTrack = recent.firstOrNull() ?: container.sample.allTracks.first()
+    val continueTrack = recent.firstOrNull() ?: localTracks.firstOrNull() ?: container.sample.allTracks.first()
 
     Column(
         Modifier
@@ -58,6 +60,7 @@ fun HomeScreen(
         )
         ProviderStatusRow(
             mapOf(
+                ProviderId.LOCAL to localState,
                 ProviderId.SPOTIFY to spotifyState,
                 ProviderId.YOUTUBE_MUSIC to youtubeState,
                 ProviderId.SOUNDCLOUD to soundcloudState,
@@ -66,7 +69,7 @@ fun HomeScreen(
         )
         Spacer(Modifier.height(20.dp))
         Text(
-            "Continue listening",
+            if (recent.isNotEmpty()) "Continue listening" else if (localTracks.isNotEmpty()) "From your library" else "Try a sample track",
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(horizontal = 20.dp),
         )
@@ -84,7 +87,7 @@ fun HomeScreen(
                 TrackRow(track, onClick = { onPlay(track) }, modifier = Modifier.padding(horizontal = 12.dp))
             }
         }
-        SectionHeader("Albums")
+        SectionHeader("Sample albums")
         Row(
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -96,7 +99,7 @@ fun HomeScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
-        SectionHeader("Playlists")
+        SectionHeader("Sample playlists")
         Row(
             Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -109,7 +112,7 @@ fun HomeScreen(
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            "Sample library is shown until a provider is connected. Live search uses official APIs only.",
+            "These sample albums and playlists use SoundHelix audio. Find your own music in Library or Search.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),

@@ -16,15 +16,21 @@ data class AudioQuality(
     val bitDepth: Int? = null,
 ) {
     val label: String
-        get() {
-            val bitrate = bitrateKbps?.let { "$it kbps" }
-            val lossless = if (tier == QualityTier.LOSSLESS || tier == QualityTier.HI_RES) {
-                listOfNotNull(bitDepth?.let { "${it}-bit" }, sampleRateHz?.let { "${it / 1000} kHz" })
-                    .joinToString(" ")
-                    .ifBlank { null }
-            } else {
-                null
+        get() = buildList {
+            add(
+                when (tier) {
+                    QualityTier.LOW -> "Low"
+                    QualityTier.STANDARD -> "Standard"
+                    QualityTier.HIGH -> "High"
+                    QualityTier.LOSSLESS -> "Lossless"
+                    QualityTier.HI_RES -> "Hi-Res"
+                },
+            )
+            codec?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it.uppercase()) }
+            bitrateKbps?.takeIf { it > 0 }?.let { add("$it kbps") }
+            if (tier == QualityTier.LOSSLESS || tier == QualityTier.HI_RES) {
+                bitDepth?.let { add("${it}-bit") }
+                sampleRateHz?.takeIf { it > 0 }?.let { add("${it / 1000} kHz") }
             }
-            return listOfNotNull(bitrate, lossless, codec).joinToString(" · ").ifBlank { tier.name }
-        }
+        }.joinToString(" · ")
 }

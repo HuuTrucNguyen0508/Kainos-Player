@@ -6,6 +6,8 @@ import android.net.Uri
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.local.LocalTrackSource
+import com.universalmusic.player.data.local.MediaStoreLocalTrackSource
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.domain.model.ProviderId
@@ -43,6 +45,9 @@ actual fun createTokenStore(): TokenStore = PrefsStore(androidContext)
 
 actual fun createSettingsStore(): SettingsStore = PrefsSettingsStore(androidContext)
 
+actual fun createLocalTrackSource(configuredFolders: () -> List<String>): LocalTrackSource =
+    MediaStoreLocalTrackSource(androidContext)
+
 actual fun loadAppConfig(): AppConfig {
     val prefs = androidContext.getSharedPreferences("ump_config", Context.MODE_PRIVATE)
     return AppConfig(
@@ -72,6 +77,12 @@ actual fun listenForOAuthRedirect(port: Int, path: String): String {
 }
 
 actual fun usesLocalOAuthListener(): Boolean = false
+
+actual fun defaultLocalMusicFolder(): String = ""
+
+actual fun supportsMusicFolderPicker(): Boolean = false
+
+actual fun pickMusicFolder(): String? = null
 
 private class PrefsStore(context: Context) : TokenStore {
     private val prefs = context.getSharedPreferences("ump_tokens", Context.MODE_PRIVATE)

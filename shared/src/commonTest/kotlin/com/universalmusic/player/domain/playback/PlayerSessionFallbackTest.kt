@@ -6,8 +6,11 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.model.ResolvedPlayback
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,6 +18,65 @@ import kotlin.test.assertNotNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
+    @Test
+    fun pauseWhileResolvingCancelsPendingPlayback() = runTest {
+        var resolutions = 0
+        val resolver = object : SourceResolver {
+            override suspend fun resolve(track: Track, preferences: PlaybackPreferences): ResolvedPlayback {
+                resolutions++
+                awaitCancellation()
+            }
+        }
+        val session = PlayerSession(RecordingEngine {}, resolver, backgroundScope)
+        session.play(track("Loading", "Artist", provider = ProviderId.SAMPLE))
+        runCurrent()
+        session.togglePlayPause()
+        runCurrent()
+
+        assertEquals(1, resolutions)
+        assertEquals(false, session.nowPlaying.value.buffering)
+        assertEquals(false, session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun selectingUnplayableTrackStopsPreviousAudio() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.playAwait(track("Old", "Artist", provider = ProviderId.SAMPLE))
+        assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+
+        session.play(track("Unavailable", "Artist", provider = ProviderId.SAMPLE).copy(sources = emptyList()))
+        runCurrent()
+
+        assertEquals(EngineStatus.IDLE, engine.state.value.status)
+        assertNotNull(session.nowPlaying.value.error)
+        assertEquals(null, session.nowPlaying.value.resolved)
+    }
+
+    @Test
+    fun replacingLoadingTrackDoesNotStartItsFallback() = runTest {
+        val attempts = mutableListOf<PlaybackHandle>()
+        val old = track("Old", "Artist", provider = ProviderId.SPOTIFY).let {
+            it.copy(sources = it.sources + track("Old", "Artist", provider = ProviderId.YOUTUBE_MUSIC).sources)
+        }
+        val latest = track("Latest", "Artist", provider = ProviderId.SAMPLE)
+        val engine = object : PlaybackEngine by RecordingEngine({}) {
+            override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?) {
+                attempts += handle
+                if (handle == old.sources.first().handle) awaitCancellation()
+            }
+        }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope,
+            initialPreferences = PlaybackPreferences(preferredProvider = ProviderId.SPOTIFY))
+        session.play(old)
+        runCurrent()
+        session.play(latest)
+        runCurrent()
+
+        assertEquals(listOf(old.sources.first().handle, latest.sources.single().handle), attempts)
+        assertEquals(latest.canonicalId, session.nowPlaying.value.track?.canonicalId)
+    }
+
     @Test
     fun fallsBackWhenPreferredSourceFailsToStart() = runTest {
         val failing = ProviderId.SPOTIFY

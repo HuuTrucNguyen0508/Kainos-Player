@@ -9,6 +9,9 @@ import com.universalmusic.player.domain.model.SourceFallbackEvent
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.queue.QueueController
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,7 +55,9 @@ class PlayerSession(
                         isPlaying = engineState.status == EngineStatus.PLAYING,
                         positionMs = engineState.positionMs,
                         durationMs = engineState.durationMs ?: current.track?.durationMs,
-                        buffering = engineState.status == EngineStatus.BUFFERING,
+                        buffering = engineState.status == EngineStatus.BUFFERING ||
+                            (current.buffering && current.resolved == null &&
+                                engineState.status == EngineStatus.IDLE),
                         error = engineState.error,
                     )
                 }
@@ -62,7 +67,8 @@ class PlayerSession(
                 if (engineState.status == EngineStatus.FAILED) {
                     val current = _nowPlaying.value.resolved
                     if (current != null) {
-                        tryFallback(current)
+                        playJob?.cancel()
+                        playJob = scope.launch { tryFallback(current) }
                     }
                 }
             }
@@ -80,8 +86,7 @@ class PlayerSession(
 
     suspend fun playAwait(track: Track) {
         queue.playNow(track)
-        val item = queue.queue.value.current ?: return
-        playTrack(item.track)
+        startCurrent()?.join()
     }
 
     fun play(tracks: List<Track>, startIndex: Int = 0) {
@@ -100,6 +105,12 @@ class PlayerSession(
     fun playNext(track: Track) = queue.playNext(track)
 
     fun togglePlayPause() {
+        if (_nowPlaying.value.buffering) {
+            playJob?.cancel()
+            engine.stop()
+            _nowPlaying.update { it.copy(buffering = false, isPlaying = false) }
+            return
+        }
         val state = engine.state.value
         when (state.status) {
             EngineStatus.PLAYING -> engine.pause()
@@ -112,7 +123,13 @@ class PlayerSession(
     fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
 
     fun skipToNext() {
-        val next = queue.nextIndex() ?: return
+        val next = queue.nextIndex()
+        if (next == null) {
+            _nowPlaying.update {
+                it.copy(isPlaying = false, buffering = false, positionMs = 0)
+            }
+            return
+        }
         queue.jumpTo(next)
         startCurrent()
     }
@@ -146,27 +163,35 @@ class PlayerSession(
         _nowPlaying.update { it.copy(favorite = favorite) }
     }
 
-    private fun startCurrent() {
-        val item = queue.queue.value.current ?: return
+    private fun startCurrent(): Job? {
+        val item = queue.queue.value.current ?: return null
         playJob?.cancel()
+        engine.stop()
         playJob = scope.launch {
             playTrack(item.track)
         }
+        return playJob
     }
 
     private suspend fun playTrack(track: Track) {
+        currentCoroutineContext().ensureActive()
         _nowPlaying.update {
-            it.copy(track = track, buffering = true, error = null, fallback = null)
+            it.copy(track = track, resolved = null, isPlaying = false, positionMs = 0,
+                buffering = true, error = null, fallback = null)
         }
         val resolved = runCatching { resolver.resolve(track, _preferences.value) }
             .getOrElse { error ->
+                if (error is CancellationException) throw error
+                currentCoroutineContext().ensureActive()
                 _nowPlaying.update { it.copy(buffering = false, error = error.message, isPlaying = false) }
                 return
             }
+        currentCoroutineContext().ensureActive()
         startResolved(resolved, fallback = null)
     }
 
     private suspend fun startResolved(resolved: ResolvedPlayback, fallback: SourceFallbackEvent?) {
+        currentCoroutineContext().ensureActive()
         _nowPlaying.update {
             it.copy(
                 track = resolved.track,
@@ -179,6 +204,8 @@ class PlayerSession(
         runCatching {
             engine.play(resolved.source.handle, resolved.source.quality)
         }.onFailure { error ->
+            if (error is CancellationException) throw error
+            currentCoroutineContext().ensureActive()
             tryFallback(resolved, error.message)
         }
     }

@@ -141,7 +141,11 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
             Box(Modifier.weight(1f).fillMaxSize()) {
                 when {
                     showQueue && !desktop -> QueueScreen(container) { showQueue = false }
-                    showNowPlaying && !desktop -> NowPlayingScreen(container, onOpenQueue = { showQueue = true })
+                    showNowPlaying && !desktop -> NowPlayingScreen(
+                        container,
+                        onOpenQueue = { showQueue = true },
+                        onClose = { showNowPlaying = false },
+                    )
                     else -> when (destination) {
                         AppDestination.Home -> HomeScreen(
                             container,
@@ -149,7 +153,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                             onPlayTracks = ::playTracks,
                             onOpenNowPlaying = { showNowPlaying = true },
                         )
-                        AppDestination.Search -> SearchScreen(container, ::play)
+                        AppDestination.Search -> SearchScreen(container, ::play, requestFocus = true)
                         AppDestination.Library -> LibraryScreen(container, ::play, ::playTracks)
                         AppDestination.Settings -> SettingsScreen(container)
                     }

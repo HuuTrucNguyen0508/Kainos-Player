@@ -3,6 +3,7 @@ package com.universalmusic.player.app
 import com.universalmusic.player.data.catalog.SampleCatalogProvider
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
+import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.soundcloud.SoundCloudProvider
@@ -16,10 +17,14 @@ import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.platform.createLocalTrackSource
 import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.createTokenStore
+import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.loadAppConfig
+import com.universalmusic.player.platform.pickMusicFolder
+import com.universalmusic.player.platform.supportsMusicFolderPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +51,9 @@ class AppContainer {
     val library = LibraryRepository()
     val matcher = TrackMatcher()
     val sample = SampleCatalogProvider()
+    private val _settings = MutableStateFlow(AppSettings())
+    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+    val local = LocalMusicProvider(createLocalTrackSource { _settings.value.localMusicFolders })
     val spotify = SpotifyProvider(http, tokens, config)
     val youtube = YouTubeMusicProvider(http, config)
     val soundcloud = SoundCloudProvider(http, config)
@@ -56,9 +64,6 @@ class AppContainer {
         resolver = resolver,
         scope = scope,
     )
-
-    private val _settings = MutableStateFlow(AppSettings())
-    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
     private val _uiRequests = MutableSharedFlow<UiRequest>(extraBufferCapacity = 4)
     val uiRequests: SharedFlow<UiRequest> = _uiRequests.asSharedFlow()
@@ -73,11 +78,13 @@ class AppContainer {
             _settings.value = loaded
             player.updatePreferences(loaded.toPlaybackPreferences())
             spotify.restore()
+            refreshLocalLibrary()
         }
     }
 
     fun providersForSearch(includeSample: Boolean = _settings.value.sampleCatalogEnabled): List<MusicProvider> {
         val live = buildList {
+            add(local)
             if (spotify.state.value != ProviderState.NOT_CONFIGURED) add(spotify)
             if (youtube.state.value != ProviderState.NOT_CONFIGURED) add(youtube)
             if (soundcloud.state.value != ProviderState.NOT_CONFIGURED) add(soundcloud)
@@ -94,7 +101,45 @@ class AppContainer {
         player.updatePreferences(next.toPlaybackPreferences())
     }
 
+    fun refreshLocalLibrary() {
+        scope.launch { runCatching { local.refresh() } }
+    }
+
+    /** Folders currently used for desktop scanning (settings, or the platform default). */
+    fun effectiveLocalMusicFolders(): List<String> {
+        val configured = _settings.value.localMusicFolders
+        if (configured.isNotEmpty()) return configured
+        return listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+    }
+
+    fun addLocalMusicFolderFromPicker() {
+        if (!supportsMusicFolderPicker()) return
+        scope.launch {
+            val picked = pickMusicFolder() ?: return@launch
+            updateSettings { current ->
+                val base = current.localMusicFolders.ifEmpty {
+                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                }
+                current.copy(localMusicFolders = (base + picked).distinct())
+            }
+            runCatching { local.refresh() }
+        }
+    }
+
+    fun removeLocalMusicFolder(path: String) {
+        scope.launch {
+            updateSettings { current ->
+                val base = current.localMusicFolders.ifEmpty {
+                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                }
+                current.copy(localMusicFolders = base.filterNot { it == path })
+            }
+            runCatching { local.refresh() }
+        }
+    }
+
     fun providerState(id: ProviderId): StateFlow<ProviderState> = when (id) {
+        ProviderId.LOCAL -> local.state
         ProviderId.SPOTIFY -> spotify.state
         ProviderId.YOUTUBE_MUSIC -> youtube.state
         ProviderId.SOUNDCLOUD -> soundcloud.state

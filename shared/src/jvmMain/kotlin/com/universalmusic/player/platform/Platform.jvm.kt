@@ -3,6 +3,9 @@ package com.universalmusic.player.platform
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.local.JvmLocalTrackSource
+import com.universalmusic.player.data.local.LocalTrackSource
+import com.universalmusic.player.data.local.resolveMusicRoots
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.domain.model.ProviderId
@@ -18,6 +21,7 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.security.MessageDigest
 import java.util.Properties
 import kotlin.io.path.div
@@ -49,6 +53,15 @@ actual fun createHttpClient(): HttpClient = HttpClient(CIO) {
 actual fun createTokenStore(): TokenStore = FileTokenStore(configDir() / "tokens.json")
 
 actual fun createSettingsStore(): SettingsStore = FileSettingsStore(configDir() / "settings.json")
+
+actual fun createLocalTrackSource(configuredFolders: () -> List<String>): LocalTrackSource =
+    JvmLocalTrackSource {
+        resolveMusicRoots(
+            homeDirectory = Paths.get(System.getProperty("user.home", ".")),
+            configuredFolders = configuredFolders(),
+            additionalRoots = System.getenv("KAINOS_MUSIC_DIRS"),
+        )
+    }
 
 actual fun loadAppConfig(): AppConfig {
     val env = System.getenv()
@@ -86,6 +99,101 @@ actual fun platformLabel(): String = "Linux"
 actual fun listenForOAuthRedirect(port: Int, path: String): String = awaitOAuthRedirect(port, path)
 
 actual fun usesLocalOAuthListener(): Boolean = true
+
+actual fun defaultLocalMusicFolder(): String =
+    Paths.get(System.getProperty("user.home", "."), "Music")
+        .toAbsolutePath()
+        .normalize()
+        .toString()
+
+actual fun supportsMusicFolderPicker(): Boolean = true
+
+actual fun pickMusicFolder(): String? {
+    pickWithZenity()?.let { return it }
+    pickWithKdialog()?.let { return it }
+    return pickWithSwing()
+}
+
+private fun pickWithZenity(): String? {
+    val zenity = findExecutable("zenity") ?: return null
+    return runCatching {
+        val process = ProcessBuilder(
+            zenity,
+            "--file-selection",
+            "--directory",
+            "--title=Choose music folder",
+        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val stdout = process.inputStream.bufferedReader().readText()
+        if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
+    }.getOrNull()
+}
+
+private fun pickWithKdialog(): String? {
+    val kdialog = findExecutable("kdialog") ?: return null
+    return runCatching {
+        val process = ProcessBuilder(
+            kdialog,
+            "--getexistingdirectory",
+            System.getProperty("user.home", "."),
+            "--title",
+            "Choose music folder",
+        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val stdout = process.inputStream.bufferedReader().readText()
+        if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
+    }.getOrNull()
+}
+
+/** Keep the last absolute path-looking line; ignore GTK/tool chatter on stdout. */
+private fun parsePickedDirectory(stdout: String): String? {
+    val candidate = stdout
+        .lineSequence()
+        .map(String::trim)
+        .filter { it.startsWith('/') }
+        .lastOrNull()
+        ?: return null
+    val path = Paths.get(candidate).toAbsolutePath().normalize()
+    return path.takeIf { Files.isDirectory(path) }?.toString()
+}
+
+private fun pickWithSwing(): String? {
+    fun choose(): String? {
+        val frame = javax.swing.JFrame().apply {
+            title = "Kainos Player"
+            isAlwaysOnTop = true
+            setLocationRelativeTo(null)
+            isVisible = true
+            toFront()
+        }
+        return try {
+            val chooser = javax.swing.JFileChooser().apply {
+                fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                dialogTitle = "Choose music folder"
+                isMultiSelectionEnabled = false
+            }
+            val result = chooser.showOpenDialog(frame)
+            if (result != javax.swing.JFileChooser.APPROVE_OPTION) null
+            else chooser.selectedFile?.absoluteFile?.canonicalFile?.path
+        } finally {
+            frame.isVisible = false
+            frame.dispose()
+        }
+    }
+    return if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+        choose()
+    } else {
+        var selected: String? = null
+        javax.swing.SwingUtilities.invokeAndWait { selected = choose() }
+        selected
+    }
+}
+
+private fun findExecutable(name: String): String? {
+    val path = System.getenv("PATH") ?: return null
+    return path.split(':').firstOrNull { dir ->
+        val file = java.io.File(dir, name)
+        file.canExecute()
+    }?.let { java.io.File(it, name).absolutePath }
+}
 
 private class FileTokenStore(private val path: Path) : TokenStore {
     override suspend fun read(provider: ProviderId): AuthTokens? {
