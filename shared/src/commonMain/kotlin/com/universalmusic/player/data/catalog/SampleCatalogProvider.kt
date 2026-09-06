@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Local demonstration catalog used when no music service is connected.
- * Streams are royalty-free SoundHelix examples — not Spotify/YouTube/SoundCloud audio.
+ * Streams are royalty-free SoundHelix examples — not Spotify/YouTube audio.
  */
 class SampleCatalogProvider : MusicProvider {
     override val providerId: ProviderId = ProviderId.SAMPLE
@@ -126,7 +126,6 @@ private fun demoTrack(
     year: Int = 2024,
     spotifyBitrate: Int = 320,
     youtubeBitrate: Int = 256,
-    soundCloudBitrate: Int = 128,
 ): Track {
     val artistRef = ArtistRef("sample-artist-${artist.lowercase()}", artist)
     val albumRef = AlbumRef("sample-album-${album.lowercase()}", album, art(album), year)
@@ -144,7 +143,6 @@ private fun demoTrack(
             sampleSource(id, url),
             informational(ProviderId.SPOTIFY, "sp-$id", spotifyBitrate, QualityTier.HIGH, playable = false),
             informational(ProviderId.YOUTUBE_MUSIC, "yt-$id", youtubeBitrate, QualityTier.HIGH, playable = false),
-            informational(ProviderId.SOUNDCLOUD, "sc-$id", soundCloudBitrate, QualityTier.STANDARD, playable = false),
         ),
     )
 }

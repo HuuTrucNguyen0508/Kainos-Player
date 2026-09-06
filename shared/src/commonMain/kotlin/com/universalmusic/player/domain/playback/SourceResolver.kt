@@ -82,14 +82,12 @@ class DefaultSourceResolver : SourceResolver {
     private fun preferredFromMode(mode: SourceSelectionMode): ProviderId? = when (mode) {
         SourceSelectionMode.PREFER_SPOTIFY, SourceSelectionMode.FORCE_SPOTIFY -> ProviderId.SPOTIFY
         SourceSelectionMode.PREFER_YOUTUBE_MUSIC, SourceSelectionMode.FORCE_YOUTUBE_MUSIC -> ProviderId.YOUTUBE_MUSIC
-        SourceSelectionMode.PREFER_SOUNDCLOUD, SourceSelectionMode.FORCE_SOUNDCLOUD -> ProviderId.SOUNDCLOUD
         else -> null
     }
 
     private fun forcedProvider(mode: SourceSelectionMode): ProviderId? = when (mode) {
         SourceSelectionMode.FORCE_SPOTIFY -> ProviderId.SPOTIFY
         SourceSelectionMode.FORCE_YOUTUBE_MUSIC -> ProviderId.YOUTUBE_MUSIC
-        SourceSelectionMode.FORCE_SOUNDCLOUD -> ProviderId.SOUNDCLOUD
         else -> null
     }
 
@@ -100,9 +98,7 @@ class DefaultSourceResolver : SourceResolver {
             SourceSelectionMode.PREFER_HIGHEST_BITRATE -> "Highest bitrate · ${provider.displayName}"
             SourceSelectionMode.PREFER_SPOTIFY -> "Preferred Spotify, selected ${provider.displayName}"
             SourceSelectionMode.PREFER_YOUTUBE_MUSIC -> "Preferred YouTube Music, selected ${provider.displayName}"
-            SourceSelectionMode.PREFER_SOUNDCLOUD -> "Preferred SoundCloud, selected ${provider.displayName}"
             SourceSelectionMode.FORCE_SPOTIFY,
-            SourceSelectionMode.FORCE_YOUTUBE_MUSIC,
-            SourceSelectionMode.FORCE_SOUNDCLOUD -> "Manual override · ${provider.displayName}"
+            SourceSelectionMode.FORCE_YOUTUBE_MUSIC -> "Manual override · ${provider.displayName}"
         }
 }

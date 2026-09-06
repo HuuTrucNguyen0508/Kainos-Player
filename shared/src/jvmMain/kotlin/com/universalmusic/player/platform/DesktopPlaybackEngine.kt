@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -24,16 +25,31 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.channels.Channel
 
 /**
  * In-process desktop playback via headless mpv (no extra window).
  * Pause / resume / seek use mpv's JSON IPC socket.
  */
 class DesktopPlaybackEngine internal constructor(
-    private val spotifyStarter: suspend (String) -> Unit,
+    private val spotify: SpotifyPlaybackController,
     private val runtime: DesktopPlaybackRuntime = SystemDesktopPlaybackRuntime,
 ) : PlaybackEngine {
+    internal constructor(
+        spotifyStarter: suspend (String) -> Unit,
+        runtime: DesktopPlaybackRuntime = SystemDesktopPlaybackRuntime,
+    ) : this(
+        SpotifyPlaybackController(
+            play = spotifyStarter,
+            pause = {},
+            resume = {},
+            seekTo = {},
+        ),
+        runtime,
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
     private val _state = MutableStateFlow(EngineState())
     override val state: StateFlow<EngineState> = _state.asStateFlow()
     private val lifecycleLock = Any()
@@ -50,6 +66,18 @@ class DesktopPlaybackEngine internal constructor(
         Thread({ shutdown() }, "kainos-mpv-shutdown").also(Runtime.getRuntime()::addShutdownHook)
     } else {
         null
+    }
+
+    init {
+        scope.launch {
+            for (command in spotifyCommands) {
+                val result = runCatching { command.action() }
+                command.completion?.complete(result)
+                if (command.completion == null) {
+                    result.onFailure { failure -> markSpotifyFailed(failure, command.name) }
+                }
+            }
+        }
     }
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?) {
@@ -78,7 +106,7 @@ class DesktopPlaybackEngine internal constructor(
                         "${handle.provider.displayName} does not provide a supported Linux playback mechanism.",
                     )
                 }
-                spotifyStarter(handle.trackId)
+                runSpotifyCommand("Spotify Connect playback") { spotify.play(handle.trackId) }
                 synchronized(lifecycleLock) {
                     if (token != requestToken) return
                     startedAt = System.currentTimeMillis()
@@ -94,6 +122,19 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun pause() {
+        if (spotifyIsActive()) {
+            synchronized(lifecycleLock) {
+                if (_state.value.status != EngineStatus.PLAYING &&
+                    _state.value.status != EngineStatus.BUFFERING
+                ) return
+                elapsedOffset = _state.value.positionMs
+                cancelTickerLocked()
+                userPaused = true
+                _state.value = _state.value.copy(status = EngineStatus.PAUSED, error = null)
+            }
+            enqueueSpotifyCommand("Spotify Connect pause", spotify.pause)
+            return
+        }
         synchronized(lifecycleLock) {
             if (_state.value.status != EngineStatus.PLAYING &&
                 _state.value.status != EngineStatus.BUFFERING
@@ -119,6 +160,17 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun resume() {
+        if (spotifyIsActive()) {
+            synchronized(lifecycleLock) {
+                if (_state.value.status != EngineStatus.PAUSED) return
+                userPaused = false
+                startedAt = System.currentTimeMillis()
+                _state.value = _state.value.copy(status = EngineStatus.PLAYING, error = null)
+                startTickerLocked()
+            }
+            enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
+            return
+        }
         val restart = synchronized(lifecycleLock) {
             val current = _state.value
             if (current.status != EngineStatus.PAUSED) return
@@ -153,6 +205,16 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun seekTo(positionMs: Long) {
+        if (spotifyIsActive()) {
+            val target = positionMs.coerceAtLeast(0)
+            synchronized(lifecycleLock) {
+                elapsedOffset = target
+                startedAt = System.currentTimeMillis()
+                _state.value = _state.value.copy(positionMs = target, error = null)
+            }
+            enqueueSpotifyCommand("Spotify Connect seek") { spotify.seekTo(target) }
+            return
+        }
         val restart = synchronized(lifecycleLock) {
             elapsedOffset = positionMs.coerceAtLeast(0)
             startedAt = System.currentTimeMillis()
@@ -195,6 +257,7 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun stop() {
+        val pauseSpotify = spotifyIsActive()
         synchronized(lifecycleLock) {
             invalidatePendingStartLocked()
             userPaused = false
@@ -211,6 +274,7 @@ class DesktopPlaybackEngine internal constructor(
             lastQuality = null
             _state.value = EngineState()
         }
+        if (pauseSpotify) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
     }
 
     override fun setVolume(volume: Float) {
@@ -335,6 +399,38 @@ class DesktopPlaybackEngine internal constructor(
         ticker?.cancel()
         ticker = null
     }
+
+    private fun spotifyIsActive(): Boolean = synchronized(lifecycleLock) {
+        (lastHandle as? PlaybackHandle.ProviderPlayback)?.provider == ProviderId.SPOTIFY
+    }
+
+    private suspend fun runSpotifyCommand(name: String, action: suspend () -> Unit) {
+        val completion = CompletableDeferred<Result<Unit>>()
+        spotifyCommands.send(SpotifyCommand(name, action, completion))
+        completion.await().getOrThrow()
+    }
+
+    private fun enqueueSpotifyCommand(name: String, action: suspend () -> Unit) {
+        spotifyCommands.trySend(SpotifyCommand(name, action))
+    }
+
+    private fun markSpotifyFailed(failure: Throwable, name: String) {
+        synchronized(lifecycleLock) {
+            if (spotifyIsActive()) {
+                cancelTickerLocked()
+                _state.value = _state.value.copy(
+                    status = EngineStatus.FAILED,
+                    error = failure.message ?: "$name failed",
+                )
+            }
+        }
+    }
+
+    private data class SpotifyCommand(
+        val name: String,
+        val action: suspend () -> Unit,
+        val completion: CompletableDeferred<Result<Unit>>? = null,
+    )
 
     private fun invalidatePendingStartLocked() {
         requestToken++

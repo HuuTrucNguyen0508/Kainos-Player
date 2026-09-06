@@ -5,11 +5,13 @@ import com.universalmusic.player.domain.model.AlbumRef
 import com.universalmusic.player.domain.model.Artist
 import com.universalmusic.player.domain.model.ArtistRef
 import com.universalmusic.player.domain.model.Artwork
+import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 
 internal fun SpotifyTrack.toDomain(premium: Boolean): Track {
@@ -28,13 +30,18 @@ internal fun SpotifyTrack.toDomain(premium: Boolean): Track {
 }
 
 internal fun SpotifyTrack.toSource(premium: Boolean): PlaybackSource {
-    // Web API does not report per-track bitrate. Do not invent 320 kbps.
+    // Web API does not report per-track format. Assume CD-quality Connect output (16-bit / 44.1 kHz).
+    // Do not invent a lossy bitrate such as 320 kbps.
     @Suppress("UNUSED_PARAMETER")
     val unusedPremium = premium
     return PlaybackSource(
         provider = ProviderId.SPOTIFY,
         providerTrackId = id,
-        quality = null,
+        quality = AudioQuality(
+            tier = QualityTier.LOSSLESS,
+            sampleRateHz = 44_100,
+            bitDepth = 16,
+        ),
         isPlayable = is_playable ?: true,
         handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, id),
     )
@@ -74,10 +81,10 @@ internal fun SpotifyPlaylist.toDomain(premium: Boolean): Playlist = Playlist(
     canonicalId = "spotify-playlist:$id",
     title = name,
     description = description,
-    artwork = images.toArtwork(),
+    artwork = images.orEmpty().toArtwork(),
     ownerName = owner?.display_name,
-    trackCount = tracks?.total,
-    tracks = tracks?.items?.mapNotNull { it.track?.toDomain(premium) }.orEmpty(),
+    trackCount = items?.total ?: tracks?.total,
+    tracks = (items?.items ?: tracks?.items)?.mapNotNull { it.track?.toDomain(premium) }.orEmpty(),
     source = ProviderEntityRef(ProviderId.SPOTIFY, id),
 )
 

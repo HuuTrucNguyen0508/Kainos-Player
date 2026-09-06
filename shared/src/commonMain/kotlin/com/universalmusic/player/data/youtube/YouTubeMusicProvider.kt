@@ -16,25 +16,33 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.MusicProvider
+import com.universalmusic.player.platform.UnavailableYouTubeStreamResolver
+import com.universalmusic.player.platform.YouTubeStreamResolver
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.client.plugins.expectSuccess
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 
 /**
- * Official YouTube Data API v3 adapter.
- *
- * There is no supported public YouTube Music catalog/playback API for third-party
- * players. This provider therefore exposes search and metadata only. Playback is
- * reported as unsupported rather than using unofficial InnerTube clients.
+ * YouTube Data API v3 for search/metadata, plus optional yt-dlp audio URL resolution
+ * for in-app playback on desktop when a stream resolver is available.
  */
 class YouTubeMusicProvider(
     private val http: HttpClient,
-    private val config: AppConfig,
+    private var config: AppConfig,
+    private val streams: YouTubeStreamResolver = UnavailableYouTubeStreamResolver,
 ) : MusicProvider {
     override val providerId: ProviderId = ProviderId.YOUTUBE_MUSIC
     private val _state = MutableStateFlow(
@@ -42,63 +50,123 @@ class YouTubeMusicProvider(
     )
     override val state: StateFlow<ProviderState> = _state.asStateFlow()
 
+    fun updateConfig(next: AppConfig) {
+        config = next
+        _state.value = if (next.hasYouTubeCredentials) ProviderState.AVAILABLE else ProviderState.NOT_CONFIGURED
+    }
+
     override suspend fun search(query: String): SearchResult {
-        val key = config.youtubeDataApiKey ?: error("YouTube Data API key is not configured")
-        _state.value = ProviderState.LOADING
-        return try {
-            val response = http.get("https://www.googleapis.com/youtube/v3/search") {
+        if (query.isBlank()) return SearchResult()
+        return request {
+            // Category filters require type=video and cannot be combined with playlist search.
+            val response = fetch("search") {
                 parameter("part", "snippet")
-                parameter("q", query)
+                parameter("q", query.trim())
                 parameter("type", "video,playlist")
                 parameter("maxResults", 20)
-                parameter("videoCategoryId", "10")
-                parameter("key", key)
-            }.body<YouTubeSearchResponse>()
-            _state.value = ProviderState.AVAILABLE
-            val tracks = response.items.filter { it.id.videoId != null }.map { it.toTrack() }
-            val playlists = response.items.filter { it.id.playlistId != null }.map { it.toPlaylist() }
-            SearchResult(tracks = tracks, playlists = playlists)
-        } catch (error: Throwable) {
-            _state.value = ProviderState.UNAVAILABLE
-            throw error
+            }
+            val videos = response.items.filter { it.resourceId("videoId") != null }
+            val ids = videos.mapNotNull { it.resourceId("videoId") }
+            val details = if (ids.isEmpty()) emptyMap() else fetch("videos") {
+                parameter("part", "snippet,contentDetails")
+                parameter("id", ids.joinToString(","))
+            }.items.associateBy { it.resourceId("videoId") }
+            SearchResult(
+                tracks = videos.map { (details[it.resourceId("videoId")] ?: it).toTrack(streams.isAvailable()) },
+                playlists = response.items.filter { it.resourceId("playlistId") != null }.map { it.toPlaylist() },
+            )
         }
     }
 
-    override suspend fun getTrack(id: String): Track? {
-        val key = config.youtubeDataApiKey ?: return null
-        val response = http.get("https://www.googleapis.com/youtube/v3/videos") {
+    override suspend fun getTrack(id: String): Track? = request {
+        fetch("videos") {
             parameter("part", "snippet,contentDetails")
             parameter("id", id)
-            parameter("key", key)
-        }.body<YouTubeSearchResponse>()
-        return response.items.firstOrNull()?.toTrack()
+        }.items.firstOrNull()?.toTrack(streams.isAvailable())
     }
 
     override suspend fun getAlbum(id: String): Album? = null
 
     override suspend fun getArtist(id: String): Artist? = null
 
-    override suspend fun getPlaylist(id: String): Playlist? {
-        val key = config.youtubeDataApiKey ?: return null
-        val response = http.get("https://www.googleapis.com/youtube/v3/playlists") {
+    override suspend fun getPlaylist(id: String): Playlist? = request {
+        fetch("playlists") {
             parameter("part", "snippet,contentDetails")
             parameter("id", id)
-            parameter("key", key)
-        }.body<YouTubeSearchResponse>()
-        return response.items.firstOrNull()?.toPlaylist()
+        }.items.firstOrNull()?.toPlaylist()
     }
 
-    override suspend fun getStream(track: Track): PlaybackSource? = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
+    private suspend fun fetch(endpoint: String, parameters: HttpRequestBuilder.() -> Unit): YouTubeSearchResponse {
+        val key = config.youtubeDataApiKey?.takeIf { it.isNotBlank() }
+            ?: error("YouTube Data API key is not configured")
+        val response = http.get("https://www.googleapis.com/youtube/v3/$endpoint") {
+            // Handle errors here so URLs containing the API key never reach the UI.
+            expectSuccess = false
+            parameter("key", key)
+            parameters()
+        }
+        if (!response.status.isSuccess()) {
+            val reason = runCatching { response.body<YouTubeErrorResponse>().error?.errors?.firstOrNull()?.reason }.getOrNull()
+            _state.value = when {
+                response.status.value == 429 || reason in listOf("quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded") -> ProviderState.RATE_LIMITED
+                response.status.value == 401 || reason in listOf("keyInvalid", "accessNotConfigured", "ipRefererBlocked") -> ProviderState.AUTH_REQUIRED
+                else -> ProviderState.UNAVAILABLE
+            }
+            error(when (_state.value) {
+                ProviderState.RATE_LIMITED -> "YouTube quota or rate limit reached. Try again later."
+                ProviderState.AUTH_REQUIRED -> "Check your YouTube API key and enable YouTube Data API v3 in Google Cloud."
+                else -> "YouTube request failed (HTTP ${response.status.value}). Check API access and try again."
+            })
+        }
+        return response.body()
+    }
 
-    override suspend fun getCapabilities(): ProviderCapabilities = ProviderCapabilities(
-        search = config.hasYouTubeCredentials,
-        metadata = config.hasYouTubeCredentials,
-        playlists = config.hasYouTubeCredentials,
-        library = false,
-        playback = false,
-        backgroundPlayback = false,
-        losslessPlayback = false,
-    )
+    private suspend fun <T> request(block: suspend () -> T): T {
+        val previous = _state.value
+        _state.value = ProviderState.LOADING
+        try {
+            return block().also { _state.value = ProviderState.AVAILABLE }
+        } catch (cancelled: CancellationException) {
+            _state.value = previous
+            throw cancelled
+        } catch (failure: Exception) {
+            if (_state.value == ProviderState.LOADING) _state.value = ProviderState.UNAVAILABLE
+            // Transport exceptions may include the credential-bearing request URL.
+            val message = when (_state.value) {
+                ProviderState.RATE_LIMITED -> "YouTube quota or rate limit reached. Try again later."
+                ProviderState.AUTH_REQUIRED -> "Check your YouTube API key and enable YouTube Data API v3 in Google Cloud."
+                else -> "YouTube is unavailable. Check your connection, API key, and API access."
+            }
+            throw IllegalStateException(message)
+        }
+    }
+
+    override suspend fun getStream(track: Track): PlaybackSource? {
+        val base = track.sourceFor(ProviderId.YOUTUBE_MUSIC) ?: return null
+        if (!streams.isAvailable()) return base
+        val resolved = streams.resolveAudioUrl(base.providerTrackId)
+            ?: error("Could not resolve a YouTube audio stream for \"${track.title}\"")
+        return base.copy(
+            streamUrl = resolved.url,
+            quality = resolved.quality ?: base.quality,
+            isPlayable = true,
+            handle = PlaybackHandle.Url(resolved.url),
+        )
+    }
+
+    override suspend fun getCapabilities(): ProviderCapabilities {
+        val configured = config.hasYouTubeCredentials
+        val playback = configured && streams.isAvailable()
+        return ProviderCapabilities(
+            search = configured,
+            metadata = configured,
+            playlists = configured,
+            library = false,
+            playback = playback,
+            backgroundPlayback = playback,
+            losslessPlayback = false,
+        )
+    }
 
     override suspend fun isAuthenticated(): Boolean = config.hasYouTubeCredentials
 }
@@ -110,17 +178,25 @@ private data class YouTubeSearchResponse(
 
 @Serializable
 private data class YouTubeItem(
-    val id: YouTubeId = YouTubeId(),
+    val id: JsonElement = JsonPrimitive(""),
     val snippet: YouTubeSnippet? = null,
     val contentDetails: YouTubeContentDetails? = null,
 )
 
+private fun YouTubeItem.resourceId(field: String): String? = when (val value = id) {
+    is JsonPrimitive -> value.content.takeIf { it.isNotBlank() }
+    is JsonObject -> value[field]?.jsonPrimitive?.content
+    else -> null
+}
+
 @Serializable
-private data class YouTubeId(
-    val videoId: String? = null,
-    val playlistId: String? = null,
-    val kind: String? = null,
-)
+private data class YouTubeErrorResponse(val error: YouTubeApiError? = null)
+
+@Serializable
+private data class YouTubeApiError(val errors: List<YouTubeErrorReason> = emptyList())
+
+@Serializable
+private data class YouTubeErrorReason(val reason: String? = null)
 
 @Serializable
 private data class YouTubeSnippet(
@@ -150,8 +226,8 @@ private data class YouTubeContentDetails(
     val itemCount: Int? = null,
 )
 
-private fun YouTubeItem.toTrack(): Track {
-    val id = id.videoId ?: snippet?.title ?: "unknown"
+private fun YouTubeItem.toTrack(playable: Boolean): Track {
+    val id = requireNotNull(resourceId("videoId")) { "YouTube video is missing its ID" }
     val thumb = snippet?.thumbnails?.high ?: snippet?.thumbnails?.medium ?: snippet?.thumbnails?.default
     val artistName = snippet?.channelTitle ?: "YouTube"
     return Track(
@@ -166,7 +242,7 @@ private fun YouTubeItem.toTrack(): Track {
                 provider = ProviderId.YOUTUBE_MUSIC,
                 providerTrackId = id,
                 quality = null,
-                isPlayable = false,
+                isPlayable = playable,
                 handle = PlaybackHandle.ProviderPlayback(ProviderId.YOUTUBE_MUSIC, id),
             ),
         ),
@@ -174,7 +250,7 @@ private fun YouTubeItem.toTrack(): Track {
 }
 
 private fun YouTubeItem.toPlaylist(): Playlist {
-    val id = id.playlistId ?: "unknown"
+    val id = requireNotNull(resourceId("playlistId")) { "YouTube playlist is missing its ID" }
     val thumb = snippet?.thumbnails?.high ?: snippet?.thumbnails?.medium
     return Playlist(
         canonicalId = "yt-playlist:$id",

@@ -4,5 +4,4 @@
 #
 # Provider credentials do NOT go in this file. Put them in secrets.properties
 # (see secrets.properties.example) or export them as environment variables:
-#   SPOTIFY_CLIENT_ID, YOUTUBE_DATA_API_KEY,
-#   SOUNDCLOUD_CLIENT_ID, SOUNDCLOUD_CLIENT_SECRET
+#   SPOTIFY_CLIENT_ID, YOUTUBE_DATA_API_KEY

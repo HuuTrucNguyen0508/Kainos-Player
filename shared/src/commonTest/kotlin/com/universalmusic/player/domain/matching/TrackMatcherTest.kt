@@ -29,7 +29,7 @@ class TrackMatcherTest {
     @Test
     fun differentCapitalizationMatches() {
         val a = track("Paranoid Android", "Radiohead", "OK Computer", provider = ProviderId.SPOTIFY)
-        val b = track("paranoid android", "RADIOHEAD", "ok computer", provider = ProviderId.SOUNDCLOUD)
+        val b = track("paranoid android", "RADIOHEAD", "ok computer", provider = ProviderId.YOUTUBE_MUSIC)
         val match = matcher.match(a, b)
         assertEquals(MatchReason.NORMALIZED_METADATA, match.reason)
     }
@@ -46,7 +46,7 @@ class TrackMatcherTest {
     @Test
     fun remixIsNotMergedWithOriginal() {
         val original = track("Get Lucky", "Daft Punk", "Random Access Memories", provider = ProviderId.SPOTIFY)
-        val remix = track("Get Lucky - Remix", "Daft Punk", "Random Access Memories", provider = ProviderId.SOUNDCLOUD)
+        val remix = track("Get Lucky - Remix", "Daft Punk", "Random Access Memories", provider = ProviderId.YOUTUBE_MUSIC)
         val match = matcher.match(original, remix)
         assertEquals(MatchReason.NONE, match.reason)
         assertEquals(0f, match.confidence)
@@ -63,7 +63,7 @@ class TrackMatcherTest {
     fun acousticAndRemasterStaySeparate() {
         val original = track("Yellow", "Coldplay", "Parachutes", provider = ProviderId.SPOTIFY)
         val acoustic = track("Yellow - Acoustic", "Coldplay", "Parachutes", provider = ProviderId.YOUTUBE_MUSIC)
-        val remaster = track("Yellow (2024 Remaster)", "Coldplay", "Parachutes", provider = ProviderId.SOUNDCLOUD)
+        val remaster = track("Yellow (2024 Remaster)", "Coldplay", "Parachutes", provider = ProviderId.YOUTUBE_MUSIC)
         assertEquals(MatchReason.NONE, matcher.match(original, acoustic).reason)
         assertEquals(MatchReason.NONE, matcher.match(original, remaster).reason)
     }
@@ -79,7 +79,7 @@ class TrackMatcherTest {
     @Test
     fun durationDifferenceWithoutSharedMetadataDoesNotMerge() {
         val a = track("Hello", "Adele", "25", durationMs = 295_000, provider = ProviderId.SPOTIFY)
-        val b = track("Hello", "Lionel Richie", "Can't Slow Down", durationMs = 249_000, provider = ProviderId.SOUNDCLOUD)
+        val b = track("Hello", "Lionel Richie", "Can't Slow Down", durationMs = 249_000, provider = ProviderId.YOUTUBE_MUSIC)
         assertEquals(MatchReason.NONE, matcher.match(a, b).reason)
     }
 
@@ -88,7 +88,7 @@ class TrackMatcherTest {
         val tracks = listOf(
             track("Reckoner", "Radiohead", "In Rainbows", isrc = "GBUM70704123", provider = ProviderId.SPOTIFY),
             track("Reckoner", "Radiohead", "In Rainbows", isrc = "GBUM70704123", provider = ProviderId.YOUTUBE_MUSIC),
-            track("Reckoner - Live", "Radiohead", "In Rainbows From the Basement", provider = ProviderId.SOUNDCLOUD),
+            track("Reckoner - Live", "Radiohead", "In Rainbows From the Basement", provider = ProviderId.YOUTUBE_MUSIC),
         )
         val grouped = matcher.group(tracks)
         assertEquals(2, grouped.size)
@@ -98,7 +98,7 @@ class TrackMatcherTest {
     @Test
     fun punctuationAndUnicodeFold() {
         val a = track("Crème Brûlée", "Artist", "Album", provider = ProviderId.SPOTIFY)
-        val b = track("Creme Brulee", "Artist", "Album", provider = ProviderId.SOUNDCLOUD)
+        val b = track("Creme Brulee", "Artist", "Album", provider = ProviderId.YOUTUBE_MUSIC)
         assertEquals(MatchReason.NORMALIZED_METADATA, matcher.match(a, b).reason)
     }
 }

@@ -6,11 +6,13 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 - Shared Material 3 UI: Home, Search, Library, Settings, Now Playing, Queue
 - Local library as a provider (desktop folder scan + Android MediaStore)
+- Desktop local scans probe sample rate / bit depth via ffprobe; Now Playing shows Nyquist and theoretical PCM DR
 - Linux desktop playback via headless mpv (local files / HTTP)
+- Desktop YouTube audio via yt-dlp URL resolve → mpv (search still uses YouTube Data API)
 - Android URL playback via Media3 / ExoPlayer
+- Spotify Connect playback with device transfer; desktop auto-launches Spotify when no Connect device is listed
 - Quality ranking and source fallback in the shared player session
 - Sample catalog for UI/player demos without credentials
-- SoundCloud provider path exists when `SOUNDCLOUD_CLIENT_ID` is set (search + progressive streams)
 
 ## Usability refinements
 
@@ -21,14 +23,13 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 - Provider labels scroll horizontally on narrow screens
 - Settings hides inactive gapless, normalization, and compact-mode switches; these features still need implementation
 
-## Not done yet (needs implementation)
+## Incomplete / platform gaps
 
-- **Spotify** — not finished; still needs to be implemented end-to-end
-- **YouTube Music** — not finished; still needs to be implemented (search/metadata alone is not a full player path)
+- **Spotify** — Connect works for play/pause/seek; no in-process Web Playback SDK, limited remote state sync
+- **YouTube Music** — desktop in-app audio when yt-dlp is installed; Android still browser-only; no YouTube Music account library
 
 ## Known limits
 
-- No stream ripping, DRM bypass, or unofficial downloads
+- No stream ripping UI or DRM bypass for Spotify
 - No custom EQ / DSP
 - No gapless playback or volume normalization yet
-- Full Spotify and YouTube Music experiences stay out of scope until those providers are properly implemented

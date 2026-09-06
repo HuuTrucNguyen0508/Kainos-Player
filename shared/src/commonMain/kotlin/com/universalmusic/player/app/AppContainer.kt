@@ -6,10 +6,17 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
-import com.universalmusic.player.data.soundcloud.SoundCloudProvider
+import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.matching.TrackMatcher
+import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.platform.SpotifyPlaybackController
+import com.universalmusic.player.platform.createYouTubeStreamResolver
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
@@ -44,7 +51,9 @@ enum class UiRequest {
 
 class AppContainer {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val config: AppConfig = loadAppConfig()
+    private val defaults: AppConfig = loadAppConfig()
+    var config: AppConfig = defaults
+        private set
     val http = createHttpClient()
     val tokens = createTokenStore()
     val settingsStore: SettingsStore = createSettingsStore()
@@ -55,14 +64,38 @@ class AppContainer {
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
     val local = LocalMusicProvider(createLocalTrackSource { _settings.value.localMusicFolders })
     val spotify = SpotifyProvider(http, tokens, config)
-    val youtube = YouTubeMusicProvider(http, config)
-    val soundcloud = SoundCloudProvider(http, config)
+    val youtubeStreams = createYouTubeStreamResolver()
+    val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
     val resolver = DefaultSourceResolver()
+    private val settingsMutex = Mutex()
+    private val _ready = MutableStateFlow(false)
+    val ready = _ready.asStateFlow()
+    private val _spotifyTracks = MutableStateFlow<List<Track>>(emptyList())
+    val spotifyTracks = _spotifyTracks.asStateFlow()
+    private val _spotifyPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
+    val spotifyPlaylists = _spotifyPlaylists.asStateFlow()
+    private val _spotifyLibraryError = MutableStateFlow<String?>(null)
+    val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
+    private val _spotifyLibraryLoading = MutableStateFlow(false)
+    val spotifyLibraryLoading = _spotifyLibraryLoading.asStateFlow()
+    private val libraryMutex = Mutex()
 
     val player = PlayerSession(
-        engine = createPlaybackEngine { trackId -> spotify.startConnectPlayback(trackId) },
+        engine = createPlaybackEngine(SpotifyPlaybackController(
+            spotify::startConnectPlayback, spotify::pauseConnectPlayback,
+            spotify::resumeConnectPlayback, spotify::seekConnectPlayback,
+        )),
         resolver = resolver,
         scope = scope,
+        enrichSource = { track, source ->
+            val provider = when (source.provider) {
+                ProviderId.LOCAL -> local
+                ProviderId.SPOTIFY -> spotify
+                ProviderId.YOUTUBE_MUSIC -> youtube
+                ProviderId.SAMPLE -> sample
+            }
+            provider.getStream(track) ?: source
+        },
     )
 
     private val _uiRequests = MutableSharedFlow<UiRequest>(extraBufferCapacity = 4)
@@ -77,8 +110,10 @@ class AppContainer {
             val loaded = settingsStore.read()
             _settings.value = loaded
             player.updatePreferences(loaded.toPlaybackPreferences())
-            spotify.restore()
             refreshLocalLibrary()
+            applyProviderSettings(loaded, clearSessionOnChange = false)
+            _ready.value = true
+            if (spotify.isAuthenticated()) refreshSpotifyLibrary()
         }
     }
 
@@ -87,18 +122,68 @@ class AppContainer {
             add(local)
             if (spotify.state.value != ProviderState.NOT_CONFIGURED) add(spotify)
             if (youtube.state.value != ProviderState.NOT_CONFIGURED) add(youtube)
-            if (soundcloud.state.value != ProviderState.NOT_CONFIGURED) add(soundcloud)
         }
         return if (includeSample) live + sample else live.ifEmpty { listOf(sample) }
     }
 
     fun unifiedSearch(): UnifiedSearch = UnifiedSearch(providersForSearch(), matcher)
 
-    suspend fun updateSettings(transform: (AppSettings) -> AppSettings) {
-        val next = transform(_settings.value)
-        _settings.value = next
+    suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsMutex.withLock {
+        val previous = _settings.value
+        val next = transform(previous)
         settingsStore.write(next)
+        if (next.spotifyClientId != previous.spotifyClientId || next.youtubeDataApiKey != previous.youtubeDataApiKey) {
+            applyProviderSettings(next)
+        }
+        _settings.value = next
         player.updatePreferences(next.toPlaybackPreferences())
+    }
+
+    private suspend fun applyProviderSettings(settings: AppSettings, clearSessionOnChange: Boolean = true) {
+        val next = defaults.copy(
+            spotifyClientId = settings.spotifyClientId?.takeIf { it.isNotBlank() } ?: defaults.spotifyClientId,
+            youtubeDataApiKey = settings.youtubeDataApiKey?.takeIf { it.isNotBlank() } ?: defaults.youtubeDataApiKey,
+        )
+        if (next.spotifyClientId != config.spotifyClientId) clearSpotifyLibrary()
+        config = next
+        youtube.updateConfig(next)
+        spotify.updateConfig(next, clearSessionOnChange)
+    }
+
+    suspend fun disconnectSpotify() {
+        spotify.logout()
+        clearSpotifyLibrary()
+    }
+
+    private fun clearSpotifyLibrary() {
+        _spotifyTracks.value = emptyList()
+        _spotifyPlaylists.value = emptyList()
+        _spotifyLibraryError.value = null
+    }
+
+    suspend fun refreshSpotifyLibrary() = libraryMutex.withLock {
+        _spotifyLibraryLoading.value = true
+        _spotifyLibraryError.value = null
+        try {
+            val result = loadSpotifyLibrary(spotify)
+            if (spotify.isAuthenticated()) {
+                result.tracks.onSuccess { _spotifyTracks.value = it }
+                result.playlists.onSuccess { _spotifyPlaylists.value = it }
+                val failedSections = buildList {
+                    if (result.tracks.isFailure) add("liked songs")
+                    if (result.playlists.isFailure) add("playlists")
+                }
+                if (failedSections.isNotEmpty()) {
+                    _spotifyLibraryError.value = "Could not load Spotify ${failedSections.joinToString(" and ")}. Successfully loaded sections are still available. Try refreshing."
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            _spotifyLibraryError.value = "Could not load your Spotify library. Check your connection and Spotify access, then refresh."
+        } finally {
+            _spotifyLibraryLoading.value = false
+        }
     }
 
     fun refreshLocalLibrary() {
@@ -142,7 +227,6 @@ class AppContainer {
         ProviderId.LOCAL -> local.state
         ProviderId.SPOTIFY -> spotify.state
         ProviderId.YOUTUBE_MUSIC -> youtube.state
-        ProviderId.SOUNDCLOUD -> soundcloud.state
         ProviderId.SAMPLE -> sample.state
     }
 }

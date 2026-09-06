@@ -208,6 +208,7 @@ fun MiniPlayerBar(
     onOpen: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    canSkipNext: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -238,7 +239,7 @@ fun MiniPlayerBar(
             IconButton(onClick = onToggle) {
                 Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause" else "Play")
             }
-            IconButton(onClick = onNext) {
+            IconButton(onClick = onNext, enabled = canSkipNext) {
                 Icon(Icons.Default.SkipNext, contentDescription = "Next")
             }
         }

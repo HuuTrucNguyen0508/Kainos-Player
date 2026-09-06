@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Launch Kainos Player. Prefers a packaged binary; falls back to Gradle run.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+if [[ -x "$ROOT/tools/yt-dlp" ]]; then
+  export KAINOS_YT_DLP="$ROOT/tools/yt-dlp"
+elif [[ -x "${HOME}/.local/bin/yt-dlp" ]]; then
+  export KAINOS_YT_DLP="${HOME}/.local/bin/yt-dlp"
+fi
+
+APP_BIN="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player/bin/Kainos Player"
+
+cd "$ROOT"
+
+if [[ ! -x "$APP_BIN" ]]; then
+  echo "Packaging Kainos Player…" >&2
+  ./gradlew :desktopApp:createDistributable --console=plain
+fi
+
+mkdir -p "$ROOT/logs"
+LOG="$ROOT/logs/desktop-run-$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$(basename "$LOG")" "$ROOT/logs/desktop-run-latest.log"
+exec "$APP_BIN" "$@" >"$LOG" 2>&1

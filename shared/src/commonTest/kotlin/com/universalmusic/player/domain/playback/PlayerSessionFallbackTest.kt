@@ -121,6 +121,25 @@ class PlayerSessionFallbackTest {
         assertEquals(2, session.queue.queue.value.items.size)
         assertEquals("Two", session.queue.queue.value.current?.track?.title)
     }
+
+    @Test
+    fun engineFailureKeepsConcreteErrorWhenNoFallbackExists() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.playAwait(track("Song", "Artist", provider = ProviderId.SPOTIFY))
+        assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+
+        engine.state.value = EngineState(
+            status = EngineStatus.FAILED,
+            error = "Spotify Connect playback failed (404): No active device found",
+        )
+        runCurrent()
+
+        assertEquals(
+            "Spotify Connect playback failed (404): No active device found",
+            session.nowPlaying.value.error,
+        )
+    }
 }
 
 private class RecordingEngine(

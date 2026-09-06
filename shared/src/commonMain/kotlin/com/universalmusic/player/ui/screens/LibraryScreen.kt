@@ -45,6 +45,8 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.ui.components.AlbumRow
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.TrackRow
+import com.universalmusic.player.platform.openUrl
+import com.universalmusic.player.platform.encodeUrl
 import kotlinx.coroutines.launch
 
 private enum class LibraryTab { Songs, Albums, Artists, Playlists }
@@ -52,8 +54,7 @@ private enum class LibraryTab { Songs, Albums, Artists, Playlists }
 @Composable
 fun LibraryScreen(
     container: AppContainer,
-    onPlay: (Track) -> Unit,
-    onPlayTracks: (List<Track>) -> Unit,
+    onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
     var tab by remember { mutableStateOf(LibraryTab.Songs) }
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -63,9 +64,14 @@ fun LibraryScreen(
     val favorites by container.library.favoriteIds.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
     val localState by container.local.state.collectAsState()
-    val songs = remember(localTracks, saved, settings.librarySongSort) {
+    val spotifyTracks by container.spotifyTracks.collectAsState()
+    val spotifyPlaylists by container.spotifyPlaylists.collectAsState()
+    val spotifyLoading by container.spotifyLibraryLoading.collectAsState()
+    val spotifyError by container.spotifyLibraryError.collectAsState()
+    val spotifyState by container.spotify.state.collectAsState()
+    val songs = remember(localTracks, saved, spotifyTracks, settings.librarySongSort) {
         settings.librarySongSort.sort(
-            (localTracks + saved).distinctBy(Track::canonicalId)
+            (localTracks + saved + spotifyTracks).distinctBy(Track::canonicalId)
                 .ifEmpty { container.sample.allTracks },
         )
     }
@@ -113,6 +119,13 @@ fun LibraryScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
         )
+        if (spotifyState == ProviderState.AVAILABLE) {
+            OutlinedButton(onClick = { scope.launch { container.refreshSpotifyLibrary() } }, enabled = !spotifyLoading,
+                modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text(if (spotifyLoading) "Loading Spotify library…" else "Refresh Spotify · ${spotifyTracks.size} liked songs")
+            }
+        }
+        spotifyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
         ScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 16.dp) {
             LibraryTab.entries.forEach { item ->
                 Tab(
@@ -123,10 +136,10 @@ fun LibraryScreen(
             }
         }
         val showingSamples = when (tab) {
-            LibraryTab.Songs -> localTracks.isEmpty() && saved.isEmpty()
+            LibraryTab.Songs -> localTracks.isEmpty() && saved.isEmpty() && spotifyTracks.isEmpty()
             LibraryTab.Albums -> localAlbums.isEmpty()
             LibraryTab.Artists -> localArtists.isEmpty()
-            LibraryTab.Playlists -> true
+            LibraryTab.Playlists -> spotifyPlaylists.isEmpty()
         }
         if (showingSamples) {
             Text(
@@ -168,7 +181,10 @@ fun LibraryScreen(
                         items(songs, key = { it.canonicalId }) { track ->
                             TrackRow(
                                 track = track,
-                                onClick = { onPlay(track) },
+                                onClick = {
+                                    val index = songs.indexOfFirst { it.canonicalId == track.canonicalId }.coerceAtLeast(0)
+                                    onPlayTracks(songs, index)
+                                },
                                 modifier = Modifier.padding(horizontal = 8.dp),
                                 trailing = {
                                     Row(
@@ -205,7 +221,7 @@ fun LibraryScreen(
                         items(albums, key = { it.canonicalId }) { album ->
                             AlbumRow(
                                 album = album,
-                                onClick = { if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks) },
+                                onClick = { if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks, 0) },
                                 modifier = Modifier.padding(horizontal = 8.dp),
                             )
                         }
@@ -222,11 +238,15 @@ fun LibraryScreen(
             }
             LibraryTab.Playlists -> {
                 LazyColumn {
-                    items(container.sample.homePlaylists, key = { it.canonicalId }) { playlist ->
+                    items(spotifyPlaylists.ifEmpty { container.sample.homePlaylists }, key = { it.canonicalId }) { playlist ->
                         Text(
-                            playlist.title,
+                            if (playlist.source.provider == ProviderId.SPOTIFY) "${playlist.title} · Open Spotify" else playlist.title,
                             modifier = Modifier.fillMaxWidth()
-                                .clickable(enabled = playlist.tracks.isNotEmpty()) { onPlayTracks(playlist.tracks) }
+                                .clickable {
+                                    if (playlist.source.provider == ProviderId.SPOTIFY) {
+                                        openUrl("https://open.spotify.com/playlist/${encodeUrl(playlist.source.providerEntityId)}")
+                                    } else if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks, 0)
+                                }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
                         )
                     }

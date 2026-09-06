@@ -11,6 +11,7 @@ secrets.properties
 captures
 .externalNativeBuild
 .cxx
+tools/yt-dlp
 *.xcodeproj/*
 !*.xcodeproj/project.pbxproj
 !*.xcodeproj/xcshareddata/
@@ -19,3 +20,5 @@ captures
 **/xcshareddata/WorkspaceSettings.xcsettings
 .cursor
 agent-tools/
+logs/
+.codex/

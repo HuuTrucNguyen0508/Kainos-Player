@@ -23,9 +23,10 @@ compose.desktop {
             targetFormats(TargetFormat.Deb, TargetFormat.Dmg, TargetFormat.Msi)
             packageName = "Kainos Player"
             packageVersion = "1.0.0"
-            description = "A unified Material music player for Spotify, YouTube Music, and SoundCloud."
+            description = "A unified Material music player for Spotify and YouTube Music."
             copyright = "Copyright 2026"
             linux {
+                iconFile.set(project.file("icons/linux.png"))
                 shortcut = true
             }
         }
