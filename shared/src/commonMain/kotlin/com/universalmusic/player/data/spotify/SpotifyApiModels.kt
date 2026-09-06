@@ -91,7 +91,7 @@ internal data class SpotifyImage(
 
 @Serializable
 internal data class SpotifySavedTrack(
-    val track: SpotifyTrack,
+    val track: SpotifyTrack? = null,
 )
 
 @Serializable

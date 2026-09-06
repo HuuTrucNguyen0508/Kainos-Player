@@ -171,7 +171,7 @@ class SpotifyProvider(
             parameter("limit", 10)
         }.successBody<SpotifySearchResponse>("Spotify search")
         return SearchResult(
-            tracks = response.tracks?.items?.map { it.toDomain(premium) }.orEmpty(),
+            tracks = response.tracks?.items?.mapNotNull { it.toDomainOrNull(premium) }.orEmpty(),
             albums = response.albums?.items?.map { it.toDomain(premium) }.orEmpty(),
             artists = response.artists?.items?.map { it.toDomain() }.orEmpty(),
             playlists = response.playlists?.items?.mapNotNull { it?.toDomain(premium) }.orEmpty(),
@@ -221,7 +221,7 @@ class SpotifyProvider(
                 parameter("limit", 50)
                 parameter("offset", offset)
             }.successBody<SpotifyPaging<SpotifySavedTrack>>("Spotify saved tracks")
-            result += response.items.map { it.track.toDomain(premium) }
+            result += response.items.mapNotNull { it.track?.toDomainOrNull(premium) }
             offset += response.items.size
         } while (response.next != null && response.items.isNotEmpty())
         return result
@@ -237,7 +237,9 @@ class SpotifyProvider(
                 parameter("limit", 50)
                 parameter("offset", offset)
             }.successBody<SpotifyPaging<SpotifyPlaylist>>("Spotify playlists")
-            result += response.items.map { it.toDomain(premium) }
+            result += response.items.mapNotNull { playlist ->
+                playlist.takeIf { it.id.isNotBlank() && it.name.isNotBlank() }?.toDomain(premium)
+            }
             offset += response.items.size
         } while (response.next != null && response.items.isNotEmpty())
         return result

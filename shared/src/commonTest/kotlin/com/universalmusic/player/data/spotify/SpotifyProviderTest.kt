@@ -158,6 +158,27 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun librarySkipsDelistedTracksWithEmptyMetadata() = runTest {
+        val store = TokenStoreFake(AuthTokens("access"))
+        val provider = provider(store) {
+            respondJson(
+                """
+                {"items":[
+                  {"track":null},
+                  {"track":{"id":"gone","name":"","duration_ms":0,"artists":[{"id":"0LyfQWJT6nXafLPZqxe9Of","name":""}],"album":{"id":"a","name":"","images":[]}}},
+                  {"track":{"id":"keep","name":"Keep Me","duration_ms":120000,"artists":[{"id":"a1","name":"Artist"}]}}
+                ],"total":3,"next":null}
+                """.trimIndent(),
+            )
+        }
+
+        val tracks = provider.getLibraryTracks()
+
+        assertEquals(listOf("Keep Me"), tracks.map { it.title })
+        assertEquals(listOf("spotify:keep"), tracks.map { it.canonicalId })
+    }
+
+    @Test
     fun connectControlsUsePlayerEndpoints() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val requests = mutableListOf<String>()
