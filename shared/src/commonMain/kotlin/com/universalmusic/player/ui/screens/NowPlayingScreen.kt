@@ -1,6 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,16 +12,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -27,11 +30,11 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -64,30 +67,60 @@ fun NowPlayingScreen(
     } else {
         0f
     }
+    val provider = now.resolved?.source?.provider
+    val quality = now.resolved?.source?.quality
+    val spineLabel = listOfNotNull(provider?.displayName, quality?.label).joinToString(" · ").ifBlank { "Kainos" }
 
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(if (compact) 20.dp else 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(if (compact) 16.dp else 24.dp),
     ) {
         if (onClose != null) {
             TextButton(onClick = onClose, modifier = Modifier.align(Alignment.Start)) {
                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
-                Text("Back to browsing")
+                Text("Back")
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Vinyl-sleeve signature: art plane + thin spine strip with source/quality.
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(
+                Modifier
+                    .width(10.dp)
+                    .height(if (compact) 220.dp else 280.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            ) {
+                // Spine text is implied by the solid strip; keep the face clean.
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                ArtworkImage(
+                    artwork = track?.artwork,
+                    contentDescription = track?.title ?: "Artwork",
+                    modifier = Modifier
+                        .widthIn(max = 360.dp)
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
+                    seed = track?.title ?: "U",
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    spineLabel.uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = provider?.displayName?.let(::providerColor) ?: MaterialTheme.colorScheme.primary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
-        ArtworkImage(
-            artwork = track?.artwork,
-            contentDescription = track?.title ?: "Artwork",
-            modifier = Modifier
-                .widthIn(max = 360.dp)
-                .fillMaxWidth(if (compact) 0.86f else 0.94f)
-                .aspectRatio(1f),
-            seed = track?.title ?: "U",
-        )
-        Spacer(Modifier.height(24.dp))
+
+        Spacer(Modifier.height(20.dp))
         Text(
             track?.title ?: "Nothing playing",
             style = MaterialTheme.typography.headlineSmall,
@@ -95,29 +128,19 @@ fun NowPlayingScreen(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            track?.artistLine ?: "Choose a track from Search or Home",
+            track?.artistLine ?: "Pick a track from Home, Search, or Library",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        val provider = now.resolved?.source?.provider
-        val quality = now.resolved?.source?.quality
-        if (provider != null || quality != null) {
-            Spacer(Modifier.height(8.dp))
+        quality?.technicalDetail?.let { detail ->
             Text(
-                listOfNotNull(provider?.displayName, quality?.label).joinToString(" · "),
-                style = MaterialTheme.typography.labelLarge,
-                color = provider?.displayName?.let(::providerColor) ?: MaterialTheme.colorScheme.primary,
+                detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
             )
-            quality?.technicalDetail?.let { detail ->
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
         }
         now.resolved?.reason?.takeIf { it.isNotBlank() && now.fallback == null }?.let { reason ->
             Text(
@@ -156,26 +179,28 @@ fun NowPlayingScreen(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
                 formatTime(scrubPosition?.let { (it * (knownDurationMs ?: 0)).toLong() } ?: now.positionMs),
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelMedium,
             )
             Text(
                 knownDurationMs?.let(::formatTime) ?: "--:--",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelMedium,
             )
         }
         Spacer(Modifier.height(8.dp))
         Row(
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             IconButton(onClick = { container.player.skipToPrevious() }, enabled = track != null) {
-                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(36.dp))
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(34.dp))
             }
             IconButton(onClick = { container.player.togglePlayPause() }, enabled = track != null) {
                 Icon(
                     if (now.isPlaying || now.buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (now.isPlaying || now.buffering) "Pause" else "Play",
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(52.dp),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
             IconButton(
@@ -188,10 +213,13 @@ fun NowPlayingScreen(
                     container.player.queue.nextIndex() != null
                 },
             ) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next", Modifier.size(36.dp))
+                Icon(Icons.Default.SkipNext, contentDescription = "Next", Modifier.size(34.dp))
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
             IconButton(onClick = { container.player.toggleShuffle() }) {
                 Icon(
                     Icons.Default.Shuffle,
@@ -207,7 +235,7 @@ fun NowPlayingScreen(
                 )
             }
             IconButton(onClick = onOpenQueue) {
-                Icon(Icons.Default.QueueMusic, contentDescription = "Queue")
+                Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue")
             }
             IconButton(
                 enabled = track != null,

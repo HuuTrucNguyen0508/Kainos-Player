@@ -1,9 +1,9 @@
 package com.universalmusic.player.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -41,6 +41,9 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.theme.providerColor
 
+private val SleeveCorner = RoundedCornerShape(4.dp)
+private val RowCorner = RoundedCornerShape(6.dp)
+
 @Composable
 fun ArtworkImage(
     artwork: Artwork?,
@@ -48,24 +51,23 @@ fun ArtworkImage(
     modifier: Modifier = Modifier,
     seed: String = contentDescription,
 ) {
-    val shape = RoundedCornerShape(10.dp)
     if (artwork != null) {
         AsyncImage(
             model = artwork.url,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
-            modifier = modifier.clip(shape),
+            modifier = modifier.clip(SleeveCorner),
         )
     } else {
         Box(
             modifier = modifier
-                .clip(shape)
+                .clip(SleeveCorner)
                 .background(placeholderColor(seed)),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = seed.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 color = Color.White,
             )
         }
@@ -78,13 +80,13 @@ fun ProviderChips(
     modifier: Modifier = Modifier,
     available: Collection<ProviderId> = providers,
 ) {
-    Row(modifier = modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(modifier = modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         providers.distinct().forEach { provider ->
             val active = provider in available
             Text(
-                text = provider.displayName,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (active) providerColor(provider.displayName) else MaterialTheme.colorScheme.onSurfaceVariant,
+                text = provider.displayName.uppercase(),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (active) providerColor(provider.displayName) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                 maxLines = 1,
             )
         }
@@ -98,27 +100,24 @@ fun ProviderStatusRow(
 ) {
     Row(
         modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         statuses.forEach { (provider, state) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when (state) {
-                                ProviderState.AVAILABLE -> providerColor(provider.displayName)
-                                ProviderState.LOADING -> MaterialTheme.colorScheme.primary
-                                ProviderState.RATE_LIMITED -> MaterialTheme.colorScheme.error
-                                else -> MaterialTheme.colorScheme.outline
-                            },
-                        ),
-                )
-                Spacer(Modifier.width(6.dp))
+            val tone = when (state) {
+                ProviderState.AVAILABLE -> providerColor(provider.displayName)
+                ProviderState.LOADING -> MaterialTheme.colorScheme.primary
+                ProviderState.RATE_LIMITED -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.outline
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "${provider.displayName} · ${state.name.lowercase().replace('_', ' ')}",
+                    text = provider.displayName.uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tone,
+                )
+                Text(
+                    text = state.name.lowercase().replace('_', ' '),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -137,15 +136,15 @@ fun TrackRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RowCorner)
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ArtworkImage(track.artwork, track.title, Modifier.size(52.dp), track.title)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 track.artistLine,
                 style = MaterialTheme.typography.bodySmall,
@@ -156,7 +155,7 @@ fun TrackRow(
             ProviderChips(
                 providers = track.sources.map { it.provider },
                 available = track.playableSources().map { it.provider },
-                modifier = Modifier.padding(top = 4.dp),
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
         trailing?.invoke()
@@ -172,15 +171,15 @@ fun AlbumRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RowCorner)
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ArtworkImage(album.artwork, album.title, Modifier.size(52.dp), album.title)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(album.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(album.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 buildString {
                     append(album.artists.joinToString { it.name })
@@ -214,23 +213,27 @@ fun MiniPlayerBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(0.dp),
+            )
             .clickable(onClick = onOpen),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 2.dp,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(artwork, title, Modifier.size(48.dp), title)
-            Spacer(Modifier.width(10.dp))
+            ArtworkImage(artwork, title, Modifier.size(44.dp), title)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     listOfNotNull(artist, providerLabel).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -249,9 +252,10 @@ fun MiniPlayerBar(
 @Composable
 fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     Text(
-        title,
-        style = MaterialTheme.typography.titleLarge,
-        modifier = modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        title.uppercase(),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.padding(horizontal = 20.dp, vertical = 12.dp),
     )
 }
 
@@ -261,9 +265,9 @@ fun EmptyState(title: String, body: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.Start,
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(title, style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
         Text(
             body,
@@ -275,8 +279,8 @@ fun EmptyState(title: String, body: String, modifier: Modifier = Modifier) {
 
 private fun placeholderColor(seed: String): Color {
     val hash = seed.hashCode()
-    val r = 80 + ((hash ushr 16) and 0x5F)
-    val g = 60 + ((hash ushr 8) and 0x4F)
-    val b = 40 + (hash and 0x3F)
+    val r = 40 + ((hash ushr 16) and 0x3F)
+    val g = 50 + ((hash ushr 8) and 0x4F)
+    val b = 70 + (hash and 0x5F)
     return Color(r, g, b)
 }

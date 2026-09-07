@@ -79,6 +79,7 @@ internal data class SpotifyPlaylistTrack(
 
 @Serializable
 internal data class SpotifyOwner(
+    val id: String? = null,
     val display_name: String? = null,
 )
 

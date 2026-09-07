@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.data.spotify.isDiscoverWeekly
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.domain.model.Album
@@ -50,8 +51,6 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.ui.components.AlbumRow
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.TrackRow
-import com.universalmusic.player.platform.openUrl
-import com.universalmusic.player.platform.encodeUrl
 import kotlinx.coroutines.launch
 
 private enum class LibraryTab { Songs, Albums, Artists, Playlists }
@@ -118,8 +117,11 @@ fun LibraryScreen(
     }
     val filteredPlaylists = remember(spotifyPlaylists, needle) {
         val base = spotifyPlaylists.ifEmpty { container.sample.homePlaylists }
-        if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
+        val filtered = if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
+        filtered.sortedByDescending { it.isDiscoverWeekly() }
     }
+    var playlistBusyId by remember { mutableStateOf<String?>(null) }
+    var playlistError by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().padding(bottom = 88.dp)) {
         Row(
@@ -311,17 +313,64 @@ fun LibraryScreen(
                         },
                     )
                 } else {
+                    playlistError?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                        )
+                    }
                     LazyColumn {
                         items(filteredPlaylists, key = { it.canonicalId }) { playlist ->
+                            val busy = playlistBusyId == playlist.canonicalId
+                            val subtitle = when {
+                                busy -> "Loading…"
+                                playlist.isDiscoverWeekly() -> "Made for you · Play in Kainos"
+                                playlist.source.provider == ProviderId.SPOTIFY -> "Play in Kainos"
+                                else -> playlist.description ?: playlist.ownerName.orEmpty()
+                            }
                             Text(
-                                if (playlist.source.provider == ProviderId.SPOTIFY) "${playlist.title} · Open Spotify" else playlist.title,
-                                modifier = Modifier.fillMaxWidth()
-                                    .clickable {
-                                        if (playlist.source.provider == ProviderId.SPOTIFY) {
-                                            openUrl("https://open.spotify.com/playlist/${encodeUrl(playlist.source.providerEntityId)}")
-                                        } else if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks, 0)
+                                playlist.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !busy) {
+                                        scope.launch {
+                                            playlistError = null
+                                            if (playlist.source.provider == ProviderId.SPOTIFY) {
+                                                playlistBusyId = playlist.canonicalId
+                                                try {
+                                                    val tracks = container.loadSpotifyPlaylistTracks(
+                                                        playlist.source.providerEntityId,
+                                                    )
+                                                    if (tracks.isEmpty()) {
+                                                        playlistError = "No playable tracks in \"${playlist.title}\"."
+                                                    } else {
+                                                        onPlayTracks(tracks, 0)
+                                                    }
+                                                } catch (failure: Exception) {
+                                                    playlistError = failure.message
+                                                        ?: "Could not load \"${playlist.title}\"."
+                                                } finally {
+                                                    playlistBusyId = null
+                                                }
+                                            } else if (playlist.tracks.isNotEmpty()) {
+                                                onPlayTracks(playlist.tracks, 0)
+                                            }
+                                        }
                                     }
-                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                            )
+                            Text(
+                                subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (playlist.isDiscoverWeekly()) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 10.dp),
                             )
                         }
                     }

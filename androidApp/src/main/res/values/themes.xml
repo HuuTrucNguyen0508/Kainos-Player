@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.UniversalMusicPlayer" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#101014</item>
-        <item name="android:navigationBarColor">#101014</item>
-        <item name="android:windowBackground">#101014</item>
+    <style name="Theme.UniversalMusicPlayer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#EEF0F5</item>
+        <item name="android:navigationBarColor">#EEF0F5</item>
+        <item name="android:windowBackground">#EEF0F5</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

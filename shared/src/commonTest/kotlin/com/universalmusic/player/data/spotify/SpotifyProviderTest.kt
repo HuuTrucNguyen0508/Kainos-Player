@@ -288,6 +288,31 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun playlistTracksPaginateAndSkipNullEntries() = runTest {
+        val store = TokenStoreFake(AuthTokens("access"))
+        val offsets = mutableListOf<String?>()
+        val provider = provider(store) { request ->
+            assertTrue(request.url.encodedPath.endsWith("/playlists/dw/tracks"))
+            offsets += request.url.parameters["offset"]
+            val offset = request.url.parameters["offset"]
+            if (offset == "0") {
+                respondJson(
+                    """{"items":[{"track":{"id":"a","name":"One"}},{"track":null}],"total":3,"next":"https://api.spotify.com/v1/playlists/dw/tracks?offset=2"}""",
+                )
+            } else {
+                respondJson(
+                    """{"items":[{"track":{"id":"b","name":"Two"}}],"total":3,"next":null}""",
+                )
+            }
+        }
+
+        val tracks = provider.getPlaylistTracks("dw")
+
+        assertEquals("0,2", offsets.joinToString(","))
+        assertEquals(listOf("One", "Two"), tracks.map { it.title })
+    }
+
+    @Test
     fun librarySkipsDelistedTracksWithEmptyMetadata() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val provider = provider(store) {

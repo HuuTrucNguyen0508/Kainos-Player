@@ -229,9 +229,32 @@ class SpotifyProvider(
 
     override suspend fun getPlaylist(id: String): Playlist? {
         val token = accessToken()
-        return http.get("$API/playlists/$id") { bearerAuth(token) }
+        val playlist = http.get("$API/playlists/$id") { bearerAuth(token) }
             .successBody<SpotifyPlaylist>("Spotify playlist lookup")
             .toDomain(premium)
+        val tracks = getPlaylistTracks(id)
+        return playlist.copy(tracks = tracks, trackCount = tracks.size)
+    }
+
+    /** Pages every track in a playlist (Discover Weekly and user playlists). */
+    suspend fun getPlaylistTracks(playlistId: String): List<Track> {
+        val id = playlistId.trim()
+        if (id.isEmpty()) return emptyList()
+        val token = accessToken()
+        val result = mutableListOf<Track>()
+        var offset = 0
+        do {
+            val response = http.get("$API/playlists/$id/tracks") {
+                bearerAuth(token)
+                parameter("limit", 50)
+                parameter("offset", offset)
+                parameter("additional_types", "track")
+            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist tracks")
+            result += response.items.mapNotNull { it.track?.toDomainOrNull(premium) }
+            offset += response.items.size
+            if (response.items.isEmpty()) break
+        } while (response.next != null)
+        return result
     }
 
     override suspend fun getStream(track: Track): PlaybackSource? {

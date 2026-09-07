@@ -4,7 +4,8 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 ## Working now
 
-- Shared Material 3 UI: Home, Search, Library, Settings, Now Playing, Queue
+- Shared Material 3 UI with a studio-signal look: cool fog/graphite surfaces, teal accent, Outfit + IBM Plex type, vinyl-sleeve Now Playing panel on desktop and Android
+- Home, Search, Library, Settings, Now Playing, Queue
 - Local library as a provider (desktop folder scan + Android MediaStore)
 - Desktop local scans probe sample rate / bit depth via ffprobe; Now Playing shows Nyquist and theoretical PCM DR
 - Linux desktop playback via headless mpv (local files / HTTP)
@@ -19,6 +20,7 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 - Home starts with a recent track or local music when available; demo albums and playlists are labeled as samples
 - Library labels sample content and supports playing sample playlists
+- Spotify Discover Weekly is detected from the user’s playlists, pinned in Library → Playlists, shown on Home under Made for you, and plays in-app via Connect/receiver
 - Search supports keyboard focus, clearing the query, and cancellation when the query changes; result lists dedupe provider rows so blank/duplicate Spotify playlist stubs cannot crash the UI
 - Library has an in-app search field that filters songs, albums, artists, and playlists on Android and desktop
 - Now Playing has a return button on mobile, scrolls on short windows, shows loading feedback, and seeks when the slider is released
