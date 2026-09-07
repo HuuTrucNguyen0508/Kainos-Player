@@ -79,7 +79,7 @@ actual fun loadAppConfig(): AppConfig {
 actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine =
     AndroidPlaybackEngine(androidContext, spotify)
 
-actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = UnavailableYouTubeStreamResolver
+actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = AndroidYouTubeStreamResolver()
 
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
     UnavailableSpotifyWebPlaybackHost

@@ -12,6 +12,10 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
+    coreLibraryDesugaring(libs.android.desugar.jdk.libs.nio)
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation(libs.kotlinx.coroutines.core)
 }
 
 android {
@@ -24,6 +28,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     packaging {
         resources {
@@ -36,6 +41,7 @@ android {
         }
     }
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }

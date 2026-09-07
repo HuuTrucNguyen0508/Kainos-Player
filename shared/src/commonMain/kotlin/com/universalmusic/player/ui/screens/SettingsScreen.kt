@@ -268,7 +268,7 @@ fun SettingsScreen(container: AppContainer) {
             onConnect = {},
             onDisconnect = {},
             showButtons = false,
-            detail = "Search videos and playlists via the YouTube Data API. On Linux desktop, playback uses yt-dlp to resolve an audio URL for in-app mpv when yt-dlp is installed. Android still opens YouTube in the browser.",
+            detail = "Search videos and playlists via the YouTube Data API. Linux desktop resolves audio with yt-dlp into mpv when installed. Android resolves audio with NewPipe Extractor into the in-app ExoPlayer service.",
         )
 
         Text("Appearance", style = MaterialTheme.typography.titleMedium)

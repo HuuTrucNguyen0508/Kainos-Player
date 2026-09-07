@@ -31,7 +31,7 @@ There is no official YouTube Music catalog or playback API for third-party playe
 
 This project uses the **official YouTube Data API v3** for search and metadata. On Linux desktop, when `yt-dlp` is available (`KAINOS_YT_DLP`, `~/.local/bin/yt-dlp`, `tools/yt-dlp`, or `PATH`), the player resolves a progressive/adaptive **audio** URL and plays it in headless mpv. That is intentional NewPipe-style stream resolution, not an InnerTube catalog client and not a downloader UI.
 
-Android still opens results in the browser; in-app YouTube audio there is not wired yet. Library sync with a YouTube Music account is not supported.
+On Android, [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor) resolves an audio URL for the in-app Media3/ExoPlayer service. Without a YouTube `poToken` provider, some formats may be missing; the resolver picks the best available audio URL and returns null if none appear. Library sync with a YouTube Music account is not supported.
 
 Save a YouTube Data API key in Settings or set `YOUTUBE_DATA_API_KEY` to enable search. Install yt-dlp with `scripts/install-yt-dlp.sh` (or your package manager) for desktop playback.
 

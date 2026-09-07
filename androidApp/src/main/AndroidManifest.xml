@@ -35,5 +35,13 @@
                     android:scheme="universalmusic" />
             </intent-filter>
         </activity>
+        <service
+            android:name="com.universalmusic.player.platform.AndroidPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
