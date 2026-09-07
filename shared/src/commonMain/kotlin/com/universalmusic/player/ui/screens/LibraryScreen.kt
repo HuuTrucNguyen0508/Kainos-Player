@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
@@ -74,12 +75,17 @@ fun LibraryScreen(
     val spotifyLoading by container.spotifyLibraryLoading.collectAsState()
     val spotifyError by container.spotifyLibraryError.collectAsState()
     val spotifyState by container.spotify.state.collectAsState()
+    val localOnly = settings.libraryLocalOnly
     val needle = query.trim().lowercase()
-    val songs = remember(localTracks, saved, spotifyTracks, settings.librarySongSort, needle) {
-        settings.librarySongSort.sort(
+    val songs = remember(localTracks, saved, spotifyTracks, settings.librarySongSort, needle, localOnly) {
+        val catalog = if (localOnly) {
+            localTracks
+        } else {
             (localTracks + saved + spotifyTracks).distinctBy(Track::canonicalId)
                 .ifEmpty { container.sample.allTracks }
-                .filter { needle.isEmpty() || it.matchesLibraryQuery(needle) },
+        }
+        settings.librarySongSort.sort(
+            catalog.filter { needle.isEmpty() || it.matchesLibraryQuery(needle) },
         )
     }
     val localAlbums = remember(localTracks) {
@@ -100,8 +106,8 @@ fun LibraryScreen(
             }
             .sortedBy { it.title.lowercase() }
     }
-    val filteredAlbums = remember(localAlbums, needle) {
-        val base = localAlbums.ifEmpty { container.sample.homeAlbums }
+    val filteredAlbums = remember(localAlbums, needle, localOnly) {
+        val base = if (localOnly) localAlbums else localAlbums.ifEmpty { container.sample.homeAlbums }
         if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
     }
     val localArtists = remember(localTracks) {
@@ -111,11 +117,12 @@ fun LibraryScreen(
             .map { Artist(it.canonicalId, it.name, it.artwork, sources = listOf(ProviderEntityRef(ProviderId.LOCAL, it.canonicalId))) }
             .sortedBy { it.name.lowercase() }
     }
-    val filteredArtists = remember(localArtists, needle) {
-        val base = localArtists.ifEmpty { container.sample.homeArtists }
+    val filteredArtists = remember(localArtists, needle, localOnly) {
+        val base = if (localOnly) localArtists else localArtists.ifEmpty { container.sample.homeArtists }
         if (needle.isEmpty()) base else base.filter { it.name.lowercase().contains(needle) }
     }
-    val filteredPlaylists = remember(spotifyPlaylists, needle) {
+    val filteredPlaylists = remember(spotifyPlaylists, needle, localOnly) {
+        if (localOnly) return@remember emptyList()
         val base = spotifyPlaylists.ifEmpty { container.sample.homePlaylists }
         val filtered = if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
         filtered.sortedByDescending { it.isDiscoverWeekly() }
@@ -151,6 +158,28 @@ fun LibraryScreen(
                 }
             },
         )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterChip(
+                selected = localOnly,
+                onClick = {
+                    scope.launch {
+                        container.updateSettings { it.copy(libraryLocalOnly = !it.libraryLocalOnly) }
+                    }
+                },
+                label = { Text("Local files only") },
+                leadingIcon = if (localOnly) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else {
+                    null
+                },
+            )
+        }
         Text(
             when {
                 localState == ProviderState.LOADING -> "Scanning your music folders…"
@@ -162,13 +191,15 @@ fun LibraryScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
         )
-        if (spotifyState == ProviderState.AVAILABLE) {
+        if (spotifyState == ProviderState.AVAILABLE && !localOnly) {
             OutlinedButton(onClick = { scope.launch { container.refreshSpotifyLibrary() } }, enabled = !spotifyLoading,
                 modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text(if (spotifyLoading) "Loading Spotify library…" else "Refresh Spotify · ${spotifyTracks.size} liked songs")
             }
         }
-        spotifyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
+        if (!localOnly) {
+            spotifyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
+        }
         ScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 16.dp) {
             LibraryTab.entries.forEach { item ->
                 Tab(
@@ -178,7 +209,7 @@ fun LibraryScreen(
                 )
             }
         }
-        val showingSamples = when (tab) {
+        val showingSamples = !localOnly && when (tab) {
             LibraryTab.Songs -> localTracks.isEmpty() && saved.isEmpty() && spotifyTracks.isEmpty()
             LibraryTab.Albums -> localAlbums.isEmpty()
             LibraryTab.Artists -> localArtists.isEmpty()
@@ -218,15 +249,15 @@ fun LibraryScreen(
                 if (songs.isEmpty()) {
                     EmptyState(
                         if (needle.isEmpty()) "No songs yet" else "No songs match \"$query\"",
-                        if (needle.isEmpty()) {
-                            "Play something and it will land here. App favorites stay separate from Spotify Liked."
-                        } else {
-                            "Try another title, artist, or album name."
+                        when {
+                            needle.isNotEmpty() -> "Try another title, artist, or album name."
+                            localOnly -> "Scan your music folders from Settings, or turn off Local files only."
+                            else -> "Play something and it will land here. App favorites stay separate from Spotify Liked."
                         },
                     )
                 } else {
                     val listState = rememberLazyListState()
-                    LaunchedEffect(settings.librarySongSort, needle) { listState.scrollToItem(0) }
+                    LaunchedEffect(settings.librarySongSort, needle, localOnly) { listState.scrollToItem(0) }
                     LazyColumn(state = listState) {
                         items(songs, key = { it.canonicalId }) { track ->
                             TrackRow(
@@ -266,10 +297,10 @@ fun LibraryScreen(
                 if (filteredAlbums.isEmpty()) {
                     EmptyState(
                         if (needle.isEmpty()) "No albums" else "No albums match \"$query\"",
-                        if (needle.isEmpty()) {
-                            "Connect a provider or play from the sample catalog."
-                        } else {
-                            "Try another album or artist name."
+                        when {
+                            needle.isNotEmpty() -> "Try another album or artist name."
+                            localOnly -> "Local albums appear after a library scan."
+                            else -> "Connect a provider or play from the sample catalog."
                         },
                     )
                 } else {
@@ -305,11 +336,15 @@ fun LibraryScreen(
             LibraryTab.Playlists -> {
                 if (filteredPlaylists.isEmpty()) {
                     EmptyState(
-                        if (needle.isEmpty()) "No playlists" else "No playlists match \"$query\"",
                         if (needle.isEmpty()) {
-                            "Connect Spotify or browse sample playlists."
+                            if (localOnly) "No local playlists" else "No playlists"
                         } else {
-                            "Try another playlist name."
+                            "No playlists match \"$query\""
+                        },
+                        when {
+                            needle.isNotEmpty() -> "Try another playlist name."
+                            localOnly -> "Turn off Local files only to see Spotify playlists."
+                            else -> "Connect Spotify or browse sample playlists."
                         },
                     )
                 } else {

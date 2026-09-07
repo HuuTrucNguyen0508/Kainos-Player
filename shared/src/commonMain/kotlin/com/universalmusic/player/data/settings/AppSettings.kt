@@ -26,6 +26,8 @@ data class AppSettings(
     /** Absolute folder paths scanned for local audio on desktop. Empty means default to ~/Music. */
     val localMusicFolders: List<String> = emptyList(),
     val librarySongSort: TrackSort = TrackSort.NAME_ASCENDING,
+    /** When true, Library shows only scanned local files (no Spotify liked songs, saved, samples, or playlists). */
+    val libraryLocalOnly: Boolean = false,
 ) {
     fun toPlaybackPreferences(): PlaybackPreferences = PlaybackPreferences(
         sourceSelection = sourceSelection,
