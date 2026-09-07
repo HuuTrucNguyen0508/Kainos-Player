@@ -84,7 +84,16 @@ actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = AndroidYouTube
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
     UnavailableSpotifyWebPlaybackHost
 
-actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = false
+actual fun requiresExplicitSpotifyDevice(): Boolean = true
+
+actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = withContext(Dispatchers.Main) {
+    val intent = androidContext.packageManager.getLaunchIntentForPackage("com.spotify.music")
+        ?: return@withContext false
+    runCatching {
+        androidContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    }.getOrDefault(false)
+}
 
 actual fun openUrl(url: String) {
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

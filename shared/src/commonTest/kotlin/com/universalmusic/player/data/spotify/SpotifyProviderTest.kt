@@ -17,6 +17,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.http.content.OutgoingContent
@@ -356,9 +357,204 @@ class SpotifyProviderTest {
 
         assertEquals("/v1/me/player/devices?", requests[0])
         assertEquals("/v1/me/player/play?device_id=desk", requests[1])
-        assertEquals("/v1/me/player/pause?", requests[2])
-        assertEquals("/v1/me/player/play?", requests[3])
-        assertEquals("/v1/me/player/seek?position_ms=12345", requests[4])
+        assertEquals("/v1/me/player/pause?device_id=desk", requests[2])
+        assertEquals("/v1/me/player/play?device_id=desk", requests[3])
+        assertEquals("/v1/me/player/seek?position_ms=12345&device_id=desk", requests[4])
+    }
+
+    @Test
+    fun explicitDeviceRoutesAwayFromRemoteActiveSpeakerAndKeepsControlsOnPhone() = runTest {
+        val requests = mutableListOf<String>()
+        val transferBodies = mutableListOf<String>()
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+            selectedPlaybackDeviceId = { "phone" },
+        ) { request ->
+            requests += request.method.value + " " + request.url.encodedPath + request.url.parameters.entries()
+                .flatMap { (key, values) -> values.map { "$key=$it" } }
+                .joinToString(prefix = "?", separator = "&")
+            when {
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player/devices" -> respondJson(
+                    """{"devices":[{"id":"speaker","is_active":true,"is_restricted":false,"name":"Kitchen","type":"Speaker","volume_percent":35},{"id":"phone","is_active":false,"is_restricted":false,"name":"Pixel","type":"Smartphone","volume_percent":60}]}""",
+                )
+                request.method == HttpMethod.Put && request.url.encodedPath == "/v1/me/player" -> {
+                    transferBodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+                    respond("", HttpStatusCode.NoContent)
+                }
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player" -> respondJson(
+                    """{"device":{"id":"phone","name":"Pixel","type":"Smartphone","volume_percent":60},"item":{"id":"track"},"is_playing":true}""",
+                )
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        provider.startConnectPlayback("track")
+        provider.pauseConnectPlayback()
+        provider.resumeConnectPlayback()
+        provider.seekConnectPlayback(12_345)
+
+        assertEquals(
+            listOf(
+                "GET /v1/me/player/devices?",
+                "PUT /v1/me/player?",
+                "PUT /v1/me/player/play?device_id=phone",
+                "GET /v1/me/player?",
+                "PUT /v1/me/player/pause?device_id=phone",
+                "PUT /v1/me/player/play?device_id=phone",
+                "PUT /v1/me/player/seek?position_ms=12345&device_id=phone",
+            ),
+            requests,
+        )
+        assertTrue(transferBodies.single().contains("phone"))
+        assertTrue(!transferBodies.single().contains("speaker"))
+    }
+
+    @Test
+    fun explicitDeviceRequiresASelectionBeforeCallingSpotify() = runTest {
+        var requests = 0
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+        ) {
+            requests += 1
+            respondJson("{}")
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            provider.startConnectPlayback("track")
+        }
+
+        assertTrue(failure.message.orEmpty().contains("Settings"))
+        assertEquals(0, requests)
+    }
+
+    @Test
+    fun explicitDeviceStartsSpotifyAndWaitsForTheExactStoredDevice() = runTest {
+        var deviceRequests = 0
+        var clientStarts = 0
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+            selectedPlaybackDeviceId = { "phone" },
+            startConnectClient = {
+                clientStarts += 1
+                true
+            },
+        ) { request ->
+            when {
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player/devices" -> {
+                    deviceRequests += 1
+                    if (deviceRequests == 1) {
+                        respondJson("""{"devices":[]}""")
+                    } else {
+                        respondJson(
+                            """{"devices":[{"id":"phone","is_active":false,"is_restricted":false,"name":"Pixel","type":"Smartphone","volume_percent":50}]}""",
+                        )
+                    }
+                }
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player" -> respondJson(
+                    """{"device":{"id":"phone","name":"Pixel","type":"Smartphone","volume_percent":50},"item":{"id":"track"},"is_playing":true}""",
+                )
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        provider.startConnectPlayback("track")
+
+        assertEquals(1, clientStarts)
+        assertEquals(2, deviceRequests)
+    }
+
+    @Test
+    fun explicitDeviceFailsFastWithAlternativesWhenSelectedDeviceIsOffline() = runTest {
+        var clientStarts = 0
+        var deviceRequests = 0
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+            selectedPlaybackDeviceId = { "phone" },
+            startConnectClient = {
+                clientStarts += 1
+                true
+            },
+        ) { request ->
+            when {
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player/devices" -> {
+                    deviceRequests += 1
+                    respondJson(
+                        """{"devices":[{"id":"speaker","is_active":true,"is_restricted":false,"name":"Kitchen","type":"Speaker","volume_percent":35}]}""",
+                    )
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            provider.startConnectPlayback("track")
+        }
+
+        assertEquals(0, clientStarts)
+        assertEquals(1, deviceRequests)
+        assertTrue(failure.message.orEmpty().contains("Kitchen"))
+        assertTrue(failure.message.orEmpty().contains("Spotify output"))
+    }
+
+    @Test
+    fun explicitDeviceRequiresPlaybackConfirmedOnSelectedDevice() = runTest {
+        var confirmationRequests = 0
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+            selectedPlaybackDeviceId = { "phone" },
+        ) { request ->
+            when {
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player/devices" -> respondJson(
+                    """{"devices":[{"id":"phone","is_active":true,"is_restricted":false,"name":"Pixel","type":"Smartphone","volume_percent":60}]}""",
+                )
+                request.method == HttpMethod.Get && request.url.encodedPath == "/v1/me/player" -> {
+                    confirmationRequests += 1
+                    respondJson(
+                        """{"device":{"id":"speaker","name":"Kitchen","type":"Speaker","volume_percent":35},"item":{"id":"track"},"is_playing":true}""",
+                    )
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            provider.startConnectPlayback("track")
+        }
+
+        assertTrue(failure.message.orEmpty().contains("Pixel"))
+        assertTrue(failure.message.orEmpty().contains("not confirmed"))
+        assertEquals(3, confirmationRequests)
+    }
+
+    @Test
+    fun explicitDeviceReportsMutedSpotifyVolumeBeforePlayback() = runTest {
+        var playbackWrites = 0
+        val provider = provider(
+            store = TokenStoreFake(AuthTokens("access")),
+            requireExplicitPlaybackDevice = true,
+            selectedPlaybackDeviceId = { "phone" },
+        ) { request ->
+            if (request.method == HttpMethod.Get) {
+                respondJson(
+                    """{"devices":[{"id":"phone","is_active":true,"is_restricted":false,"name":"Pixel","type":"Smartphone","volume_percent":0}]}""",
+                )
+            } else {
+                playbackWrites += 1
+                respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            provider.startConnectPlayback("track")
+        }
+
+        assertTrue(failure.message.orEmpty().contains("volume is 0"))
+        assertEquals(0, playbackWrites)
     }
 
     @Test
@@ -426,6 +622,9 @@ class SpotifyProviderTest {
     private fun provider(
         store: TokenStoreFake,
         webPlayback: SpotifyWebPlaybackHost = UnavailableSpotifyWebPlaybackHost,
+        requireExplicitPlaybackDevice: Boolean = false,
+        selectedPlaybackDeviceId: () -> String? = { null },
+        startConnectClient: suspend () -> Boolean = { false },
         handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData,
     ): SpotifyProvider {
         val client = HttpClient(MockEngine(handler)) {
@@ -442,6 +641,9 @@ class SpotifyProviderTest {
             ),
             clock = { 1_000L },
             webPlayback = webPlayback,
+            requireExplicitPlaybackDevice = requireExplicitPlaybackDevice,
+            selectedPlaybackDeviceId = selectedPlaybackDeviceId,
+            startConnectClient = startConnectClient,
         )
     }
 

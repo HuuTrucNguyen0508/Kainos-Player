@@ -13,6 +13,7 @@ import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeStreamResolver
@@ -69,7 +70,11 @@ class AppContainer {
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
     )
-    val spotify = SpotifyProvider(http, tokens, config, webPlayback = spotifyWebPlayback).also {
+    val spotify = SpotifyProvider(
+        http, tokens, config, webPlayback = spotifyWebPlayback,
+        requireExplicitPlaybackDevice = requiresExplicitSpotifyDevice(),
+        selectedPlaybackDeviceId = { _settings.value.spotifyPlaybackDeviceId },
+    ).also {
         spotifyProvider = it
     }
     val youtubeStreams = createYouTubeStreamResolver()
@@ -140,7 +145,10 @@ class AppContainer {
 
     suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsMutex.withLock {
         val previous = _settings.value
-        val next = transform(previous)
+        val transformed = transform(previous)
+        val next = if (transformed.spotifyClientId != previous.spotifyClientId) {
+            transformed.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null)
+        } else transformed
         settingsStore.write(next)
         if (next.spotifyClientId != previous.spotifyClientId || next.youtubeDataApiKey != previous.youtubeDataApiKey) {
             applyProviderSettings(next)
@@ -162,6 +170,7 @@ class AppContainer {
 
     suspend fun disconnectSpotify() {
         spotify.logout()
+        updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
     }
 

@@ -4,7 +4,7 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 ## Working now
 
-- Shared Material 3 UI with a studio-signal look: cool fog/graphite surfaces, teal accent, Outfit + IBM Plex type, vinyl-sleeve Now Playing panel on desktop and Android
+- Shared Material 3 UI themed to the Caelestia shell palette (olive tonalspot): separate light (`#fafaf1` paper / `#4e6634` primary) and dark (`#0d0f0a` / `#b8ce9d` primary) schemes, default Material type, surface containers, chips, and a filled play control
 - Home, Search, Library, Settings, Now Playing, Queue
 - Local library as a provider (desktop folder scan + Android MediaStore)
 - Desktop local scans probe sample rate / bit depth via ffprobe; Now Playing shows Nyquist and theoretical PCM DR
@@ -29,7 +29,8 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 ## Incomplete / platform gaps
 
-- **Spotify** — native librespot sign-in, cached headless restart, and audio-backend initialization are verified live; device selection and transfer pass automated tests. Audible end-to-end playback still needs confirmation; remote state sync remains limited
+- **Spotify (Android)** — Connect-only remote control with an explicit device picker in Settings and Now Playing. Kainos never decodes Spotify audio on the phone; sound comes from the selected Connect device (this phone’s Spotify app, a computer, a speaker, etc.). Audible Premium playback still needs confirmation on a physical phone.
+- **Spotify (desktop)** — native librespot sign-in, cached headless restart, and audio-backend initialization are verified live; device selection and transfer pass automated tests. Remote state sync remains limited.
 - **YouTube Music** — desktop in-app audio when yt-dlp is installed; Android in-app audio via NewPipe Extractor → ExoPlayer; no YouTube Music account library
 
 ## Known limits

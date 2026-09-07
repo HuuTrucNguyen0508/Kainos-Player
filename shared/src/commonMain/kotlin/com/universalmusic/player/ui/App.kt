@@ -53,7 +53,7 @@ import com.universalmusic.player.ui.theme.UniversalMusicTheme
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
     val settings by container.settings.collectAsState()
-    UniversalMusicTheme(settings.themeMode) {
+    UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             AppScaffold(container, desktop = maxWidth >= 840.dp)
         }
@@ -115,8 +115,8 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         )
                     }
                     NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 3.dp,
                     ) {
                         AppDestination.entries.forEach { item ->
                             NavigationBarItem(
@@ -138,26 +138,19 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         Row(Modifier.fillMaxSize().padding(padding)) {
             if (desktop) {
                 NavigationRail(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(92.dp)
-                        .background(MaterialTheme.colorScheme.surface),
+                        .width(88.dp),
                     header = {
                         Column(
                             Modifier.padding(top = 20.dp, bottom = 12.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                "KAINOS",
-                                style = MaterialTheme.typography.labelLarge,
+                                "Kainos",
+                                style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.primary,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "PLAYER",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },

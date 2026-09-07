@@ -23,5 +23,5 @@
 - Spotify playlists play in-app via paged playlist tracks (not a browser hop); Discover Weekly is detected from `/me/playlists`, pinned on Home (Made for you) and Library → Playlists
 - YouTube search uses the Data API; desktop playback resolves audio with yt-dlp (`KAINOS_YT_DLP`, `~/.local/bin/yt-dlp`, or `tools/yt-dlp`) into mpv; Android uses NewPipe Extractor; SoundCloud was removed as a provider
 - Local desktop scans use ffprobe for sample rate / bit depth; Now Playing shows Nyquist and theoretical PCM dynamic range
-- Shared Compose UI uses a studio-signal theme: fog/graphite surfaces, teal accent, Outfit + IBM Plex fonts, and a vinyl-sleeve Now Playing layout on desktop and Android
+- Shared Compose UI follows Material 3 with the Caelestia shell tonalspot olive palette: distinct light (`#fafaf1` / `#4e6634`) and dark (`#0d0f0a` / `#b8ce9d`) schemes, default Material type, surface containers, and chips
 - `docs/CURRENT_STATE.md` tracks what works versus incomplete Spotify/YouTube work

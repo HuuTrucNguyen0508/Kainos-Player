@@ -89,6 +89,30 @@ class AndroidPlaybackTest {
     }
 
     @Test
+    fun switchingToSpotifyStopsTheLocalMediaSession() = runBlocking {
+        var spotifyStarts = 0
+        val spotify = SpotifyPlaybackController({ spotifyStarts++ }, {}, {}, {})
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        try {
+            withEngine(spotify) { engine, context ->
+                val wav = File(context.cacheDir, "kainos-local-to-spotify-test.wav")
+                wav.writeBytes(silentWav(10))
+                try {
+                    engine.play(PlaybackHandle.Url(wav.toURI().toString()), null)
+                    awaitStatus(engine, EngineStatus.PLAYING)
+                    engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "test-track"), null)
+                    assertEquals(1, spotifyStarts)
+                    delay(300)
+                    automation.adoptShellPermissionIdentity("android.permission.MEDIA_CONTENT_CONTROL")
+                    val manager = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+                    val local = manager.getActiveSessions(null).firstOrNull { it.packageName == context.packageName }
+                    assertTrue("Kainos local audio is still playing after Spotify starts", local == null || local.playbackState?.state != PlaybackState.STATE_PLAYING)
+                } finally { wav.delete() }
+            }
+        } finally { automation.dropShellPermissionIdentity() }
+    }
+
+    @Test
     fun mediaStoreAudioAppearsInLocalLibrary() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         initAndroidPlatform(context)

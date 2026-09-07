@@ -36,7 +36,10 @@ expect fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEng
 
 expect fun createYouTubeStreamResolver(): YouTubeStreamResolver
 
-/** Best-effort: start the desktop Spotify client when Connect has no device. */
+/** Android requires a user-selected Connect device to avoid playing on another device. */
+expect fun requiresExplicitSpotifyDevice(): Boolean
+
+/** Best-effort: open Spotify on this device so it can register with Connect. */
 expect suspend fun ensureSpotifyConnectClientAvailable(): Boolean
 
 expect fun openUrl(url: String)
