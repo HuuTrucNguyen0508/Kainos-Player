@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.platform.SpotifyPlaybackController
+import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -63,7 +64,13 @@ class AppContainer {
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
     val local = LocalMusicProvider(createLocalTrackSource { _settings.value.localMusicFolders })
-    val spotify = SpotifyProvider(http, tokens, config)
+    private lateinit var spotifyProvider: SpotifyProvider
+    val spotifyWebPlayback = createSpotifyWebPlaybackHost(
+        tokenSupplier = { spotifyProvider.validAccessToken() },
+    )
+    val spotify = SpotifyProvider(http, tokens, config, webPlayback = spotifyWebPlayback).also {
+        spotifyProvider = it
+    }
     val youtubeStreams = createYouTubeStreamResolver()
     val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
     val resolver = DefaultSourceResolver()
@@ -166,7 +173,7 @@ class AppContainer {
         _spotifyLibraryError.value = null
         try {
             val result = loadSpotifyLibrary(spotify)
-            if (spotify.isAuthenticated()) {
+            if (spotify.isAuthenticated() || spotify.state.value == ProviderState.RATE_LIMITED) {
                 result.tracks.onSuccess { _spotifyTracks.value = it }
                 result.playlists.onSuccess { _spotifyPlaylists.value = it }
                 val failedSections = buildList {
@@ -174,13 +181,26 @@ class AppContainer {
                     if (result.playlists.isFailure) add("playlists")
                 }
                 if (failedSections.isNotEmpty()) {
-                    _spotifyLibraryError.value = "Could not load Spotify ${failedSections.joinToString(" and ")}. Successfully loaded sections are still available. Try refreshing."
+                    val quota = listOf(result.tracks, result.playlists).any { part ->
+                        part.exceptionOrNull()?.message?.contains("quota", ignoreCase = true) == true ||
+                            part.exceptionOrNull()?.message?.contains("QUOTA", ignoreCase = false) == true
+                    }
+                    _spotifyLibraryError.value = if (quota) {
+                        "Spotify development quota exceeded. Keep using the library already loaded; try refreshing later."
+                    } else {
+                        "Could not load Spotify ${failedSections.joinToString(" and ")}. Successfully loaded sections are still available. Try refreshing."
+                    }
                 }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            _spotifyLibraryError.value = "Could not load your Spotify library. Check your connection and Spotify access, then refresh."
+            val message = failure.message.orEmpty()
+            _spotifyLibraryError.value = if ("quota" in message.lowercase() || "QUOTA" in message) {
+                "Spotify development quota exceeded. Keep using the library already loaded; try refreshing later."
+            } else {
+                "Could not load your Spotify library. Check your connection and Spotify access, then refresh."
+            }
         } finally {
             _spotifyLibraryLoading.value = false
         }

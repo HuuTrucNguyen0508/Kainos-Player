@@ -97,6 +97,13 @@ actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEng
 
 actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = JvmYouTubeStreamResolver()
 
+actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
+    if (System.getProperty("os.name", "").contains("Linux", ignoreCase = true)) {
+        JvmLibrespotPlaybackHost()
+    } else {
+        JvmSpotifyWebPlaybackHost(tokenSupplier)
+    }
+
 actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = ensureSpotifyDesktopClientRunning()
 
 actual fun openUrl(url: String) {

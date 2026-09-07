@@ -81,6 +81,9 @@ actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEng
 
 actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = UnavailableYouTubeStreamResolver
 
+actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
+    UnavailableSpotifyWebPlaybackHost
+
 actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = false
 
 actual fun openUrl(url: String) {

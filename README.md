@@ -38,7 +38,7 @@ Install a menu launcher (uses `~/Pictures/4.png` as the app icon, copied into `d
 kainos-player
 ```
 
-That installs `~/.local/bin/kainos-player` and a desktop entry. The first launch packages a native distributable, then starts it.
+That installs `~/.local/bin/kainos-player` and a desktop entry. The launcher checks the native distributable with Gradle on each launch, rebuilding changed code before starting it. Build and app output are saved in `logs/desktop-run-latest.log`.
 
 Keyboard shortcuts:
 
@@ -49,7 +49,7 @@ Keyboard shortcuts:
 | Ctrl+F / Ctrl+K | Open Search |
 | Ctrl+Q | Toggle the queue panel |
 
-Install `mpv` for in-app local-file and HTTP playback on Linux (headless, no extra window). Pause/seek use mpv’s IPC. For YouTube audio on desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh` or your package manager). Spotify playback uses Connect; on Linux the app will try to start the Spotify client if no Connect device is listed. Premium is required.
+Install `mpv` for in-app local-file and HTTP playback on Linux (headless, no extra window). Pause/seek use mpv’s IPC. For YouTube audio on desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh` or your package manager). For Spotify on Linux, run `scripts/install-librespot.sh` to build the headless receiver. This requires Rust/Cargo and ALSA development libraries. Kainos starts the receiver for playback; Spotify Premium is required.
 
 ```bash
 sudo pacman -S mpv
@@ -90,7 +90,7 @@ For file-based setup, copy `secrets.properties.example` to `secrets.properties` 
 
 No client secret is needed. Login uses PKCE and validates the OAuth state and redirect. After connecting, Library loads your liked songs and playlists. Use **Refresh Spotify library** to reload them. Playlist links open Spotify.
 
-Play, pause, resume, and seek control your active Spotify Connect device. On Linux desktop, if no device is listed, Kainos tries to launch Spotify and wait for Connect. Premium is required for playback. Developer apps must also meet Spotify’s [current development-mode requirements](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
+On Linux, Kainos runs [librespot](https://github.com/librespot-org/librespot) as a background Spotify Connect receiver. Its first use requires a separate browser sign-in; later launches reuse private cached credentials. No Spotify player window is needed during playback. Librespot is unofficial and requires Premium. Use `KAINOS_LIBRESPOT` to override the executable; the launcher detects the repository installation automatically. Play, pause, resume, and seek still use Spotify’s Web API, so API rate limits can block these controls and library loading even when the receiver is running. Developer apps must also meet Spotify’s [current development-mode requirements](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
 
 ### YouTube Music
 

@@ -14,6 +14,10 @@ import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.AuthSession
 import com.universalmusic.player.domain.provider.AuthenticatingProvider
+import com.universalmusic.player.platform.SpotifyWebPlaybackHost
+import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
+import com.universalmusic.player.platform.SpotifyWebPlaybackState
+import com.universalmusic.player.platform.UnavailableSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.encodeUrl
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
@@ -30,6 +34,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.Url
 import io.ktor.http.contentType
@@ -57,6 +63,7 @@ private val SCOPES = listOf(
     "user-modify-playback-state",
     "user-read-currently-playing",
     "user-read-recently-played",
+    "streaming",
 )
 
 class SpotifyProvider(
@@ -64,6 +71,7 @@ class SpotifyProvider(
     private val tokens: TokenStore,
     initialConfig: AppConfig,
     private val clock: () -> Long = { currentTimeMillis() },
+    private val webPlayback: SpotifyWebPlaybackHost = UnavailableSpotifyWebPlaybackHost,
 ) : AuthenticatingProvider {
     override val providerId: ProviderId = ProviderId.SPOTIFY
 
@@ -88,8 +96,18 @@ class SpotifyProvider(
         }
         try {
             refreshIfNeeded(stored)
-            loadProfile()
-            _state.value = ProviderState.AVAILABLE
+            when (loadProfileStatus()) {
+                ProfileStatus.Ok -> _state.value = ProviderState.AVAILABLE
+                ProfileStatus.QuotaExceeded -> {
+                    // Tokens are valid; development-mode account quota is exhausted.
+                    premium = true
+                    _state.value = ProviderState.RATE_LIMITED
+                }
+                ProfileStatus.Failed -> {
+                    premium = false
+                    _state.value = ProviderState.UNAVAILABLE
+                }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -147,8 +165,18 @@ class SpotifyProvider(
             val response = tokenResponse.successBody<SpotifyTokenResponse>("Spotify token exchange")
             persist(response)
             pendingLogin = null
-            loadProfile()
-            _state.value = ProviderState.AVAILABLE
+            when (loadProfileStatus()) {
+                ProfileStatus.Ok -> _state.value = ProviderState.AVAILABLE
+                ProfileStatus.QuotaExceeded -> {
+                    premium = true
+                    _state.value = ProviderState.RATE_LIMITED
+                }
+                ProfileStatus.Failed -> {
+                    // Keep tokens; player endpoints can still work once quota recovers.
+                    premium = true
+                    _state.value = ProviderState.AVAILABLE
+                }
+            }
         }
     }
 
@@ -258,6 +286,18 @@ class SpotifyProvider(
     suspend fun startConnectPlayback(spotifyTrackId: String) {
         val token = accessToken()
         val target = resolvePlaybackTarget(token)
+        // #region agent log
+        debugSpotifyLog(
+            "H1",
+            "SpotifyProvider.startConnectPlayback",
+            "playback target resolved",
+            mapOf(
+                "kainosLocal" to target.kainosLocal,
+                "hasActiveDevice" to target.hasActiveDevice,
+                "devicePrefix" to target.deviceId.take(8),
+            ),
+        )
+        // #endregion
         if (!target.hasActiveDevice) {
             val transfer = http.put("$API/me/player") {
                 bearerAuth(token)
@@ -269,16 +309,92 @@ class SpotifyProvider(
                 transfer.requireSuccess("Spotify Connect device transfer")
             }
         }
-        val response = http.put("$API/me/player/play") {
-            bearerAuth(token)
-            parameter("device_id", target.deviceId)
-            contentType(ContentType.Application.Json)
-            setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId")))
+        var lastError: String? = null
+        repeat(3) { attempt ->
+            val response = http.put("$API/me/player/play") {
+                bearerAuth(token)
+                parameter("device_id", target.deviceId)
+                contentType(ContentType.Application.Json)
+                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId")))
+            }
+            if (response.status.isSuccess()) {
+                // #region agent log
+                debugSpotifyLog(
+                    "H1",
+                    "SpotifyProvider.startConnectPlayback",
+                    "direct play succeeded",
+                    mapOf("attempt" to attempt + 1),
+                )
+                // #endregion
+                return
+            }
+            lastError = runCatching { response.bodyAsText() }.getOrNull()
+            // #region agent log
+            debugSpotifyLog(
+                "H1",
+                "SpotifyProvider.startConnectPlayback",
+                "direct play failed",
+                mapOf("attempt" to attempt + 1, "status" to response.status.value),
+            )
+            // #endregion
+            if (response.status.value !in setOf(404, 502, 503)) {
+                response.requireSuccess("Spotify Connect playback")
+            }
+            delay(250L * (attempt + 1))
         }
-        response.requireSuccess("Spotify Connect playback")
+        error("Spotify Connect playback failed${lastError?.let { ": $it" }.orEmpty()}")
     }
 
     private suspend fun resolvePlaybackTarget(token: String): ConnectPlaybackTarget {
+        val stored = tokens.read(ProviderId.SPOTIFY)
+        val granted = stored?.scopes.orEmpty()
+        val hasStreaming = "streaming" in granted
+        // #region agent log
+        debugSpotifyLog(
+            "H4",
+            "SpotifyProvider.resolvePlaybackTarget",
+            "scope check",
+            mapOf("hasStreaming" to hasStreaming, "scopeCount" to granted.size),
+        )
+        // #endregion
+
+        if (hasStreaming || !webPlayback.requiresStreamingScope) {
+            val device = runCatching { webPlayback.ensureDeviceReady() }.getOrElse { failure ->
+                if (failure is CancellationException) throw failure
+                // #region agent log
+                debugSpotifyLog(
+                    "H2",
+                    "SpotifyProvider.resolvePlaybackTarget",
+                    "web playback ensure failed",
+                    mapOf("error" to (failure.message ?: "unknown"), "state" to webPlayback.state.value.toString()),
+                )
+                // #endregion
+                null
+            }
+            if (device != null) {
+                val deviceId = device.deviceId ?: device.deviceName?.let { name ->
+                    waitForNamedConnectDevice(token, name)?.id
+                }
+                if (deviceId.isNullOrBlank()) {
+                    webPlaybackFailureMessage()?.let { error(it) }
+                    error(
+                        "Kainos Player started librespot, but Spotify did not register its Connect device. " +
+                            "Check ~/.universal-music-player/logs/librespot.log and try again.",
+                    )
+                }
+                return ConnectPlaybackTarget(
+                    deviceId = deviceId,
+                    // Receiver startup only registers the device. Activate it before playback.
+                    hasActiveDevice = false,
+                    kainosLocal = true,
+                )
+            }
+            if (webPlayback.state.value is SpotifyWebPlaybackState.ActivationRequired) {
+                error("Spotify needs one-time browser audio activation. Use Enable Audio in the Kainos Player window.")
+            }
+            webPlaybackFailureMessage()?.let { error(it) }
+        }
+
         var devices = listConnectDevices(token)
         if (devices.isEmpty()) {
             ensureSpotifyConnectClientAvailable()
@@ -289,9 +405,15 @@ class SpotifyProvider(
             }
         }
         if (devices.isEmpty()) {
+            val hint = if (!hasStreaming) {
+                " Reconnect Spotify in Settings to enable Linux web playback (streaming scope)."
+            } else {
+                ""
+            }
             error(
-                "No Spotify Connect device found. Could not start or detect the Spotify app. " +
-                    "Open Spotify on this computer (or another Premium device), then try again.",
+                "No Spotify Connect device found. Could not start Kainos web playback or detect Spotify." +
+                    hint +
+                    " Open Spotify on this computer (or another Premium device), then try again.",
             )
         }
         val preferred = devices.firstOrNull { it.isActive }
@@ -300,6 +422,7 @@ class SpotifyProvider(
         return ConnectPlaybackTarget(
             deviceId = preferred.id!!,
             hasActiveDevice = devices.any { it.isActive },
+            kainosLocal = false,
         )
     }
 
@@ -308,6 +431,30 @@ class SpotifyProvider(
             .successBody<SpotifyDevicesResponse>("Spotify devices")
             .devices
             .filter { !it.isRestricted && !it.id.isNullOrBlank() }
+
+    private suspend fun waitForNamedConnectDevice(token: String, name: String): SpotifyDevice? {
+        repeat(12) { attempt ->
+            val devices = listConnectDevices(token)
+            devices.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it }
+            if (attempt < 11) delay(1_000)
+        }
+        // Refresh a dead-child failure before returning the registration error.
+        webPlayback.ensureDeviceReady()
+        return null
+    }
+
+    private fun webPlaybackFailureMessage(): String? = when (val current = webPlayback.state.value) {
+        is SpotifyWebPlaybackState.Failed -> when (val reason = current.reason) {
+            SpotifyWebPlaybackFailure.LibrespotNotFound ->
+                "librespot is not installed. Run scripts/install-librespot.sh, then try again."
+            SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
+                "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
+            is SpotifyWebPlaybackFailure.LibrespotExited ->
+                reason.detail ?: "librespot stopped before its Spotify Connect device was ready."
+            else -> null
+        }
+        else -> null
+    }
 
     suspend fun pauseConnectPlayback() {
         val response = http.put("$API/me/player/pause") { bearerAuth(accessToken()) }
@@ -340,6 +487,14 @@ class SpotifyProvider(
         refreshIfNeeded(stored).accessToken
     }
 
+    /** Used by the desktop Web Playback host token endpoint. */
+    suspend fun validAccessToken(): String = accessToken()
+
+    suspend fun missingStreamingScope(): Boolean {
+        val scopes = tokens.read(ProviderId.SPOTIFY)?.scopes.orEmpty()
+        return scopes.isNotEmpty() && "streaming" !in scopes
+    }
+
     private suspend fun refreshIfNeeded(stored: AuthTokens): AuthTokens {
         if (!stored.isExpired(clock()) || stored.refreshToken.isNullOrBlank()) {
             return stored
@@ -353,6 +508,14 @@ class SpotifyProvider(
                 append("client_id", clientId)
             },
         )
+        if (tokenResponse.status == HttpStatusCode.BadRequest) {
+            val body = runCatching { tokenResponse.bodyAsText() }.getOrNull().orEmpty()
+            if (body.contains("invalid_grant")) {
+                tokens.clear(ProviderId.SPOTIFY)
+                _state.value = ProviderState.AUTH_REQUIRED
+                error("Spotify needs to be reconnected. Open Settings and connect Spotify again.")
+            }
+        }
         val response = tokenResponse.successBody<SpotifyTokenResponse>("Spotify token refresh")
         return persist(response, stored.refreshToken)
     }
@@ -369,14 +532,42 @@ class SpotifyProvider(
     }
 
     private suspend fun loadProfile() {
-        val token = tokens.read(ProviderId.SPOTIFY)?.accessToken ?: return
-        val me = http.get("$API/me") { bearerAuth(token) }
-            .successBody<SpotifyUser>("Spotify profile")
+        when (loadProfileStatus()) {
+            ProfileStatus.Ok -> Unit
+            ProfileStatus.QuotaExceeded -> error(SPOTIFY_QUOTA_MESSAGE)
+            ProfileStatus.Failed -> error("Spotify profile could not be loaded. Check your connection and try again.")
+        }
+    }
+
+    private suspend fun loadProfileStatus(): ProfileStatus {
+        val token = tokens.read(ProviderId.SPOTIFY)?.accessToken ?: return ProfileStatus.Failed
+        val response = http.get("$API/me") { bearerAuth(token) }
+        if (response.status.value == 429) {
+            val body = runCatching { response.bodyAsText() }.getOrNull().orEmpty()
+            return if ("QUOTA_EXCEEDED" in body) {
+                ProfileStatus.QuotaExceeded
+            } else {
+                ProfileStatus.QuotaExceeded // treat other 429s the same for profile
+            }
+        }
+        if (!response.status.isSuccess()) {
+            return ProfileStatus.Failed
+        }
+        val me = response.body<SpotifyUser>()
         // Spotify's current profile response no longer guarantees the legacy product field.
         // Player endpoints enforce Premium eligibility, so a valid user session may attempt Connect playback.
         premium = me.id.isNotBlank()
+        return ProfileStatus.Ok
     }
 }
+
+private enum class ProfileStatus { Ok, QuotaExceeded, Failed }
+
+private const val SPOTIFY_QUOTA_MESSAGE =
+    "Spotify development quota exceeded for this developer account. " +
+        "Wait for the quota window to reset, avoid reloading the full liked library repeatedly, " +
+        "or request Extended Quota in the Spotify Developer Dashboard."
+
 
 @OptIn(ExperimentalEncodingApi::class)
 internal fun pkceChallenge(verifier: String): String {
@@ -416,7 +607,27 @@ private suspend fun HttpResponse.requireSuccess(operation: String) {
 
 private suspend fun HttpResponse.errorMessage(operation: String): Nothing {
     val detail = runCatching { bodyAsText() }.getOrNull()?.takeIf { it.isNotBlank() }
+    if (status.value == 429) {
+        val retryAfter = headers[HttpHeaders.RetryAfter]
+        val retryHint = retryAfter?.let(::spotifyRetryAfterHint).orEmpty()
+        if (detail != null && "QUOTA_EXCEEDED" in detail) {
+            error(SPOTIFY_QUOTA_MESSAGE + retryHint)
+        }
+        error("$operation was rate limited by Spotify.$retryHint")
+    }
     error("$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
+}
+
+private fun spotifyRetryAfterHint(value: String): String {
+    val seconds = value.toLongOrNull()
+    if (seconds == null) return " Spotify asked clients to retry after $value."
+    val approximate = when {
+        seconds >= 86_400 -> "about ${(seconds + 43_199) / 86_400} days"
+        seconds >= 3_600 -> "about ${(seconds + 1_799) / 3_600} hours"
+        seconds >= 60 -> "about ${(seconds + 29) / 60} minutes"
+        else -> "$seconds seconds"
+    }
+    return " Spotify asked clients to retry after $seconds seconds ($approximate)."
 }
 
 private data class PendingLogin(
@@ -429,4 +640,16 @@ private data class PendingLogin(
 private data class ConnectPlaybackTarget(
     val deviceId: String,
     val hasActiveDevice: Boolean,
+    val kainosLocal: Boolean = false,
 )
+
+// #region agent log
+private fun debugSpotifyLog(
+    hypothesisId: String,
+    location: String,
+    message: String,
+    data: Map<String, Any?>,
+) {
+    println("DBG[$hypothesisId] $location: $message $data")
+}
+// #endregion

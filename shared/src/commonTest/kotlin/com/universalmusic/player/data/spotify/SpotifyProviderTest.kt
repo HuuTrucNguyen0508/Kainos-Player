@@ -1,5 +1,12 @@
 package com.universalmusic.player.data.spotify
 
+import com.universalmusic.player.platform.SpotifyWebPlaybackHost
+import com.universalmusic.player.platform.SpotifyWebPlaybackDevice
+import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
+import com.universalmusic.player.platform.SpotifyWebPlaybackState
+import com.universalmusic.player.platform.UnavailableSpotifyWebPlaybackHost
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
 import com.universalmusic.player.data.config.AppConfig
@@ -23,6 +30,128 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
+    @Test
+    fun webPlayerIsActivatedBeforeStartingTheTrack() = runTest {
+        val requests = mutableListOf<String>()
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Ready("web-device"))
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice("web-device")
+            override suspend fun shutdown() = Unit
+        }
+        val provider = provider(TokenStoreFake(AuthTokens("access", scopes = listOf("streaming"))), host) { request ->
+            requests += request.url.encodedPath
+            respond("", HttpStatusCode.NoContent)
+        }
+
+        provider.startConnectPlayback("song")
+
+        assertEquals(listOf("/v1/me/player", "/v1/me/player/play"), requests)
+    }
+
+    @Test
+    fun cancellingWebStartupDoesNotFallBackToExternalDevices() = runTest {
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.StartingHost)
+            override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = throw CancellationException("Track skipped")
+            override suspend fun shutdown() = Unit
+        }
+        var requests = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access", scopes = listOf("streaming"))), host) {
+            requests++
+            respondJson("{}")
+        }
+
+        assertFailsWith<CancellationException> { provider.startConnectPlayback("song") }
+        assertEquals(0, requests)
+    }
+
+    @Test
+    fun nativeReceiverIsResolvedByNameWithoutUsingStreamingScope() = runTest {
+        val requests = mutableListOf<String>()
+        val transferBodies = mutableListOf<String>()
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope: Boolean = false
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player")
+            override suspend fun shutdown() = Unit
+        }
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { request ->
+            requests += request.url.encodedPath + request.url.parameters.entries()
+                .flatMap { (key, values) -> values.map { "$key=$it" } }
+                .joinToString(prefix = "?", separator = "&")
+            when (request.url.encodedPath) {
+                "/v1/me/player/devices" -> respondJson(
+                    """{"devices":[{"id":"other-speaker","is_active":true,"is_restricted":false,"name":"Kitchen","type":"Speaker"},{"id":"kainos-device","is_active":false,"is_restricted":false,"name":"Kainos Player","type":"Computer"}]}""",
+                )
+                "/v1/me/player" -> {
+                    transferBodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+                    respond("", HttpStatusCode.NoContent)
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+
+        provider.startConnectPlayback("song")
+
+        assertEquals(
+            listOf(
+                "/v1/me/player/devices?",
+                "/v1/me/player?",
+                "/v1/me/player/play?device_id=kainos-device",
+            ),
+            requests,
+        )
+        assertTrue(transferBodies.single().contains("kainos-device"))
+        assertTrue(!transferBodies.single().contains("other-speaker"))
+    }
+
+    @Test
+    fun nativeReceiverAuthenticationFailureDoesNotLaunchExternalPlayback() = runTest {
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(
+                SpotifyWebPlaybackState.Failed(SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired),
+            )
+            override val requiresStreamingScope: Boolean = false
+            override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = null
+            override suspend fun shutdown() = Unit
+        }
+        var requests = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) {
+            requests += 1
+            respondJson("{}")
+        }
+
+        val failure = assertFailsWith<IllegalStateException> { provider.startConnectPlayback("song") }
+
+        assertTrue(failure.message.orEmpty().contains("one-time librespot sign-in"))
+        assertEquals(0, requests)
+    }
+
+    @Test
+    fun namedReceiverPollStopsImmediatelyOnRateLimitAndShowsRetryDelay() = runTest {
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope: Boolean = false
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player")
+            override suspend fun shutdown() = Unit
+        }
+        var requests = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) {
+            requests += 1
+            respond(
+                content = "rate limited",
+                status = HttpStatusCode.TooManyRequests,
+                headers = headersOf(HttpHeaders.RetryAfter, "69951"),
+            )
+        }
+
+        val failure = assertFailsWith<IllegalStateException> { provider.startConnectPlayback("song") }
+
+        assertEquals(1, requests)
+        assertTrue(failure.message.orEmpty().contains("69951 seconds"))
+        assertTrue(failure.message.orEmpty().contains("about 19 hours"))
+    }
+
     @Test
     fun playlistFailureDoesNotDiscardLikedSongs() = runTest {
         val provider = provider(TokenStoreFake(AuthTokens("access"))) { request ->
@@ -85,6 +214,7 @@ class SpotifyProviderTest {
         assertEquals(0, requests)
         assertEquals("S256", queryParam(session.authorizationUrl, "code_challenge_method"))
         assertEquals(43, queryParam(session.authorizationUrl, "code_challenge")?.length)
+        assertTrue(queryParam(session.authorizationUrl, "scope").orEmpty().contains("streaming"))
     }
 
     @Test
@@ -270,6 +400,7 @@ class SpotifyProviderTest {
 
     private fun provider(
         store: TokenStoreFake,
+        webPlayback: SpotifyWebPlaybackHost = UnavailableSpotifyWebPlaybackHost,
         handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData,
     ): SpotifyProvider {
         val client = HttpClient(MockEngine(handler)) {
@@ -285,6 +416,7 @@ class SpotifyProviderTest {
                 spotifyRedirectUri = "http://127.0.0.1:43821/callback",
             ),
             clock = { 1_000L },
+            webPlayback = webPlayback,
         )
     }
 

@@ -10,7 +10,8 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 - Linux desktop playback via headless mpv (local files / HTTP)
 - Desktop YouTube audio via yt-dlp URL resolve → mpv (search still uses YouTube Data API)
 - Android URL playback via Media3 / ExoPlayer
-- Spotify Connect playback with device transfer; desktop auto-launches Spotify when no Connect device is listed
+- Linux Spotify integration uses an app-managed, headless librespot Connect receiver named `Kainos Player`
+- Librespot native OAuth credentials persist under `~/.universal-music-player/librespot/system`; later launches are headless and do not open a browser
 - Quality ranking and source fallback in the shared player session
 - Sample catalog for UI/player demos without credentials
 
@@ -25,11 +26,12 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 ## Incomplete / platform gaps
 
-- **Spotify** — Connect works for play/pause/seek; no in-process Web Playback SDK, limited remote state sync
+- **Spotify** — native librespot sign-in, cached headless restart, and audio-backend initialization are verified live; device selection and transfer pass automated tests. Audible end-to-end playback still needs confirmation; remote state sync remains limited
 - **YouTube Music** — desktop in-app audio when yt-dlp is installed; Android still browser-only; no YouTube Music account library
 
 ## Known limits
 
 - No stream ripping UI or DRM bypass for Spotify
+- Librespot requires Spotify Premium and is an unofficial client. Spotify Web API quota limits still apply to device lookup and playback commands even when librespot authentication works.
 - No custom EQ / DSP
 - No gapless playback or volume normalization yet

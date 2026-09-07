@@ -32,6 +32,8 @@ import com.universalmusic.player.data.settings.ThemeMode
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
+import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
+import com.universalmusic.player.platform.SpotifyWebPlaybackState
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.authenticateSpotify
 import com.universalmusic.player.platform.platformLabel
@@ -43,6 +45,8 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(container: AppContainer) {
     val settings by container.settings.collectAsState()
     val spotify by container.spotify.state.collectAsState()
+    val spotifyPlayback by container.spotifyWebPlayback.state.collectAsState()
+    val nativeSpotify = !container.spotifyWebPlayback.requiresStreamingScope
     val youtube by container.youtube.state.collectAsState()
     val local by container.local.state.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
@@ -195,15 +199,20 @@ fun SettingsScreen(container: AppContainer) {
             name = "Spotify",
             state = spotify,
             configured = container.config.hasSpotifyCredentials,
-            connected = spotify == ProviderState.AVAILABLE,
+            connected = spotify == ProviderState.AVAILABLE || spotify == ProviderState.RATE_LIMITED,
             onConnect = {
                 providerAction {
                     val session = container.spotify.beginLogin()
                     val redirect = authenticateSpotify(session.authorizationUrl, session.redirectScheme)
                     if (redirect != null) {
                         container.spotify.completeLogin(redirect)
-                        providerNotice = "Spotify connected."
-                        container.refreshSpotifyLibrary()
+                        val limited = container.spotify.state.value == ProviderState.RATE_LIMITED
+                        providerNotice = if (limited) {
+                            "Spotify connected, but the developer API quota is exhausted. Playback may work; library refresh should wait."
+                        } else {
+                            "Spotify connected."
+                        }
+                        if (!limited) container.refreshSpotifyLibrary()
                     } else {
                         providerNotice = "Finish signing in in your browser to connect Spotify."
                     }
@@ -211,12 +220,44 @@ fun SettingsScreen(container: AppContainer) {
             },
             onDisconnect = { providerAction { container.disconnectSpotify() } },
             busy = providerBusy || !ready,
-            detail = "Search Spotify and load your liked songs and playlists. Playback controls use Spotify Connect with Premium and an active device in the Spotify app.",
+            detail = "Connect your Spotify account for search, liked songs, playlists, and playback controls. Spotify API rate limits can temporarily block these features.",
         )
-        if (spotify == ProviderState.AVAILABLE) {
+        if (nativeSpotify) {
+            OutlinedButton(enabled = ready && !providerBusy, onClick = {
+                providerAction {
+                    val receiver = container.spotifyWebPlayback.prepareAuthentication()
+                    if (receiver != null) {
+                        providerNotice = "Receiver started. Complete Spotify sign-in if a browser page opens, then choose a track in Kainos."
+                    }
+                }
+            }) { Text("Set up in-app Spotify playback") }
+            Text(
+                "Spotify Premium playback runs in the background through librespot. Sign in once in your browser; later playback uses the saved login.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val failure = (spotifyPlayback as? SpotifyWebPlaybackState.Failed)?.reason
+            if (failure != null) {
+                Text(
+                    when (failure) {
+                        SpotifyWebPlaybackFailure.LibrespotNotFound -> "Install librespot with scripts/install-librespot.sh, then try setup again."
+                        SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired -> "Set up in-app Spotify playback to sign in to the receiver."
+                        is SpotifyWebPlaybackFailure.LibrespotExited -> failure.detail ?: "The Spotify receiver stopped. Try setup again."
+                        else -> "Spotify receiver setup failed. Try setup again."
+                    },
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+        if (spotify == ProviderState.AVAILABLE || spotify == ProviderState.RATE_LIMITED) {
             OutlinedButton(enabled = !libraryLoading && !providerBusy, onClick = {
                 scope.launch { container.refreshSpotifyLibrary() }
             }) { Text(if (libraryLoading) "Loading library…" else "Refresh Spotify library") }
+            Text(
+                "If Spotify reports a rate limit, wait for its retry time before refreshing again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         libraryError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         ProviderAccountRow(
