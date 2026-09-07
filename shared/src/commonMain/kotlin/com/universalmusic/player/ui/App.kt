@@ -1,11 +1,16 @@
 package com.universalmusic.player.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -13,6 +18,7 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -27,12 +33,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.ui.components.MiniPlayerBar
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
 import com.universalmusic.player.ui.screens.LibraryScreen
@@ -41,12 +49,11 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
-import com.universalmusic.player.ui.components.MiniPlayerBar
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
     val settings by container.settings.collectAsState()
-    UniversalMusicTheme(settings.themeMode) {
+    UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             AppScaffold(container, desktop = maxWidth >= 840.dp)
         }
@@ -61,7 +68,6 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
     val canSkipNext = run {
-        // Depend on queue snapshot so skip affordances recompose after shuffle/list changes.
         queue.shuffle
         queue.repeat
         queue.items.size
@@ -77,7 +83,6 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         showNowPlaying = true
     }
 
-    // Platform shells (desktop keyboard shortcuts) drive navigation through this flow.
     LaunchedEffect(container) {
         container.uiRequests.collect { request ->
             when (request) {
@@ -92,6 +97,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
@@ -108,7 +114,10 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                             onNext = { container.player.skipToNext() },
                         )
                     }
-                    NavigationBar {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        tonalElevation = 3.dp,
+                    ) {
                         AppDestination.entries.forEach { item ->
                             NavigationBarItem(
                                 selected = destination == item,
@@ -128,7 +137,24 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     ) { padding ->
         Row(Modifier.fillMaxSize().padding(padding)) {
             if (desktop) {
-                NavigationRail {
+                NavigationRail(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(88.dp),
+                    header = {
+                        Column(
+                            Modifier.padding(top = 20.dp, bottom = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                "Kainos",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    },
+                ) {
                     AppDestination.entries.forEach { item ->
                         NavigationRailItem(
                             selected = destination == item && !showQueue,
@@ -142,6 +168,12 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         )
                     }
                 }
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
             }
             Box(Modifier.weight(1f).fillMaxSize()) {
                 when {
@@ -168,7 +200,18 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                 }
             }
             if (desktop) {
-                Surface(Modifier.widthIn(min = 360.dp, max = 420.dp).fillMaxSize(), tonalElevation = 1.dp) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                Surface(
+                    Modifier.widthIn(min = 360.dp, max = 420.dp).fillMaxSize(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
                     if (showQueue) {
                         QueueScreen(container) { showQueue = false }
                     } else {

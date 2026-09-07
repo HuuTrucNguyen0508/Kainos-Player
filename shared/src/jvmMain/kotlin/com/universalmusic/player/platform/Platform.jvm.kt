@@ -116,6 +116,8 @@ actual fun openUrl(url: String) {
     }
 }
 
+actual fun requiresExplicitSpotifyDevice(): Boolean = false
+
 actual fun platformLabel(): String = "Linux"
 
 actual fun listenForOAuthRedirect(port: Int, path: String): String = awaitOAuthRedirect(port, path)

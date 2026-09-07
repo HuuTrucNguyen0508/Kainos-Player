@@ -67,6 +67,8 @@ kotlin {
             implementation(libs.androidx.media3.session)
             implementation(libs.androidx.media3.ui)
             implementation(libs.newpipe.extractor)
+            implementation(libs.librespot.android.sink)
+            implementation(libs.librespot.android.decoder)
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)

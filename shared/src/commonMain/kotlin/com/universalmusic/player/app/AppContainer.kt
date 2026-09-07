@@ -6,12 +6,14 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
+import com.universalmusic.player.data.spotify.findDiscoverWeekly
 import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeStreamResolver
@@ -68,7 +70,11 @@ class AppContainer {
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
     )
-    val spotify = SpotifyProvider(http, tokens, config, webPlayback = spotifyWebPlayback).also {
+    val spotify = SpotifyProvider(
+        http, tokens, config, webPlayback = spotifyWebPlayback,
+        requireExplicitPlaybackDevice = requiresExplicitSpotifyDevice(),
+        selectedPlaybackDeviceId = { _settings.value.spotifyPlaybackDeviceId },
+    ).also {
         spotifyProvider = it
     }
     val youtubeStreams = createYouTubeStreamResolver()
@@ -81,6 +87,8 @@ class AppContainer {
     val spotifyTracks = _spotifyTracks.asStateFlow()
     private val _spotifyPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
     val spotifyPlaylists = _spotifyPlaylists.asStateFlow()
+    private val _spotifyDiscoverWeekly = MutableStateFlow<Playlist?>(null)
+    val spotifyDiscoverWeekly = _spotifyDiscoverWeekly.asStateFlow()
     private val _spotifyLibraryError = MutableStateFlow<String?>(null)
     val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
     private val _spotifyLibraryLoading = MutableStateFlow(false)
@@ -137,7 +145,10 @@ class AppContainer {
 
     suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsMutex.withLock {
         val previous = _settings.value
-        val next = transform(previous)
+        val transformed = transform(previous)
+        val next = if (transformed.spotifyClientId != previous.spotifyClientId) {
+            transformed.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null)
+        } else transformed
         settingsStore.write(next)
         if (next.spotifyClientId != previous.spotifyClientId || next.youtubeDataApiKey != previous.youtubeDataApiKey) {
             applyProviderSettings(next)
@@ -159,12 +170,14 @@ class AppContainer {
 
     suspend fun disconnectSpotify() {
         spotify.logout()
+        updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
     }
 
     private fun clearSpotifyLibrary() {
         _spotifyTracks.value = emptyList()
         _spotifyPlaylists.value = emptyList()
+        _spotifyDiscoverWeekly.value = null
         _spotifyLibraryError.value = null
     }
 
@@ -175,7 +188,10 @@ class AppContainer {
             val result = loadSpotifyLibrary(spotify)
             if (spotify.isAuthenticated() || spotify.state.value == ProviderState.RATE_LIMITED) {
                 result.tracks.onSuccess { _spotifyTracks.value = it }
-                result.playlists.onSuccess { _spotifyPlaylists.value = it }
+                result.playlists.onSuccess { playlists ->
+                    _spotifyPlaylists.value = playlists
+                    _spotifyDiscoverWeekly.value = findDiscoverWeekly(playlists)
+                }
                 val failedSections = buildList {
                     if (result.tracks.isFailure) add("liked songs")
                     if (result.playlists.isFailure) add("playlists")
@@ -204,6 +220,13 @@ class AppContainer {
         } finally {
             _spotifyLibraryLoading.value = false
         }
+    }
+
+    /** Load full track list for a Spotify playlist and return playable tracks. */
+    suspend fun loadSpotifyPlaylistTracks(playlistId: String): List<Track> {
+        val id = playlistId.trim()
+        require(id.isNotEmpty()) { "Playlist id is required" }
+        return spotify.getPlaylistTracks(id)
     }
 
     fun refreshLocalLibrary() {

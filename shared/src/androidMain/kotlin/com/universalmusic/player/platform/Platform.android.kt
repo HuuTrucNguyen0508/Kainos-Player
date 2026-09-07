@@ -27,9 +27,11 @@ import java.net.SocketTimeoutException
 import java.net.URI
 import java.security.MessageDigest
 import java.security.SecureRandom
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -82,9 +84,18 @@ actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEng
 actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = AndroidYouTubeStreamResolver()
 
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
-    UnavailableSpotifyWebPlaybackHost
+    AndroidLibrespotPlaybackHost()
 
-actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = false
+actual fun requiresExplicitSpotifyDevice(): Boolean = false
+
+actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = withContext(Dispatchers.Main) {
+    val intent = androidContext.packageManager.getLaunchIntentForPackage("com.spotify.music")
+        ?: return@withContext false
+    runCatching {
+        androidContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    }.getOrDefault(false)
+}
 
 actual fun openUrl(url: String) {
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -104,6 +115,32 @@ actual suspend fun authenticateSpotify(authorizationUrl: String, redirectUri: St
         return null
     }
     require(redirect.port in 1..65535) { "Spotify redirect must include a valid port" }
+    return authenticateSpotifyViaWebView(authorizationUrl, redirectUri)
+}
+
+private suspend fun authenticateSpotifyViaWebView(
+    authorizationUrl: String,
+    redirectUri: String,
+): String? {
+    val deferred = CompletableDeferred<String?>()
+    SpotifyAuthRelay.pending = deferred
+    withContext(Dispatchers.Main) {
+        val intent = Intent(androidContext, SpotifyAuthActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(SpotifyAuthActivity.EXTRA_AUTH_URL, authorizationUrl)
+            putExtra(SpotifyAuthActivity.EXTRA_REDIRECT_URI, redirectUri)
+        }
+        androidContext.startActivity(intent)
+    }
+    return withTimeoutOrNull(180_000) { deferred.await() }
+}
+
+@Suppress("unused")
+private suspend fun authenticateSpotifyViaBrowser(
+    authorizationUrl: String,
+    redirectUri: String,
+): String? {
+    val redirect = URI(redirectUri)
     val expectedPath = redirect.rawPath.takeUnless { it.isNullOrBlank() } ?: "/"
     return withContext(Dispatchers.IO) {
         runInterruptible {

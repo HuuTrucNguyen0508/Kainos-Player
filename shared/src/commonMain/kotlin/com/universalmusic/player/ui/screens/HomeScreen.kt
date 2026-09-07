@@ -7,16 +7,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,6 +35,7 @@ import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.components.ProviderStatusRow
 import com.universalmusic.player.ui.components.SectionHeader
 import com.universalmusic.player.ui.components.TrackRow
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -41,8 +48,12 @@ fun HomeScreen(
     val youtubeState by container.youtube.state.collectAsState()
     val localState by container.local.state.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
+    val discoverWeekly by container.spotifyDiscoverWeekly.collectAsState()
     val albums = container.sample.homeAlbums
     val playlists = container.sample.homePlaylists
+    val scope = rememberCoroutineScope()
+    var discoverBusy by remember { mutableStateOf(false) }
+    var discoverError by remember { mutableStateOf<String?>(null) }
     val continueContext = when {
         recent.isNotEmpty() -> recent
         localTracks.isNotEmpty() -> localTracks
@@ -57,9 +68,15 @@ fun HomeScreen(
             .padding(bottom = 96.dp),
     ) {
         Text(
+            "KAINOS",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
+        )
+        Text(
             "Good listening",
             style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
         ProviderStatusRow(
             mapOf(
@@ -70,9 +87,80 @@ fun HomeScreen(
             modifier = Modifier.padding(horizontal = 20.dp),
         )
         Spacer(Modifier.height(20.dp))
+        discoverWeekly?.let { playlist ->
+            SectionHeader("Made for you")
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clickable(enabled = !discoverBusy) {
+                        scope.launch {
+                            discoverBusy = true
+                            discoverError = null
+                            try {
+                                val tracks = container.loadSpotifyPlaylistTracks(playlist.source.providerEntityId)
+                                if (tracks.isEmpty()) {
+                                    discoverError = "Discover Weekly has no playable tracks right now."
+                                } else {
+                                    onPlayTracks(tracks, 0)
+                                    onOpenNowPlaying()
+                                }
+                            } catch (failure: Exception) {
+                                discoverError = failure.message ?: "Could not load Discover Weekly."
+                            } finally {
+                                discoverBusy = false
+                            }
+                        }
+                    },
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                ArtworkImage(
+                    playlist.artwork,
+                    playlist.title,
+                    Modifier.height(120.dp).width(120.dp),
+                    playlist.title,
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                    Text("Discover Weekly", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        playlist.description?.takeIf { it.isNotBlank() }
+                            ?: "Your personal Spotify mix for the week",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        when {
+                            discoverBusy -> "Loading tracks…"
+                            else -> listOfNotNull(
+                                playlist.trackCount?.let { "$it tracks" },
+                                "Play in Kainos",
+                            ).joinToString(" · ")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+            if (discoverBusy) {
+                CircularProgressIndicator(Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            }
+            discoverError?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Text(
             if (recent.isNotEmpty()) "Continue listening" else if (localTracks.isNotEmpty()) "From your library" else "Try a sample track",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp),
         )
         TrackRow(

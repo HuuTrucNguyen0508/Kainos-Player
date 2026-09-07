@@ -13,11 +13,13 @@ Supported when `SPOTIFY_CLIENT_ID` is configured and the user signs in:
 - Artwork, ISRC, duration, explicit flag
 - Compatibility with profiles that omit subscription information, as development-mode responses now do
 
-Playback uses **Spotify Connect** for play, pause, resume, and seek. The app never downloads, decrypts, or unwraps Spotify audio. Premium is required.
+Playback uses **Spotify Connect** for play, pause, resume, and seek. Premium is required.
 
-On Linux desktop, if no Connect device is listed, the app tries to launch the Spotify client (`spotify`, `/usr/bin/spotify`, or Flatpak `com.spotify.Client`) and waits briefly for a device to appear. It still cannot embed Spotify audio in-process; Connect remains the path.
+On **Linux desktop**, Kainos starts a headless [librespot](https://github.com/librespot-org/librespot) Connect receiver named `Kainos Player` that decodes audio on the machine. Setup is one-time OAuth via Settings → Set up in-app Spotify playback.
 
-The app sends playback commands to the active device. It does not poll remote playback state, so changes made directly in Spotify are not synchronized into Kainos Player. Playlist entries open Spotify.
+On **Android**, Kainos embeds [librespot-java](https://github.com/librespot-org/librespot-java) 0.2.0 (via `lib-librespot-android` sink/decoder modules) as the same Connect receiver. First setup uses browser OAuth with loopback redirect `http://127.0.0.1:5588/login`; credentials are stored under the app private files and reused on later launches. Audio is decoded on-device through `AndroidSinkOutput`. This is personal / unofficial use; Spotify may break or revoke access.
+
+If no Kainos receiver is ready and no other Connect device is listed, Linux may try to launch the Spotify client as a fallback. Remote player state is not polled, so changes made directly in Spotify are not synchronized into Kainos Player.
 
 Quality: The Web API does not report per-track format. The app assumes CD-quality Connect output at **16-bit / 44.1 kHz** (Nyquist 22.05 kHz). It still does not invent a lossy bitrate such as 320 kbps.
 

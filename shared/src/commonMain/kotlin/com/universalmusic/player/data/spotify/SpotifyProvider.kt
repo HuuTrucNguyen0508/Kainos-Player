@@ -72,6 +72,9 @@ class SpotifyProvider(
     initialConfig: AppConfig,
     private val clock: () -> Long = { currentTimeMillis() },
     private val webPlayback: SpotifyWebPlaybackHost = UnavailableSpotifyWebPlaybackHost,
+    private val requireExplicitPlaybackDevice: Boolean = false,
+    private val selectedPlaybackDeviceId: () -> String? = { null },
+    private val startConnectClient: suspend () -> Boolean = { ensureSpotifyConnectClientAvailable() },
 ) : AuthenticatingProvider {
     override val providerId: ProviderId = ProviderId.SPOTIFY
 
@@ -83,6 +86,7 @@ class SpotifyProvider(
     private var config: AppConfig = initialConfig
     private var pendingLogin: PendingLogin? = null
     private var premium: Boolean = false
+    private var activePlaybackDeviceId: String? = null
 
     suspend fun restore() {
         if (!config.hasSpotifyCredentials) {
@@ -184,6 +188,7 @@ class SpotifyProvider(
         tokens.clear(ProviderId.SPOTIFY)
         authMutex.withLock { pendingLogin = null }
         premium = false
+        activePlaybackDeviceId = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }
 
@@ -229,9 +234,32 @@ class SpotifyProvider(
 
     override suspend fun getPlaylist(id: String): Playlist? {
         val token = accessToken()
-        return http.get("$API/playlists/$id") { bearerAuth(token) }
+        val playlist = http.get("$API/playlists/$id") { bearerAuth(token) }
             .successBody<SpotifyPlaylist>("Spotify playlist lookup")
             .toDomain(premium)
+        val tracks = getPlaylistTracks(id)
+        return playlist.copy(tracks = tracks, trackCount = tracks.size)
+    }
+
+    /** Pages every track in a playlist (Discover Weekly and user playlists). */
+    suspend fun getPlaylistTracks(playlistId: String): List<Track> {
+        val id = playlistId.trim()
+        if (id.isEmpty()) return emptyList()
+        val token = accessToken()
+        val result = mutableListOf<Track>()
+        var offset = 0
+        do {
+            val response = http.get("$API/playlists/$id/tracks") {
+                bearerAuth(token)
+                parameter("limit", 50)
+                parameter("offset", offset)
+                parameter("additional_types", "track")
+            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist tracks")
+            result += response.items.mapNotNull { it.track?.toDomainOrNull(premium) }
+            offset += response.items.size
+            if (response.items.isEmpty()) break
+        } while (response.next != null)
+        return result
     }
 
     override suspend fun getStream(track: Track): PlaybackSource? {
@@ -326,6 +354,10 @@ class SpotifyProvider(
                     mapOf("attempt" to attempt + 1),
                 )
                 // #endregion
+                if (requireExplicitPlaybackDevice) {
+                    confirmPlaybackOnTarget(token, target, spotifyTrackId)
+                }
+                activePlaybackDeviceId = target.deviceId
                 return
             }
             lastError = runCatching { response.bodyAsText() }.getOrNull()
@@ -345,7 +377,12 @@ class SpotifyProvider(
         error("Spotify Connect playback failed${lastError?.let { ": $it" }.orEmpty()}")
     }
 
+    suspend fun getConnectDevices(): List<SpotifyConnectDevice> =
+        fetchConnectDevices(accessToken()).mapNotNull(SpotifyDevice::toConnectDeviceOrNull)
+
     private suspend fun resolvePlaybackTarget(token: String): ConnectPlaybackTarget {
+        if (requireExplicitPlaybackDevice) return resolveExplicitPlaybackTarget(token)
+
         val stored = tokens.read(ProviderId.SPOTIFY)
         val granted = stored?.scopes.orEmpty()
         val hasStreaming = "streaming" in granted
@@ -378,8 +415,8 @@ class SpotifyProvider(
                 if (deviceId.isNullOrBlank()) {
                     webPlaybackFailureMessage()?.let { error(it) }
                     error(
-                        "Kainos Player started librespot, but Spotify did not register its Connect device. " +
-                            "Check ~/.universal-music-player/logs/librespot.log and try again.",
+                        "Kainos Player started the Spotify receiver, but Spotify did not register its Connect device. " +
+                            "Set up in-app Spotify playback again in Settings, then retry.",
                     )
                 }
                 return ConnectPlaybackTarget(
@@ -397,7 +434,7 @@ class SpotifyProvider(
 
         var devices = listConnectDevices(token)
         if (devices.isEmpty()) {
-            ensureSpotifyConnectClientAvailable()
+            startConnectClient()
             for (attempt in 1..12) {
                 delay(1_000)
                 devices = listConnectDevices(token)
@@ -421,16 +458,96 @@ class SpotifyProvider(
             ?: devices.first()
         return ConnectPlaybackTarget(
             deviceId = preferred.id!!,
-            hasActiveDevice = devices.any { it.isActive },
+            hasActiveDevice = preferred.isActive,
             kainosLocal = false,
+            deviceName = preferred.name,
+        )
+    }
+
+    private suspend fun resolveExplicitPlaybackTarget(token: String): ConnectPlaybackTarget {
+        val selectedId = selectedPlaybackDeviceId()?.trim().orEmpty()
+        if (selectedId.isEmpty()) {
+            error(
+                "Choose a Spotify Connect device in Settings → Spotify output before playing. " +
+                    "Pick this phone, a computer, a speaker, or any other available device.",
+            )
+        }
+
+        var devices = fetchConnectDevices(token)
+        var selected = devices.firstOrNull { it.id == selectedId }
+        if (selected == null) {
+            val alternatives = devices.mapNotNull(SpotifyDevice::toConnectDeviceOrNull)
+                .filterNot { it.id == selectedId }
+            if (alternatives.isNotEmpty()) {
+                error(selectedDeviceMissingMessage(selectedId, alternatives))
+            }
+            // Nothing else is online. Try launching the local Spotify app so this phone can appear.
+            startConnectClient()
+            for (attempt in 0 until 12) {
+                devices = fetchConnectDevices(token)
+                selected = devices.firstOrNull { it.id == selectedId }
+                if (selected != null) break
+                if (attempt < 11) delay(1_000)
+            }
+        }
+        val device = selected
+        if (device == null) {
+            val alternatives = devices.mapNotNull(SpotifyDevice::toConnectDeviceOrNull)
+                .filterNot { it.id == selectedId }
+            error(selectedDeviceMissingMessage(selectedId, alternatives))
+        }
+        if (device.isRestricted) {
+            error(
+                "${device.displayName()} cannot be controlled through Spotify. " +
+                    "Choose another Spotify device in Settings → Spotify output.",
+            )
+        }
+        requireSpotifyVolume(device)
+        return ConnectPlaybackTarget(
+            deviceId = selectedId,
+            hasActiveDevice = device.isActive,
+            deviceName = device.name,
+        )
+    }
+
+    private suspend fun confirmPlaybackOnTarget(
+        token: String,
+        target: ConnectPlaybackTarget,
+        spotifyTrackId: String,
+    ) {
+        repeat(3) { attempt ->
+            val response = http.get("$API/me/player") { bearerAuth(token) }
+            if (response.status.isSuccess() && response.status != HttpStatusCode.NoContent) {
+                val playback = response.body<SpotifyCurrentPlaybackResponse>()
+                if (
+                    playback.device?.id == target.deviceId &&
+                    playback.item?.id == spotifyTrackId &&
+                    playback.isPlaying
+                ) {
+                    requireSpotifyVolume(playback.device)
+                    return
+                }
+            } else if (!response.status.isSuccess()) {
+                response.requireSuccess("Spotify playback confirmation")
+            }
+            if (attempt < 2) delay(250L * (attempt + 1))
+        }
+        val label = target.deviceName?.takeIf { it.isNotBlank() } ?: "the selected device"
+        error(
+            "Spotify playback on $label was not confirmed. " +
+                "Open Spotify on that device, check its volume and output, then try again. " +
+                "Or pick a different Connect device in Settings → Spotify output.",
         )
     }
 
     private suspend fun listConnectDevices(token: String): List<SpotifyDevice> =
+        fetchConnectDevices(token)
+            .filter { !it.isRestricted && !it.id.isNullOrBlank() }
+
+    private suspend fun fetchConnectDevices(token: String): List<SpotifyDevice> =
         http.get("$API/me/player/devices") { bearerAuth(token) }
             .successBody<SpotifyDevicesResponse>("Spotify devices")
             .devices
-            .filter { !it.isRestricted && !it.id.isNullOrBlank() }
 
     private suspend fun waitForNamedConnectDevice(token: String, name: String): SpotifyDevice? {
         repeat(12) { attempt ->
@@ -451,18 +568,25 @@ class SpotifyProvider(
                 "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
             is SpotifyWebPlaybackFailure.LibrespotExited ->
                 reason.detail ?: "librespot stopped before its Spotify Connect device was ready."
+            is SpotifyWebPlaybackFailure.Message -> reason.detail
             else -> null
         }
         else -> null
     }
 
     suspend fun pauseConnectPlayback() {
-        val response = http.put("$API/me/player/pause") { bearerAuth(accessToken()) }
+        val response = http.put("$API/me/player/pause") {
+            bearerAuth(accessToken())
+            activePlaybackDeviceId?.let { parameter("device_id", it) }
+        }
         response.requireSuccess("Spotify Connect pause")
     }
 
     suspend fun resumeConnectPlayback() {
-        val response = http.put("$API/me/player/play") { bearerAuth(accessToken()) }
+        val response = http.put("$API/me/player/play") {
+            bearerAuth(accessToken())
+            activePlaybackDeviceId?.let { parameter("device_id", it) }
+        }
         response.requireSuccess("Spotify Connect resume")
     }
 
@@ -470,6 +594,7 @@ class SpotifyProvider(
         val response = http.put("$API/me/player/seek") {
             bearerAuth(accessToken())
             parameter("position_ms", positionMs.coerceAtLeast(0))
+            activePlaybackDeviceId?.let { parameter("device_id", it) }
         }
         response.requireSuccess("Spotify Connect seek")
     }
@@ -641,7 +766,45 @@ private data class ConnectPlaybackTarget(
     val deviceId: String,
     val hasActiveDevice: Boolean,
     val kainosLocal: Boolean = false,
+    val deviceName: String? = null,
 )
+
+private fun SpotifyDevice.toConnectDeviceOrNull(): SpotifyConnectDevice? {
+    val resolvedId = id?.takeIf { it.isNotBlank() } ?: return null
+    return SpotifyConnectDevice(
+        id = resolvedId,
+        name = displayName(),
+        type = type?.takeIf { it.isNotBlank() } ?: "Unknown",
+        isActive = isActive,
+        isRestricted = isRestricted,
+        volumePercent = volumePercent,
+    )
+}
+
+private fun SpotifyDevice.displayName(): String =
+    name?.takeIf { it.isNotBlank() } ?: "Unknown device"
+
+private fun requireSpotifyVolume(device: SpotifyDevice) {
+    if (device.volumePercent == 0) {
+        error(
+            "Spotify volume is 0 on ${device.displayName()}. Raise the volume in Spotify, then try again.",
+        )
+    }
+}
+
+private fun selectedDeviceMissingMessage(
+    selectedId: String,
+    alternatives: List<SpotifyConnectDevice>,
+): String {
+    val available = alternatives.joinToString { "${it.name} (${it.type})" }
+    return if (available.isNotEmpty()) {
+        "The Spotify device saved in Settings is offline (id ${selectedId.take(8)}…). " +
+            "Choose another device under Settings → Spotify output. Available now: $available."
+    } else {
+        "The Spotify device saved in Settings is offline. Open Spotify on this phone or another " +
+            "Premium device, then refresh devices in Settings → Spotify output and select one."
+    }
+}
 
 // #region agent log
 private fun debugSpotifyLog(

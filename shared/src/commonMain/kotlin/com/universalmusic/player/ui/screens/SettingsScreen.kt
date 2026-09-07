@@ -1,13 +1,17 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -28,16 +32,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.data.spotify.SpotifyConnectDevice
+import com.universalmusic.player.data.settings.AppColorScheme
 import com.universalmusic.player.data.settings.ThemeMode
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
 import com.universalmusic.player.platform.SpotifyWebPlaybackState
+import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.authenticateSpotify
+import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
+import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.supportsMusicFolderPicker
+import com.universalmusic.player.ui.theme.colorSchemeFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -47,6 +57,8 @@ fun SettingsScreen(container: AppContainer) {
     val spotify by container.spotify.state.collectAsState()
     val spotifyPlayback by container.spotifyWebPlayback.state.collectAsState()
     val nativeSpotify = !container.spotifyWebPlayback.requiresStreamingScope
+    var spotifyDevices by remember { mutableStateOf<List<SpotifyConnectDevice>>(emptyList()) }
+    var spotifyDevicesLoaded by remember { mutableStateOf(false) }
     val youtube by container.youtube.state.collectAsState()
     val local by container.local.state.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
@@ -66,7 +78,7 @@ fun SettingsScreen(container: AppContainer) {
         scope.launch {
             try { action() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { providerError = failure.message ?: "Provider connection failed. Try again." }
+            catch (failure: Throwable) { providerError = failure.message ?: "Provider connection failed. Try again." }
             finally { providerBusy = false }
         }
     }
@@ -222,12 +234,95 @@ fun SettingsScreen(container: AppContainer) {
             busy = providerBusy || !ready,
             detail = "Connect your Spotify account for search, liked songs, playlists, and playback controls. Spotify API rate limits can temporarily block these features.",
         )
+        if (requiresExplicitSpotifyDevice()) {
+            Text("Spotify output", style = MaterialTheme.typography.titleMedium)
+            Text(
+                settings.spotifyPlaybackDeviceName?.let { "Selected: $it" }
+                    ?: "No device selected. Pick where Spotify should play.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Kainos cannot play Spotify audio itself on Android. It tells Spotify which Connect device to use. " +
+                    "Open Spotify on this phone for phone speakers, or leave Spotify closed and pick a computer, speaker, " +
+                    "or another phone that is already online. Sound only comes from the device you select.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(enabled = ready && !providerBusy, onClick = {
+                providerAction {
+                    if (!ensureSpotifyConnectClientAvailable()) {
+                        error("Install the Spotify app to use this phone as a Connect device, or pick another online device below.")
+                    }
+                    providerNotice = "Spotify opened. Sign in if needed, then refresh devices and select this phone."
+                }
+            }) { Text("Open Spotify app") }
+            OutlinedButton(
+                enabled = ready && !providerBusy && (spotify == ProviderState.AVAILABLE || spotify == ProviderState.RATE_LIMITED),
+                onClick = {
+                    providerAction {
+                        spotifyDevices = container.spotify.getConnectDevices()
+                        spotifyDevicesLoaded = true
+                        val selectedId = container.settings.value.spotifyPlaybackDeviceId
+                        if (selectedId != null && spotifyDevices.none { it.id == selectedId }) {
+                            container.updateSettings {
+                                it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null)
+                            }
+                            providerNotice = "Previous Spotify device went offline. Select another device below."
+                        } else {
+                            providerNotice = when {
+                                spotifyDevices.isEmpty() -> "No Connect devices yet. Open Spotify somewhere, then refresh."
+                                else -> "${spotifyDevices.size} Spotify device${if (spotifyDevices.size == 1) "" else "s"} found."
+                            }
+                        }
+                    }
+                },
+            ) { Text("Refresh Spotify devices") }
+            if (spotifyDevicesLoaded && spotifyDevices.isEmpty()) {
+                Text(
+                    "No Spotify devices are available. Open Spotify on this phone or another Premium device, then refresh.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            spotifyDevices.forEach { device ->
+                val selected = settings.spotifyPlaybackDeviceId == device.id
+                Row(
+                    Modifier.fillMaxWidth().selectable(selected = selected, enabled = !providerBusy && !device.isRestricted) {
+                        providerAction {
+                            container.updateSettings { it.copy(
+                                spotifyPlaybackDeviceId = device.id,
+                                spotifyPlaybackDeviceName = device.name,
+                            ) }
+                            providerNotice = "Spotify will play on ${device.name}."
+                        }
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selected, onClick = null, enabled = !device.isRestricted)
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text(device.name)
+                        Text(
+                            buildString {
+                                append(device.type)
+                                if (device.isActive) append(" · Active")
+                                if (device.volumePercent == 0) append(" · Muted in Spotify")
+                                if (device.isRestricted) append(" · Cannot be controlled")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
         if (nativeSpotify) {
             OutlinedButton(enabled = ready && !providerBusy, onClick = {
                 providerAction {
                     val receiver = container.spotifyWebPlayback.prepareAuthentication()
                     if (receiver != null) {
-                        providerNotice = "Receiver started. Complete Spotify sign-in if a browser page opens, then choose a track in Kainos."
+                        providerNotice =
+                            "Receiver started. Complete Spotify sign-in if a browser page opens, then choose a track in Kainos."
+                    } else {
+                        val failure = (container.spotifyWebPlayback.state.value as? SpotifyWebPlaybackState.Failed)?.reason
+                        providerError = failure?.let(::spotifyPlaybackFailureMessage)
+                            ?: "Spotify receiver setup failed. Try setup again."
                     }
                 }
             }) { Text("Set up in-app Spotify playback") }
@@ -239,12 +334,7 @@ fun SettingsScreen(container: AppContainer) {
             val failure = (spotifyPlayback as? SpotifyWebPlaybackState.Failed)?.reason
             if (failure != null) {
                 Text(
-                    when (failure) {
-                        SpotifyWebPlaybackFailure.LibrespotNotFound -> "Install librespot with scripts/install-librespot.sh, then try setup again."
-                        SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired -> "Set up in-app Spotify playback to sign in to the receiver."
-                        is SpotifyWebPlaybackFailure.LibrespotExited -> failure.detail ?: "The Spotify receiver stopped. Try setup again."
-                        else -> "Spotify receiver setup failed. Try setup again."
-                    },
+                    spotifyPlaybackFailureMessage(failure),
                     color = MaterialTheme.colorScheme.error,
                 )
             }
@@ -272,6 +362,7 @@ fun SettingsScreen(container: AppContainer) {
         )
 
         Text("Appearance", style = MaterialTheme.typography.titleMedium)
+        Text("Light / dark", style = MaterialTheme.typography.labelLarge)
         ThemeMode.entries.forEach { mode ->
             Row(
                 Modifier
@@ -285,6 +376,54 @@ fun SettingsScreen(container: AppContainer) {
                     scope.launch { container.updateSettings { it.copy(themeMode = mode) } }
                 })
                 Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+        Text("Color scheme", style = MaterialTheme.typography.labelLarge)
+        Text(
+            "Palettes from Caelestia shell schemes. Light and dark variants both update when you change mode above.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        AppColorScheme.entries.forEach { scheme ->
+            val selected = settings.colorScheme == scheme
+            val previewDark = when (settings.themeMode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            val preview = colorSchemeFor(scheme, previewDark)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .selectable(selected) {
+                        scope.launch { container.updateSettings { it.copy(colorScheme = scheme) } }
+                    }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = selected, onClick = {
+                    scope.launch { container.updateSettings { it.copy(colorScheme = scheme) } }
+                })
+                Row(
+                    Modifier.padding(start = 4.dp, end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    listOf(preview.primary, preview.secondary, preview.tertiary, preview.surfaceContainer).forEach { swatch ->
+                        Box(
+                            Modifier
+                                .size(18.dp)
+                                .background(swatch, RoundedCornerShape(4.dp)),
+                        )
+                    }
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(scheme.label, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        scheme.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         SettingToggle("Include sample catalog in search", settings.sampleCatalogEnabled) {
@@ -343,6 +482,25 @@ private fun ProviderAccountRow(
             }
         }
     }
+}
+
+private fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): String = when (failure) {
+    SpotifyWebPlaybackFailure.LibrespotNotFound -> "Install librespot with scripts/install-librespot.sh, then try setup again."
+    SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
+        "Set up in-app Spotify playback to sign in to the receiver."
+    is SpotifyWebPlaybackFailure.LibrespotExited -> {
+        val detail = failure.detail.orEmpty()
+        describeLibrespotConnectionFailure(detail)?.let { return it }
+        when {
+            detail.contains("GeneratedMessageV3", ignoreCase = true) ||
+                detail.contains("protobuf", ignoreCase = true) ->
+                "Spotify setup failed: a required library is missing from this build. Reinstall the app."
+            detail.isNotBlank() -> detail
+            else -> "The Spotify receiver stopped. Try setup again."
+        }
+    }
+    is SpotifyWebPlaybackFailure.Message -> failure.detail
+    else -> "Spotify receiver setup failed. Try setup again."
 }
 
 private fun SourceSelectionMode.label(): String = when (this) {

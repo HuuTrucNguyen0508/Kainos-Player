@@ -79,6 +79,7 @@ internal data class SpotifyPlaylistTrack(
 
 @Serializable
 internal data class SpotifyOwner(
+    val id: String? = null,
     val display_name: String? = null,
 )
 
@@ -126,6 +127,28 @@ internal data class SpotifyDevice(
     @SerialName("is_restricted") val isRestricted: Boolean = false,
     val name: String? = null,
     val type: String? = null,
+    @SerialName("volume_percent") val volumePercent: Int? = null,
+)
+
+@Serializable
+internal data class SpotifyCurrentPlaybackResponse(
+    val device: SpotifyDevice? = null,
+    val item: SpotifyPlaybackItem? = null,
+    @SerialName("is_playing") val isPlaying: Boolean = false,
+)
+
+@Serializable
+internal data class SpotifyPlaybackItem(
+    val id: String? = null,
+)
+
+data class SpotifyConnectDevice(
+    val id: String,
+    val name: String,
+    val type: String,
+    val isActive: Boolean,
+    val isRestricted: Boolean,
+    val volumePercent: Int?,
 )
 
 @Serializable

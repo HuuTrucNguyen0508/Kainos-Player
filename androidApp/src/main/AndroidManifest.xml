@@ -10,6 +10,10 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <queries>
+        <package android:name="com.spotify.music" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_media_play"
@@ -35,6 +39,12 @@
                     android:scheme="universalmusic" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="com.universalmusic.player.platform.SpotifyAuthActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize"
+            android:hardwareAccelerated="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <service
             android:name="com.universalmusic.player.platform.AndroidPlaybackService"
             android:exported="true"

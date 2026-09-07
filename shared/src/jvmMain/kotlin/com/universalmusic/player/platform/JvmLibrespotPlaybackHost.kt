@@ -12,8 +12,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-internal const val KAINOS_SPOTIFY_DEVICE_NAME = "Kainos Player"
-
 internal data class LibrespotPaths(
     val systemCache: Path,
     val audioCache: Path,
