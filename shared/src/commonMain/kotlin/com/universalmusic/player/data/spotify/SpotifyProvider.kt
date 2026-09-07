@@ -202,7 +202,7 @@ class SpotifyProvider(
             tracks = response.tracks?.items?.mapNotNull { it.toDomainOrNull(premium) }.orEmpty(),
             albums = response.albums?.items?.map { it.toDomain(premium) }.orEmpty(),
             artists = response.artists?.items?.map { it.toDomain() }.orEmpty(),
-            playlists = response.playlists?.items?.mapNotNull { it?.toDomain(premium) }.orEmpty(),
+            playlists = response.playlists?.items?.mapNotNull { it?.toDomainOrNull(premium) }.orEmpty(),
         )
     }
 
@@ -266,7 +266,7 @@ class SpotifyProvider(
                 parameter("offset", offset)
             }.successBody<SpotifyPaging<SpotifyPlaylist>>("Spotify playlists")
             result += response.items.mapNotNull { playlist ->
-                playlist.takeIf { it.id.isNotBlank() && it.name.isNotBlank() }?.toDomain(premium)
+                playlist.takeIf { it.id.isNotBlank() && it.name.isNotBlank() }?.toDomainOrNull(premium)
             }
             offset += response.items.size
         } while (response.next != null && response.items.isNotEmpty())

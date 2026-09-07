@@ -7,6 +7,8 @@ androidx-activity = "1.13.0"
 androidx-lifecycle = "2.11.0-beta01"
 androidx-navigation = "2.9.2"
 androidx-media3 = "1.8.0"
+desugar-jdk-libs-nio = "2.1.5"
+newpipe-extractor = "v0.26.5"
 coil = "3.5.0"
 compose-material-icons = "1.7.3"
 compose-material3 = "1.11.0-alpha07"
@@ -24,6 +26,8 @@ androidx-lifecycle-viewmodelCompose = { group = "org.jetbrains.androidx.lifecycl
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidx-media3" }
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "androidx-media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "androidx-media3" }
+android-desugar-jdk-libs-nio = { module = "com.android.tools:desugar_jdk_libs_nio", version.ref = "desugar-jdk-libs-nio" }
+newpipe-extractor = { module = "com.github.teamnewpipe:NewPipeExtractor", version.ref = "newpipe-extractor" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-ktor = { group = "io.coil-kt.coil3", name = "coil-network-ktor3", version.ref = "coil" }
 compose-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "compose-multiplatform" }

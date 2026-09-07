@@ -64,7 +64,7 @@ fun ArtworkImage(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = seed.take(1).uppercase(),
+                text = seed.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
                 style = MaterialTheme.typography.titleMedium,
                 color = Color.White,
             )

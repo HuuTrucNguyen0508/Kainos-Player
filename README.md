@@ -71,9 +71,17 @@ Open the project in Android Studio, or:
 ./gradlew :androidApp:assembleDebug
 ```
 
-Install the debug APK. Background playback uses Media3 / ExoPlayer for HTTP sources and Spotify Connect for Spotify. Lock-screen and Bluetooth controls follow the Media3 session when a URL is playing.
+Install `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Local and HTTP audio use a Media3 foreground playback service with system media controls. Spotify uses Connect to an available Spotify device; Android does not run the Linux librespot receiver. YouTube search uses the Data API; playback resolves an audio URL with NewPipe Extractor into ExoPlayer.
 
 On first launch, allow music and audio access. The app reads the Android MediaStore index and refreshes the local library after permission is granted; it does not copy audio into the app.
+
+With an emulator or Android device connected, run the playback and library checks:
+
+```bash
+JAVA_HOME="$HOME/.jdks/temurin-17" ./gradlew :androidApp:connectedDebugAndroidTest :androidApp:lintDebug
+```
+
+The instrumented tests cover MediaStore scanning, local playback controls and completion, recovery from missing audio, background service/system pause, and switching from Spotify to local audio with a simulated Spotify controller. They do not sign in to Spotify or test physical Bluetooth hardware.
 
 ## Connect providers
 
@@ -96,7 +104,7 @@ On Linux, Kainos runs [librespot](https://github.com/librespot-org/librespot) as
 
 Enable **YouTube Data API v3** in your Google Cloud project, create an API key, and save it in Settings or set `YOUTUBE_DATA_API_KEY`. Search returns videos and playlists, with durations fetched from video metadata.
 
-On Linux desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh`) so Search can play audio in-app through mpv. **Open YouTube** still opens the browser. Android remains browser-only for YouTube. Account library sync is not implemented.
+On Linux desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh`) so Search can play audio in-app through mpv. **Open YouTube** still opens the browser. Android resolves audio with NewPipe Extractor into the in-app ExoPlayer service. Account library sync is not implemented.
 
 The adapter uses the official [search](https://developers.google.com/youtube/v3/docs/search/list) and [video metadata](https://developers.google.com/youtube/v3/docs/videos/list) endpoints. Quota and credential errors appear in search. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
