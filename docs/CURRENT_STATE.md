@@ -19,7 +19,8 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 - Home starts with a recent track or local music when available; demo albums and playlists are labeled as samples
 - Library labels sample content and supports playing sample playlists
-- Search supports keyboard focus, clearing the query, and cancellation when the query changes
+- Search supports keyboard focus, clearing the query, and cancellation when the query changes; result lists dedupe provider rows so blank/duplicate Spotify playlist stubs cannot crash the UI
+- Library has an in-app search field that filters songs, albums, artists, and playlists on Android and desktop
 - Now Playing has a return button on mobile, scrolls on short windows, shows loading feedback, and seeks when the slider is released
 - Provider labels scroll horizontally on narrow screens
 - Settings hides inactive gapless, normalization, and compact-mode switches; these features still need implementation

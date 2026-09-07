@@ -94,6 +94,12 @@ internal fun SpotifyPlaylist.toDomain(premium: Boolean): Playlist = Playlist(
     source = ProviderEntityRef(ProviderId.SPOTIFY, id),
 )
 
+/** Drop incomplete playlist stubs Spotify sometimes returns in search/paging payloads. */
+internal fun SpotifyPlaylist.toDomainOrNull(premium: Boolean): Playlist? {
+    if (id.isBlank() || name.isBlank()) return null
+    return toDomain(premium)
+}
+
 internal fun List<SpotifyImage>.toArtwork(): Artwork? {
     val image = maxByOrNull { it.width ?: 0 } ?: firstOrNull() ?: return null
     return Artwork(image.url, image.width, image.height)

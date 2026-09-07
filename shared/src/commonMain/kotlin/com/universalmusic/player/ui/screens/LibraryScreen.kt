@@ -14,15 +14,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,6 +43,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artist
+import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
@@ -58,6 +63,7 @@ fun LibraryScreen(
 ) {
     var tab by remember { mutableStateOf(LibraryTab.Songs) }
     var sortMenuOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     val settings by container.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val saved by container.library.savedTracks.collectAsState()
@@ -69,33 +75,51 @@ fun LibraryScreen(
     val spotifyLoading by container.spotifyLibraryLoading.collectAsState()
     val spotifyError by container.spotifyLibraryError.collectAsState()
     val spotifyState by container.spotify.state.collectAsState()
-    val songs = remember(localTracks, saved, spotifyTracks, settings.librarySongSort) {
+    val needle = query.trim().lowercase()
+    val songs = remember(localTracks, saved, spotifyTracks, settings.librarySongSort, needle) {
         settings.librarySongSort.sort(
             (localTracks + saved + spotifyTracks).distinctBy(Track::canonicalId)
-                .ifEmpty { container.sample.allTracks },
+                .ifEmpty { container.sample.allTracks }
+                .filter { needle.isEmpty() || it.matchesLibraryQuery(needle) },
         )
     }
-    val localAlbums = localTracks
-        .filter { it.album != null }
-        .groupBy { it.album!!.canonicalId }
-        .map { (id, tracks) ->
-            val ref = tracks.first().album!!
-            Album(
-                canonicalId = id,
-                title = ref.title,
-                artists = tracks.flatMap(Track::artists).distinctBy { it.canonicalId },
-                artwork = ref.artwork,
-                year = ref.year,
-                tracks = tracks,
-                sources = listOf(ProviderEntityRef(ProviderId.LOCAL, id)),
-            )
-        }
-        .sortedBy { it.title.lowercase() }
-    val localArtists = localTracks
-        .flatMap(Track::artists)
-        .distinctBy { it.canonicalId }
-        .map { Artist(it.canonicalId, it.name, it.artwork, sources = listOf(ProviderEntityRef(ProviderId.LOCAL, it.canonicalId))) }
-        .sortedBy { it.name.lowercase() }
+    val localAlbums = remember(localTracks) {
+        localTracks
+            .filter { it.album != null }
+            .groupBy { it.album!!.canonicalId }
+            .map { (id, tracks) ->
+                val ref = tracks.first().album!!
+                Album(
+                    canonicalId = id,
+                    title = ref.title,
+                    artists = tracks.flatMap(Track::artists).distinctBy { it.canonicalId },
+                    artwork = ref.artwork,
+                    year = ref.year,
+                    tracks = tracks,
+                    sources = listOf(ProviderEntityRef(ProviderId.LOCAL, id)),
+                )
+            }
+            .sortedBy { it.title.lowercase() }
+    }
+    val filteredAlbums = remember(localAlbums, needle) {
+        val base = localAlbums.ifEmpty { container.sample.homeAlbums }
+        if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
+    }
+    val localArtists = remember(localTracks) {
+        localTracks
+            .flatMap(Track::artists)
+            .distinctBy { it.canonicalId }
+            .map { Artist(it.canonicalId, it.name, it.artwork, sources = listOf(ProviderEntityRef(ProviderId.LOCAL, it.canonicalId))) }
+            .sortedBy { it.name.lowercase() }
+    }
+    val filteredArtists = remember(localArtists, needle) {
+        val base = localArtists.ifEmpty { container.sample.homeArtists }
+        if (needle.isEmpty()) base else base.filter { it.name.lowercase().contains(needle) }
+    }
+    val filteredPlaylists = remember(spotifyPlaylists, needle) {
+        val base = spotifyPlaylists.ifEmpty { container.sample.homePlaylists }
+        if (needle.isEmpty()) base else base.filter { it.matchesLibraryQuery(needle) }
+    }
 
     Column(Modifier.fillMaxSize().padding(bottom = 88.dp)) {
         Row(
@@ -108,6 +132,23 @@ fun LibraryScreen(
                 Text(if (localState == ProviderState.LOADING) "Scanning…" else "Refresh files")
             }
         }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            placeholder = { Text("Search library") },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { query = "" }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear library search")
+                    }
+                }
+            },
+        )
         Text(
             when {
                 localState == ProviderState.LOADING -> "Scanning your music folders…"
@@ -141,7 +182,7 @@ fun LibraryScreen(
             LibraryTab.Artists -> localArtists.isEmpty()
             LibraryTab.Playlists -> spotifyPlaylists.isEmpty()
         }
-        if (showingSamples) {
+        if (showingSamples && needle.isEmpty()) {
             Text(
                 "Sample catalog · SoundHelix audio",
                 style = MaterialTheme.typography.labelMedium,
@@ -173,10 +214,17 @@ fun LibraryScreen(
                     }
                 }
                 if (songs.isEmpty()) {
-                    EmptyState("No songs yet", "Play something and it will land here. App favorites stay separate from Spotify Liked.")
+                    EmptyState(
+                        if (needle.isEmpty()) "No songs yet" else "No songs match \"$query\"",
+                        if (needle.isEmpty()) {
+                            "Play something and it will land here. App favorites stay separate from Spotify Liked."
+                        } else {
+                            "Try another title, artist, or album name."
+                        },
+                    )
                 } else {
                     val listState = rememberLazyListState()
-                    LaunchedEffect(settings.librarySongSort) { listState.scrollToItem(0) }
+                    LaunchedEffect(settings.librarySongSort, needle) { listState.scrollToItem(0) }
                     LazyColumn(state = listState) {
                         items(songs, key = { it.canonicalId }) { track ->
                             TrackRow(
@@ -213,12 +261,18 @@ fun LibraryScreen(
                 }
             }
             LibraryTab.Albums -> {
-                val albums = localAlbums.ifEmpty { container.sample.homeAlbums }
-                if (albums.isEmpty()) {
-                    EmptyState("No albums", "Connect a provider or play from the sample catalog.")
+                if (filteredAlbums.isEmpty()) {
+                    EmptyState(
+                        if (needle.isEmpty()) "No albums" else "No albums match \"$query\"",
+                        if (needle.isEmpty()) {
+                            "Connect a provider or play from the sample catalog."
+                        } else {
+                            "Try another album or artist name."
+                        },
+                    )
                 } else {
                     LazyColumn {
-                        items(albums, key = { it.canonicalId }) { album ->
+                        items(filteredAlbums, key = { it.canonicalId }) { album ->
                             AlbumRow(
                                 album = album,
                                 onClick = { if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks, 0) },
@@ -229,26 +283,47 @@ fun LibraryScreen(
                 }
             }
             LibraryTab.Artists -> {
-                val artists = localArtists.ifEmpty { container.sample.homeArtists }
-                LazyColumn {
-                    items(artists, key = { it.canonicalId }) { artist ->
-                        Text(artist.name, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+                if (filteredArtists.isEmpty()) {
+                    EmptyState(
+                        if (needle.isEmpty()) "No artists" else "No artists match \"$query\"",
+                        if (needle.isEmpty()) {
+                            "Local artists appear here after a library scan."
+                        } else {
+                            "Try another artist name."
+                        },
+                    )
+                } else {
+                    LazyColumn {
+                        items(filteredArtists, key = { it.canonicalId }) { artist ->
+                            Text(artist.name, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+                        }
                     }
                 }
             }
             LibraryTab.Playlists -> {
-                LazyColumn {
-                    items(spotifyPlaylists.ifEmpty { container.sample.homePlaylists }, key = { it.canonicalId }) { playlist ->
-                        Text(
-                            if (playlist.source.provider == ProviderId.SPOTIFY) "${playlist.title} · Open Spotify" else playlist.title,
-                            modifier = Modifier.fillMaxWidth()
-                                .clickable {
-                                    if (playlist.source.provider == ProviderId.SPOTIFY) {
-                                        openUrl("https://open.spotify.com/playlist/${encodeUrl(playlist.source.providerEntityId)}")
-                                    } else if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks, 0)
-                                }
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
-                        )
+                if (filteredPlaylists.isEmpty()) {
+                    EmptyState(
+                        if (needle.isEmpty()) "No playlists" else "No playlists match \"$query\"",
+                        if (needle.isEmpty()) {
+                            "Connect Spotify or browse sample playlists."
+                        } else {
+                            "Try another playlist name."
+                        },
+                    )
+                } else {
+                    LazyColumn {
+                        items(filteredPlaylists, key = { it.canonicalId }) { playlist ->
+                            Text(
+                                if (playlist.source.provider == ProviderId.SPOTIFY) "${playlist.title} · Open Spotify" else playlist.title,
+                                modifier = Modifier.fillMaxWidth()
+                                    .clickable {
+                                        if (playlist.source.provider == ProviderId.SPOTIFY) {
+                                            openUrl("https://open.spotify.com/playlist/${encodeUrl(playlist.source.providerEntityId)}")
+                                        } else if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks, 0)
+                                    }
+                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -262,3 +337,18 @@ private fun TrackSort.label(): String = when (this) {
     TrackSort.DURATION_ASCENDING -> "Duration shortest first"
     TrackSort.DURATION_DESCENDING -> "Duration longest first"
 }
+
+private fun Track.matchesLibraryQuery(needle: String): Boolean =
+    title.lowercase().contains(needle) ||
+        artists.any { it.name.lowercase().contains(needle) } ||
+        album?.title?.lowercase()?.contains(needle) == true
+
+private fun Album.matchesLibraryQuery(needle: String): Boolean =
+    title.lowercase().contains(needle) ||
+        artists.any { it.name.lowercase().contains(needle) } ||
+        tracks.any { it.matchesLibraryQuery(needle) }
+
+private fun Playlist.matchesLibraryQuery(needle: String): Boolean =
+    title.lowercase().contains(needle) ||
+        ownerName?.lowercase()?.contains(needle) == true ||
+        description?.lowercase()?.contains(needle) == true

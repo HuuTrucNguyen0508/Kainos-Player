@@ -255,7 +255,7 @@ class SpotifyProviderTest {
                     "tracks":{"items":[],"total":0},
                     "albums":{"items":[],"total":0},
                     "artists":{"items":[],"total":0},
-                    "playlists":{"items":[null,{"id":"p1","name":"Mix","items":{"total":7}}],"total":2}
+                    "playlists":{"items":[null,{"id":"","name":"Broken"},{"id":"p1","name":"Mix","items":{"total":7}}],"total":3}
                 }""",
             )
         }

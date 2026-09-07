@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
@@ -39,7 +39,9 @@ import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.ProviderStatusRow
 import com.universalmusic.player.ui.components.TrackRow
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SearchScreen(
@@ -63,7 +65,9 @@ fun SearchScreen(
     val hasLocalTracks = localTracks.isNotEmpty()
 
     LaunchedEffect(requestFocus) {
-        if (requestFocus) focusRequester.requestFocus()
+        if (requestFocus) {
+            runCatching { focusRequester.requestFocus() }
+        }
     }
 
     LaunchedEffect(query, settings.sampleCatalogEnabled, settings.spotifyClientId, settings.youtubeDataApiKey) {
@@ -78,7 +82,9 @@ fun SearchScreen(
         loading = true
         delay(220)
         try {
-            result = container.unifiedSearch().search(value)
+            result = withContext(Dispatchers.IO) {
+                container.unifiedSearch().search(value)
+            }
             loading = false
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -129,8 +135,13 @@ fun SearchScreen(
             Text("${status.provider.displayName}: ${status.message}", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
         }
-        val playlists = result?.playlists.orEmpty().filter { it.source.provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC) }
+        val playlists = result?.playlists.orEmpty()
+            .filter { it.source.provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC) }
+            .filter { it.canonicalId.isNotBlank() && it.source.providerEntityId.isNotBlank() }
+            .distinctBy { it.canonicalId }
         val tracks = result?.tracks
+            ?.filter { it.canonicalId.isNotBlank() }
+            ?.distinctBy { it.canonicalId }
         when {
             loading && tracks == null -> CircularProgressIndicator(Modifier.padding(24.dp))
             error != null -> Text(error ?: "", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(20.dp))
@@ -148,7 +159,7 @@ fun SearchScreen(
             }
             else -> LazyColumn {
                 val trackList = tracks.orEmpty()
-                items(trackList, key = { "track:${it.canonicalId}" }) { track ->
+                itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
                     fun openYouTube() { youtubeSource?.let { openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}") } }
                     TrackRow(track, onClick = {
@@ -162,7 +173,7 @@ fun SearchScreen(
                         if (youtubeSource != null) TextButton(onClick = ::openYouTube) { Text("Open YouTube") }
                     })
                 }
-                items(playlists, key = { "playlist:${it.canonicalId}" }) { playlist ->
+                itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
                     TextButton(onClick = {
                         val id = encodeUrl(playlist.source.providerEntityId)
                         when (playlist.source.provider) {

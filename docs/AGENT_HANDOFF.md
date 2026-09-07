@@ -1,16 +1,18 @@
 # Agent handoff
 
-Updated 2026-09-07 after live YouTube smoke and APK packaging. Never include account tokens or credentials.
+Updated 2026-09-07 after Search crash fix and Library search.
 
-## Latest outcome
+## Latest user request
 
-- Live Android YouTube smoke PASS on Pixel_10_Pro API 37: NewPipe resolved `jNQXAC9IVRw`, ExoPlayer reached PLAYING with advancing position, then pause. Evidence: `logs/android-youtube-live-smoke.log` and connected test XML (`failures="0"`).
-- Debug APK: `androidApp/build/outputs/apk/debug/androidApp-debug.apk`
-- User asked to push the APK to GitHub after a good smoke. Emulator stopped after packaging.
+- Search section crashed when typing → fixed (dedupe LazyColumn keys, drop blank Spotify playlist stubs, safer focus request, search on IO).
+- Add search in Library on both apps → done in shared `LibraryScreen` (filters songs/albums/artists/playlists).
+
+## Validation
+
+- `logs/search-library-fix.log`: compileJvm + compileAndroid + desktop + androidDebug + jvmTest PASS
 
 ## Remaining gaps
 
-- Android Spotify still Connect-only (no librespot).
-- Physical-device / Bluetooth not verified.
-- Linux audible Spotify end-to-end not verified.
-- NewPipe without poToken may miss some formats on some videos.
+- Android Spotify still Connect-only.
+- Physical-device confirmation of the Search crash fix still useful.
+- Live YouTube smoke previously passed; NewPipe without poToken may miss some formats.
