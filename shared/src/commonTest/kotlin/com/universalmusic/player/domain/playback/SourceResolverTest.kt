@@ -20,7 +20,7 @@ class SourceResolverTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 320),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 256, quality = QualityTier.STANDARD),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, bitrate = 128, quality = QualityTier.LOW),
+            track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 128, quality = QualityTier.LOW),
         )
         val resolved = resolver.resolve(track, PlaybackPreferences.Default)
         assertEquals(ProviderId.SPOTIFY, resolved.source.provider)
@@ -31,7 +31,7 @@ class SourceResolverTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 256, quality = QualityTier.HIGH),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 256, quality = QualityTier.HIGH),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, bitrate = 256, quality = QualityTier.HIGH),
+            track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 256, quality = QualityTier.HIGH),
         )
         val resolved = resolver.resolve(
             track,
@@ -41,14 +41,14 @@ class SourceResolverTest {
     }
 
     @Test
-    fun selectsSoundCloudWhenItIsBestAvailable() = runTest {
+    fun selectsLocalWhenItIsBestAvailable() = runTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, playable = false),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 256, quality = QualityTier.STANDARD),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, bitrate = 320),
+            track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 320),
         )
         val resolved = resolver.resolve(track, PlaybackPreferences.Default)
-        assertEquals(ProviderId.SOUNDCLOUD, resolved.source.provider)
+        assertEquals(ProviderId.LOCAL, resolved.source.provider)
         assertTrue(resolved.fallbacks.any { it.provider == ProviderId.YOUTUBE_MUSIC })
     }
 
@@ -57,7 +57,7 @@ class SourceResolverTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 160, quality = QualityTier.STANDARD),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 256, quality = QualityTier.HIGH),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, playable = false),
+            track("Song", "Artist", provider = ProviderId.LOCAL, playable = false),
         )
         val resolved = resolver.resolve(track, PlaybackPreferences.Default)
         assertEquals(ProviderId.YOUTUBE_MUSIC, resolved.source.provider)
@@ -65,7 +65,7 @@ class SourceResolverTest {
 
     @Test
     fun unknownQualityRanksBelowKnownHighQuality() = runTest {
-        val unknown = track("Song", "Artist", provider = ProviderId.SOUNDCLOUD).let { original ->
+        val unknown = track("Song", "Artist", provider = ProviderId.LOCAL).let { original ->
             original.copy(sources = original.sources.map { it.copy(quality = null) })
         }
         val track = merged(
@@ -81,10 +81,10 @@ class SourceResolverTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, playable = false),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, playable = false),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, bitrate = 128, quality = QualityTier.LOW),
+            track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 128, quality = QualityTier.LOW),
         )
         val resolved = resolver.resolve(track, PlaybackPreferences.Default)
-        assertEquals(ProviderId.SOUNDCLOUD, resolved.source.provider)
+        assertEquals(ProviderId.LOCAL, resolved.source.provider)
         assertTrue(resolved.fallbacks.isEmpty())
     }
 
@@ -92,13 +92,13 @@ class SourceResolverTest {
     fun forcedProviderIsHonored() = runTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 320),
-            track("Song", "Artist", provider = ProviderId.SOUNDCLOUD, bitrate = 128, quality = QualityTier.LOW),
+            track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 128, quality = QualityTier.LOW),
         )
         val resolved = resolver.resolve(
             track,
-            PlaybackPreferences(sourceSelection = SourceSelectionMode.FORCE_SOUNDCLOUD),
+            PlaybackPreferences(sourceSelection = SourceSelectionMode.FORCE_YOUTUBE_MUSIC),
         )
-        assertEquals(ProviderId.SOUNDCLOUD, resolved.source.provider)
+        assertEquals(ProviderId.YOUTUBE_MUSIC, resolved.source.provider)
     }
 
     @Test

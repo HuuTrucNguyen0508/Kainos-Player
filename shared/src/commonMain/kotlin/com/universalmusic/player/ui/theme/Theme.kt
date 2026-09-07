@@ -16,7 +16,6 @@ val InkElevated = Color(0xFF1A1A21)
 val Cream = Color(0xFFF7F1E8)
 val SpotifyGreen = Color(0xFF1DB954)
 val YoutubeRed = Color(0xFFFF0033)
-val SoundCloudOrange = Color(0xFFFF5500)
 
 private val DarkColors = darkColorScheme(
     primary = Amber,
@@ -76,7 +75,6 @@ fun UniversalMusicTheme(
 fun providerColor(name: String): Color = when (name) {
     "Spotify" -> SpotifyGreen
     "YouTube Music" -> YoutubeRed
-    "SoundCloud" -> SoundCloudOrange
     else -> Amber
 }
 

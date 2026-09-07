@@ -13,6 +13,8 @@ enum class ThemeMode {
 
 @Serializable
 data class AppSettings(
+    val spotifyClientId: String? = null,
+    val youtubeDataApiKey: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = true,
     val compactMode: Boolean = false,

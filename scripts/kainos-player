@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Update the packaged app with Gradle's incremental checks, then launch it.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+if [[ -z "${KAINOS_LIBRESPOT:-}" && -x "$ROOT/tools/librespot-runtime/bin/librespot" ]]; then
+  export KAINOS_LIBRESPOT="$ROOT/tools/librespot-runtime/bin/librespot"
+fi
+
+if [[ -x "$ROOT/tools/yt-dlp" ]]; then
+  export KAINOS_YT_DLP="$ROOT/tools/yt-dlp"
+elif [[ -x "${HOME}/.local/bin/yt-dlp" ]]; then
+  export KAINOS_YT_DLP="${HOME}/.local/bin/yt-dlp"
+fi
+
+APP_BIN="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player/bin/Kainos Player"
+
+cd "$ROOT"
+
+mkdir -p "$ROOT/logs"
+LOG="$ROOT/logs/desktop-run-$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$(basename "$LOG")" "$ROOT/logs/desktop-run-latest.log"
+
+# An existing executable can contain old shared code. Let Gradle check all
+# inputs, including resources and dependencies, rather than checking existence.
+echo "Checking Kainos Player for updates…" >&2
+if ! ./gradlew :desktopApp:createDistributable --console=plain >>"$LOG" 2>&1; then
+  echo "Kainos Player build failed. See log: $LOG" >&2
+  exit 1
+fi
+
+exec "$APP_BIN" "$@" >>"$LOG" 2>&1

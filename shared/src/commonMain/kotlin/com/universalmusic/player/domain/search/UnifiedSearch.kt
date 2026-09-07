@@ -7,6 +7,7 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.UnifiedSearchResult
 import com.universalmusic.player.domain.provider.MusicProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
@@ -21,7 +22,7 @@ class UnifiedSearch(
             async {
                 provider.providerId to runCatching {
                     withTimeoutOrNull(timeoutMs) { provider.search(query) }
-                }
+                }.onFailure { if (it is CancellationException) throw it }
             }
         }
 
@@ -52,7 +53,9 @@ class UnifiedSearch(
                 onFailure = { error ->
                     ProviderSearchStatus(
                         provider = providerId,
-                        state = classify(error),
+                        state = providers.first { it.providerId == providerId }.state.value
+                            .takeIf { it in listOf(ProviderState.AUTH_REQUIRED, ProviderState.RATE_LIMITED, ProviderState.NOT_CONFIGURED) }
+                            ?: classify(error),
                         message = error.message,
                     )
                 },

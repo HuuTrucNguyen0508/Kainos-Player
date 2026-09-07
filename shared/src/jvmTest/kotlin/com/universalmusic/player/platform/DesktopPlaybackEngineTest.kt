@@ -8,6 +8,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -16,11 +17,36 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
+    @Test
+    fun stopIsSentBeforeAFollowingSpotifyPlay() = runBlocking {
+        val calls = CopyOnWriteArrayList<String>()
+        val engine = DesktopPlaybackEngine(
+            spotify = SpotifyPlaybackController(
+                play = { calls += "play:$it" },
+                pause = { calls += "pause" },
+                resume = {},
+                seekTo = {},
+            ),
+            runtime = FakeDesktopPlaybackRuntime(),
+        )
+
+        engine.play(PlaybackHandle.ProviderPlayback(com.universalmusic.player.domain.model.ProviderId.SPOTIFY, "one"), null)
+        engine.stop()
+        engine.play(PlaybackHandle.ProviderPlayback(com.universalmusic.player.domain.model.ProviderId.SPOTIFY, "two"), null)
+
+        withTimeout(1_000) {
+            while (calls.size < 3) kotlinx.coroutines.yield()
+        }
+        assertEquals(listOf("play:one", "pause", "play:two"), calls)
+        engine.stop()
+    }
+
     @Test
     fun newerPlayPreventsAnOlderBlockedStartFromOverlappingIt() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime()

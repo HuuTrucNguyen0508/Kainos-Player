@@ -14,6 +14,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import com.universalmusic.player.platform.openUrl
+import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,7 +44,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun SearchScreen(
     container: AppContainer,
-    onPlay: (Track) -> Unit,
+    onPlayTrackInList: (List<Track>, Int) -> Unit,
     requestFocus: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
@@ -52,7 +55,6 @@ fun SearchScreen(
     val settings by container.settings.collectAsState()
     val spotify by container.spotify.state.collectAsState()
     val youtube by container.youtube.state.collectAsState()
-    val soundcloud by container.soundcloud.state.collectAsState()
     val local by container.local.state.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
     val sample by container.sample.state.collectAsState()
@@ -64,7 +66,7 @@ fun SearchScreen(
         if (requestFocus) focusRequester.requestFocus()
     }
 
-    LaunchedEffect(query) {
+    LaunchedEffect(query, settings.sampleCatalogEnabled, settings.spotifyClientId, settings.youtubeDataApiKey) {
         val value = query.trim()
         error = null
         if (value.isBlank()) {
@@ -110,7 +112,6 @@ fun SearchScreen(
                 ProviderId.LOCAL to local,
                 ProviderId.SPOTIFY to spotify,
                 ProviderId.YOUTUBE_MUSIC to youtube,
-                ProviderId.SOUNDCLOUD to soundcloud,
             ).let { current ->
                 if (sampleIncluded) current + (ProviderId.SAMPLE to sample) else current
             }
@@ -124,6 +125,11 @@ fun SearchScreen(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
+        result?.providerStatuses?.values?.filter { it.message != null }?.forEach { status ->
+            Text("${status.provider.displayName}: ${status.message}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
+        }
+        val playlists = result?.playlists.orEmpty().filter { it.source.provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC) }
         val tracks = result?.tracks
         when {
             loading && tracks == null -> CircularProgressIndicator(Modifier.padding(24.dp))
@@ -132,7 +138,7 @@ fun SearchScreen(
                 "Search once",
                 emptyQueryBody(sampleIncluded, hasLocalTracks),
             )
-            tracks.isNullOrEmpty() -> if (loading) {
+            tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
                 CircularProgressIndicator(Modifier.padding(24.dp))
             } else {
                 EmptyState(
@@ -141,8 +147,32 @@ fun SearchScreen(
                 )
             }
             else -> LazyColumn {
-                items(tracks, key = { it.canonicalId }) { track ->
-                    TrackRow(track, onClick = { onPlay(track) }, modifier = Modifier.padding(horizontal = 8.dp))
+                val trackList = tracks.orEmpty()
+                items(trackList, key = { "track:${it.canonicalId}" }) { track ->
+                    val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
+                    fun openYouTube() { youtubeSource?.let { openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}") } }
+                    TrackRow(track, onClick = {
+                        if (youtubeSource != null && track.sources.none { it.isPlayable }) {
+                            openYouTube()
+                        } else {
+                            val index = trackList.indexOfFirst { it.canonicalId == track.canonicalId }.coerceAtLeast(0)
+                            onPlayTrackInList(trackList, index)
+                        }
+                    }, modifier = Modifier.padding(horizontal = 8.dp), trailing = {
+                        if (youtubeSource != null) TextButton(onClick = ::openYouTube) { Text("Open YouTube") }
+                    })
+                }
+                items(playlists, key = { "playlist:${it.canonicalId}" }) { playlist ->
+                    TextButton(onClick = {
+                        val id = encodeUrl(playlist.source.providerEntityId)
+                        when (playlist.source.provider) {
+                            ProviderId.YOUTUBE_MUSIC -> openUrl("https://www.youtube.com/playlist?list=$id")
+                            ProviderId.SPOTIFY -> openUrl("https://open.spotify.com/playlist/$id")
+                            else -> Unit
+                        }
+                    }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                        Text("${playlist.title} · Open on ${playlist.source.provider.displayName}")
+                    }
                 }
             }
         }

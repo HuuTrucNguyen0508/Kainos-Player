@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +15,7 @@ import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.ui.UniversalMusicApp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 class MainActivity : ComponentActivity() {
     private val requestAudioPermission = registerForActivityResult(
@@ -47,7 +49,20 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data ?: return
         if (uri.scheme != "universalmusic" || uri.host != "spotify-callback") return
         lifecycleScope.launch {
-            runCatching { ensureAppContainer().spotify.completeLogin(uri.toString()) }
+            try {
+                val container = ensureAppContainer()
+                container.spotify.completeLogin(uri.toString())
+                container.refreshSpotifyLibrary()
+                Toast.makeText(this@MainActivity, "Spotify connected", Toast.LENGTH_SHORT).show()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Toast.makeText(
+                    this@MainActivity,
+                    failure.message ?: "Spotify connection failed",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
         }
     }
 

@@ -17,16 +17,25 @@ class QueueController(
     val queue: StateFlow<PlaybackQueue> = _queue.asStateFlow()
 
     fun playNow(track: Track) {
-        val item = QueueItem(idFactory(), track)
-        _queue.value = PlaybackQueue(items = listOf(item), currentIndex = 0)
+        playNow(listOf(track), startIndex = 0)
     }
 
     fun playNow(tracks: List<Track>, startIndex: Int = 0) {
         val items = tracks.map { QueueItem(idFactory(), it) }
-        _queue.value = PlaybackQueue(
-            items = items,
-            currentIndex = startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)),
-        )
+        if (items.isEmpty()) {
+            _queue.value = PlaybackQueue()
+            return
+        }
+        val index = startIndex.coerceIn(0, items.lastIndex)
+        _queue.update { current ->
+            val base = PlaybackQueue(
+                items = items,
+                currentIndex = index,
+                shuffle = current.shuffle,
+                repeat = current.repeat,
+            )
+            base.copy(shuffleOrder = rebuildShuffle(base, items.size))
+        }
     }
 
     fun addToQueue(track: Track) {

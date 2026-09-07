@@ -6,10 +6,8 @@ enum class SourceSelectionMode {
     PREFER_HIGHEST_BITRATE,
     PREFER_SPOTIFY,
     PREFER_YOUTUBE_MUSIC,
-    PREFER_SOUNDCLOUD,
     FORCE_SPOTIFY,
     FORCE_YOUTUBE_MUSIC,
-    FORCE_SOUNDCLOUD,
 }
 
 data class PlaybackPreferences(

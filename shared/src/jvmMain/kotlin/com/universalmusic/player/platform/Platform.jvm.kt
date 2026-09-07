@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.playback.PlaybackEngine
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -23,6 +24,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Properties
 import kotlin.io.path.div
 import kotlin.io.path.exists
@@ -43,10 +45,18 @@ actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 actual fun sha256Bytes(bytes: ByteArray): ByteArray =
     MessageDigest.getInstance("SHA-256").digest(bytes)
 
+actual fun secureRandomBytes(size: Int): ByteArray =
+    ByteArray(size).also(SecureRandom()::nextBytes)
+
 actual fun encodeUrl(value: String): String =
     URLEncoder.encode(value, Charsets.UTF_8.name())
 
 actual fun createHttpClient(): HttpClient = HttpClient(CIO) {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 30_000
+        connectTimeoutMillis = 10_000
+        socketTimeoutMillis = 30_000
+    }
     install(ContentNegotiation) { json(json) }
 }
 
@@ -79,24 +89,39 @@ actual fun loadAppConfig(): AppConfig {
         spotifyClientId = value("SPOTIFY_CLIENT_ID"),
         spotifyRedirectUri = value("SPOTIFY_REDIRECT_URI") ?: "http://127.0.0.1:43821/callback",
         youtubeDataApiKey = value("YOUTUBE_DATA_API_KEY"),
-        soundCloudClientId = value("SOUNDCLOUD_CLIENT_ID"),
-        soundCloudClientSecret = value("SOUNDCLOUD_CLIENT_SECRET"),
-        soundCloudRedirectUri = value("SOUNDCLOUD_REDIRECT_URI") ?: "http://127.0.0.1:43822/callback",
     )
 }
 
-actual fun createPlaybackEngine(spotifyStarter: suspend (String) -> Unit): PlaybackEngine =
-    DesktopPlaybackEngine(spotifyStarter)
+actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine =
+    DesktopPlaybackEngine(spotify)
+
+actual fun createYouTubeStreamResolver(): YouTubeStreamResolver = JvmYouTubeStreamResolver()
+
+actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
+    if (System.getProperty("os.name", "").contains("Linux", ignoreCase = true)) {
+        JvmLibrespotPlaybackHost()
+    } else {
+        JvmSpotifyWebPlaybackHost(tokenSupplier)
+    }
+
+actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = ensureSpotifyDesktopClientRunning()
 
 actual fun openUrl(url: String) {
-    if (Desktop.isDesktopSupported()) {
+    val openedWithDesktop = Desktop.isDesktopSupported() && runCatching {
         Desktop.getDesktop().browse(URI(url))
+    }.isSuccess
+    if (!openedWithDesktop) {
+        runCatching { ProcessBuilder("xdg-open", url).start() }
+            .getOrElse { error("Could not open the system browser: ${it.message}") }
     }
 }
 
 actual fun platformLabel(): String = "Linux"
 
 actual fun listenForOAuthRedirect(port: Int, path: String): String = awaitOAuthRedirect(port, path)
+
+actual suspend fun authenticateSpotify(authorizationUrl: String, redirectUri: String): String? =
+    authenticateWithLoopbackServer(authorizationUrl, redirectUri)
 
 actual fun usesLocalOAuthListener(): Boolean = true
 

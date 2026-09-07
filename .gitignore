@@ -1,5 +1,7 @@
 *.iml
 .kotlin
+__pycache__/
+*.pyc
 .gradle
 **/build/
 xcuserdata
@@ -11,6 +13,8 @@ secrets.properties
 captures
 .externalNativeBuild
 .cxx
+tools/yt-dlp
+tools/librespot-runtime/
 *.xcodeproj/*
 !*.xcodeproj/project.pbxproj
 !*.xcodeproj/xcshareddata/
@@ -19,3 +23,5 @@ captures
 **/xcshareddata/WorkspaceSettings.xcsettings
 .cursor
 agent-tools/
+logs/
+.codex/

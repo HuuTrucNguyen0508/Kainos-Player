@@ -59,17 +59,21 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     var showNowPlaying by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     val now by container.player.nowPlaying.collectAsState()
-
-    fun play(track: Track) {
-        container.library.recordPlay(track)
-        container.player.play(track)
-        showNowPlaying = true
+    val queue by container.player.queue.queue.collectAsState()
+    val canSkipNext = run {
+        // Depend on queue snapshot so skip affordances recompose after shuffle/list changes.
+        queue.shuffle
+        queue.repeat
+        queue.items.size
+        queue.currentIndex
+        container.player.queue.nextIndex() != null
     }
 
-    fun playTracks(tracks: List<Track>) {
-        val first = tracks.firstOrNull() ?: return
-        container.library.recordPlay(first)
-        container.player.play(tracks)
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
+        if (tracks.isEmpty()) return
+        val index = startIndex.coerceIn(0, tracks.lastIndex)
+        container.library.recordPlay(tracks[index])
+        container.player.play(tracks, startIndex = index)
         showNowPlaying = true
     }
 
@@ -98,6 +102,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                             artwork = track.artwork,
                             isPlaying = now.isPlaying,
                             providerLabel = now.resolved?.source?.provider?.displayName,
+                            canSkipNext = canSkipNext,
                             onOpen = { showNowPlaying = true },
                             onToggle = { container.player.togglePlayPause() },
                             onNext = { container.player.skipToNext() },
@@ -149,12 +154,15 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                     else -> when (destination) {
                         AppDestination.Home -> HomeScreen(
                             container,
-                            onPlay = ::play,
                             onPlayTracks = ::playTracks,
                             onOpenNowPlaying = { showNowPlaying = true },
                         )
-                        AppDestination.Search -> SearchScreen(container, ::play, requestFocus = true)
-                        AppDestination.Library -> LibraryScreen(container, ::play, ::playTracks)
+                        AppDestination.Search -> SearchScreen(
+                            container,
+                            onPlayTrackInList = ::playTracks,
+                            requestFocus = true,
+                        )
+                        AppDestination.Library -> LibraryScreen(container, ::playTracks)
                         AppDestination.Settings -> SettingsScreen(container)
                     }
                 }

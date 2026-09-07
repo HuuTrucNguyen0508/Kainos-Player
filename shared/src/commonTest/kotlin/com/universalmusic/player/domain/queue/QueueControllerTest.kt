@@ -28,7 +28,7 @@ class QueueControllerTest {
                 track("C", "X", provider = ProviderId.SPOTIFY),
             ),
         )
-        queue.playNext(track("B", "X", provider = ProviderId.SOUNDCLOUD))
+        queue.playNext(track("B", "X", provider = ProviderId.YOUTUBE_MUSIC))
         assertEquals(listOf("A", "B", "C"), queue.queue.value.items.map { it.track.title })
     }
 
@@ -115,6 +115,52 @@ class QueueControllerTest {
         queue.replaceCurrentTrack(track("A", "X", provider = ProviderId.YOUTUBE_MUSIC))
         assertEquals(originalId, queue.queue.value.current?.id)
         assertEquals(ProviderId.YOUTUBE_MUSIC, queue.queue.value.current?.track?.sources?.single()?.provider)
+    }
+
+    @Test
+    fun playNowPreservesShuffleAndRepeat() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        queue.setRepeat(RepeatMode.ALL)
+
+        queue.playNow(
+            listOf(
+                track("C", "X", provider = ProviderId.SPOTIFY),
+                track("D", "X", provider = ProviderId.SPOTIFY),
+                track("E", "X", provider = ProviderId.SPOTIFY),
+            ),
+            startIndex = 1,
+        )
+
+        assertTrue(queue.queue.value.shuffle)
+        assertEquals(RepeatMode.ALL, queue.queue.value.repeat)
+        assertEquals("D", queue.queue.value.current?.track?.title)
+        assertEquals(1, queue.queue.value.shuffleOrder.first())
+        assertEquals(queue.queue.value.shuffleOrder[1], queue.nextIndex())
+    }
+
+    @Test
+    fun shuffleChangesSkipOrder() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        val order = queue.queue.value.shuffleOrder
+        assertEquals(0, order.first())
+        assertEquals(order.getOrNull(1), queue.nextIndex())
     }
 
     @Test

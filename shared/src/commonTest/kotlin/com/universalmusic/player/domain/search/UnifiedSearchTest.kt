@@ -11,29 +11,45 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.MusicProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class UnifiedSearchTest {
+    @Test
+    fun cancelledSearchPropagatesCancellation() = runTest {
+        val search = UnifiedSearch(listOf(FakeProvider(ProviderId.YOUTUBE_MUSIC, error = CancellationException("New query"))))
+        assertFailsWith<CancellationException> { search.search("old query") }
+    }
+
+    @Test
+    fun providerCredentialStateIsPreservedOnFailure() = runTest {
+        val provider = FakeProvider(ProviderId.YOUTUBE_MUSIC, error = IllegalStateException("Check your API key"))
+        provider.state.value = ProviderState.AUTH_REQUIRED
+        val result = UnifiedSearch(listOf(provider)).search("query")
+        assertEquals(ProviderState.AUTH_REQUIRED, result.providerStatuses.getValue(ProviderId.YOUTUBE_MUSIC).state)
+    }
+
     @Test
     fun oneProviderFailureDoesNotBlockOthers() = runTest {
         val search = UnifiedSearch(
             listOf(
                 FakeProvider(ProviderId.SPOTIFY, result = SearchResult(tracks = listOf(track("Song", "Artist", provider = ProviderId.SPOTIFY)))),
                 FakeProvider(ProviderId.YOUTUBE_MUSIC, error = IllegalStateException("Spotify-like boom").let { IllegalStateException("unavailable") }),
-                FakeProvider(ProviderId.SOUNDCLOUD, result = SearchResult(tracks = listOf(track("Song", "Artist", provider = ProviderId.SOUNDCLOUD)))),
+                FakeProvider(ProviderId.LOCAL, result = SearchResult(tracks = listOf(track("Song", "Artist", provider = ProviderId.LOCAL)))),
             ),
         )
         val result = search.search("Song")
         assertTrue(result.tracks.isNotEmpty())
         assertEquals(ProviderState.AVAILABLE, result.providerStatuses.getValue(ProviderId.SPOTIFY).state)
         assertEquals(ProviderState.UNAVAILABLE, result.providerStatuses.getValue(ProviderId.YOUTUBE_MUSIC).state)
-        assertEquals(ProviderState.AVAILABLE, result.providerStatuses.getValue(ProviderId.SOUNDCLOUD).state)
+        assertEquals(ProviderState.AVAILABLE, result.providerStatuses.getValue(ProviderId.LOCAL).state)
     }
 
     @Test
@@ -42,7 +58,7 @@ class UnifiedSearchTest {
             listOf(
                 FakeProvider(ProviderId.SPOTIFY, error = IllegalStateException("auth required")),
                 FakeProvider(ProviderId.YOUTUBE_MUSIC, error = IllegalStateException("rate limited 429")),
-                FakeProvider(ProviderId.SOUNDCLOUD, result = SearchResult(tracks = listOf(track("Only", "Here", provider = ProviderId.SOUNDCLOUD)))),
+                FakeProvider(ProviderId.LOCAL, result = SearchResult(tracks = listOf(track("Only", "Here", provider = ProviderId.LOCAL)))),
             ),
         )
         val result = search.search("Only")
@@ -70,7 +86,7 @@ class UnifiedSearchTest {
         val search = UnifiedSearch(
             listOf(
                 FakeProvider(ProviderId.SPOTIFY, result = SearchResult()),
-                FakeProvider(ProviderId.SOUNDCLOUD, result = SearchResult()),
+                FakeProvider(ProviderId.LOCAL, result = SearchResult()),
             ),
         )
         val result = search.search("zzzz")
@@ -98,7 +114,7 @@ private class FakeProvider(
     private val error: Throwable? = null,
     private val delayMs: Long = 0,
 ) : MusicProvider {
-    override val state: StateFlow<ProviderState> = MutableStateFlow(ProviderState.AVAILABLE)
+    override val state: MutableStateFlow<ProviderState> = MutableStateFlow(ProviderState.AVAILABLE)
 
     override suspend fun search(query: String): SearchResult {
         if (delayMs > 0) delay(delayMs)

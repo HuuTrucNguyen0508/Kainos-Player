@@ -114,7 +114,7 @@ private fun Path.toLocalTrack(root: Path): LocalTrack {
         artists = listOfNotNull(filenameArtist ?: directoryArtist),
         album = directoryAlbum,
         location = toUri().toASCIIString(),
-        quality = extension.toQuality(),
+        quality = probeLocalAudioQuality(this, extension.toQuality()),
     )
 }
 

@@ -102,14 +102,22 @@ fun NowPlayingScreen(
             overflow = TextOverflow.Ellipsis,
         )
         val provider = now.resolved?.source?.provider
-        val quality = now.resolved?.source?.quality?.label
+        val quality = now.resolved?.source?.quality
         if (provider != null || quality != null) {
             Spacer(Modifier.height(8.dp))
             Text(
-                listOfNotNull(provider?.displayName, quality).joinToString(" · "),
+                listOfNotNull(provider?.displayName, quality?.label).joinToString(" · "),
                 style = MaterialTheme.typography.labelLarge,
                 color = provider?.displayName?.let(::providerColor) ?: MaterialTheme.colorScheme.primary,
             )
+            quality?.technicalDetail?.let { detail ->
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         now.resolved?.reason?.takeIf { it.isNotBlank() && now.fallback == null }?.let { reason ->
             Text(
@@ -170,8 +178,17 @@ fun NowPlayingScreen(
                     modifier = Modifier.size(56.dp),
                 )
             }
-            IconButton(onClick = { container.player.skipToNext() }, enabled = container.player.queue.nextIndex() != null) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
+            IconButton(
+                onClick = { container.player.skipToNext() },
+                enabled = run {
+                    queue.shuffle
+                    queue.repeat
+                    queue.items.size
+                    queue.currentIndex
+                    container.player.queue.nextIndex() != null
+                },
+            ) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Next", Modifier.size(36.dp))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

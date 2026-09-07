@@ -38,6 +38,7 @@ class PlayerSession(
     private val scope: CoroutineScope,
     val queue: QueueController = QueueController(),
     initialPreferences: PlaybackPreferences = PlaybackPreferences.Default,
+    private val enrichSource: suspend (Track, PlaybackSource) -> PlaybackSource = { _, source -> source },
 ) {
     private val _nowPlaying = MutableStateFlow(NowPlayingState())
     val nowPlaying: StateFlow<NowPlayingState> = _nowPlaying.asStateFlow()
@@ -67,8 +68,9 @@ class PlayerSession(
                 if (engineState.status == EngineStatus.FAILED) {
                     val current = _nowPlaying.value.resolved
                     if (current != null) {
+                        val reason = engineState.error
                         playJob?.cancel()
-                        playJob = scope.launch { tryFallback(current) }
+                        playJob = scope.launch { tryFallback(current, reason) }
                     }
                 }
             }
@@ -192,21 +194,30 @@ class PlayerSession(
 
     private suspend fun startResolved(resolved: ResolvedPlayback, fallback: SourceFallbackEvent?) {
         currentCoroutineContext().ensureActive()
+        val enrichedSource = runCatching { enrichSource(resolved.track, resolved.source) }
+            .getOrElse { error ->
+                if (error is CancellationException) throw error
+                currentCoroutineContext().ensureActive()
+                tryFallback(resolved, error.message)
+                return
+            }
+        val playable = resolved.copy(source = enrichedSource)
+        currentCoroutineContext().ensureActive()
         _nowPlaying.update {
             it.copy(
-                track = resolved.track,
-                resolved = resolved,
+                track = playable.track,
+                resolved = playable,
                 buffering = true,
                 fallback = fallback,
                 error = null,
             )
         }
         runCatching {
-            engine.play(resolved.source.handle, resolved.source.quality)
+            engine.play(playable.source.handle, playable.source.quality)
         }.onFailure { error ->
             if (error is CancellationException) throw error
             currentCoroutineContext().ensureActive()
-            tryFallback(resolved, error.message)
+            tryFallback(playable, error.message)
         }
     }
 

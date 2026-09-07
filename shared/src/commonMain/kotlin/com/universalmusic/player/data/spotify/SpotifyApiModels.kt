@@ -7,6 +7,9 @@ import kotlinx.serialization.Serializable
 internal data class SpotifyPaging<T>(
     val items: List<T> = emptyList(),
     val total: Int = 0,
+    val limit: Int = 0,
+    val offset: Int = 0,
+    val next: String? = null,
 )
 
 @Serializable
@@ -14,7 +17,7 @@ internal data class SpotifySearchResponse(
     val tracks: SpotifyPaging<SpotifyTrack>? = null,
     val albums: SpotifyPaging<SpotifyAlbum>? = null,
     val artists: SpotifyPaging<SpotifyArtist>? = null,
-    val playlists: SpotifyPaging<SpotifyPlaylist>? = null,
+    val playlists: SpotifyPaging<SpotifyPlaylist?>? = null,
 )
 
 @Serializable
@@ -57,9 +60,10 @@ internal data class SpotifyPlaylist(
     val id: String,
     val name: String,
     val description: String? = null,
-    val images: List<SpotifyImage> = emptyList(),
+    val images: List<SpotifyImage>? = null,
     val owner: SpotifyOwner? = null,
     val tracks: SpotifyPlaylistTracks? = null,
+    val items: SpotifyPlaylistTracks? = null,
 )
 
 @Serializable
@@ -87,7 +91,7 @@ internal data class SpotifyImage(
 
 @Serializable
 internal data class SpotifySavedTrack(
-    val track: SpotifyTrack,
+    val track: SpotifyTrack? = null,
 )
 
 @Serializable
@@ -108,4 +112,24 @@ internal data class SpotifyTokenResponse(
 @Serializable
 internal data class SpotifyPlayRequest(
     val uris: List<String>,
+)
+
+@Serializable
+internal data class SpotifyDevicesResponse(
+    val devices: List<SpotifyDevice> = emptyList(),
+)
+
+@Serializable
+internal data class SpotifyDevice(
+    val id: String? = null,
+    @SerialName("is_active") val isActive: Boolean = false,
+    @SerialName("is_restricted") val isRestricted: Boolean = false,
+    val name: String? = null,
+    val type: String? = null,
+)
+
+@Serializable
+internal data class SpotifyTransferRequest(
+    @SerialName("device_ids") val deviceIds: List<String>,
+    val play: Boolean = false,
 )

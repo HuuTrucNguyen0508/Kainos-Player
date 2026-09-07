@@ -33,19 +33,22 @@ import com.universalmusic.player.ui.components.TrackRow
 @Composable
 fun HomeScreen(
     container: AppContainer,
-    onPlay: (Track) -> Unit,
-    onPlayTracks: (List<Track>) -> Unit,
+    onPlayTracks: (List<Track>, Int) -> Unit,
     onOpenNowPlaying: () -> Unit,
 ) {
     val recent by container.library.recentlyPlayed.collectAsState()
     val spotifyState by container.spotify.state.collectAsState()
     val youtubeState by container.youtube.state.collectAsState()
-    val soundcloudState by container.soundcloud.state.collectAsState()
     val localState by container.local.state.collectAsState()
     val localTracks by container.local.libraryTracks.collectAsState()
     val albums = container.sample.homeAlbums
     val playlists = container.sample.homePlaylists
-    val continueTrack = recent.firstOrNull() ?: localTracks.firstOrNull() ?: container.sample.allTracks.first()
+    val continueContext = when {
+        recent.isNotEmpty() -> recent
+        localTracks.isNotEmpty() -> localTracks
+        else -> container.sample.allTracks
+    }
+    val continueTrack = continueContext.first()
 
     Column(
         Modifier
@@ -63,7 +66,6 @@ fun HomeScreen(
                 ProviderId.LOCAL to localState,
                 ProviderId.SPOTIFY to spotifyState,
                 ProviderId.YOUTUBE_MUSIC to youtubeState,
-                ProviderId.SOUNDCLOUD to soundcloudState,
             ),
             modifier = Modifier.padding(horizontal = 20.dp),
         )
@@ -76,15 +78,20 @@ fun HomeScreen(
         TrackRow(
             track = continueTrack,
             onClick = {
-                onPlay(continueTrack)
+                onPlayTracks(continueContext, 0)
                 onOpenNowPlaying()
             },
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         )
         if (recent.isNotEmpty()) {
             SectionHeader("Recently played")
-            recent.take(8).forEach { track ->
-                TrackRow(track, onClick = { onPlay(track) }, modifier = Modifier.padding(horizontal = 12.dp))
+            val recentList = recent.take(8)
+            recentList.forEachIndexed { index, track ->
+                TrackRow(
+                    track,
+                    onClick = { onPlayTracks(recentList, index) },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
             }
         }
         SectionHeader("Sample albums")
@@ -94,7 +101,7 @@ fun HomeScreen(
         ) {
             albums.forEach { album ->
                 AlbumCard(album) {
-                    if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks)
+                    if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks, 0)
                 }
             }
         }
@@ -106,7 +113,7 @@ fun HomeScreen(
         ) {
             playlists.forEach { playlist ->
                 PlaylistCard(playlist) {
-                    if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks)
+                    if (playlist.tracks.isNotEmpty()) onPlayTracks(playlist.tracks, 0)
                 }
             }
         }
