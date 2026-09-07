@@ -415,8 +415,8 @@ class SpotifyProvider(
                 if (deviceId.isNullOrBlank()) {
                     webPlaybackFailureMessage()?.let { error(it) }
                     error(
-                        "Kainos Player started librespot, but Spotify did not register its Connect device. " +
-                            "Check ~/.universal-music-player/logs/librespot.log and try again.",
+                        "Kainos Player started the Spotify receiver, but Spotify did not register its Connect device. " +
+                            "Set up in-app Spotify playback again in Settings, then retry.",
                     )
                 }
                 return ConnectPlaybackTarget(
@@ -568,6 +568,7 @@ class SpotifyProvider(
                 "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
             is SpotifyWebPlaybackFailure.LibrespotExited ->
                 reason.detail ?: "librespot stopped before its Spotify Connect device was ready."
+            is SpotifyWebPlaybackFailure.Message -> reason.detail
             else -> null
         }
         else -> null

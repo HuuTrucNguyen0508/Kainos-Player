@@ -40,6 +40,7 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
 import com.universalmusic.player.platform.SpotifyWebPlaybackState
+import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.authenticateSpotify
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
@@ -77,7 +78,7 @@ fun SettingsScreen(container: AppContainer) {
         scope.launch {
             try { action() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { providerError = failure.message ?: "Provider connection failed. Try again." }
+            catch (failure: Throwable) { providerError = failure.message ?: "Provider connection failed. Try again." }
             finally { providerBusy = false }
         }
     }
@@ -316,7 +317,12 @@ fun SettingsScreen(container: AppContainer) {
                 providerAction {
                     val receiver = container.spotifyWebPlayback.prepareAuthentication()
                     if (receiver != null) {
-                        providerNotice = "Receiver started. Complete Spotify sign-in if a browser page opens, then choose a track in Kainos."
+                        providerNotice =
+                            "Receiver started. Complete Spotify sign-in if a browser page opens, then choose a track in Kainos."
+                    } else {
+                        val failure = (container.spotifyWebPlayback.state.value as? SpotifyWebPlaybackState.Failed)?.reason
+                        providerError = failure?.let(::spotifyPlaybackFailureMessage)
+                            ?: "Spotify receiver setup failed. Try setup again."
                     }
                 }
             }) { Text("Set up in-app Spotify playback") }
@@ -328,12 +334,7 @@ fun SettingsScreen(container: AppContainer) {
             val failure = (spotifyPlayback as? SpotifyWebPlaybackState.Failed)?.reason
             if (failure != null) {
                 Text(
-                    when (failure) {
-                        SpotifyWebPlaybackFailure.LibrespotNotFound -> "Install librespot with scripts/install-librespot.sh, then try setup again."
-                        SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired -> "Set up in-app Spotify playback to sign in to the receiver."
-                        is SpotifyWebPlaybackFailure.LibrespotExited -> failure.detail ?: "The Spotify receiver stopped. Try setup again."
-                        else -> "Spotify receiver setup failed. Try setup again."
-                    },
+                    spotifyPlaybackFailureMessage(failure),
                     color = MaterialTheme.colorScheme.error,
                 )
             }
@@ -481,6 +482,25 @@ private fun ProviderAccountRow(
             }
         }
     }
+}
+
+private fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): String = when (failure) {
+    SpotifyWebPlaybackFailure.LibrespotNotFound -> "Install librespot with scripts/install-librespot.sh, then try setup again."
+    SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
+        "Set up in-app Spotify playback to sign in to the receiver."
+    is SpotifyWebPlaybackFailure.LibrespotExited -> {
+        val detail = failure.detail.orEmpty()
+        describeLibrespotConnectionFailure(detail)?.let { return it }
+        when {
+            detail.contains("GeneratedMessageV3", ignoreCase = true) ||
+                detail.contains("protobuf", ignoreCase = true) ->
+                "Spotify setup failed: a required library is missing from this build. Reinstall the app."
+            detail.isNotBlank() -> detail
+            else -> "The Spotify receiver stopped. Try setup again."
+        }
+    }
+    is SpotifyWebPlaybackFailure.Message -> failure.detail
+    else -> "Spotify receiver setup failed. Try setup again."
 }
 
 private fun SourceSelectionMode.label(): String = when (this) {

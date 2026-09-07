@@ -12,7 +12,8 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 - Desktop YouTube audio via yt-dlp URL resolve → mpv (search still uses YouTube Data API)
 - Android URL playback via Media3 / ExoPlayer, including YouTube audio resolved with NewPipe Extractor
 - Linux Spotify integration uses an app-managed, headless librespot Connect receiver named `Kainos Player`
-- Librespot native OAuth credentials persist under `~/.universal-music-player/librespot/system`; later launches are headless and do not open a browser
+- Android Spotify uses in-process librespot-java 0.2.0 as the same Connect receiver (`AndroidLibrespotPlaybackHost`), decoding via `AndroidSinkOutput`
+- Librespot native OAuth credentials persist under `~/.universal-music-player/librespot/system` on Linux; Android stores credentials under the app private `files/librespot/` directory after browser OAuth (loopback `http://127.0.0.1:5588/login`)
 - Quality ranking and source fallback in the shared player session
 - Sample catalog for UI/player demos without credentials
 
@@ -29,14 +30,14 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 
 ## Incomplete / platform gaps
 
-- **Spotify (Android)** — Connect-only remote control with an explicit device picker in Settings and Now Playing. Kainos never decodes Spotify audio on the phone; sound comes from the selected Connect device (this phone’s Spotify app, a computer, a speaker, etc.). Audible Premium playback still needs confirmation on a physical phone.
+- **Spotify (Android)** — in-app librespot-java receiver is wired; live Premium playback and background/FGS survival still need physical-device confirmation. Optional Connect device picker remains available only when explicit-device mode is re-enabled.
 - **Spotify (desktop)** — native librespot sign-in, cached headless restart, and audio-backend initialization are verified live; device selection and transfer pass automated tests. Remote state sync remains limited.
 - **YouTube Music** — desktop in-app audio when yt-dlp is installed; Android in-app audio via NewPipe Extractor → ExoPlayer; no YouTube Music account library
 
 ## Known limits
 
-- No stream ripping UI or DRM bypass for Spotify
-- Librespot requires Spotify Premium and is an unofficial client. Spotify Web API quota limits still apply to device lookup and playback commands even when librespot authentication works.
+- Spotify in-app decode uses unofficial librespot / librespot-java (personal use). Protocol changes can break playback.
+- Librespot requires Spotify Premium. Spotify Web API quota limits still apply to device lookup and playback commands even when librespot authentication works.
 - No custom EQ / DSP
 - No gapless playback or volume normalization yet
 

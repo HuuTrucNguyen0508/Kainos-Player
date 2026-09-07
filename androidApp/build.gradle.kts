@@ -18,6 +18,11 @@ dependencies {
     androidTestImplementation(libs.kotlinx.coroutines.core)
 }
 
+// librespot needs protobuf-java (GeneratedMessageV3); NewPipe pulls protobuf-javalite — keep java only.
+configurations.configureEach {
+    exclude(group = "com.google.protobuf", module = "protobuf-javalite")
+}
+
 android {
     namespace = "com.universalmusic.player"
     compileSdk = libs.versions.android.compileSdk.get().toInt()

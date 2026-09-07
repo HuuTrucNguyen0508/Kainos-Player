@@ -25,3 +25,6 @@ tools/librespot-runtime/
 agent-tools/
 logs/
 .codex/
+
+# Local debug APK drops (publish via GitHub Releases)
+release/

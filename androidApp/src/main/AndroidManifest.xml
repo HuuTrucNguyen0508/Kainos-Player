@@ -39,6 +39,12 @@
                     android:scheme="universalmusic" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="com.universalmusic.player.platform.SpotifyAuthActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize"
+            android:hardwareAccelerated="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <service
             android:name="com.universalmusic.player.platform.AndroidPlaybackService"
             android:exported="true"
