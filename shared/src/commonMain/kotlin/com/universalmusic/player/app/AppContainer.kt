@@ -1,15 +1,24 @@
 package com.universalmusic.player.app
 
 import com.universalmusic.player.data.catalog.SampleCatalogProvider
+import com.universalmusic.player.data.cache.MetadataArtworkCache
+import com.universalmusic.player.data.cache.MetadataCacheStats
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
+import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.local.LocalLibraryRootMode
+import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
 import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.SpotifyProvider
+import com.universalmusic.player.data.spotify.SpotifyRecommendationsAccess
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
+import com.universalmusic.player.domain.continuation.ContinuationOutcome
+import com.universalmusic.player.domain.continuation.SearchAutoplayController
+import com.universalmusic.player.domain.continuation.SearchContinuationFetcher
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
@@ -28,12 +37,16 @@ import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
 import com.universalmusic.player.platform.createHttpClient
 import com.universalmusic.player.platform.createLocalTrackSource
+import com.universalmusic.player.platform.bindPlatformMediaControls
+import com.universalmusic.player.platform.createMetadataArtworkCache
 import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.createTokenStore
+import com.universalmusic.player.platform.createUserLibraryStore
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.loadAppConfig
 import com.universalmusic.player.platform.pickMusicFolder
+import com.universalmusic.player.platform.releaseMusicFolderAccess
 import com.universalmusic.player.platform.supportsMusicFolderPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +63,7 @@ import kotlinx.coroutines.launch
 enum class UiRequest {
     FOCUS_SEARCH,
     TOGGLE_QUEUE,
+    DISMISS_OVERLAY,
 }
 
 class AppContainer {
@@ -60,12 +74,20 @@ class AppContainer {
     val http = createHttpClient()
     val tokens = createTokenStore()
     val settingsStore: SettingsStore = createSettingsStore()
-    val library = LibraryRepository()
+    val userLibraryStore: UserLibraryStore = createUserLibraryStore()
+    val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
+    val library = LibraryRepository(
+        scope = scope,
+        store = userLibraryStore,
+        metadataCache = metadataCache,
+    )
     val matcher = TrackMatcher()
     val sample = SampleCatalogProvider()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
-    val local = LocalMusicProvider(createLocalTrackSource { _settings.value.localMusicFolders })
+    val local = LocalMusicProvider(createLocalTrackSource { localLibraryScanConfig() })
+    private val _localLibraryMessage = MutableStateFlow<String?>(null)
+    val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
     private lateinit var spotifyProvider: SpotifyProvider
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
@@ -95,6 +117,14 @@ class AppContainer {
     val spotifyLibraryLoading = _spotifyLibraryLoading.asStateFlow()
     private val libraryMutex = Mutex()
 
+    val searchContinuation = SearchContinuationFetcher(spotify = spotify, youtube = youtube)
+    val searchAutoplay = SearchAutoplayController(
+        autoplayEnabled = { _settings.value.searchAutoplayEnabled },
+        fetchContinuation = { seed, query, exclude ->
+            searchContinuation.fetch(seed, query, exclude)
+        },
+    )
+
     val player = PlayerSession(
         engine = createPlaybackEngine(SpotifyPlaybackController(
             spotify::startConnectPlayback, spotify::pauseConnectPlayback,
@@ -111,37 +141,93 @@ class AppContainer {
             }
             provider.getStream(track) ?: source
         },
+        isFavorite = library::isFavorite,
+        onQueueExhausted = { exclude ->
+            when (val outcome = searchAutoplay.requestContinuation(exclude)) {
+                is ContinuationOutcome.Appended -> outcome.tracks
+                else -> emptyList()
+            }
+        },
     )
 
     private val _uiRequests = MutableSharedFlow<UiRequest>(extraBufferCapacity = 4)
     val uiRequests: SharedFlow<UiRequest> = _uiRequests.asSharedFlow()
+
+    /** True while a search/library text field is focused; desktop shortcuts should no-op. */
+    private val _textInputFocused = MutableStateFlow(false)
+    val textInputFocused: StateFlow<Boolean> = _textInputFocused.asStateFlow()
+
+    fun setTextInputFocused(focused: Boolean) {
+        _textInputFocused.value = focused
+    }
+
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
+        searchAutoplay.clearSearchSession()
+        player.play(tracks, startIndex = startIndex)
+    }
+
+    fun playSearchResults(tracks: List<Track>, startIndex: Int, query: String) {
+        searchAutoplay.beginSearchPlayback(tracks, query)
+        player.play(tracks, startIndex = startIndex)
+    }
+
+    fun clearPlaybackQueue() {
+        searchAutoplay.clearSearchSession()
+        player.clearQueue()
+    }
+
+    suspend fun spotifyRecommendationsAccess(): SpotifyRecommendationsAccess =
+        spotify.ensureRecommendationsAccess()
 
     fun requestUi(request: UiRequest) {
         _uiRequests.tryEmit(request)
     }
 
     init {
+        bindPlatformMediaControls(player, scope)
         scope.launch {
-            val loaded = settingsStore.read()
+            val raw = settingsStore.read()
+            val loaded = migrateLocalLibrarySettings(raw)
+            if (loaded != raw) settingsStore.write(loaded)
             _settings.value = loaded
             player.updatePreferences(loaded.toPlaybackPreferences())
-            refreshLocalLibrary()
             applyProviderSettings(loaded, clearSessionOnChange = false)
+            library.load(spotify.currentUserId())
+            refreshLocalLibrary()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
         }
     }
 
-    fun providersForSearch(includeSample: Boolean = _settings.value.sampleCatalogEnabled): List<MusicProvider> {
-        val live = buildList {
-            add(local)
-            if (spotify.state.value != ProviderState.NOT_CONFIGURED) add(spotify)
-            if (youtube.state.value != ProviderState.NOT_CONFIGURED) add(youtube)
+    private fun migrateLocalLibrarySettings(settings: AppSettings): AppSettings {
+        if (settings.localMusicFolders.isNotEmpty() && !settings.localMusicFoldersConfigured) {
+            return settings.copy(localMusicFoldersConfigured = true)
         }
-        return if (includeSample) live + sample else live.ifEmpty { listOf(sample) }
+        return settings
+    }
+
+    private fun localLibraryScanConfig(): LocalLibraryScanConfig {
+        val settings = _settings.value
+        return LocalLibraryScanConfig(
+            mode = if (settings.localMusicFoldersConfigured) {
+                LocalLibraryRootMode.EXPLICIT
+            } else {
+                LocalLibraryRootMode.USE_DEFAULTS
+            },
+            folders = settings.localMusicFolders,
+            includeMediaStore = settings.includeMediaStoreLibrary,
+        )
+    }
+
+    /** Global Search providers: Spotify and YouTube only (Library keeps local search). */
+    fun providersForSearch(): List<MusicProvider> = buildList {
+        if (spotify.state.value != ProviderState.NOT_CONFIGURED) add(spotify)
+        if (youtube.state.value != ProviderState.NOT_CONFIGURED) add(youtube)
     }
 
     fun unifiedSearch(): UnifiedSearch = UnifiedSearch(providersForSearch(), matcher)
+
+    fun searchProvidersConfigured(): Boolean = providersForSearch().isNotEmpty()
 
     suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsMutex.withLock {
         val previous = _settings.value
@@ -172,6 +258,7 @@ class AppContainer {
         spotify.logout()
         updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
+        library.setSpotifyAccountId(null)
     }
 
     private fun clearSpotifyLibrary() {
@@ -181,11 +268,19 @@ class AppContainer {
         _spotifyLibraryError.value = null
     }
 
+    suspend fun clearMetadataArtworkCache(): MetadataCacheStats {
+        metadataCache.clear()
+        return metadataCache.stats()
+    }
+
+    suspend fun metadataCacheStats(): MetadataCacheStats = metadataCache.stats()
+
     suspend fun refreshSpotifyLibrary() = libraryMutex.withLock {
         _spotifyLibraryLoading.value = true
         _spotifyLibraryError.value = null
         try {
             val result = loadSpotifyLibrary(spotify)
+            spotify.currentUserId()?.let { library.setSpotifyAccountId(it) }
             if (spotify.isAuthenticated() || spotify.state.value == ProviderState.RATE_LIMITED) {
                 result.tracks.onSuccess { _spotifyTracks.value = it }
                 result.playlists.onSuccess { playlists ->
@@ -230,13 +325,19 @@ class AppContainer {
     }
 
     fun refreshLocalLibrary() {
-        scope.launch { runCatching { local.refresh() } }
+        scope.launch {
+            _localLibraryMessage.value = null
+            runCatching { local.refresh() }
+                .onFailure { failure ->
+                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
+                }
+        }
     }
 
-    /** Folders currently used for desktop scanning (settings, or the platform default). */
+    /** Folders currently shown in Settings (configured list, or platform default when not configured). */
     fun effectiveLocalMusicFolders(): List<String> {
-        val configured = _settings.value.localMusicFolders
-        if (configured.isNotEmpty()) return configured
+        val settings = _settings.value
+        if (settings.localMusicFoldersConfigured) return settings.localMusicFolders
         return listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
     }
 
@@ -245,24 +346,50 @@ class AppContainer {
         scope.launch {
             val picked = pickMusicFolder() ?: return@launch
             updateSettings { current ->
-                val base = current.localMusicFolders.ifEmpty {
+                val base = if (current.localMusicFoldersConfigured) {
+                    current.localMusicFolders
+                } else {
                     listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
-                current.copy(localMusicFolders = (base + picked).distinct())
+                current.copy(
+                    localMusicFoldersConfigured = true,
+                    localMusicFolders = (base + picked).distinct(),
+                )
             }
             runCatching { local.refresh() }
+                .onFailure { failure ->
+                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
+                }
+                .onSuccess { _localLibraryMessage.value = null }
         }
     }
 
     fun removeLocalMusicFolder(path: String) {
         scope.launch {
+            releaseMusicFolderAccess(path)
             updateSettings { current ->
-                val base = current.localMusicFolders.ifEmpty {
+                val base = if (current.localMusicFoldersConfigured) {
+                    current.localMusicFolders
+                } else {
                     listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
-                current.copy(localMusicFolders = base.filterNot { it == path })
+                current.copy(
+                    localMusicFoldersConfigured = true,
+                    localMusicFolders = base.filterNot { it == path },
+                )
             }
             runCatching { local.refresh() }
+                .onFailure { failure ->
+                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
+                }
+                .onSuccess { _localLibraryMessage.value = null }
+        }
+    }
+
+    fun setIncludeMediaStoreLibrary(include: Boolean) {
+        scope.launch {
+            updateSettings { it.copy(includeMediaStoreLibrary = include) }
+            refreshLocalLibrary()
         }
     }
 

@@ -18,10 +18,17 @@ data class LocalTrack(
     val title: String,
     val artists: List<String> = emptyList(),
     val album: String? = null,
+    /**
+     * Stable grouping key for album identity (e.g. parent directory URI/path), not display title.
+     * Same title + different keys → different albums.
+     */
+    val albumGroupKey: String = "",
     val durationMs: Long? = null,
     val artworkUri: String? = null,
     /** A path or content URI understood by the platform playback engine. */
     val location: String,
+    /** Optional byte length for cross-source dedupe (SAF vs MediaStore). */
+    val contentLength: Long? = null,
     val quality: AudioQuality? = null,
     val explicit: Boolean = false,
     val isrc: String? = null,

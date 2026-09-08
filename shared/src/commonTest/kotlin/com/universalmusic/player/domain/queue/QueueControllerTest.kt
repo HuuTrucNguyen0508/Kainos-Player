@@ -107,6 +107,21 @@ class QueueControllerTest {
     }
 
     @Test
+    fun manualNextIndexEscapesRepeatOne() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setRepeat(RepeatMode.ONE)
+        assertEquals(0, queue.nextIndex(respectRepeatOne = true))
+        assertEquals(1, queue.nextIndex(respectRepeatOne = false))
+    }
+
+    @Test
     fun replaceCurrentTrackKeepsQueueIdentity() {
         var n = 0
         val queue = QueueController { "id-${n++}" }
@@ -169,5 +184,121 @@ class QueueControllerTest {
         val queue = QueueController { "id-${n++}" }
         queue.playNow(track("A", "X", provider = ProviderId.SPOTIFY))
         assertNull(queue.nextIndex())
+    }
+
+    @Test
+    fun playNextUnderShuffleInsertsImmediatelyAfterCurrent() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+                track("D", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        val beforeUpcoming = queue.queue.value.upcoming.map { it.track.title }
+        queue.playNext(track("B", "X", provider = ProviderId.YOUTUBE_MUSIC))
+        assertEquals("B", queue.queue.value.upcoming.first().track.title)
+        // Prior upcoming (minus reshuffled-only brand-new) still present after B.
+        assertTrue(queue.queue.value.upcoming.map { it.track.title }.containsAll(beforeUpcoming))
+    }
+
+    @Test
+    fun shuffleAddDoesNotReplayHistoryEntries() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+                track("D", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        // Force a known order: current A, then B, C, D by jumping through B.
+        // Advance current to B via jump so A becomes history in shuffle order.
+        val order = queue.queue.value.shuffleOrder.toMutableList()
+        // Ensure A is first (current), then pin B second for a stable history after jump.
+        val aIdx = 0
+        val bIdx = 1
+        val rest = order.filter { it != aIdx && it != bIdx }
+        // Rebuild by disabling/enabling is random — instead jumpTo B after manually setting order via playNext path.
+        // Simpler: play A,B,C without shuffle, enable shuffle, jump to second in shuffleOrder.
+        val second = queue.queue.value.shuffleOrder[1]
+        queue.jumpTo(second)
+        val historyIds = queue.queue.value.history.map { it.id }
+        assertTrue(historyIds.isNotEmpty())
+        queue.addToQueue(track("E", "X", provider = ProviderId.SPOTIFY))
+        val historyAfter = queue.queue.value.history.map { it.id }
+        assertEquals(historyIds, historyAfter)
+        assertTrue(queue.queue.value.upcoming.any { it.track.title == "E" })
+        assertTrue(queue.queue.value.history.none { it.track.title == "E" })
+    }
+
+    @Test
+    fun removeUnderShuffleKeepsRemainingUpcomingIdentity() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        val upcomingIds = queue.queue.value.upcoming.map { it.id }
+        val removeId = upcomingIds.first()
+        queue.remove(removeId)
+        assertTrue(queue.queue.value.items.none { it.id == removeId })
+        assertEquals(
+            upcomingIds.drop(1).toSet(),
+            queue.queue.value.upcoming.map { it.id }.toSet(),
+        )
+    }
+
+    @Test
+    fun upcomingReflectsPlaybackOrderNotStorageOrderWhenShuffled() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        val orderTitles = queue.queue.value.playbackOrder().map { queue.queue.value.items[it].track.title }
+        val upcomingTitles = queue.queue.value.upcoming.map { it.track.title }
+        assertEquals(orderTitles.drop(1), upcomingTitles)
+    }
+
+    @Test
+    fun appendTracksKeepsCurrentAndExtendsTailAfterManualPlayNext() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.playNext(track("Manual", "X", provider = ProviderId.YOUTUBE_MUSIC))
+        queue.appendTracks(
+            listOf(
+                track("Auto1", "X", provider = ProviderId.YOUTUBE_MUSIC),
+                track("Auto2", "X", provider = ProviderId.YOUTUBE_MUSIC),
+            ),
+        )
+        assertEquals(
+            listOf("A", "Manual", "B", "Auto1", "Auto2"),
+            queue.queue.value.items.map { it.track.title },
+        )
+        assertEquals(0, queue.queue.value.currentIndex)
+        assertEquals(1, queue.nextIndex(respectRepeatOne = false))
     }
 }

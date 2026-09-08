@@ -60,20 +60,25 @@ class JvmLocalTrackSource(
     }
 }
 
+/**
+ * @param foldersConfigured when false and [configuredFolders] is empty, use ~/Music.
+ *   when true and empty, do not add the default Music folder.
+ */
 internal fun resolveMusicRoots(
     homeDirectory: Path,
     configuredFolders: List<String> = emptyList(),
+    foldersConfigured: Boolean = configuredFolders.isNotEmpty(),
     additionalRoots: String? = null,
 ): List<Path> = buildList {
-    if (configuredFolders.isEmpty()) {
-        add(homeDirectory.resolve("Music"))
-    } else {
-        configuredFolders
-            .asSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .mapNotNull { runCatching { Paths.get(it) }.getOrNull() }
-            .let(::addAll)
+    val explicit = configuredFolders
+        .asSequence()
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .mapNotNull { runCatching { Paths.get(it) }.getOrNull() }
+        .toList()
+    when {
+        !foldersConfigured && explicit.isEmpty() -> add(homeDirectory.resolve("Music"))
+        else -> addAll(explicit)
     }
     additionalRoots
         ?.split(File.pathSeparatorChar)
@@ -86,6 +91,7 @@ internal fun resolveMusicRoots(
 
 private fun defaultMusicRoots(): List<Path> = resolveMusicRoots(
     homeDirectory = Paths.get(System.getProperty("user.home", ".")),
+    foldersConfigured = false,
     additionalRoots = System.getenv("KAINOS_MUSIC_DIRS"),
 )
 
@@ -99,7 +105,7 @@ private fun Path.toLocalTrack(root: Path): LocalTrack {
         ?.substring(0, artistTitleSeparator)
         ?.humanized()
         ?.takeIf(String::isNotEmpty)
-    val title = cleanedStem
+    val pathTitle = cleanedStem
         .substring(if (artistTitleSeparator > 0) artistTitleSeparator + 3 else 0)
         .withoutTrackNumber()
         .humanized()
@@ -107,14 +113,32 @@ private fun Path.toLocalTrack(root: Path): LocalTrack {
     val directoryArtist = relative.directoryPartFromEnd(2)
     val directoryAlbum = relative.directoryPartFromEnd(1)
     val extension = audioExtension() ?: error("Unsupported local audio file: $this")
+    val fallbackQuality = extension.toQuality()
+    val parent = parent
+    val albumGroupKey = (parent ?: this).toAbsolutePath().normalize().toString()
+    val probed = probeLocalAudioMetadata(this, fallbackQuality)
+    val title = probed.title?.takeIf { it.isNotBlank() } ?: pathTitle
+    val artists = when {
+        !probed.artists.isNullOrEmpty() -> probed.artists
+        filenameArtist != null -> listOf(filenameArtist)
+        directoryArtist != null -> listOf(directoryArtist)
+        else -> emptyList()
+    }
+    val album = probed.album?.takeIf { it.isNotBlank() } ?: directoryAlbum
+    val length = runCatching { Files.size(this) }.getOrNull()?.takeIf { it > 0 }
+    val artworkUri = resolveLocalArtworkUri(this, probed.embeddedArtworkPath)
 
     return LocalTrack(
         id = stableId(this),
         title = title,
-        artists = listOfNotNull(filenameArtist ?: directoryArtist),
-        album = directoryAlbum,
+        artists = artists,
+        album = album,
+        albumGroupKey = albumGroupKey,
         location = toUri().toASCIIString(),
-        quality = probeLocalAudioQuality(this, extension.toQuality()),
+        contentLength = length,
+        artworkUri = artworkUri,
+        quality = probed.quality,
+        durationMs = probed.durationMs,
     )
 }
 

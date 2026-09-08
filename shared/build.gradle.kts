@@ -62,6 +62,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.documentfile)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.media3.exoplayer)
             implementation(libs.androidx.media3.session)
@@ -74,6 +75,8 @@ kotlin {
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.server.core)
             implementation(libs.ktor.server.cio)
+            implementation(libs.dbus.java.core)
+            implementation(libs.dbus.java.transport.native.unixsocket)
         }
     }
 }

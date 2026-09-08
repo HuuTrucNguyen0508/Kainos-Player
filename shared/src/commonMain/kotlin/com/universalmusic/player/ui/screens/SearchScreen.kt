@@ -19,6 +19,7 @@ import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
@@ -46,7 +48,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SearchScreen(
     container: AppContainer,
-    onPlayTrackInList: (List<Track>, Int) -> Unit,
+    onPlayTrackInList: (List<Track>, Int, query: String) -> Unit,
     requestFocus: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
@@ -57,12 +59,12 @@ fun SearchScreen(
     val settings by container.settings.collectAsState()
     val spotify by container.spotify.state.collectAsState()
     val youtube by container.youtube.state.collectAsState()
-    val local by container.local.state.collectAsState()
-    val localTracks by container.local.libraryTracks.collectAsState()
-    val sample by container.sample.state.collectAsState()
-    val sampleIncluded = container.providersForSearch(settings.sampleCatalogEnabled)
-        .any { it.providerId == ProviderId.SAMPLE }
-    val hasLocalTracks = localTracks.isNotEmpty()
+    val providersConfigured = spotify != ProviderState.NOT_CONFIGURED ||
+        youtube != ProviderState.NOT_CONFIGURED
+
+    DisposableEffect(Unit) {
+        onDispose { container.setTextInputFocused(false) }
+    }
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -70,10 +72,15 @@ fun SearchScreen(
         }
     }
 
-    LaunchedEffect(query, settings.sampleCatalogEnabled, settings.spotifyClientId, settings.youtubeDataApiKey) {
+    LaunchedEffect(query, settings.spotifyClientId, settings.youtubeDataApiKey) {
         val value = query.trim()
         error = null
         if (value.isBlank()) {
+            result = null
+            loading = false
+            return@LaunchedEffect
+        }
+        if (!providersConfigured) {
             result = null
             loading = false
             return@LaunchedEffect
@@ -101,10 +108,11 @@ fun SearchScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { container.setTextInputFocused(it.isFocused) },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            placeholder = { Text("Search songs, artists, albums") },
+            placeholder = { Text("Search Spotify and YouTube") },
             trailingIcon = {
                 if (query.isNotEmpty()) {
                     IconButton(onClick = { query = "" }) {
@@ -115,12 +123,9 @@ fun SearchScreen(
         )
         val statuses = result?.providerStatuses?.mapValues { it.value.state }
             ?: mapOf(
-                ProviderId.LOCAL to local,
                 ProviderId.SPOTIFY to spotify,
                 ProviderId.YOUTUBE_MUSIC to youtube,
-            ).let { current ->
-                if (sampleIncluded) current + (ProviderId.SAMPLE to sample) else current
-            }
+            )
         ProviderStatusRow(statuses, Modifier.padding(horizontal = 20.dp))
         result?.let { current ->
             val counts = current.providerStatuses.values.joinToString("   ") { statusLine(it) }
@@ -132,8 +137,12 @@ fun SearchScreen(
             )
         }
         result?.providerStatuses?.values?.filter { it.message != null }?.forEach { status ->
-            Text("${status.provider.displayName}: ${status.message}", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
+            Text(
+                "${status.provider.displayName}: ${status.message}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
         }
         val playlists = result?.playlists.orEmpty()
             .filter { it.source.provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC) }
@@ -141,75 +150,83 @@ fun SearchScreen(
             .distinctBy { it.canonicalId }
         val tracks = result?.tracks
             ?.filter { it.canonicalId.isNotBlank() }
+            ?.filter { track ->
+                track.sources.any {
+                    it.provider == ProviderId.SPOTIFY || it.provider == ProviderId.YOUTUBE_MUSIC
+                }
+            }
             ?.distinctBy { it.canonicalId }
         when {
-            loading && tracks == null -> CircularProgressIndicator(Modifier.padding(24.dp))
-            error != null -> Text(error ?: "", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(20.dp))
+            !providersConfigured -> EmptyState(
+                "Connect a provider",
+                "Search uses Spotify and YouTube only. Add a Spotify Client ID and/or YouTube Data API key in Settings. Local files stay in Library.",
+            )
+            loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
+            error != null -> Text(
+                error ?: "",
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(20.dp),
+            )
             query.isBlank() -> EmptyState(
-                "Search once",
-                emptyQueryBody(sampleIncluded, hasLocalTracks),
+                "Search Spotify and YouTube",
+                "Local files are not included here — use Library search for your folders.",
             )
             tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
                 CircularProgressIndicator(Modifier.padding(24.dp))
             } else {
                 EmptyState(
                     "No matches for \"${query.trim()}\"",
-                    noResultsBody(sampleIncluded, hasLocalTracks),
+                    "Nothing matched on Spotify or YouTube. Try a different title or artist, or check provider status above.",
                 )
             }
             else -> LazyColumn {
                 val trackList = tracks.orEmpty()
                 itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
-                    fun openYouTube() { youtubeSource?.let { openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}") } }
-                    TrackRow(track, onClick = {
-                        if (youtubeSource != null && track.sources.none { it.isPlayable }) {
-                            openYouTube()
-                        } else {
-                            val index = trackList.indexOfFirst { it.canonicalId == track.canonicalId }.coerceAtLeast(0)
-                            onPlayTrackInList(trackList, index)
+                    fun openYouTube() {
+                        youtubeSource?.let {
+                            openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
                         }
-                    }, modifier = Modifier.padding(horizontal = 8.dp), trailing = {
-                        if (youtubeSource != null) TextButton(onClick = ::openYouTube) { Text("Open YouTube") }
-                    })
+                    }
+                    TrackRow(
+                        track,
+                        onClick = {
+                            if (youtubeSource != null && track.sources.none { it.isPlayable }) {
+                                openYouTube()
+                            } else {
+                                val index = trackList.indexOfFirst { it.canonicalId == track.canonicalId }
+                                    .coerceAtLeast(0)
+                                onPlayTrackInList(trackList, index, query.trim())
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        trailing = {
+                            if (youtubeSource != null) {
+                                TextButton(onClick = ::openYouTube) { Text("Open YouTube") }
+                            }
+                        },
+                    )
                 }
                 itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
-                    TextButton(onClick = {
-                        val id = encodeUrl(playlist.source.providerEntityId)
-                        when (playlist.source.provider) {
-                            ProviderId.YOUTUBE_MUSIC -> openUrl("https://www.youtube.com/playlist?list=$id")
-                            ProviderId.SPOTIFY -> openUrl("https://open.spotify.com/playlist/$id")
-                            else -> Unit
-                        }
-                    }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    TextButton(
+                        onClick = {
+                            val id = encodeUrl(playlist.source.providerEntityId)
+                            when (playlist.source.provider) {
+                                ProviderId.YOUTUBE_MUSIC ->
+                                    openUrl("https://www.youtube.com/playlist?list=$id")
+                                ProviderId.SPOTIFY ->
+                                    openUrl("https://open.spotify.com/playlist/$id")
+                                else -> Unit
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    ) {
                         Text("${playlist.title} · Open on ${playlist.source.provider.displayName}")
                     }
                 }
             }
         }
     }
-}
-
-private fun emptyQueryBody(sampleIncluded: Boolean, hasLocalTracks: Boolean): String = when {
-    sampleIncluded && hasLocalTracks ->
-        "Search your local library, connected providers, and the sample catalog."
-    sampleIncluded ->
-        "Search connected providers and the sample catalog. Add music to your local library from Settings."
-    hasLocalTracks ->
-        "Search your local library and connected providers. Enable the sample catalog in Settings for demo tracks."
-    else ->
-        "Search connected providers. Add music to your local library or enable the sample catalog in Settings."
-}
-
-private fun noResultsBody(sampleIncluded: Boolean, hasLocalTracks: Boolean): String = when {
-    sampleIncluded && hasLocalTracks ->
-        "Nothing matched in your local library, connected providers, or the sample catalog. Try a different title, artist, or album."
-    sampleIncluded ->
-        "Nothing matched in the sample catalog or connected providers. Try a different title, artist, or album."
-    hasLocalTracks ->
-        "Nothing matched in your local library or connected providers. Try a different title, artist, or album."
-    else ->
-        "Try a different title, artist, or album, or connect a provider in Settings."
 }
 
 private fun statusLine(status: ProviderSearchStatus): String {

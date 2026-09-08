@@ -35,6 +35,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.universalmusic.player.data.library.requiresNetworkToPlay
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.ProviderId
@@ -178,7 +179,10 @@ fun TrackRow(
             Column(Modifier.weight(1f)) {
                 Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    track.artistLine,
+                    buildString {
+                        append(track.artistLine)
+                        if (track.requiresNetworkToPlay()) append(" · Needs connection")
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

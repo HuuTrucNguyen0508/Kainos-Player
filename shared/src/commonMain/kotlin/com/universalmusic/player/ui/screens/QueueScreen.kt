@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.domain.model.QueueItem
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.TrackRow
 
@@ -34,57 +34,91 @@ fun QueueScreen(
     onClose: () -> Unit,
 ) {
     val queue by container.player.queue.queue.collectAsState()
+    val order = queue.playbackOrder()
+    val orderedItems: List<Pair<Int, QueueItem>> = order.mapNotNull { storageIndex ->
+        queue.items.getOrNull(storageIndex)?.let { storageIndex to it }
+    }
+    val currentOrderPos = order.indexOf(queue.currentIndex)
+
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Queue", style = MaterialTheme.typography.headlineSmall)
+            Column {
+                Text("Queue", style = MaterialTheme.typography.headlineSmall)
+                if (queue.shuffle) {
+                    Text(
+                        "Shuffle order",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Row {
-                TextButton(onClick = { container.player.queue.clear() }) { Text("Clear") }
+                TextButton(onClick = { container.clearPlaybackQueue() }) { Text("Clear") }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }
             }
         }
-        if (queue.items.isEmpty()) {
-            EmptyState("Queue is empty", "Play a track or add one from search. The queue stores unified tracks, not a single provider.")
+        if (orderedItems.isEmpty()) {
+            EmptyState(
+                "Queue is empty",
+                "Play a track or add one from Search or Library.",
+            )
         } else {
             LazyColumn {
-                itemsIndexed(queue.items, key = { _, item -> item.id }) { index, item ->
-                    val current = index == queue.currentIndex
+                itemsIndexed(orderedItems, key = { _, pair -> pair.second.id }) { orderPos, (storageIndex, item) ->
+                    val isCurrent = orderPos == currentOrderPos
+                    val sectionLabel = when {
+                        isCurrent -> "Now playing"
+                        orderPos == 0 && currentOrderPos > 0 -> "Played"
+                        orderPos == currentOrderPos + 1 -> "Up next"
+                        else -> null
+                    }
+                    sectionLabel?.let { label ->
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp),
+                        )
+                    }
                     TrackRow(
                         track = item.track,
-                        onClick = { container.player.playQueueIndex(index) },
+                        onClick = { container.player.playQueueIndex(storageIndex) },
                         trailing = {
                             Row {
-                                IconButton(onClick = { container.player.queue.move(index, (index - 1).coerceAtLeast(0)) }) {
+                                IconButton(
+                                    onClick = {
+                                        container.player.moveInPlaybackOrder(
+                                            orderPos,
+                                            (orderPos - 1).coerceAtLeast(0),
+                                        )
+                                    },
+                                    enabled = orderPos > 0,
+                                ) {
                                     Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
                                 }
-                                IconButton(onClick = { container.player.queue.move(index, (index + 1).coerceAtMost(queue.items.lastIndex)) }) {
+                                IconButton(
+                                    onClick = {
+                                        container.player.moveInPlaybackOrder(
+                                            orderPos,
+                                            (orderPos + 1).coerceAtMost(orderedItems.lastIndex),
+                                        )
+                                    },
+                                    enabled = orderPos < orderedItems.lastIndex,
+                                ) {
                                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
                                 }
-                                IconButton(onClick = { container.player.queue.remove(item.id) }) {
+                                IconButton(onClick = { container.player.removeFromQueue(item.id) }) {
                                     Icon(Icons.Default.Close, contentDescription = "Remove")
                                 }
                             }
                         },
                     )
-                    if (current) {
-                        Text(
-                            "Now playing",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 76.dp, bottom = 8.dp),
-                        )
-                    }
                 }
             }
-        }
-        Button(
-            onClick = { container.sample.allTracks.forEach { container.player.addToQueue(it) } },
-            modifier = Modifier.padding(top = 12.dp),
-        ) {
-            Text("Add sample album to queue")
         }
     }
 }

@@ -1,11 +1,16 @@
 package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.TokenStore
+import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.settings.SettingsStore
+import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.domain.playback.PlaybackEngine
+import com.universalmusic.player.domain.playback.PlayerSession
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CoroutineScope
 
 expect fun currentTimeMillis(): Long
 
@@ -21,7 +26,11 @@ expect fun createTokenStore(): TokenStore
 
 expect fun createSettingsStore(): SettingsStore
 
-expect fun createLocalTrackSource(configuredFolders: () -> List<String>): LocalTrackSource
+expect fun createUserLibraryStore(): UserLibraryStore
+
+expect fun createMetadataArtworkCache(): MetadataArtworkCache
+
+expect fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource
 
 expect fun loadAppConfig(): AppConfig
 
@@ -58,5 +67,13 @@ expect fun defaultLocalMusicFolder(): String
 
 expect fun supportsMusicFolderPicker(): Boolean
 
-/** Opens a native directory picker. Returns an absolute path, or null if cancelled / unsupported. */
-expect fun pickMusicFolder(): String?
+/** Opens a native directory picker. Returns a path or tree URI, or null if cancelled / unsupported. */
+expect suspend fun pickMusicFolder(): String?
+
+/** Best-effort release of a previously granted folder access (Android SAF). No-op on desktop. */
+expect fun releaseMusicFolderAccess(folder: String)
+
+/** Wire platform media controls (Android MediaSession / Linux MPRIS) to [session]. */
+expect fun bindPlatformMediaControls(session: PlayerSession, scope: CoroutineScope)
+
+expect fun unbindPlatformMediaControls()

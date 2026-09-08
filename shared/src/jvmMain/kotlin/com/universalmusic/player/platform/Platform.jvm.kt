@@ -2,8 +2,15 @@ package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
+import com.universalmusic.player.data.cache.DefaultMetadataArtworkCache
+import com.universalmusic.player.data.cache.FileMetadataCacheDisk
+import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.library.FileUserLibraryStore
+import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.local.JvmLocalTrackSource
+import com.universalmusic.player.data.local.LocalLibraryRootMode
+import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.data.local.resolveMusicRoots
 import com.universalmusic.player.data.settings.AppSettings
@@ -64,11 +71,30 @@ actual fun createTokenStore(): TokenStore = FileTokenStore(configDir() / "tokens
 
 actual fun createSettingsStore(): SettingsStore = FileSettingsStore(configDir() / "settings.json")
 
-actual fun createLocalTrackSource(configuredFolders: () -> List<String>): LocalTrackSource =
+actual fun createUserLibraryStore(): UserLibraryStore =
+    FileUserLibraryStore(configDir() / "user-library.json")
+
+actual fun createMetadataArtworkCache(): MetadataArtworkCache {
+    val disk = FileMetadataCacheDisk(configDir() / "meta-cache")
+    return DefaultMetadataArtworkCache(
+        disk = disk,
+        downloadArtwork = ::downloadArtworkBytes,
+    )
+}
+
+private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
+    URI(url).toURL().openStream().use { input ->
+        input.readBytes()
+    }
+}.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
+
+actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource =
     JvmLocalTrackSource {
+        val scan = config()
         resolveMusicRoots(
             homeDirectory = Paths.get(System.getProperty("user.home", ".")),
-            configuredFolders = configuredFolders(),
+            configuredFolders = scan.folders,
+            foldersConfigured = scan.mode == LocalLibraryRootMode.EXPLICIT,
             additionalRoots = System.getenv("KAINOS_MUSIC_DIRS"),
         )
     }
@@ -135,10 +161,27 @@ actual fun defaultLocalMusicFolder(): String =
 
 actual fun supportsMusicFolderPicker(): Boolean = true
 
-actual fun pickMusicFolder(): String? {
+actual suspend fun pickMusicFolder(): String? {
     pickWithZenity()?.let { return it }
     pickWithKdialog()?.let { return it }
     return pickWithSwing()
+}
+
+actual fun releaseMusicFolderAccess(folder: String) = Unit
+
+private var mprisController: MprisController? = null
+
+actual fun bindPlatformMediaControls(
+    session: com.universalmusic.player.domain.playback.PlayerSession,
+    scope: kotlinx.coroutines.CoroutineScope,
+) {
+    mprisController?.stop()
+    mprisController = MprisController(session, scope).also { it.start() }
+}
+
+actual fun unbindPlatformMediaControls() {
+    mprisController?.stop()
+    mprisController = null
 }
 
 private fun pickWithZenity(): String? {

@@ -113,6 +113,7 @@ internal fun track(
     playable: Boolean = true,
     bitrate: Int? = 320,
     quality: QualityTier = QualityTier.HIGH,
+    canonicalId: String? = null,
 ): Track {
     val source = PlaybackSource(
         provider = provider,
@@ -122,7 +123,7 @@ internal fun track(
         handle = PlaybackHandle.ProviderPlayback(provider, "${provider.name}-$title"),
     )
     return Track(
-        canonicalId = "${provider.name}:$title:$artist",
+        canonicalId = canonicalId ?: "${provider.name}:$title:$artist",
         title = title,
         artists = listOf(ArtistRef("artist-$artist", artist)),
         album = album?.let { AlbumRef("album-$it", it) },

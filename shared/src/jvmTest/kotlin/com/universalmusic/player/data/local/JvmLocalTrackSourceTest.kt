@@ -85,6 +85,7 @@ class JvmLocalTrackSourceTest {
         val roots = resolveMusicRoots(
             homeDirectory = root,
             configuredFolders = listOf(chosen.toString(), "  ", chosen.resolve(".").toString()),
+            foldersConfigured = true,
             additionalRoots = extra.toString(),
         )
 
@@ -92,6 +93,41 @@ class JvmLocalTrackSourceTest {
             listOf(chosen, extra).map { it.toAbsolutePath().normalize() },
             roots,
         )
+    }
+
+    @Test
+    fun emptyConfiguredFoldersDoNotReintroduceDefaultMusic() = withTempDirectory { root ->
+        val roots = resolveMusicRoots(
+            homeDirectory = root,
+            configuredFolders = emptyList(),
+            foldersConfigured = true,
+            additionalRoots = null,
+        )
+        assertTrue(roots.isEmpty())
+    }
+
+    @Test
+    fun sameAlbumTitleInDifferentFoldersGetsDistinctAlbumGroupKeys() = withTempDirectory { root ->
+        val a = Files.createDirectories(root.resolve("Artist_A/Greatest_Hits"))
+        val b = Files.createDirectories(root.resolve("Artist_B/Greatest_Hits"))
+        Files.write(a.resolve("01 - Song_One.mp3"), byteArrayOf(1))
+        Files.write(b.resolve("01 - Song_Two.mp3"), byteArrayOf(2))
+
+        val tracks = JvmLocalTrackSource(listOf(root)).scan()
+        assertEquals(2, tracks.size)
+        assertTrue(tracks[0].albumGroupKey != tracks[1].albumGroupKey)
+        assertEquals("Greatest Hits", tracks[0].album)
+        assertEquals("Greatest Hits", tracks[1].album)
+    }
+
+    @Test
+    fun prefersSidecarCoverWhenPresent() = withTempDirectory { root ->
+        val album = Files.createDirectories(root.resolve("Signal_Club/City_Lines"))
+        Files.write(album.resolve("01 - Blue_Hour.mp3"), byteArrayOf(1, 2, 3))
+        val cover = Files.write(album.resolve("cover.jpg"), ByteArray(64) { 7 })
+
+        val track = JvmLocalTrackSource(listOf(root)).scan().single()
+        assertEquals(cover.toUri().toASCIIString(), track.artworkUri)
     }
 }
 

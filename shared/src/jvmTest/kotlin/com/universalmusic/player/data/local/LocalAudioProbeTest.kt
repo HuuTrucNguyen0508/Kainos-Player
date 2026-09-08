@@ -50,4 +50,36 @@ class LocalAudioProbeTest {
         assertEquals(96_000, quality.sampleRateHz)
         assertEquals(24, quality.bitDepth)
     }
+
+    @Test
+    fun parsesEmbeddedTagsFromFfprobeJson() {
+        val parsed = parseFfprobeMetadata(
+            rawJson = """
+                {
+                  "streams": [{
+                    "codec_name": "flac",
+                    "codec_type": "audio",
+                    "sample_rate": "44100",
+                    "bits_per_raw_sample": "16",
+                    "bit_rate": "800000"
+                  }],
+                  "format": {
+                    "duration": "12.5",
+                    "tags": {
+                      "title": "Tagged Title",
+                      "artist": "Tagged Artist",
+                      "album": "Tagged Album",
+                      "album_artist": "Album Artist"
+                    }
+                  }
+                }
+            """.trimIndent(),
+            fallback = AudioQuality(QualityTier.LOSSLESS, codec = "flac"),
+        )
+        assertEquals("Tagged Title", parsed.title)
+        assertEquals(listOf("Album Artist"), parsed.artists)
+        assertEquals("Tagged Album", parsed.album)
+        assertEquals(12_500L, parsed.durationMs)
+        assertEquals(44_100, parsed.quality.sampleRateHz)
+    }
 }

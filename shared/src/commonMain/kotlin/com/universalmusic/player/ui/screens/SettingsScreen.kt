@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -82,10 +83,10 @@ fun SettingsScreen(container: AppContainer) {
             finally { providerBusy = false }
         }
     }
-    val localFolders = settings.localMusicFolders.ifEmpty {
-        listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
-    }
-    val usingDefaultFolder = settings.localMusicFolders.isEmpty()
+    val localFolders = container.effectiveLocalMusicFolders()
+    val usingDefaultFolder = !settings.localMusicFoldersConfigured
+    val localLibraryMessage by container.localLibraryMessage.collectAsState()
+    val canPickFolders = supportsMusicFolderPicker()
 
     Column(
         Modifier
@@ -119,6 +120,19 @@ fun SettingsScreen(container: AppContainer) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        SettingToggle(
+            "Autoplay similar tracks after Search (default off)",
+            settings.searchAutoplayEnabled,
+        ) {
+            scope.launch { container.updateSettings { current -> current.copy(searchAutoplayEnabled = it) } }
+        }
+        Text(
+            "When on, finishing a Search result queue can append one continuation batch. " +
+                "Manually queued tracks stay ahead of autoplay. Spotify radio uses /recommendations only when " +
+                "this Client ID is allowed; otherwise Spotify continuation is skipped (no Liked Songs shuffle).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Text("Providers", style = MaterialTheme.typography.titleMedium)
         ProviderAccountRow(
@@ -129,19 +143,40 @@ fun SettingsScreen(container: AppContainer) {
             onConnect = container::refreshLocalLibrary,
             onDisconnect = {},
             showButtons = false,
-            detail = if (supportsMusicFolderPicker()) {
-                "${localTracks.size} tracks in your music folders."
+            detail = if (canPickFolders) {
+                buildString {
+                    append("${localTracks.size} tracks in your music folders.")
+                    if (usingDefaultFolder && defaultLocalMusicFolder().isNotBlank()) {
+                        append(" Using the default Music folder until you add folders.")
+                    } else if (settings.localMusicFoldersConfigured && settings.localMusicFolders.isEmpty()) {
+                        append(" No folders selected — nothing is indexed from disk.")
+                    }
+                    localLibraryMessage?.let { append(" $it") }
+                }
             } else {
-                "${localTracks.size} tracks. Android reads the device media library after permission is granted."
+                "${localTracks.size} tracks."
             },
         )
-        if (supportsMusicFolderPicker()) {
+        if (canPickFolders) {
             Text("Music folders", style = MaterialTheme.typography.labelLarge)
             if (usingDefaultFolder) {
                 Text(
                     "Using the default Music folder until you add or change folders.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (localFolders.isEmpty()) {
+                Text(
+                    "No folders selected. Local files will not appear until you add a folder.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            localLibraryMessage?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
                 )
             }
             localFolders.forEach { folder ->
@@ -157,7 +192,6 @@ fun SettingsScreen(container: AppContainer) {
                     )
                     OutlinedButton(
                         onClick = { container.removeLocalMusicFolder(folder) },
-                        enabled = !usingDefaultFolder,
                     ) {
                         Text("Remove")
                     }
@@ -169,6 +203,26 @@ fun SettingsScreen(container: AppContainer) {
                 }
                 OutlinedButton(onClick = container::refreshLocalLibrary, enabled = local != ProviderState.LOADING) {
                     Text(if (local == ProviderState.LOADING) "Scanning…" else "Refresh")
+                }
+            }
+            if (platformLabel() == "Android") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(settings.includeMediaStoreLibrary) {
+                            container.setIncludeMediaStoreLibrary(!settings.includeMediaStoreLibrary)
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = settings.includeMediaStoreLibrary,
+                        onCheckedChange = { container.setIncludeMediaStoreLibrary(it) },
+                    )
+                    Text(
+                        "Also include device MediaStore library",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
         } else {
@@ -426,7 +480,7 @@ fun SettingsScreen(container: AppContainer) {
                 }
             }
         }
-        SettingToggle("Include sample catalog in search", settings.sampleCatalogEnabled) {
+        SettingToggle("Include sample catalog on Home and Library", settings.sampleCatalogEnabled) {
             scope.launch { container.updateSettings { current -> current.copy(sampleCatalogEnabled = it) } }
         }
 
@@ -437,6 +491,21 @@ fun SettingsScreen(container: AppContainer) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        var cacheNotice by remember { mutableStateOf<String?>(null) }
+        OutlinedButton(
+            onClick = {
+                scope.launch {
+                    val stats = container.clearMetadataArtworkCache()
+                    cacheNotice =
+                        "Cleared metadata/artwork cache (${stats.entryCount} entries, ${stats.artworkFileCount} images)."
+                }
+            },
+        ) {
+            Text("Clear metadata & artwork cache")
+        }
+        cacheNotice?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

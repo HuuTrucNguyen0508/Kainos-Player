@@ -43,6 +43,7 @@ internal class MediaStoreLocalTrackSource(
         add(MediaStore.Audio.Media.ALBUM_ID)
         add(MediaStore.Audio.Media.DURATION)
         add(MediaStore.Audio.Media.MIME_TYPE)
+        add(MediaStore.Audio.Media.SIZE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             add(BITRATE_COLUMN)
         }
@@ -68,9 +69,11 @@ internal class MediaStoreLocalTrackSource(
             title = title,
             artists = artist?.let(::listOf).orEmpty(),
             album = textOrNull(MediaStore.Audio.Media.ALBUM),
+            albumGroupKey = albumId?.let { "mediastore-album:$it" }.orEmpty(),
             durationMs = positiveLongOrNull(MediaStore.Audio.Media.DURATION),
             artworkUri = albumId?.let { ContentUris.withAppendedId(ALBUM_ART_URI, it).toString() },
             location = contentUri,
+            contentLength = positiveLongOrNull(MediaStore.Audio.Media.SIZE),
             quality = audioQuality(mimeType, bitrateKbps),
         )
     }

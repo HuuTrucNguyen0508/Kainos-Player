@@ -14,6 +14,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
+import com.universalmusic.player.platform.unbindPlatformMediaControls
 import com.universalmusic.player.ui.UniversalMusicApp
 
 fun main() {
@@ -22,12 +23,21 @@ fun main() {
         val container = ensureAppContainer()
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
-            onCloseRequest = ::exitApplication,
+            onCloseRequest = {
+                unbindPlatformMediaControls()
+                exitApplication()
+            },
             title = "Kainos Player",
             state = state,
             icon = icon,
             onKeyEvent = { event ->
                 if (event.type != KeyEventType.KeyDown) return@Window false
+                if (event.key == Key.Escape) {
+                    container.requestUi(UiRequest.DISMISS_OVERLAY)
+                    return@Window true
+                }
+                // Typing in Search/Library must not trigger transport shortcuts.
+                if (container.textInputFocused.value) return@Window false
                 when {
                     event.key == Key.Spacebar -> {
                         container.player.togglePlayPause()

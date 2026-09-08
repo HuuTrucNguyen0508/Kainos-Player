@@ -15,5 +15,7 @@ sealed interface PlaybackHandle {
     data class ProviderPlayback(
         val provider: ProviderId,
         val trackId: String,
+        /** Used by engines to emit natural ENDED for Connect/timer backends. */
+        val durationMs: Long? = null,
     ) : PlaybackHandle
 }

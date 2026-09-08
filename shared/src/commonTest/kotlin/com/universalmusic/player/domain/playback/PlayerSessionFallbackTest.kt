@@ -61,7 +61,7 @@ class PlayerSessionFallbackTest {
         }
         val latest = track("Latest", "Artist", provider = ProviderId.SAMPLE)
         val engine = object : PlaybackEngine by RecordingEngine({}) {
-            override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?) {
+            override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
                 attempts += handle
                 if (handle == old.sources.first().handle) awaitCancellation()
             }
@@ -132,6 +132,7 @@ class PlayerSessionFallbackTest {
         engine.state.value = EngineState(
             status = EngineStatus.FAILED,
             error = "Spotify Connect playback failed (404): No active device found",
+            playGeneration = engine.state.value.playGeneration,
         )
         runCurrent()
 
@@ -146,26 +147,32 @@ private class RecordingEngine(
     private val onPlay: (PlaybackHandle) -> Unit,
 ) : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
+    private var activePlayGeneration: Long = 0L
 
-    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?) {
+    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        activePlayGeneration = playGeneration
         onPlay(handle)
-        state.value = EngineState(status = EngineStatus.PLAYING, durationMs = 1000)
+        state.value = EngineState(
+            status = EngineStatus.PLAYING,
+            durationMs = 1000,
+            playGeneration = playGeneration,
+        )
     }
 
     override fun pause() {
-        state.value = state.value.copy(status = EngineStatus.PAUSED)
+        state.value = state.value.copy(status = EngineStatus.PAUSED, playGeneration = activePlayGeneration)
     }
 
     override fun resume() {
-        state.value = state.value.copy(status = EngineStatus.PLAYING)
+        state.value = state.value.copy(status = EngineStatus.PLAYING, playGeneration = activePlayGeneration)
     }
 
     override fun seekTo(positionMs: Long) {
-        state.value = state.value.copy(positionMs = positionMs)
+        state.value = state.value.copy(positionMs = positionMs, playGeneration = activePlayGeneration)
     }
 
     override fun stop() {
-        state.value = EngineState()
+        state.value = EngineState(playGeneration = activePlayGeneration)
     }
 
     override fun setVolume(volume: Float) = Unit

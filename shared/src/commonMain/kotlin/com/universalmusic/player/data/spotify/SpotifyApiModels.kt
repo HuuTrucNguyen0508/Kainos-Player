@@ -21,6 +21,11 @@ internal data class SpotifySearchResponse(
 )
 
 @Serializable
+internal data class SpotifyRecommendationsResponse(
+    val tracks: List<SpotifyTrack> = emptyList(),
+)
+
+@Serializable
 internal data class SpotifyTrack(
     val id: String,
     val name: String,
@@ -74,8 +79,13 @@ internal data class SpotifyPlaylistTracks(
 
 @Serializable
 internal data class SpotifyPlaylistTrack(
+    /** Legacy `/playlists/{id}/tracks` payload field. */
     val track: SpotifyTrack? = null,
-)
+    /** Current `/playlists/{id}/items` payload field for this Client ID. */
+    val item: SpotifyTrack? = null,
+) {
+    fun resolvedTrack(): SpotifyTrack? = item ?: track
+}
 
 @Serializable
 internal data class SpotifyOwner(

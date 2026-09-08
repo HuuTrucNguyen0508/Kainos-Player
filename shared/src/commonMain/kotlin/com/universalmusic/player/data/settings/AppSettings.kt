@@ -40,11 +40,28 @@ data class AppSettings(
     val gapless: Boolean = true,
     val normalizeVolume: Boolean = false,
     val sampleCatalogEnabled: Boolean = true,
-    /** Absolute folder paths scanned for local audio on desktop. Empty means default to ~/Music. */
+    /**
+     * Absolute paths (desktop) or tree URIs (Android SAF) for local music roots.
+     * Interpreted with [localMusicFoldersConfigured].
+     */
     val localMusicFolders: List<String> = emptyList(),
+    /**
+     * When false, empty [localMusicFolders] means use the platform default (~/Music on desktop).
+     * When true, empty means the user chose no folders — do not reintroduce defaults.
+     */
+    val localMusicFoldersConfigured: Boolean = false,
+    /** Android: include MediaStore music in addition to SAF roots (deduped). Desktop ignores. */
+    val includeMediaStoreLibrary: Boolean = true,
     val librarySongSort: TrackSort = TrackSort.NAME_ASCENDING,
     /** When true, Library shows only scanned local files (no Spotify liked songs, saved, samples, or playlists). */
     val libraryLocalOnly: Boolean = false,
+    /** When true, Library Songs (and related album views) show only app-hearted tracks. */
+    val libraryFavoritesOnly: Boolean = false,
+    /**
+     * When true, a Search-started queue may append one continuation batch after the last track.
+     * Default is off so playback stops at the end of the Search results unless the user opts in.
+     */
+    val searchAutoplayEnabled: Boolean = false,
 ) {
     fun toPlaybackPreferences(): PlaybackPreferences = PlaybackPreferences(
         sourceSelection = sourceSelection,

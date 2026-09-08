@@ -12,6 +12,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.playback.EngineStatus
@@ -89,7 +90,7 @@ class AndroidPlaybackTest {
     }
 
     @Test
-    fun switchingToSpotifyStopsTheLocalMediaSession() = runBlocking {
+    fun switchingToSpotifyKeepsMediaSessionForNotification() = runBlocking {
         var spotifyStarts = 0
         val spotify = SpotifyPlaybackController({ spotifyStarts++ }, {}, {}, {})
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
@@ -105,8 +106,9 @@ class AndroidPlaybackTest {
                     delay(300)
                     automation.adoptShellPermissionIdentity("android.permission.MEDIA_CONTENT_CONTROL")
                     val manager = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-                    val local = manager.getActiveSessions(null).firstOrNull { it.packageName == context.packageName }
-                    assertTrue("Kainos local audio is still playing after Spotify starts", local == null || local.playbackState?.state != PlaybackState.STATE_PLAYING)
+                    val session = manager.getActiveSessions(null).firstOrNull { it.packageName == context.packageName }
+                    assertNotNull("Spotify playback should keep a MediaSession for notification/island", session)
+                    assertEquals(PlaybackState.STATE_PLAYING, session!!.playbackState!!.state)
                 } finally { wav.delete() }
             }
         } finally { automation.dropShellPermissionIdentity() }
@@ -127,7 +129,7 @@ class AndroidPlaybackTest {
         val uri = checkNotNull(context.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values))
         try {
             context.contentResolver.openOutputStream(uri)!!.use { it.write(silentWav(1)) }
-            val tracks = createLocalTrackSource { emptyList() }.scan()
+            val tracks = createLocalTrackSource { LocalLibraryScanConfig() }.scan()
             assertTrue("Inserted audio is missing from the actual MediaStore scan", tracks.any { it.location == uri.toString() })
         } finally { context.contentResolver.delete(uri, null, null) }
     }

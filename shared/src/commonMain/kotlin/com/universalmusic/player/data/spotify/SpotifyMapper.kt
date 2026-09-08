@@ -49,7 +49,7 @@ internal fun SpotifyTrack.toSource(premium: Boolean): PlaybackSource {
             bitDepth = 16,
         ),
         isPlayable = is_playable ?: true,
-        handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, id),
+        handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, id, durationMs = duration_ms?.takeIf { it > 0 }),
     )
 }
 
@@ -90,7 +90,9 @@ internal fun SpotifyPlaylist.toDomain(premium: Boolean): Playlist = Playlist(
     artwork = images.orEmpty().toArtwork(),
     ownerName = owner?.display_name,
     trackCount = items?.total ?: tracks?.total,
-    tracks = (items?.items ?: tracks?.items)?.mapNotNull { it.track?.toDomainOrNull(premium) }.orEmpty(),
+    tracks = (items?.items ?: tracks?.items)
+        ?.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) }
+        .orEmpty(),
     source = ProviderEntityRef(ProviderId.SPOTIFY, id),
 )
 

@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -94,6 +95,32 @@ class LocalMusicProviderTest {
         assertTrue(capabilities.losslessPlayback)
         assertEquals(false, capabilities.playlists)
     }
+
+    @Test
+    fun sameAlbumTitleDifferentGroupKeysMapToDistinctAlbumRefs() = runTest {
+        val provider = LocalMusicProvider(
+            LocalTrackSource {
+                listOf(
+                    localTrack(
+                        id = "one",
+                        title = "A",
+                        album = "Greatest Hits",
+                        artists = listOf("Artist A"),
+                        albumGroupKey = "/music/a/Greatest Hits",
+                    ),
+                    localTrack(
+                        id = "two",
+                        title = "B",
+                        album = "Greatest Hits",
+                        artists = listOf("Artist B"),
+                        albumGroupKey = "/music/b/Greatest Hits",
+                    ),
+                )
+            },
+        )
+        val tracks = provider.refresh()
+        assertNotEquals(tracks[0].album?.canonicalId, tracks[1].album?.canonicalId)
+    }
 }
 
 private fun localTrack(
@@ -102,11 +129,13 @@ private fun localTrack(
     artists: List<String> = listOf("Local Artist"),
     album: String? = "Local Album",
     location: String = "/music/$id.mp3",
+    albumGroupKey: String = "",
 ): LocalTrack = LocalTrack(
     id = id,
     title = title,
     artists = artists,
     album = album,
+    albumGroupKey = albumGroupKey,
     durationMs = 180_000,
     location = location,
 )

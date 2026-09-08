@@ -18,12 +18,14 @@ data class EngineState(
     val positionMs: Long = 0,
     val durationMs: Long? = null,
     val error: String? = null,
+    /** Playback attempt id from [PlaybackEngine.play]; stale events from older attempts are ignored. */
+    val playGeneration: Long = 0L,
 )
 
 interface PlaybackEngine {
     val state: StateFlow<EngineState>
 
-    suspend fun play(handle: PlaybackHandle, quality: AudioQuality?)
+    suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long = 0L)
     fun pause()
     fun resume()
     fun seekTo(positionMs: Long)

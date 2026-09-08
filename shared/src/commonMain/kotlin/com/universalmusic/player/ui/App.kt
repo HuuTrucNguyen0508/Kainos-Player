@@ -49,6 +49,7 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
+import com.universalmusic.player.ui.PlatformBackHandler
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
@@ -72,15 +73,40 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         queue.repeat
         queue.items.size
         queue.currentIndex
-        container.player.queue.nextIndex() != null
+        container.player.canSkipNext()
+    }
+
+    fun dismissOverlayStack(): Boolean = when {
+        showQueue -> {
+            showQueue = false
+            true
+        }
+        showNowPlaying -> {
+            showNowPlaying = false
+            true
+        }
+        else -> false
     }
 
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
-        container.player.play(tracks, startIndex = index)
+        container.playTracks(tracks, startIndex = index)
         showNowPlaying = true
+    }
+
+    fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0, query: String) {
+        if (tracks.isEmpty()) return
+        val index = startIndex.coerceIn(0, tracks.lastIndex)
+        container.library.recordPlay(tracks[index])
+        container.playSearchResults(tracks, startIndex = index, query = query)
+        showNowPlaying = true
+    }
+
+    // Queue → Now Playing → underlying tab. Never finishes Activity / stops playback.
+    PlatformBackHandler(enabled = showQueue || showNowPlaying) {
+        dismissOverlayStack()
     }
 
     LaunchedEffect(container) {
@@ -92,6 +118,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                     showQueue = false
                 }
                 UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
+                UiRequest.DISMISS_OVERLAY -> dismissOverlayStack()
             }
         }
     }
@@ -191,7 +218,9 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         )
                         AppDestination.Search -> SearchScreen(
                             container,
-                            onPlayTrackInList = ::playTracks,
+                            onPlayTrackInList = { tracks, index, query ->
+                                playSearchTracks(tracks, index, query)
+                            },
                             requestFocus = true,
                         )
                         AppDestination.Library -> LibraryScreen(container, ::playTracks)

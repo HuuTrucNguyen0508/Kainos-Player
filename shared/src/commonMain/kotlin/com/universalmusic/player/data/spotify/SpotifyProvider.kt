@@ -86,7 +86,75 @@ class SpotifyProvider(
     private var config: AppConfig = initialConfig
     private var pendingLogin: PendingLogin? = null
     private var premium: Boolean = false
+    private var userId: String? = null
     private var activePlaybackDeviceId: String? = null
+    private var recommendationsAccess: SpotifyRecommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
+
+    /** Spotify user id for the signed-in account, when known. */
+    fun currentUserId(): String? = userId
+
+    /** Cached feasibility of `/v1/recommendations` for this Client ID. */
+    fun recommendationsAccess(): SpotifyRecommendationsAccess = recommendationsAccess
+
+    /**
+     * Probe `/v1/recommendations` once (or return cached result).
+     * Does not invent alternatives when the endpoint is forbidden.
+     */
+    suspend fun ensureRecommendationsAccess(): SpotifyRecommendationsAccess {
+        if (recommendationsAccess != SpotifyRecommendationsAccess.UNKNOWN) return recommendationsAccess
+        val token = runCatching { accessToken() }.getOrNull()
+            ?: return SpotifyRecommendationsAccess.UNKNOWN
+        val response = http.get("$API/recommendations") {
+            bearerAuth(token)
+            parameter("seed_tracks", "11dFghVXANMlKmJXsNCbNl") // Spotify sample track id
+            parameter("limit", 1)
+        }
+        recommendationsAccess = when (response.status.value) {
+            in 200..299 -> SpotifyRecommendationsAccess.AVAILABLE
+            401 -> SpotifyRecommendationsAccess.UNKNOWN
+            403, 404 -> SpotifyRecommendationsAccess.UNAVAILABLE
+            429 -> SpotifyRecommendationsAccess.UNKNOWN
+            else -> SpotifyRecommendationsAccess.UNAVAILABLE
+        }
+        return recommendationsAccess
+    }
+
+    /**
+     * Seeded recommendations when [ensureRecommendationsAccess] is [SpotifyRecommendationsAccess.AVAILABLE].
+     * Returns failure (not liked-song shuffle) when the endpoint is unavailable.
+     */
+    suspend fun getRecommendations(seedTrackIds: List<String>, limit: Int = 20): Result<List<Track>> {
+        val seeds = seedTrackIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(5)
+        if (seeds.isEmpty()) return Result.success(emptyList())
+        return when (ensureRecommendationsAccess()) {
+            SpotifyRecommendationsAccess.UNAVAILABLE -> Result.failure(
+                IllegalStateException(
+                    "Spotify recommendations/radio is not available for this Client ID. " +
+                        "Kainos will not substitute Liked Songs shuffle.",
+                ),
+            )
+            SpotifyRecommendationsAccess.UNKNOWN -> Result.failure(
+                IllegalStateException("Spotify recommendations availability is unknown. Try again after signing in."),
+            )
+            SpotifyRecommendationsAccess.AVAILABLE -> runCatching {
+                val token = accessToken()
+                val response = http.get("$API/recommendations") {
+                    bearerAuth(token)
+                    parameter("seed_tracks", seeds.joinToString(","))
+                    parameter("limit", limit.coerceIn(1, 50))
+                }
+                if (!response.status.isSuccess()) {
+                    if (response.status.value == 403 || response.status.value == 404) {
+                        recommendationsAccess = SpotifyRecommendationsAccess.UNAVAILABLE
+                    }
+                    response.errorMessage("Spotify recommendations")
+                }
+                response.body<SpotifyRecommendationsResponse>()
+                    .tracks
+                    .mapNotNull { it.toDomainOrNull(premium) }
+            }
+        }
+    }
 
     suspend fun restore() {
         if (!config.hasSpotifyCredentials) {
@@ -188,6 +256,8 @@ class SpotifyProvider(
         tokens.clear(ProviderId.SPOTIFY)
         authMutex.withLock { pendingLogin = null }
         premium = false
+        userId = null
+        recommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
         activePlaybackDeviceId = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }
@@ -241,7 +311,12 @@ class SpotifyProvider(
         return playlist.copy(tracks = tracks, trackCount = tracks.size)
     }
 
-    /** Pages every track in a playlist (Discover Weekly and user playlists). */
+    /**
+     * Pages every track in a playlist (Discover Weekly and user playlists).
+     *
+     * Uses `/playlists/{id}/items` because `/tracks` returns 403 for the configured
+     * developer Client ID. Liked songs stay on `/me/tracks`.
+     */
     suspend fun getPlaylistTracks(playlistId: String): List<Track> {
         val id = playlistId.trim()
         if (id.isEmpty()) return emptyList()
@@ -249,13 +324,13 @@ class SpotifyProvider(
         val result = mutableListOf<Track>()
         var offset = 0
         do {
-            val response = http.get("$API/playlists/$id/tracks") {
+            val response = http.get("$API/playlists/$id/items") {
                 bearerAuth(token)
                 parameter("limit", 50)
                 parameter("offset", offset)
                 parameter("additional_types", "track")
-            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist tracks")
-            result += response.items.mapNotNull { it.track?.toDomainOrNull(premium) }
+            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist items")
+            result += response.items.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) }
             offset += response.items.size
             if (response.items.isEmpty()) break
         } while (response.next != null)
@@ -681,7 +756,8 @@ class SpotifyProvider(
         val me = response.body<SpotifyUser>()
         // Spotify's current profile response no longer guarantees the legacy product field.
         // Player endpoints enforce Premium eligibility, so a valid user session may attempt Connect playback.
-        premium = me.id.isNotBlank()
+        userId = me.id.takeIf { it.isNotBlank() }
+        premium = userId != null
         return ProfileStatus.Ok
     }
 }

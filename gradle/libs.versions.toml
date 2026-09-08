@@ -3,10 +3,12 @@ agp = "9.1.0"
 android-compileSdk = "36"
 android-minSdk = "26"
 android-targetSdk = "36"
+androidx-documentfile = "1.1.0"
 androidx-activity = "1.13.0"
 androidx-lifecycle = "2.11.0-beta01"
 androidx-navigation = "2.9.2"
 androidx-media3 = "1.8.0"
+dbus-java = "5.1.1"
 desugar-jdk-libs-nio = "2.1.5"
 newpipe-extractor = "v0.26.5"
 librespot-android = "0.2.0"
@@ -22,6 +24,7 @@ ktor = "3.5.1"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "androidx-documentfile" }
 androidx-lifecycle-runtimeCompose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-viewmodelCompose = { group = "org.jetbrains.androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidx-media3" }
@@ -60,6 +63,8 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
 navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "androidx-navigation" }
+dbus-java-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbus-java" }
+dbus-java-transport-native-unixsocket = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbus-java" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

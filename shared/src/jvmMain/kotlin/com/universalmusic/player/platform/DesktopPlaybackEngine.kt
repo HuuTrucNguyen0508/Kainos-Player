@@ -52,6 +52,11 @@ class DesktopPlaybackEngine internal constructor(
     private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
     private val _state = MutableStateFlow(EngineState())
     override val state: StateFlow<EngineState> = _state.asStateFlow()
+    private var activePlayGeneration: Long = 0L
+
+    private fun publishState(state: EngineState) {
+        _state.value = state.copy(playGeneration = activePlayGeneration)
+    }
     private val lifecycleLock = Any()
     private var requestToken = 0L
     private var activeProcess: ActiveProcess? = null
@@ -80,22 +85,23 @@ class DesktopPlaybackEngine internal constructor(
         }
     }
 
-    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?) {
+    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        activePlayGeneration = playGeneration
         val token = synchronized(lifecycleLock) {
             invalidatePendingStartLocked()
             cancelTickerLocked()
             if (!stopProcessLocked()) {
-                _state.value = EngineState(
+                publishState(EngineState(
                     status = EngineStatus.FAILED,
                     error = "Previous player did not terminate",
-                )
+                ))
                 error("Previous player did not terminate")
             }
             lastHandle = handle
             lastQuality = quality
             userPaused = false
             elapsedOffset = 0
-            _state.value = EngineState(status = EngineStatus.BUFFERING)
+            publishState(EngineState(status = EngineStatus.BUFFERING))
             requestToken
         }
         when (handle) {
@@ -110,11 +116,11 @@ class DesktopPlaybackEngine internal constructor(
                 synchronized(lifecycleLock) {
                     if (token != requestToken) return
                     startedAt = System.currentTimeMillis()
-                    _state.value = EngineState(
+                    publishState(EngineState(
                         status = EngineStatus.PLAYING,
                         positionMs = 0,
-                        durationMs = null,
-                    )
+                        durationMs = handle.durationMs,
+                    ))
                     startTickerLocked()
                 }
             }
@@ -130,7 +136,7 @@ class DesktopPlaybackEngine internal constructor(
                 elapsedOffset = _state.value.positionMs
                 cancelTickerLocked()
                 userPaused = true
-                _state.value = _state.value.copy(status = EngineStatus.PAUSED, error = null)
+                publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
             }
             enqueueSpotifyCommand("Spotify Connect pause", spotify.pause)
             return
@@ -148,14 +154,14 @@ class DesktopPlaybackEngine internal constructor(
             val active = activeProcess
             if (active != null && !runtime.sendIpc("""["set_property","pause",true]""", active.socket)) {
                 if (!stopProcessLocked()) {
-                    _state.value = _state.value.copy(
+                    publishState(_state.value.copy(
                         status = EngineStatus.FAILED,
                         error = "Player could not be paused or stopped",
-                    )
+                    ))
                     return
                 }
             }
-            _state.value = _state.value.copy(status = EngineStatus.PAUSED, error = null)
+            publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
         }
     }
 
@@ -165,7 +171,7 @@ class DesktopPlaybackEngine internal constructor(
                 if (_state.value.status != EngineStatus.PAUSED) return
                 userPaused = false
                 startedAt = System.currentTimeMillis()
-                _state.value = _state.value.copy(status = EngineStatus.PLAYING, error = null)
+                publishState(_state.value.copy(status = EngineStatus.PLAYING, error = null))
                 startTickerLocked()
             }
             enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
@@ -180,20 +186,20 @@ class DesktopPlaybackEngine internal constructor(
                 runtime.sendIpc("""["set_property","pause",false]""", active.socket)
             ) {
                 startedAt = System.currentTimeMillis()
-                _state.value = current.copy(status = EngineStatus.PLAYING, error = null)
+                publishState(current.copy(status = EngineStatus.PLAYING, error = null))
                 startTickerLocked()
                 return
             }
             if (!stopProcessLocked()) {
-                _state.value = current.copy(
+                publishState(current.copy(
                     status = EngineStatus.FAILED,
                     error = "Player did not terminate before resume",
-                )
+                ))
                 return
             }
             val handle = lastHandle ?: return
             invalidatePendingStartLocked()
-            _state.value = current.copy(status = EngineStatus.BUFFERING, error = null)
+            publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
             Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
         }
         scope.launch {
@@ -210,7 +216,7 @@ class DesktopPlaybackEngine internal constructor(
             synchronized(lifecycleLock) {
                 elapsedOffset = target
                 startedAt = System.currentTimeMillis()
-                _state.value = _state.value.copy(positionMs = target, error = null)
+                publishState(_state.value.copy(positionMs = target, error = null))
             }
             enqueueSpotifyCommand("Spotify Connect seek") { spotify.seekTo(target) }
             return
@@ -219,7 +225,7 @@ class DesktopPlaybackEngine internal constructor(
             elapsedOffset = positionMs.coerceAtLeast(0)
             startedAt = System.currentTimeMillis()
             val current = _state.value
-            _state.value = current.copy(positionMs = elapsedOffset)
+            publishState(current.copy(positionMs = elapsedOffset))
             val handle = lastHandle
             if (handle !is PlaybackHandle.Url) return
             val active = activeProcess
@@ -234,16 +240,16 @@ class DesktopPlaybackEngine internal constructor(
             }
             if (current.status != EngineStatus.PLAYING && current.status != EngineStatus.PAUSED) return
             if (!stopProcessLocked()) {
-                _state.value = current.copy(
+                publishState(current.copy(
                     status = EngineStatus.FAILED,
                     error = "Player did not terminate before seek",
-                )
+                ))
                 return
             }
             invalidatePendingStartLocked()
             val targetStatus = current.status
             userPaused = targetStatus == EngineStatus.PAUSED
-            _state.value = _state.value.copy(status = EngineStatus.BUFFERING)
+            publishState(_state.value.copy(status = EngineStatus.BUFFERING))
             Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
         }
         scope.launch {
@@ -263,16 +269,16 @@ class DesktopPlaybackEngine internal constructor(
             userPaused = false
             cancelTickerLocked()
             if (!stopProcessLocked()) {
-                _state.value = _state.value.copy(
+                publishState(_state.value.copy(
                     status = EngineStatus.FAILED,
                     error = "Player did not terminate",
-                )
+                ))
                 return
             }
             elapsedOffset = 0
             lastHandle = null
             lastQuality = null
-            _state.value = EngineState()
+            publishState(EngineState())
         }
         if (pauseSpotify) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
     }
@@ -328,12 +334,12 @@ class DesktopPlaybackEngine internal constructor(
                 userPaused = true
                 if (!runtime.sendIpc("""["set_property","pause",true]""", active.socket)) {
                     if (!stopProcessLocked()) {
-                        _state.value = EngineState(
+                        publishState(EngineState(
                             status = EngineStatus.FAILED,
                             positionMs = elapsedOffset,
                             durationMs = durationMs,
                             error = "Player could not be paused or stopped",
-                        )
+                        ))
                         return
                     }
                 }
@@ -341,11 +347,11 @@ class DesktopPlaybackEngine internal constructor(
                 userPaused = false
             }
             startedAt = System.currentTimeMillis()
-            _state.value = EngineState(
+            publishState(EngineState(
                 status = targetStatus,
                 positionMs = elapsedOffset,
                 durationMs = durationMs,
-            )
+            ))
             if (targetStatus == EngineStatus.PLAYING) startTickerLocked()
         }
     }
@@ -358,7 +364,7 @@ class DesktopPlaybackEngine internal constructor(
                 if (activeProcess !== active) return@synchronized
                 activeProcess = null
                 if (userPaused) return@synchronized
-                _state.value = if (code == 0) {
+                publishState(if (code == 0) {
                     _state.value.copy(
                         status = EngineStatus.ENDED,
                         positionMs = durationMs ?: _state.value.positionMs,
@@ -368,7 +374,7 @@ class DesktopPlaybackEngine internal constructor(
                         status = EngineStatus.FAILED,
                         error = code?.let { "Player exited with $it" } ?: "Player process failed",
                     )
-                }
+                })
                 cancelTickerLocked()
             }
         }
@@ -379,16 +385,50 @@ class DesktopPlaybackEngine internal constructor(
         val token = ++tickerToken
         ticker = scope.launch {
             while (true) {
-                synchronized(lifecycleLock) {
+                val ended = synchronized(lifecycleLock) {
                     if (token != tickerToken || _state.value.status != EngineStatus.PLAYING) {
                         return@launch
                     }
+                    val active = activeProcess
+                    if (active != null) {
+                        val eof = runtime.readProperty("eof-reached", active.socket)
+                        if (eof == "yes" || eof == "true") {
+                            cancelTickerLocked()
+                            publishState(_state.value.copy(
+                                status = EngineStatus.ENDED,
+                                positionMs = _state.value.durationMs ?: _state.value.positionMs,
+                            ))
+                            return@synchronized true
+                        }
+                        val timePos = runtime.readProperty("time-pos", active.socket)?.toDoubleOrNull()
+                        if (timePos != null) {
+                            val position = (timePos * 1000.0).toLong().coerceAtLeast(0)
+                            elapsedOffset = position
+                            startedAt = System.currentTimeMillis()
+                            publishState(_state.value.copy(positionMs = position))
+                            return@synchronized false
+                        }
+                    }
                     val position = elapsedOffset + (System.currentTimeMillis() - startedAt)
                     val duration = _state.value.durationMs
-                    _state.value = _state.value.copy(
-                        positionMs = if (duration != null) position.coerceAtMost(duration) else position,
-                    )
+                        ?: (lastHandle as? PlaybackHandle.ProviderPlayback)?.durationMs
+                    val capped = if (duration != null) position.coerceAtMost(duration) else position
+                    publishState(_state.value.copy(
+                        positionMs = capped,
+                        durationMs = duration ?: _state.value.durationMs,
+                    ))
+                    if (duration != null && position >= duration) {
+                        cancelTickerLocked()
+                        publishState(_state.value.copy(
+                            status = EngineStatus.ENDED,
+                            positionMs = duration,
+                        ))
+                        true
+                    } else {
+                        false
+                    }
                 }
+                if (ended) return@launch
                 delay(400)
             }
         }
@@ -418,10 +458,10 @@ class DesktopPlaybackEngine internal constructor(
         synchronized(lifecycleLock) {
             if (spotifyIsActive()) {
                 cancelTickerLocked()
-                _state.value = _state.value.copy(
+                publishState(_state.value.copy(
                     status = EngineStatus.FAILED,
                     error = failure.message ?: "$name failed",
-                )
+                ))
             }
         }
     }
@@ -482,6 +522,7 @@ internal interface DesktopPlaybackRuntime {
     fun startProcess(command: List<String>): Process
     fun waitForIpc(socket: Path)
     fun sendIpc(commandArrayJson: String, socket: Path): Boolean
+    fun readProperty(name: String, socket: Path): String? = null
     fun deleteIpcPath(path: Path)
 }
 
@@ -544,9 +585,71 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
                 channel.connect(UnixDomainSocketAddress.of(socket))
                 val payload = """{"command":$commandArrayJson}""" + "\n"
                 channel.write(ByteBuffer.wrap(payload.toByteArray(Charsets.UTF_8)))
+                // Drain one response line so the socket stays healthy for follow-up commands.
+                readIpcLine(channel)
             }
             true
         }.getOrDefault(false)
+    }
+
+    override fun readProperty(name: String, socket: Path): String? {
+        if (!Files.exists(socket)) return null
+        return runCatching {
+            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+                channel.connect(UnixDomainSocketAddress.of(socket))
+                val payload = """{"command":["get_property","$name"]}""" + "\n"
+                channel.write(ByteBuffer.wrap(payload.toByteArray(Charsets.UTF_8)))
+                val line = readIpcLine(channel) ?: return null
+                parseMpvData(line)
+            }
+        }.getOrNull()
+    }
+
+    private fun readIpcLine(channel: SocketChannel): String? {
+        channel.configureBlocking(true)
+        val buffer = ByteBuffer.allocate(4096)
+        val builder = StringBuilder()
+        val deadline = System.currentTimeMillis() + 400
+        while (System.currentTimeMillis() < deadline) {
+            val read = channel.read(buffer)
+            if (read < 0) break
+            if (read == 0) {
+                Thread.sleep(10)
+                continue
+            }
+            buffer.flip()
+            while (buffer.hasRemaining()) {
+                val c = buffer.get().toInt().toChar()
+                if (c == '\n') return builder.toString()
+                builder.append(c)
+            }
+            buffer.clear()
+        }
+        return builder.toString().takeIf { it.isNotBlank() }
+    }
+
+    private fun parseMpvData(line: String): String? {
+        // Minimal parse: "data": <json-value>
+        val key = "\"data\":"
+        val start = line.indexOf(key)
+        if (start < 0) return null
+        var i = start + key.length
+        while (i < line.length && line[i].isWhitespace()) i++
+        if (i >= line.length) return null
+        return when (line[i]) {
+            '"' -> {
+                val end = line.indexOf('"', i + 1)
+                if (end < 0) null else line.substring(i + 1, end)
+            }
+            't', 'f', 'n' -> {
+                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
+                line.substring(i, end).trim()
+            }
+            else -> {
+                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
+                line.substring(i, end).trim()
+            }
+        }
     }
 
     override fun deleteIpcPath(path: Path) {

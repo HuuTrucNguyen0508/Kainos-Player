@@ -88,10 +88,16 @@ private fun LocalTrack.toDomain(): Track {
     val artistRefs = artists
         .filter(String::isNotBlank)
         .distinct()
-        .map { ArtistRef(canonicalId = "local-artist:${it.lowercase()}", name = it) }
+        .map { ArtistRef(canonicalId = localArtistCanonicalId(it), name = it) }
     val albumRef = album
         ?.takeIf(String::isNotBlank)
-        ?.let { AlbumRef(canonicalId = "local-album:${it.lowercase()}", title = it, artwork = artwork) }
+        ?.let {
+            AlbumRef(
+                canonicalId = localAlbumCanonicalId(it, artists, albumGroupKey),
+                title = it,
+                artwork = artwork,
+            )
+        }
     val localSource = PlaybackSource(
         provider = ProviderId.LOCAL,
         providerTrackId = id,

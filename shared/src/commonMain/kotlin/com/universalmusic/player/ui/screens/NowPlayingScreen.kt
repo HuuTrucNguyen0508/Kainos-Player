@@ -222,7 +222,7 @@ fun NowPlayingScreen(
                     queue.repeat
                     queue.items.size
                     queue.currentIndex
-                    container.player.queue.nextIndex() != null
+                    container.player.canSkipNext()
                 },
             ) {
                 Icon(Icons.Default.SkipNext, contentDescription = "Next", Modifier.size(34.dp))
