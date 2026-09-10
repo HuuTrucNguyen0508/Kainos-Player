@@ -95,7 +95,6 @@ class KainosForwardingPlayer(
     ) {
         val prevPlaying = overlayPlaying
         val prevBuffering = overlayBuffering
-        val prevSpotify = this.spotifyActive
         val prevCommands = getAvailableCommands()
         val prevDuration = overlayDurationMs
         val prevPosition = overlayPositionMs
@@ -119,16 +118,40 @@ class KainosForwardingPlayer(
                 .setMediaId(mediaId)
                 .setMediaMetadata(meta)
                 .build()
-            if (exo.currentMediaItem?.mediaId != mediaId || lastMediaId != mediaId) {
-                exo.setMediaItem(item)
-                exo.prepare()
-                exo.playWhenReady = false
-                lastMediaId = mediaId
-                listeners.forEach { it.onMediaItemTransition(item, Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) }
-                listeners.forEach { it.onMediaMetadataChanged(meta) }
-            } else if (exo.currentMediaItem?.mediaMetadata != meta) {
-                exo.replaceMediaItem(0, item)
-                listeners.forEach { it.onMediaMetadataChanged(meta) }
+            val current = exo.currentMediaItem
+            val sameSilenceUri = current?.localConfiguration?.uri == placeholder
+            when {
+                sameSilenceUri -> {
+                    val idChanged = current!!.mediaId != mediaId
+                    val metaChanged = current.mediaMetadata != meta
+                    if (idChanged || metaChanged) {
+                        // Same silence URI: replace in place so HyperOS keeps the island.
+                        exo.replaceMediaItem(0, item)
+                        lastMediaId = mediaId
+                        if (idChanged) {
+                            listeners.forEach {
+                                it.onMediaItemTransition(item, Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED)
+                            }
+                        }
+                        if (metaChanged) {
+                            listeners.forEach { it.onMediaMetadataChanged(meta) }
+                        }
+                    }
+                }
+                current?.mediaId != mediaId || lastMediaId != mediaId -> {
+                    exo.setMediaItem(item)
+                    exo.prepare()
+                    exo.playWhenReady = false
+                    lastMediaId = mediaId
+                    listeners.forEach {
+                        it.onMediaItemTransition(item, Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED)
+                    }
+                    listeners.forEach { it.onMediaMetadataChanged(meta) }
+                }
+                current != null && current.mediaMetadata != meta -> {
+                    exo.replaceMediaItem(0, item)
+                    listeners.forEach { it.onMediaMetadataChanged(meta) }
+                }
             }
         } else if (exo.currentMediaItem != null) {
             val current = exo.currentMediaItem!!
@@ -144,15 +167,20 @@ class KainosForwardingPlayer(
             clearRetainedMedia(notify = false)
         }
 
-        if (spotifyActive || prevSpotify) {
-            notifyOverlayChanges(
-                prevPlaying = prevPlaying,
-                prevBuffering = prevBuffering,
-                prevCommands = prevCommands,
-                prevDuration = prevDuration,
-                prevPosition = prevPosition,
-            )
-        }
+        // Always notify command / overlay changes so notification Next stays in sync for local/YT.
+        notifyOverlayChanges(
+            prevPlaying = prevPlaying,
+            prevBuffering = prevBuffering,
+            prevCommands = prevCommands,
+            prevDuration = prevDuration,
+            prevPosition = prevPosition,
+        )
+    }
+
+    /** Position ticker only: no MediaItem swap. */
+    fun updateOverlayPosition(positionMs: Long, durationMs: Long?) {
+        overlayPositionMs = positionMs.coerceAtLeast(0L)
+        overlayDurationMs = durationMs?.takeIf { it > 0 } ?: overlayDurationMs
     }
 
     fun setSpotifyActive(active: Boolean) {

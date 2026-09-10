@@ -6,6 +6,7 @@ import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
+import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PlayerSession
@@ -31,6 +32,8 @@ expect fun createUserLibraryStore(): UserLibraryStore
 expect fun createMetadataArtworkCache(): MetadataArtworkCache
 
 expect fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource
+
+expect fun createLocalLibraryScanCache(): LocalLibraryScanCache?
 
 expect fun loadAppConfig(): AppConfig
 

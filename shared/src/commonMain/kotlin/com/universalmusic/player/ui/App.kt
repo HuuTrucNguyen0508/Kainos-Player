@@ -32,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +67,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     var destination by remember { mutableStateOf(AppDestination.Home) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    val tabStateHolder = rememberSaveableStateHolder()
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
     val canSkipNext = run {
@@ -210,21 +212,23 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         onOpenQueue = { showQueue = true },
                         onClose = { showNowPlaying = false },
                     )
-                    else -> when (destination) {
-                        AppDestination.Home -> HomeScreen(
-                            container,
-                            onPlayTracks = ::playTracks,
-                            onOpenNowPlaying = { showNowPlaying = true },
-                        )
-                        AppDestination.Search -> SearchScreen(
-                            container,
-                            onPlayTrackInList = { tracks, index, query ->
-                                playSearchTracks(tracks, index, query)
-                            },
-                            requestFocus = true,
-                        )
-                        AppDestination.Library -> LibraryScreen(container, ::playTracks)
-                        AppDestination.Settings -> SettingsScreen(container)
+                    else -> tabStateHolder.SaveableStateProvider(destination.name) {
+                        when (destination) {
+                            AppDestination.Home -> HomeScreen(
+                                container,
+                                onPlayTracks = ::playTracks,
+                                onOpenNowPlaying = { showNowPlaying = true },
+                            )
+                            AppDestination.Search -> SearchScreen(
+                                container,
+                                onPlayTrackInList = { tracks, index, query ->
+                                    playSearchTracks(tracks, index, query)
+                                },
+                                requestFocus = true,
+                            )
+                            AppDestination.Library -> LibraryScreen(container, ::playTracks)
+                            AppDestination.Settings -> SettingsScreen(container)
+                        }
                     }
                 }
             }

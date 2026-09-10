@@ -10,6 +10,7 @@ import com.universalmusic.player.data.library.FileUserLibraryStore
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.local.JvmLocalTrackSource
 import com.universalmusic.player.data.local.LocalLibraryRootMode
+import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.data.local.resolveMusicRoots
@@ -98,6 +99,8 @@ actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTr
             additionalRoots = System.getenv("KAINOS_MUSIC_DIRS"),
         )
     }
+
+actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = null
 
 actual fun loadAppConfig(): AppConfig {
     val env = System.getenv()

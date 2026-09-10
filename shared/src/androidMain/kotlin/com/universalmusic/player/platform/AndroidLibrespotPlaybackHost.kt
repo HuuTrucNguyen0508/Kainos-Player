@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import android.util.Log
 import com.spotify.Authentication
 import com.spotify.connectstate.Connect
 import com.universalmusic.player.platform.librespot.LibrespotOAuth
@@ -41,6 +42,7 @@ internal class AndroidLibrespotPlaybackHost(
     private val credentialsFile = File(credentialsDir, "credentials.json")
 
     override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = mutex.withLock {
+        Log.i(TAG, "ensureDeviceReady interactive=false hasCredentials=${hasCachedCredentials()}")
         ensureStarted(interactive = false, oauthCredentials = null)
     }
 
@@ -88,6 +90,7 @@ internal class AndroidLibrespotPlaybackHost(
         }
 
         _state.value = SpotifyWebPlaybackState.StartingHost
+        Log.i(TAG, "starting librespot session interactive=$interactive oauth=${oauthCredentials != null}")
         return withContext(Dispatchers.IO) {
             try {
                 registerDecodersOnce()
@@ -110,10 +113,13 @@ internal class AndroidLibrespotPlaybackHost(
                 session = createdSession
                 player = createdPlayer
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
+                Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_DEVICE_NAME")
                 namedDevice()
             } catch (cancelled: CancellationException) {
+                Log.w(TAG, "session start cancelled")
                 throw cancelled
             } catch (failure: SpotifyAuthenticationException) {
+                Log.e(TAG, "auth rejected: ${failure.message}")
                 shutdownLocked()
                 runCatching { credentialsFile.delete() }
                 _state.value = SpotifyWebPlaybackState.Failed(
@@ -124,6 +130,7 @@ internal class AndroidLibrespotPlaybackHost(
                 )
                 null
             } catch (failure: Throwable) {
+                Log.e(TAG, "session failed: ${failure.message}", failure)
                 shutdownLocked()
                 _state.value = SpotifyWebPlaybackState.Failed(
                     SpotifyWebPlaybackFailure.LibrespotExited(
@@ -142,6 +149,9 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private fun shutdownLocked() {
+        if (player != null || session != null) {
+            Log.i(TAG, "shutdown session")
+        }
         runCatching { player?.close() }
         runCatching { session?.close() }
         player = null
@@ -178,7 +188,9 @@ internal class AndroidLibrespotPlaybackHost(
                         return null
                     }
                 }
+                Log.i(TAG, "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS")
                 val createdSession = builder.create()
+                Log.i(TAG, "AP connected")
                 return createdSession to Player(playerConf, createdSession)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -186,6 +198,7 @@ internal class AndroidLibrespotPlaybackHost(
                 throw auth
             } catch (failure: Throwable) {
                 lastFailure = failure
+                Log.w(TAG, "AP connect attempt ${attempt + 1} failed: ${failure.message}")
                 if (!isRetryableLibrespotConnectFailure(failure) || attempt == CONNECT_ATTEMPTS - 1) {
                     throw failure
                 }
@@ -195,6 +208,7 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private companion object {
+        private const val TAG = "KainosSpotify"
         private const val CONNECT_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 750L
         @Volatile

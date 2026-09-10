@@ -220,7 +220,8 @@ fun SettingsScreen(container: AppContainer) {
                         onCheckedChange = { container.setIncludeMediaStoreLibrary(it) },
                     )
                     Text(
-                        "Also include device MediaStore library",
+                        "Also include device MediaStore library (entire device music index). " +
+                            "Turn this off when using picked folders.",
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }

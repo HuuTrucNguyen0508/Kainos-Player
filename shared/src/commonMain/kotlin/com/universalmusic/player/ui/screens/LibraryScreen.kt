@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.spotify.isDiscoverWeekly
+import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.domain.model.Album
@@ -63,9 +65,16 @@ fun LibraryScreen(
     container: AppContainer,
     onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
-    var tab by remember { mutableStateOf(LibraryTab.Songs) }
+    var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
+    val tab = remember(tabName) {
+        runCatching { LibraryTab.valueOf(tabName) }.getOrDefault(LibraryTab.Songs)
+    }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
+    val songsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val albumsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val artistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val settings by container.settings.collectAsState()
     val scope = rememberCoroutineScope()
     val saved by container.library.savedTracks.collectAsState()
@@ -83,13 +92,13 @@ fun LibraryScreen(
     val spotifyState by container.spotify.state.collectAsState()
     val localOnly = settings.libraryLocalOnly
     val favoritesOnly = settings.libraryFavoritesOnly
-    val needle = query.trim().lowercase()
-    val songs = remember(
+    val needle = TrackNormalizer.fold(query.trim())
+    // Chips define the playable queue; the text needle is display-only.
+    val queueSongs = remember(
         localTracks,
         saved,
         spotifyTracks,
         settings.librarySongSort,
-        needle,
         localOnly,
         favoritesOnly,
         favorites,
@@ -100,10 +109,12 @@ fun LibraryScreen(
             (localTracks + saved + spotifyTracks).distinctBy(Track::canonicalId)
                 .ifEmpty { container.sample.allTracks }
         }
-        val filtered = catalog
-            .filter { !favoritesOnly || it.canonicalId in favorites }
-            .filter { needle.isEmpty() || it.matchesLibraryQuery(needle) }
+        val filtered = catalog.filter { !favoritesOnly || it.canonicalId in favorites }
         settings.librarySongSort.sort(filtered)
+    }
+    val songs = remember(queueSongs, needle) {
+        if (needle.isEmpty()) queueSongs
+        else queueSongs.filter { it.matchesLibraryQuery(needle) }
     }
     val localAlbums = remember(localTracks, favoritesOnly, favorites) {
         localTracks
@@ -146,7 +157,7 @@ fun LibraryScreen(
         } else {
             localArtists.ifEmpty { container.sample.homeArtists }
         }
-        if (needle.isEmpty()) base else base.filter { it.name.lowercase().contains(needle) }
+        if (needle.isEmpty()) base else base.filter { TrackNormalizer.fold(it.name).contains(needle) }
     }
     val filteredPlaylists = remember(spotifyPlaylists, needle, localOnly, favoritesOnly) {
         if (localOnly || favoritesOnly) return@remember emptyList()
@@ -252,7 +263,7 @@ fun LibraryScreen(
             LibraryTab.entries.forEach { item ->
                 Tab(
                     selected = tab == item,
-                    onClick = { tab = item },
+                    onClick = { tabName = item.name },
                     text = { Text(item.name) },
                 )
             }
@@ -322,17 +333,17 @@ fun LibraryScreen(
                         },
                     )
                 } else {
-                    val listState = rememberLazyListState()
-                    LaunchedEffect(settings.librarySongSort, needle, localOnly, favoritesOnly, favorites) {
-                        listState.scrollToItem(0)
+                    LaunchedEffect(settings.librarySongSort, needle, localOnly, favoritesOnly) {
+                        songsListState.scrollToItem(0)
                     }
-                    LazyColumn(state = listState) {
+                    LazyColumn(state = songsListState) {
                         items(songs, key = { it.canonicalId }) { track ->
                             TrackRow(
                                 track = track,
                                 onClick = {
-                                    val index = songs.indexOfFirst { it.canonicalId == track.canonicalId }.coerceAtLeast(0)
-                                    onPlayTracks(songs, index)
+                                    val index = queueSongs.indexOfFirst { it.canonicalId == track.canonicalId }
+                                        .coerceAtLeast(0)
+                                    onPlayTracks(queueSongs, index)
                                 },
                                 modifier = Modifier.padding(horizontal = 8.dp),
                                 trailing = {
@@ -373,7 +384,10 @@ fun LibraryScreen(
                         },
                     )
                 } else {
-                    LazyColumn {
+                    LaunchedEffect(needle, localOnly, favoritesOnly) {
+                        albumsListState.scrollToItem(0)
+                    }
+                    LazyColumn(state = albumsListState) {
                         items(filteredAlbums, key = { it.canonicalId }) { album ->
                             AlbumRow(
                                 album = album,
@@ -395,7 +409,10 @@ fun LibraryScreen(
                         },
                     )
                 } else {
-                    LazyColumn {
+                    LaunchedEffect(needle, localOnly, favoritesOnly) {
+                        artistsListState.scrollToItem(0)
+                    }
+                    LazyColumn(state = artistsListState) {
                         items(filteredArtists, key = { it.canonicalId }) { artist ->
                             Text(artist.name, modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
                         }
@@ -430,7 +447,10 @@ fun LibraryScreen(
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                         )
                     }
-                    LazyColumn {
+                    LaunchedEffect(needle, localOnly, favoritesOnly) {
+                        playlistsListState.scrollToItem(0)
+                    }
+                    LazyColumn(state = playlistsListState) {
                         items(filteredPlaylists, key = { it.canonicalId }) { playlist ->
                             val busy = playlistBusyId == playlist.canonicalId
                             val subtitle = when {
@@ -496,17 +516,23 @@ private fun TrackSort.label(): String = when (this) {
     TrackSort.DURATION_DESCENDING -> "Duration longest first"
 }
 
-private fun Track.matchesLibraryQuery(needle: String): Boolean =
-    title.lowercase().contains(needle) ||
-        artists.any { it.name.lowercase().contains(needle) } ||
-        album?.title?.lowercase()?.contains(needle) == true
+private fun Track.matchesLibraryQuery(needle: String): Boolean {
+    if (needle.isEmpty()) return true
+    return TrackNormalizer.fold(title).contains(needle) ||
+        artists.any { TrackNormalizer.fold(it.name).contains(needle) } ||
+        album?.title?.let { TrackNormalizer.fold(it).contains(needle) } == true
+}
 
-private fun Album.matchesLibraryQuery(needle: String): Boolean =
-    title.lowercase().contains(needle) ||
-        artists.any { it.name.lowercase().contains(needle) } ||
+private fun Album.matchesLibraryQuery(needle: String): Boolean {
+    if (needle.isEmpty()) return true
+    return TrackNormalizer.fold(title).contains(needle) ||
+        artists.any { TrackNormalizer.fold(it.name).contains(needle) } ||
         tracks.any { it.matchesLibraryQuery(needle) }
+}
 
-private fun Playlist.matchesLibraryQuery(needle: String): Boolean =
-    title.lowercase().contains(needle) ||
-        ownerName?.lowercase()?.contains(needle) == true ||
-        description?.lowercase()?.contains(needle) == true
+private fun Playlist.matchesLibraryQuery(needle: String): Boolean {
+    if (needle.isEmpty()) return true
+    return TrackNormalizer.fold(title).contains(needle) ||
+        ownerName?.let { TrackNormalizer.fold(it).contains(needle) } == true ||
+        description?.let { TrackNormalizer.fold(it).contains(needle) } == true
+}

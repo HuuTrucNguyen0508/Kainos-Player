@@ -18,10 +18,11 @@ class UnifiedSearch(
     private val timeoutMs: Long = 8_000,
 ) {
     suspend fun search(query: String): UnifiedSearchResult = coroutineScope {
+        val trimmed = query.trim()
         val jobs = providers.map { provider ->
             async {
                 provider.providerId to runCatching {
-                    withTimeoutOrNull(timeoutMs) { provider.search(query) }
+                    withTimeoutOrNull(timeoutMs) { provider.search(trimmed) }
                 }.onFailure { if (it is CancellationException) throw it }
             }
         }

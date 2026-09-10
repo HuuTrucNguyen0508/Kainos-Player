@@ -9,6 +9,7 @@ import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
+import com.universalmusic.player.data.local.cacheKey
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
@@ -27,6 +28,7 @@ import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.universalmusic.player.domain.model.ProviderId
@@ -36,6 +38,7 @@ import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.platform.createLocalLibraryScanCache
 import com.universalmusic.player.platform.createLocalTrackSource
 import com.universalmusic.player.platform.bindPlatformMediaControls
 import com.universalmusic.player.platform.createMetadataArtworkCache
@@ -85,9 +88,14 @@ class AppContainer {
     val sample = SampleCatalogProvider()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
-    val local = LocalMusicProvider(createLocalTrackSource { localLibraryScanConfig() })
+    val local = LocalMusicProvider(
+        source = createLocalTrackSource { localLibraryScanConfig() },
+        cache = createLocalLibraryScanCache(),
+        configKey = { localLibraryScanConfig().cacheKey() },
+    )
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
+    private var localLibraryRefreshJob: Job? = null
     private lateinit var spotifyProvider: SpotifyProvider
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
@@ -193,6 +201,7 @@ class AppContainer {
             player.updatePreferences(loaded.toPlaybackPreferences())
             applyProviderSettings(loaded, clearSessionOnChange = false)
             library.load(spotify.currentUserId())
+            runCatching { local.hydrateFromCache() }
             refreshLocalLibrary()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
@@ -325,10 +334,12 @@ class AppContainer {
     }
 
     fun refreshLocalLibrary() {
-        scope.launch {
+        localLibraryRefreshJob?.cancel()
+        localLibraryRefreshJob = scope.launch {
             _localLibraryMessage.value = null
             runCatching { local.refresh() }
                 .onFailure { failure ->
+                    if (failure is CancellationException) return@launch
                     _localLibraryMessage.value = failure.message ?: "Local library scan failed"
                 }
         }
@@ -351,16 +362,17 @@ class AppContainer {
                 } else {
                     listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
+                val nextFolders = (base + picked).distinct()
+                val firstExplicitRoot = !current.localMusicFoldersConfigured ||
+                    current.localMusicFolders.isEmpty()
                 current.copy(
                     localMusicFoldersConfigured = true,
-                    localMusicFolders = (base + picked).distinct(),
+                    localMusicFolders = nextFolders,
+                    // Custom SAF folders should not be drowned by the full device MediaStore index.
+                    includeMediaStoreLibrary = if (firstExplicitRoot) false else current.includeMediaStoreLibrary,
                 )
             }
-            runCatching { local.refresh() }
-                .onFailure { failure ->
-                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
-                }
-                .onSuccess { _localLibraryMessage.value = null }
+            refreshLocalLibrary()
         }
     }
 
@@ -378,11 +390,7 @@ class AppContainer {
                     localMusicFolders = base.filterNot { it == path },
                 )
             }
-            runCatching { local.refresh() }
-                .onFailure { failure ->
-                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
-                }
-                .onSuccess { _localLibraryMessage.value = null }
+            refreshLocalLibrary()
         }
     }
 

@@ -2,17 +2,25 @@ package com.universalmusic.player.data.local
 
 import android.content.ContentResolver
 import android.content.Context
+import android.database.Cursor
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.QualityTier
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 /**
  * Recursive SAF tree scan for user-picked music folders.
- * Throws [IllegalStateException] with a clear message when a configured tree URI is revoked.
+ *
+ * Uses [DocumentsContract] child cursors (one query per directory) instead of
+ * [DocumentFile.listFiles] / per-property binder calls, which are prohibitively
+ * slow on large trees. Throws [IllegalStateException] when a configured tree URI
+ * is revoked.
  */
 internal class SafLocalTrackSource(
     context: Context,
@@ -28,6 +36,7 @@ internal class SafLocalTrackSource(
         val tracks = linkedMapOf<String, LocalTrack>()
         val revoked = mutableListOf<String>()
         for (raw in uris) {
+            coroutineContext.ensureActive()
             val treeUri = runCatching { Uri.parse(raw) }.getOrNull()
             if (treeUri == null) {
                 revoked += raw
@@ -42,7 +51,14 @@ internal class SafLocalTrackSource(
                 revoked += displayName(treeUri)
                 continue
             }
-            walkDocuments(root, albumGroupKey = treeUri.toString(), into = tracks)
+            val documentId = DocumentsContract.getTreeDocumentId(treeUri)
+            walkDocuments(
+                treeUri = treeUri,
+                documentId = documentId,
+                albumGroupKey = treeUri.toString(),
+                displayName = root.name,
+                into = tracks,
+            )
         }
         lastRevokedFolders = revoked.toList()
         tracks.values.toList()
@@ -63,31 +79,101 @@ internal class SafLocalTrackSource(
             ?: uri.lastPathSegment
             ?: uri.toString()
 
-    private fun walkDocuments(
-        directory: DocumentFile,
+    private suspend fun walkDocuments(
+        treeUri: Uri,
+        documentId: String,
         albumGroupKey: String,
+        displayName: String?,
         into: MutableMap<String, LocalTrack>,
     ) {
-        val children = directory.listFiles()
+        coroutineContext.ensureActive()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
+        val children = queryChildren(childrenUri) ?: return
+
+        val directories = mutableListOf<ChildDoc>()
+        val files = mutableListOf<ChildDoc>()
         for (child in children) {
-            when {
-                child.isDirectory -> {
-                    val childKey = child.uri.toString()
-                    walkDocuments(child, albumGroupKey = childKey, into = into)
-                }
-                child.isFile && child.canRead() && child.name.audioExtension() != null -> {
-                    child.toLocalTrack(albumGroupKey)?.let { track ->
-                        into.putIfAbsent(track.location, track)
-                    }
-                }
+            if (child.isDirectory) {
+                directories += child
+            } else {
+                files += child
             }
+        }
+
+        val sidecarArt = files.findSidecarArtworkUri(treeUri)
+        val directoryAlbum = displayName?.humanized()?.takeIf { it.isNotEmpty() && it != "Documents" }
+
+        for (file in files) {
+            coroutineContext.ensureActive()
+            val extension = file.displayName.audioExtension() ?: continue
+            file.toLocalTrack(
+                treeUri = treeUri,
+                albumGroupKey = albumGroupKey,
+                directoryAlbum = directoryAlbum,
+                sidecarArt = sidecarArt,
+                extension = extension,
+            )?.let { track ->
+                into.putIfAbsent(track.location, track)
+            }
+        }
+
+        for (dir in directories) {
+            walkDocuments(
+                treeUri = treeUri,
+                documentId = dir.documentId,
+                albumGroupKey = DocumentsContract.buildDocumentUriUsingTree(treeUri, dir.documentId).toString(),
+                displayName = dir.displayName,
+                into = into,
+            )
         }
     }
 
-    private fun DocumentFile.toLocalTrack(albumGroupKey: String): LocalTrack? {
-        val name = name ?: return null
-        val extension = name.audioExtension() ?: return null
-        val stem = name.substringBeforeLast('.', name)
+    private fun queryChildren(childrenUri: Uri): List<ChildDoc>? {
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+        )
+        return runCatching {
+            contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                buildList {
+                    val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    val mimeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    val sizeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getString(idIdx) ?: continue
+                        val name = cursor.getString(nameIdx) ?: continue
+                        val mime = cursor.getString(mimeIdx).orEmpty()
+                        val size = cursor.longOrNull(sizeIdx)
+                        add(ChildDoc(documentId = id, displayName = name, mimeType = mime, size = size))
+                    }
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun List<ChildDoc>.findSidecarArtworkUri(treeUri: Uri): String? {
+        val byLower = associateBy { it.displayName.lowercase() }
+        for (name in LocalArtworkPolicy.SIDECAR_NAMES) {
+            val file = byLower[name] ?: continue
+            val size = file.size ?: continue
+            if (size in 1..LocalArtworkPolicy.MAX_ARTWORK_BYTES) {
+                return DocumentsContract.buildDocumentUriUsingTree(treeUri, file.documentId).toString()
+            }
+        }
+        return null
+    }
+
+    private fun ChildDoc.toLocalTrack(
+        treeUri: Uri,
+        albumGroupKey: String,
+        directoryAlbum: String?,
+        sidecarArt: String?,
+        extension: String,
+    ): LocalTrack? {
+        val stem = displayName.substringBeforeLast('.', displayName)
         val cleanedStem = stem.withoutTrackNumber().humanized()
         val artistTitleSeparator = cleanedStem.indexOf(" - ")
         val filenameArtist = cleanedStem
@@ -100,35 +186,20 @@ internal class SafLocalTrackSource(
             .withoutTrackNumber()
             .humanized()
             .ifEmpty { stem.humanized() }
-        val parent = parentFile
-        val directoryAlbum = parent?.name?.humanized()?.takeIf { it.isNotEmpty() && it != "Documents" }
-        val directoryArtist = parent?.parentFile?.name?.humanized()?.takeIf { it.isNotEmpty() }
-        val sidecarArt = parent?.findSidecarArtwork()?.uri?.toString()
-        val length = length().takeIf { it > 0 }
-
+        if (title.isBlank()) return null
+        val location = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId).toString()
         return LocalTrack(
-            id = UUID.nameUUIDFromBytes(uri.toString().toByteArray()).toString(),
+            id = UUID.nameUUIDFromBytes(location.toByteArray()).toString(),
             title = title,
-            artists = listOfNotNull(filenameArtist ?: directoryArtist),
+            artists = listOfNotNull(filenameArtist),
             album = directoryAlbum,
             albumGroupKey = albumGroupKey,
             durationMs = null,
             artworkUri = sidecarArt,
-            location = uri.toString(),
-            contentLength = length,
+            location = location,
+            contentLength = size?.takeIf { it > 0 },
             quality = extension.toQuality(),
         )
-    }
-
-    private fun DocumentFile.findSidecarArtwork(): DocumentFile? {
-        val children = listFiles()
-        val byLower = children.filter { it.isFile }.associateBy { it.name?.lowercase().orEmpty() }
-        for (name in LocalArtworkPolicy.SIDECAR_NAMES) {
-            val file = byLower[name] ?: continue
-            val size = file.length()
-            if (size in 1..LocalArtworkPolicy.MAX_ARTWORK_BYTES) return file
-        }
-        return null
     }
 
     private fun String?.audioExtension(): String? {
@@ -150,6 +221,19 @@ internal class SafLocalTrackSource(
     private fun String.humanized(): String = replace('_', ' ')
         .replace(REPEATED_WHITESPACE, " ")
         .trim()
+
+    private fun Cursor.longOrNull(index: Int): Long? =
+        if (isNull(index)) null else getLong(index)
+
+    private data class ChildDoc(
+        val documentId: String,
+        val displayName: String,
+        val mimeType: String,
+        val size: Long?,
+    ) {
+        val isDirectory: Boolean
+            get() = mimeType == DocumentsContract.Document.MIME_TYPE_DIR
+    }
 
     private companion object {
         val TRACK_NUMBER_PREFIX = Regex("""^\s*(?:(?:\d{1,2}(?:-\d{1,2})?)[\s._-]+)+""")

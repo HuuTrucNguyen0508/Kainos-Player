@@ -331,6 +331,7 @@ class PlayerSession(
                 if (generation != playGeneration) return
                 currentCoroutineContext().ensureActive()
                 _nowPlaying.update { it.copy(buffering = false, error = error.message, isPlaying = false) }
+                advanceAfterTerminalFailure(generation)
                 return
             }
         if (generation != playGeneration) return
@@ -390,6 +391,7 @@ class PlayerSession(
                     error = reason ?: "Playback failed and no fallback is available",
                 )
             }
+            advanceAfterTerminalFailure(generation)
             return
         }
         val remaining = current.fallbacks.drop(1)
@@ -403,6 +405,13 @@ class PlayerSession(
             fallback = event,
             generation = generation,
         )
+    }
+
+    /** Skip a dead track when the queue still has something after it. */
+    private fun advanceAfterTerminalFailure(generation: Long) {
+        if (generation != playGeneration) return
+        if (queue.nextIndex(respectRepeatOne = false) == null) return
+        advance(manual = false, fromGeneration = generation)
     }
 }
 

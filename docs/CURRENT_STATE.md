@@ -88,6 +88,26 @@ Do **not** publish a GitHub Release or copy the APK to `release/` unless explici
 7. Android physical device (if available): notification island + Bluetooth transport; MediaSession Spotify overlay PLAYING
 8. Spot-check: favorites survive restart; local folders after M5; no Home redesign; no protected audio cache dirs
 
+## Android Phase A (update_16), 2026-09-09
+
+P0 fixes for HyperOS device feedback (not yet re-verified on device):
+
+- SAF scan uses `DocumentsContract` child cursors (one query per directory); scan snapshot cache `local-library-cache.json`; single-flight refresh; adding the first SAF folder turns MediaStore off by default.
+- Library row tap queues the chip-filtered list (text search is display-only); terminal play failure auto-advances when the queue has a next item.
+- MediaSession `notifyOverlayChanges` runs for all backends so notification Next stays in sync for local/YouTube.
+- Spotify Connect start uses a 20s wall-clock deadline; Spotify command I/O runs off Main; MediaController connect is non-blocking await. Log tags: `KainosSpotify`, `KainosPlayback` (service destroy / task removed).
+- Still open for Phase B / device: HyperOS island rebuild on skip, Now Playing layout, Library scroll restore, live Premium ANR confirmation (ask tester for `adb bugreport` if Spotify still freezes).
+
+`:shared:jvmTest`, `:androidApp:assembleDebug`, and `:androidApp:lintDebug` pass after these changes.
+
+## Android Phase B (update_16 UX), 2026-09-09
+
+- MediaSession: metadata/transport publishes are `distinctUntilChanged` on identity; position ticks update overlay only (no MediaItem replace). Spotify silence path prefers `replaceMediaItem`.
+- Now Playing: phone art capped at 280.dp; `navigationBarsPadding` + bottom spacer.
+- Library: `SaveableStateHolder` per destination; per-tab `LazyListState` via `rememberSaveable`; scroll reset only on sort/needle/chips.
+- Library search uses `TrackNormalizer.fold` (accent + case); `UnifiedSearch` trims once.
+- HyperOS island stability still needs device confirmation.
+
 ## Android validation, 2026-09-07
 
 Five instrumented tests pass on the Pixel 10 Pro emulator running Android 17/API 37 for MediaStore scanning, WAV play/pause/seek/completion, missing-file failure and recovery, foreground background-playback service and system pause, and pausing a simulated Spotify controller when switching to local audio. A sixth live smoke resolves a public YouTube video with NewPipe Extractor and plays the audio URL through ExoPlayer until position advances. The app launches successfully; lint has zero errors and one existing target-SDK warning. Shared JVM tests and desktop compilation also pass.

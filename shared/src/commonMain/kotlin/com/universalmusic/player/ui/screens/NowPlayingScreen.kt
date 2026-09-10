@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -94,6 +96,7 @@ fun NowPlayingScreen(
     Column(
         Modifier
             .fillMaxSize()
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(if (compact) 16.dp else 24.dp),
     ) {
@@ -112,7 +115,15 @@ fun NowPlayingScreen(
                 .align(Alignment.CenterHorizontally)
                 .widthIn(max = 360.dp)
                 .fillMaxWidth()
-                .aspectRatio(1f),
+                .then(
+                    if (compact) {
+                        Modifier.aspectRatio(1f)
+                    } else {
+                        Modifier
+                            .heightIn(max = 280.dp)
+                            .aspectRatio(1f)
+                    },
+                ),
             seed = track?.title ?: "U",
         )
         Spacer(Modifier.height(12.dp))
@@ -370,6 +381,7 @@ fun NowPlayingScreen(
                 )
             }
         }
+        Spacer(Modifier.height(if (compact) 8.dp else 24.dp))
     }
 }
 

@@ -1,7 +1,10 @@
 package com.universalmusic.player.platform
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.IBinder
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
@@ -15,6 +18,7 @@ class AndroidPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "onCreate")
         silenceUri = ensureSilenceFile(this)
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -32,7 +36,21 @@ class AndroidPlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.w(TAG, "onTaskRemoved rootIntent=${rootIntent?.component}")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onBind(intent: Intent?): IBinder? {
+        Log.i(TAG, "onBind action=${intent?.action}")
+        return super.onBind(intent)
+    }
+
     override fun onDestroy() {
+        Log.w(
+            TAG,
+            "onDestroy session=${mediaSession != null} player=${forwardingPlayer != null}",
+        )
         AndroidMediaControls.attachPlayer(null)
         mediaSession?.run {
             player.release()
@@ -44,6 +62,8 @@ class AndroidPlaybackService : MediaSessionService() {
     }
 
     companion object {
+        private const val TAG = "KainosPlayback"
+
         @Volatile
         private var silenceUri: Uri? = null
 

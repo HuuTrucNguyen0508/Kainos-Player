@@ -15,6 +15,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -39,8 +42,23 @@ object AndroidMediaControls {
         this.session = session
         syncJob?.cancel()
         syncJob = scope.launch {
-            combine(session.nowPlaying, session.queue.queue) { now, queue -> now to queue }
-                .collectLatest { (now, queue) -> publish(now, queue) }
+            // Metadata / transport: skip HyperOS island rebuilds on position ticks.
+            launch {
+                combine(session.nowPlaying, session.queue.queue) { now, queue -> now to queue }
+                    .distinctUntilChangedBy { (now, queue) -> sessionIdentity(now, queue) }
+                    .collectLatest { (now, queue) -> publish(now, queue) }
+            }
+            // Position-only: update overlay clock without replacing MediaItem.
+            launch {
+                session.nowPlaying
+                    .map { PositionTick(it.positionMs, it.durationMs) }
+                    .distinctUntilChanged()
+                    .collectLatest { tick ->
+                        onMain {
+                            forwardingPlayer?.updateOverlayPosition(tick.positionMs, tick.durationMs)
+                        }
+                    }
+            }
         }
     }
 
@@ -120,6 +138,24 @@ object AndroidMediaControls {
         )
     }
 
+    private fun sessionIdentity(now: NowPlayingState, queue: PlaybackQueue): SessionIdentity {
+        val track = now.track
+        return SessionIdentity(
+            mediaId = track?.canonicalId ?: queue.current?.id ?: "kainos-idle",
+            title = track?.title,
+            artist = track?.artistLine,
+            album = track?.album?.title,
+            artwork = track?.artwork?.url,
+            isPlaying = now.isPlaying,
+            buffering = now.buffering,
+            durationMs = now.durationMs,
+            canSeek = track != null,
+            canSkipNext = canSkipNext(),
+            canSkipPrevious = queue.items.size > 1 || now.positionMs > 3_000L,
+            spotifyActive = now.resolved?.source?.provider == ProviderId.SPOTIFY,
+        )
+    }
+
     private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             block()
@@ -127,6 +163,23 @@ object AndroidMediaControls {
             mainHandler.post(block)
         }
     }
+
+    private data class PositionTick(val positionMs: Long, val durationMs: Long?)
+
+    private data class SessionIdentity(
+        val mediaId: String,
+        val title: String?,
+        val artist: String?,
+        val album: String?,
+        val artwork: String?,
+        val isPlaying: Boolean,
+        val buffering: Boolean,
+        val durationMs: Long?,
+        val canSeek: Boolean,
+        val canSkipNext: Boolean,
+        val canSkipPrevious: Boolean,
+        val spotifyActive: Boolean,
+    )
 }
 
 internal fun Track.toMediaMetadata(durationMs: Long? = this.durationMs): MediaMetadata {

@@ -14,12 +14,15 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.MusicProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class LocalMusicProvider(
     private val source: LocalTrackSource,
+    private val cache: LocalLibraryScanCache? = null,
+    private val configKey: () -> String = { "" },
 ) : MusicProvider {
     override val providerId: ProviderId = ProviderId.LOCAL
 
@@ -29,17 +32,44 @@ class LocalMusicProvider(
     private val mutableLibraryTracks = MutableStateFlow<List<Track>>(emptyList())
     val libraryTracks: StateFlow<List<Track>> = mutableLibraryTracks.asStateFlow()
 
+    /** Apply a persisted scan snapshot without marking the provider as loading. */
+    fun applyCachedTracks(tracks: List<LocalTrack>) {
+        if (tracks.isEmpty()) return
+        mutableLibraryTracks.value = tracks.distinctBy(LocalTrack::id).map(LocalTrack::toDomain)
+        if (mutableState.value != ProviderState.LOADING) {
+            mutableState.value = ProviderState.AVAILABLE
+        }
+    }
+
+    /** Load cache for the current config key, if any. */
+    suspend fun hydrateFromCache() {
+        val key = configKey()
+        val cached = cache?.read(key).orEmpty()
+        applyCachedTracks(cached)
+    }
+
     /** Replaces the cached library with the latest complete platform snapshot. */
     suspend fun refresh(): List<Track> {
         mutableState.value = ProviderState.LOADING
         return try {
             source.scan()
                 .distinctBy(LocalTrack::id)
+                .also { scanned ->
+                    runCatching { cache?.write(configKey(), scanned) }
+                }
                 .map(LocalTrack::toDomain)
                 .also {
                     mutableLibraryTracks.value = it
                     mutableState.value = ProviderState.AVAILABLE
                 }
+        } catch (cancelled: CancellationException) {
+            // Keep previous tracks / AVAILABLE when a scan is cancelled by a newer refresh.
+            if (mutableLibraryTracks.value.isNotEmpty()) {
+                mutableState.value = ProviderState.AVAILABLE
+            } else {
+                mutableState.value = ProviderState.UNAVAILABLE
+            }
+            throw cancelled
         } catch (error: Throwable) {
             mutableState.value = ProviderState.UNAVAILABLE
             throw error

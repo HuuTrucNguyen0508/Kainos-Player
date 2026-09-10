@@ -141,6 +141,48 @@ class PlayerSessionFallbackTest {
             session.nowPlaying.value.error,
         )
     }
+
+    @Test
+    fun terminalFailureAdvancesToNextQueueItem() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(
+            listOf(
+                track("Broken", "Artist", provider = ProviderId.SPOTIFY),
+                track("Next", "Artist", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+        assertEquals("Broken", session.nowPlaying.value.track?.title)
+
+        engine.state.value = EngineState(
+            status = EngineStatus.FAILED,
+            error = "playback failed",
+            playGeneration = engine.state.value.playGeneration,
+        )
+        runCurrent()
+
+        assertEquals("Next", session.nowPlaying.value.track?.title)
+        assertEquals(true, session.nowPlaying.value.isPlaying || session.nowPlaying.value.buffering ||
+            session.nowPlaying.value.resolved != null)
+    }
+
+    @Test
+    fun resolveFailureAdvancesWhenQueueHasNext() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(
+            listOf(
+                track("Empty", "Artist", provider = ProviderId.SAMPLE).copy(sources = emptyList()),
+                track("Alive", "Artist", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+
+        assertEquals("Alive", session.nowPlaying.value.track?.title)
+    }
 }
 
 private class RecordingEngine(

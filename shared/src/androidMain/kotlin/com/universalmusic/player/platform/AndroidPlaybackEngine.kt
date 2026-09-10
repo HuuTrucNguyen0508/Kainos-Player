@@ -28,14 +28,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class AndroidPlaybackEngine(
     context: Context,
     private val spotify: SpotifyPlaybackController,
 ) : PlaybackEngine {
     private val appContext = context.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Default scope for Spotify I/O and service connect. ExoPlayer work uses Main.immediate. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
     private val controller = CompletableDeferred<MediaController>()
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -98,7 +102,7 @@ class AndroidPlaybackEngine(
     }
 
     init {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             for (command in spotifyCommands) {
                 val result = runCatching { command.action() }
                 command.completion?.complete(result)
@@ -145,6 +149,10 @@ class AndroidPlaybackEngine(
                     ticker?.cancel()
                     val player = controller.await()
                     val track = AndroidMediaControls.currentTrack()
+                    publishState(EngineState(
+                        status = EngineStatus.BUFFERING,
+                        durationMs = handle.durationMs ?: track?.durationMs,
+                    ))
                     player.setMediaItem(
                         mediaItemForMetadata(
                             track = track,
@@ -159,14 +167,14 @@ class AndroidPlaybackEngine(
                     // has not yet published (instrumented engine path).
                     AndroidMediaControls.forwardingPlayer?.publishSessionState(
                         mediaId = track?.canonicalId ?: handle.trackId,
-                        metadata = track?.toMediaMetadata(handle.durationMs ?: track.durationMs)
+                        metadata = track?.toMediaMetadata(handle.durationMs ?: track?.durationMs)
                             ?: androidx.media3.common.MediaMetadata.Builder()
                                 .setTitle("Kainos Player")
                                 .setIsPlayable(true)
                                 .build(),
                         artworkUri = track?.artwork?.url?.let(android.net.Uri::parse),
                         isPlaying = true,
-                        buffering = false,
+                        buffering = true,
                         positionMs = 0L,
                         durationMs = handle.durationMs ?: track?.durationMs,
                         canSeek = true,
@@ -186,11 +194,33 @@ class AndroidPlaybackEngine(
                 }
                 spotifyOffset = 0
                 spotifyStartedAt = System.currentTimeMillis()
+                val duration = handle.durationMs
+                    ?: AndroidMediaControls.currentDurationMs()
+                    ?: AndroidMediaControls.currentTrack()?.durationMs
                 publishState(EngineState(
                     status = EngineStatus.PLAYING,
                     positionMs = 0,
-                    durationMs = handle.durationMs,
+                    durationMs = duration,
                 ))
+                withContext(Dispatchers.Main.immediate) {
+                    AndroidMediaControls.forwardingPlayer?.publishSessionState(
+                        mediaId = AndroidMediaControls.currentTrack()?.canonicalId ?: handle.trackId,
+                        metadata = AndroidMediaControls.currentTrack()?.toMediaMetadata(duration)
+                            ?: androidx.media3.common.MediaMetadata.Builder()
+                                .setTitle("Kainos Player")
+                                .setIsPlayable(true)
+                                .build(),
+                        artworkUri = AndroidMediaControls.currentTrack()?.artwork?.url?.let(android.net.Uri::parse),
+                        isPlaying = true,
+                        buffering = false,
+                        positionMs = 0L,
+                        durationMs = duration,
+                        canSeek = true,
+                        canSkipNext = AndroidMediaControls.canSkipNext(),
+                        canSkipPrevious = AndroidMediaControls.canSkipPrevious(),
+                        spotifyActive = true,
+                    )
+                }
                 startTicker()
             }
         }
@@ -265,33 +295,50 @@ class AndroidPlaybackEngine(
             )
             val future = MediaController.Builder(appContext, token).buildAsync()
             controllerFuture = future
-            future.addListener(
+            try {
+                val player = future.await()
+                withContext(Dispatchers.Main.immediate) {
+                    mediaPlayer = player
+                    player.addListener(playerListener)
+                }
+                controller.complete(player)
+            } catch (failure: Throwable) {
+                val cause = (failure as? ExecutionException)?.cause ?: failure
+                controller.completeExceptionally(cause)
+                publishState(EngineState(
+                    status = EngineStatus.FAILED,
+                    error = cause.message ?: "Could not connect to the playback service",
+                ))
+            }
+        }
+    }
+
+    private suspend fun <T> ListenableFuture<T>.await(): T =
+        suspendCancellableCoroutine { cont ->
+            addListener(
                 {
-                    scope.launch {
-                        runCatching { future.get() }
-                            .onSuccess { player ->
-                                mediaPlayer = player
-                                player.addListener(playerListener)
-                                controller.complete(player)
-                            }
-                            .onFailure { failure ->
-                                val cause = (failure as? ExecutionException)?.cause ?: failure
-                                controller.completeExceptionally(cause)
-                                publishState(EngineState(
-                                    status = EngineStatus.FAILED,
-                                    error = cause.message ?: "Could not connect to the playback service",
-                                ))
-                            }
+                    if (cont.isCancelled) return@addListener
+                    try {
+                        val value = get() as T
+                        cont.resume(value)
+                    } catch (failure: Throwable) {
+                        val cause = (failure as? ExecutionException)?.cause ?: failure
+                        cont.resumeWithException(cause)
                     }
                 },
                 Executor { runnable -> runnable.run() },
             )
+            cont.invokeOnCancellation {
+                runCatching { cancel(true) }
+            }
         }
-    }
 
     private fun launchMediaCommand(command: (MediaController) -> Unit) {
         scope.launch {
-            runCatching { command(controller.await()) }
+            runCatching {
+                val player = controller.await()
+                withContext(Dispatchers.Main.immediate) { command(player) }
+            }
                 .onFailure { failure ->
                     if (activeBackend == ActiveBackend.MEDIA3) {
                         ticker?.cancel()
@@ -330,10 +377,15 @@ class AndroidPlaybackEngine(
                 val position = when (activeBackend) {
                     ActiveBackend.SPOTIFY -> spotifyOffset +
                         (System.currentTimeMillis() - spotifyStartedAt)
-                    ActiveBackend.MEDIA3 -> controller.await().currentPosition
+                    // MediaController must be touched on the application main looper.
+                    ActiveBackend.MEDIA3 -> withContext(Dispatchers.Main.immediate) {
+                        controller.await().currentPosition
+                    }
                     ActiveBackend.NONE -> return@launch
                 }
                 val duration = _state.value.durationMs
+                    ?: AndroidMediaControls.currentDurationMs()
+                    ?: AndroidMediaControls.currentTrack()?.durationMs
                 val capped = if (duration != null && activeBackend == ActiveBackend.SPOTIFY) {
                     position.coerceAtMost(duration)
                 } else {
@@ -348,10 +400,11 @@ class AndroidPlaybackEngine(
                     publishState(_state.value.copy(
                         status = EngineStatus.ENDED,
                         positionMs = duration,
+                        durationMs = duration,
                     ))
                     return@launch
                 }
-                publishState(_state.value.copy(positionMs = capped))
+                publishState(_state.value.copy(positionMs = capped, durationMs = duration ?: _state.value.durationMs))
                 delay(400)
             }
         }

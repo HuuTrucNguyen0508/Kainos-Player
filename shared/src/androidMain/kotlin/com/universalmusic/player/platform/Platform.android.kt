@@ -12,7 +12,9 @@ import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.AndroidUserLibraryStore
 import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.local.AndroidLocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryRootMode
+import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.local.LocalTrackSource
@@ -139,6 +141,9 @@ actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTr
         }
         merged.values.toList()
     }
+
+actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? =
+    AndroidLocalLibraryScanCache(androidContext)
 
 actual fun loadAppConfig(): AppConfig {
     val prefs = androidContext.getSharedPreferences("ump_config", Context.MODE_PRIVATE)

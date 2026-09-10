@@ -53,6 +53,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 private const val AUTH_URL = "https://accounts.spotify.com/authorize"
 private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
 private const val API = "https://api.spotify.com/v1"
+private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
 private val SCOPES = listOf(
     "user-read-email",
     "user-read-private",
@@ -387,8 +388,23 @@ class SpotifyProvider(
     )
 
     suspend fun startConnectPlayback(spotifyTrackId: String) {
+        val deadlineMs = currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS
+        startConnectPlaybackLocked(spotifyTrackId, deadlineMs)
+    }
+
+    private fun ensureWithinConnectDeadline(deadlineMs: Long) {
+        if (currentTimeMillis() > deadlineMs) {
+            error(
+                "Spotify playback timed out while starting the in-app receiver or Connect transfer. " +
+                    "Check Settings → Connect, then try again.",
+            )
+        }
+    }
+
+    private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long) {
         val token = accessToken()
-        val target = resolvePlaybackTarget(token)
+        ensureWithinConnectDeadline(deadlineMs)
+        val target = resolvePlaybackTarget(token, deadlineMs)
         // #region agent log
         debugSpotifyLog(
             "H1",
@@ -455,7 +471,10 @@ class SpotifyProvider(
     suspend fun getConnectDevices(): List<SpotifyConnectDevice> =
         fetchConnectDevices(accessToken()).mapNotNull(SpotifyDevice::toConnectDeviceOrNull)
 
-    private suspend fun resolvePlaybackTarget(token: String): ConnectPlaybackTarget {
+    private suspend fun resolvePlaybackTarget(token: String): ConnectPlaybackTarget =
+        resolvePlaybackTarget(token, deadlineMs = currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS)
+
+    private suspend fun resolvePlaybackTarget(token: String, deadlineMs: Long): ConnectPlaybackTarget {
         if (requireExplicitPlaybackDevice) return resolveExplicitPlaybackTarget(token)
 
         val stored = tokens.read(ProviderId.SPOTIFY)
@@ -471,6 +490,7 @@ class SpotifyProvider(
         // #endregion
 
         if (hasStreaming || !webPlayback.requiresStreamingScope) {
+            ensureWithinConnectDeadline(deadlineMs)
             val device = runCatching { webPlayback.ensureDeviceReady() }.getOrElse { failure ->
                 if (failure is CancellationException) throw failure
                 // #region agent log
@@ -484,8 +504,9 @@ class SpotifyProvider(
                 null
             }
             if (device != null) {
+                ensureWithinConnectDeadline(deadlineMs)
                 val deviceId = device.deviceId ?: device.deviceName?.let { name ->
-                    waitForNamedConnectDevice(token, name)?.id
+                    waitForNamedConnectDevice(token, name, deadlineMs)?.id
                 }
                 if (deviceId.isNullOrBlank()) {
                     webPlaybackFailureMessage()?.let { error(it) }
@@ -511,6 +532,7 @@ class SpotifyProvider(
         if (devices.isEmpty()) {
             startConnectClient()
             for (attempt in 1..12) {
+                ensureWithinConnectDeadline(deadlineMs)
                 delay(1_000)
                 devices = listConnectDevices(token)
                 if (devices.isNotEmpty()) break
@@ -624,13 +646,19 @@ class SpotifyProvider(
             .successBody<SpotifyDevicesResponse>("Spotify devices")
             .devices
 
-    private suspend fun waitForNamedConnectDevice(token: String, name: String): SpotifyDevice? {
+    private suspend fun waitForNamedConnectDevice(
+        token: String,
+        name: String,
+        deadlineMs: Long = currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS,
+    ): SpotifyDevice? {
         repeat(12) { attempt ->
+            ensureWithinConnectDeadline(deadlineMs)
             val devices = listConnectDevices(token)
             devices.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it }
             if (attempt < 11) delay(1_000)
         }
         // Refresh a dead-child failure before returning the registration error.
+        ensureWithinConnectDeadline(deadlineMs)
         webPlayback.ensureDeviceReady()
         return null
     }
