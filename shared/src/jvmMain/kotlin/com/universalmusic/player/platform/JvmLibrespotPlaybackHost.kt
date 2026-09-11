@@ -255,7 +255,10 @@ internal fun findLibrespotExecutable(
     val candidates = buildList {
         explicit?.let(::add)
         add(workingDirectory.resolve("tools/librespot-runtime/bin/librespot"))
+        // Gradle :desktopApp:run uses desktopApp/ as cwd; repo tools/ is one level up.
+        add(workingDirectory.parent.resolve("tools/librespot-runtime/bin/librespot"))
         add(userHome.resolve(".local/bin/librespot"))
+        add(userHome.resolve(".universal-music-player/bin/librespot"))
         environment["PATH"].orEmpty().split(File.pathSeparatorChar)
             .filter(String::isNotBlank)
             .mapTo(this) { Path.of(it).resolve("librespot") }
@@ -264,5 +267,6 @@ internal fun findLibrespotExecutable(
         .asSequence()
         .map { if (it.isAbsolute) it else workingDirectory.resolve(it) }
         .map(Path::normalize)
+        .distinct()
         .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
 }

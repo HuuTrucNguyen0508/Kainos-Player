@@ -24,6 +24,22 @@ class SpotifyDiscoverWeeklyTest {
         assertNull(findDiscoverWeekly(playlists.filterNot { it.isDiscoverWeekly() }))
     }
 
+    @Test
+    fun findsDiscoverWeeklyByMixtapeDescription() {
+        val found = findDiscoverWeekly(
+            listOf(
+                playlist("other", "Made For You"),
+                Playlist(
+                    canonicalId = "spotify-playlist:dw",
+                    title = "Discover Weekly",
+                    description = "Your weekly mixtape of fresh music.",
+                    source = ProviderEntityRef(ProviderId.SPOTIFY, "dw"),
+                ),
+            ),
+        )
+        assertEquals("dw", found?.source?.providerEntityId)
+    }
+
     private fun playlist(id: String, title: String) = Playlist(
         canonicalId = "spotify-playlist:$id",
         title = title,

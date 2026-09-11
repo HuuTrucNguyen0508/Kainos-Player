@@ -315,6 +315,9 @@ class KainosForwardingPlayer(
         if (spotifyActive) {
             AndroidMediaControls.pause()
         } else {
+            // Empty Exo playlist: do not treat as a user pause. MediaController silence
+            // setup and clearQueue leftovers must not cancel PlayerSession buffering.
+            if (exo.mediaItemCount == 0) return
             super.pause()
         }
     }
@@ -323,7 +326,9 @@ class KainosForwardingPlayer(
         if (spotifyActive) {
             if (playWhenReady) AndroidMediaControls.play() else AndroidMediaControls.pause()
         } else if (exo.mediaItemCount == 0) {
-            if (playWhenReady) AndroidMediaControls.play() else AndroidMediaControls.pause()
+            // Play while empty routes to the session. Pause while empty must no-op so
+            // internal MediaController prepare/pause cannot cancel a buffering start.
+            if (playWhenReady) AndroidMediaControls.play()
         } else {
             super.setPlayWhenReady(playWhenReady)
         }

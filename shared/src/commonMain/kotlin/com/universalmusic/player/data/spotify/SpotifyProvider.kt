@@ -18,6 +18,7 @@ import com.universalmusic.player.platform.SpotifyWebPlaybackHost
 import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
 import com.universalmusic.player.platform.SpotifyWebPlaybackState
 import com.universalmusic.player.platform.UnavailableSpotifyWebPlaybackHost
+import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.encodeUrl
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
@@ -280,6 +281,29 @@ class SpotifyProvider(
             artists = response.artists?.items?.map { it.toDomain() }.orEmpty(),
             playlists = response.playlists?.items?.mapNotNull { it?.toDomainOrNull(premium) }.orEmpty(),
         )
+    }
+
+    /**
+     * Discover Weekly is often omitted from `/me/playlists`. Fall back to search and prefer
+     * Spotify-owned (or mixtape-described) matches so Home can still surface it.
+     */
+    suspend fun searchDiscoverWeekly(): Playlist? {
+        val token = accessToken()
+        val response = http.get("$API/search") {
+            bearerAuth(token)
+            parameter("q", "Discover Weekly")
+            parameter("type", "playlist")
+            parameter("limit", 20)
+        }.successBody<SpotifySearchResponse>("Spotify Discover Weekly search")
+        val candidates = response.playlists?.items
+            ?.mapNotNull { it?.toDomainOrNull(premium) }
+            ?.filter { it.isDiscoverWeekly() }
+            .orEmpty()
+        return candidates.firstOrNull { it.ownerName.equals("Spotify", ignoreCase = true) }
+            ?: candidates.firstOrNull {
+                it.description?.contains("weekly mixtape", ignoreCase = true) == true
+            }
+            ?: candidates.firstOrNull()
     }
 
     override suspend fun getTrack(id: String): Track? {
@@ -670,7 +694,9 @@ class SpotifyProvider(
             SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
                 "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
             is SpotifyWebPlaybackFailure.LibrespotExited ->
-                reason.detail ?: "librespot stopped before its Spotify Connect device was ready."
+                describeLibrespotConnectionFailure(reason.detail)
+                    ?: reason.detail
+                    ?: "librespot stopped before its Spotify Connect device was ready."
             is SpotifyWebPlaybackFailure.Message -> reason.detail
             else -> null
         }
@@ -682,6 +708,8 @@ class SpotifyProvider(
             bearerAuth(accessToken())
             activePlaybackDeviceId?.let { parameter("device_id", it) }
         }
+        // No active Connect session (e.g. librespot not running) — treat as already paused.
+        if (response.status.value == 404) return
         response.requireSuccess("Spotify Connect pause")
     }
 

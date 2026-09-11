@@ -1,0 +1,17 @@
+[package]
+name = "kainos-spotify-rootlist"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+librespot-core = { version = "=0.8.0", default-features = true }
+librespot-metadata = { version = "=0.8.0", default-features = true }
+librespot-protocol = { version = "=0.8.0" }
+protobuf = "3.7.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[patch.crates-io]
+# librespot-core 0.8 build.rs breaks when cargo resolves two vergen_lib majors
+vergen-lib = { version = "=0.1.6" }

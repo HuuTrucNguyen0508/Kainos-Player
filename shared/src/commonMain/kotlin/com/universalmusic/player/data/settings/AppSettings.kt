@@ -30,6 +30,11 @@ data class AppSettings(
     val spotifyClientId: String? = null,
     val spotifyPlaybackDeviceId: String? = null,
     val spotifyPlaybackDeviceName: String? = null,
+    /**
+     * Spotify playlist id/URL/URI for Discover Weekly when the Web API cannot list it.
+     * Desktop librespot fetches algorithmic playlists by this id.
+     */
+    val spotifyDiscoverWeeklyPlaylistId: String? = null,
     val youtubeDataApiKey: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val colorScheme: AppColorScheme = AppColorScheme.OLIVE,
@@ -39,7 +44,6 @@ data class AppSettings(
     val crossfadeMs: Int = 0,
     val gapless: Boolean = true,
     val normalizeVolume: Boolean = false,
-    val sampleCatalogEnabled: Boolean = true,
     /**
      * Absolute paths (desktop) or tree URIs (Android SAF) for local music roots.
      * Interpreted with [localMusicFoldersConfigured].
@@ -53,7 +57,7 @@ data class AppSettings(
     /** Android: include MediaStore music in addition to SAF roots (deduped). Desktop ignores. */
     val includeMediaStoreLibrary: Boolean = true,
     val librarySongSort: TrackSort = TrackSort.NAME_ASCENDING,
-    /** When true, Library shows only scanned local files (no Spotify liked songs, saved, samples, or playlists). */
+    /** When true, Library shows only scanned local files (no Spotify liked songs, saved tracks, or playlists). */
     val libraryLocalOnly: Boolean = false,
     /** When true, Library Songs (and related album views) show only app-hearted tracks. */
     val libraryFavoritesOnly: Boolean = false,

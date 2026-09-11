@@ -5,10 +5,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -32,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,7 +49,6 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
-import com.universalmusic.player.ui.PlatformBackHandler
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
@@ -64,9 +62,13 @@ fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
 
 @Composable
 private fun AppScaffold(container: AppContainer, desktop: Boolean) {
-    var destination by remember { mutableStateOf(AppDestination.Home) }
+    var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
+    var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    val destination = remember(destinationName) {
+        runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
+    }
     val tabStateHolder = rememberSaveableStateHolder()
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
@@ -90,6 +92,30 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         else -> false
     }
 
+    fun navigateToTab(next: AppDestination) {
+        showNowPlaying = false
+        showQueue = false
+        if (next == destination) return
+        if (next == AppDestination.Home) {
+            // Home is the root: clear history so the next back can leave the app.
+            tabBackStackNames = emptyList()
+            destinationName = AppDestination.Home.name
+            return
+        }
+        tabBackStackNames = tabBackStackNames + destination.name
+        destinationName = next.name
+    }
+
+    fun handleSystemBack(): Boolean {
+        if (dismissOverlayStack()) return true
+        if (tabBackStackNames.isNotEmpty()) {
+            destinationName = tabBackStackNames.last()
+            tabBackStackNames = tabBackStackNames.dropLast(1)
+            return true
+        }
+        return false
+    }
+
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
@@ -106,21 +132,17 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         showNowPlaying = true
     }
 
-    // Queue → Now Playing → underlying tab. Never finishes Activity / stops playback.
-    PlatformBackHandler(enabled = showQueue || showNowPlaying) {
-        dismissOverlayStack()
+    // Queue → Now Playing → previous tab → … → Home. At root Home, let the system leave the app.
+    PlatformBackHandler(enabled = showQueue || showNowPlaying || tabBackStackNames.isNotEmpty()) {
+        handleSystemBack()
     }
 
     LaunchedEffect(container) {
         container.uiRequests.collect { request ->
             when (request) {
-                UiRequest.FOCUS_SEARCH -> {
-                    destination = AppDestination.Search
-                    showNowPlaying = false
-                    showQueue = false
-                }
+                UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
                 UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
-                UiRequest.DISMISS_OVERLAY -> dismissOverlayStack()
+                UiRequest.DISMISS_OVERLAY -> handleSystemBack()
             }
         }
     }
@@ -150,11 +172,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         AppDestination.entries.forEach { item ->
                             NavigationBarItem(
                                 selected = destination == item,
-                                onClick = {
-                                    destination = item
-                                    showNowPlaying = false
-                                    showQueue = false
-                                },
+                                onClick = { navigateToTab(item) },
                                 icon = { Icon(item.icon(), contentDescription = item.label) },
                                 label = { Text(item.label) },
                             )
@@ -187,11 +205,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                     AppDestination.entries.forEach { item ->
                         NavigationRailItem(
                             selected = destination == item && !showQueue,
-                            onClick = {
-                                destination = item
-                                showNowPlaying = false
-                                showQueue = false
-                            },
+                            onClick = { navigateToTab(item) },
                             icon = { Icon(item.icon(), contentDescription = item.label) },
                             label = { Text(item.label) },
                         )
@@ -218,6 +232,8 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                                 container,
                                 onPlayTracks = ::playTracks,
                                 onOpenNowPlaying = { showNowPlaying = true },
+                                onOpenSettings = { navigateToTab(AppDestination.Settings) },
+                                onOpenSearch = { navigateToTab(AppDestination.Search) },
                             )
                             AppDestination.Search -> SearchScreen(
                                 container,

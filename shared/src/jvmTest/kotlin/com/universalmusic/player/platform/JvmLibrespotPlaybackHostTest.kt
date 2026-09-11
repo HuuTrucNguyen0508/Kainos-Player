@@ -110,6 +110,25 @@ class JvmLibrespotPlaybackHostTest {
         }
     }
 
+    @Test
+    fun locatorFindsRepositoryInstallationFromDesktopAppCwd() {
+        val root = Files.createTempDirectory("kainos-librespot-locator-parent")
+        try {
+            val executable = root.resolve("tools/librespot-runtime/bin/librespot")
+            Files.createDirectories(executable.parent)
+            Files.writeString(executable, "#!/bin/sh\n")
+            executable.toFile().setExecutable(true)
+            val desktopCwd = root.resolve("desktopApp")
+            Files.createDirectories(desktopCwd)
+            assertEquals(
+                executable.normalize(),
+                findLibrespotExecutable(emptyMap(), root.resolve("home"), desktopCwd)?.normalize(),
+            )
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
     private suspend fun fixture(
         cached: Boolean = false,
         alive: Boolean = true,

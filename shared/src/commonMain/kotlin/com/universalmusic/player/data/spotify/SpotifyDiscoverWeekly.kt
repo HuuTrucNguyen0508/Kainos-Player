@@ -7,6 +7,10 @@ import com.universalmusic.player.domain.model.ProviderId
 fun findDiscoverWeekly(playlists: List<Playlist>): Playlist? =
     playlists.firstOrNull { it.isDiscoverWeekly() }
 
-fun Playlist.isDiscoverWeekly(): Boolean =
-    source.provider == ProviderId.SPOTIFY &&
-        title.equals("Discover Weekly", ignoreCase = true)
+fun Playlist.isDiscoverWeekly(): Boolean {
+    if (source.provider != ProviderId.SPOTIFY) return false
+    if (title.equals("Discover Weekly", ignoreCase = true)) return true
+    val description = description.orEmpty()
+    return description.contains("weekly mixtape", ignoreCase = true) ||
+        description.contains("Discover Weekly", ignoreCase = true)
+}

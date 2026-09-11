@@ -8,6 +8,7 @@ import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalTrackSource
+import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PlayerSession
 import io.ktor.client.HttpClient
@@ -42,6 +43,12 @@ expect fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTr
 expect fun createLocalLibraryScanCache(): LocalLibraryScanCache?
 
 expect fun loadAppConfig(): AppConfig
+
+/**
+ * Desktop librespot path that can still read Spotify-owned algorithmic playlists
+ * (Discover Weekly) after the Nov 2024 Web API restriction. Android returns null for now.
+ */
+expect suspend fun fetchLibrespotDiscoverWeekly(playlistId: String? = null): Playlist?
 
 data class SpotifyPlaybackController(
     val play: suspend (trackId: String) -> Unit,

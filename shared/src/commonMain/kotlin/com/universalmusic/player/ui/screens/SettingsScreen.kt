@@ -36,7 +36,6 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.data.settings.AppColorScheme
 import com.universalmusic.player.data.settings.ThemeMode
-import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
@@ -93,7 +92,7 @@ fun SettingsScreen(container: AppContainer) {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
-            .padding(bottom = 88.dp),
+            .padding(bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
@@ -395,6 +394,36 @@ fun SettingsScreen(container: AppContainer) {
             }
         }
         if (spotify == ProviderState.AVAILABLE || spotify == ProviderState.RATE_LIMITED) {
+            var discoverPlaylistInput by remember(settings.spotifyDiscoverWeeklyPlaylistId, ready) {
+                mutableStateOf(settings.spotifyDiscoverWeeklyPlaylistId.orEmpty())
+            }
+            OutlinedTextField(
+                value = discoverPlaylistInput,
+                onValueChange = { discoverPlaylistInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Discover Weekly playlist link") },
+                placeholder = { Text("Paste Spotify share URL or playlist id") },
+            )
+            OutlinedButton(
+                enabled = !providerBusy,
+                onClick = {
+                    scope.launch {
+                        container.updateSettings {
+                            it.copy(spotifyDiscoverWeeklyPlaylistId = discoverPlaylistInput.trim().ifEmpty { null })
+                        }
+                        container.refreshSpotifyLibrary()
+                        providerNotice = "Saved Discover Weekly link and refreshed."
+                    }
+                },
+            ) { Text("Save Discover Weekly link") }
+            Text(
+                "Spotify’s Web API no longer lists Discover Weekly for most developer apps. " +
+                    "In Spotify: open Discover Weekly → Share → Copy link, paste it here, then save. " +
+                    "Or heart Discover Weekly in Spotify so it appears in your library, then refresh.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             OutlinedButton(enabled = !libraryLoading && !providerBusy, onClick = {
                 scope.launch { container.refreshSpotifyLibrary() }
             }) { Text(if (libraryLoading) "Loading library…" else "Refresh Spotify library") }
@@ -480,9 +509,6 @@ fun SettingsScreen(container: AppContainer) {
                     )
                 }
             }
-        }
-        SettingToggle("Include sample catalog on Home and Library", settings.sampleCatalogEnabled) {
-            scope.launch { container.updateSettings { current -> current.copy(sampleCatalogEnabled = it) } }
         }
 
         Text("Advanced", style = MaterialTheme.typography.titleMedium)
@@ -593,6 +619,3 @@ private fun SourceSelectionMode.label(): String = when (this) {
     SourceSelectionMode.FORCE_SPOTIFY -> "Spotify only"
     SourceSelectionMode.FORCE_YOUTUBE_MUSIC -> "YouTube Music only"
 }
-
-@Suppress("unused")
-private val unusedProvider = ProviderId.SAMPLE

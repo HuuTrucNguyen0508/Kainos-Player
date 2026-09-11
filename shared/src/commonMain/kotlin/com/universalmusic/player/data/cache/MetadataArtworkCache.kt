@@ -133,7 +133,16 @@ class DefaultMetadataArtworkCache(
         val entry = get(canonicalId) ?: return remoteUrl
         val local = entry.artworkLocalUri?.takeIf { disk.artworkExists(it) }
         if (local != null) return local
-        return entry.track.artworkUrl ?: remoteUrl
+        // put() may have rewritten track.artworkUrl to a local URI that later vanished.
+        // Prefer a fresh remote over a stale cached local path.
+        val cached = entry.track.artworkUrl
+        if (!cached.isNullOrBlank() && isRemoteUrl(cached)) return cached
+        if (!cached.isNullOrBlank() &&
+            (cached.startsWith("content:") || disk.artworkExists(cached))
+        ) {
+            return cached
+        }
+        return remoteUrl ?: cached?.takeIf { isRemoteUrl(it) }
     }
 
     override suspend fun evictExpired(nowMs: Long) {

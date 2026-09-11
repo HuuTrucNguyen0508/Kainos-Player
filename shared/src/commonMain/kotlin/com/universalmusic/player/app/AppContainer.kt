@@ -1,6 +1,5 @@
 package com.universalmusic.player.app
 
-import com.universalmusic.player.data.catalog.SampleCatalogProvider
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.MetadataCacheStats
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
@@ -17,6 +16,8 @@ import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
 import com.universalmusic.player.data.spotify.loadSpotifyLibrary
+import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
+import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.spotify.SpotifyRecommendationsAccess
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
@@ -26,6 +27,7 @@ import com.universalmusic.player.domain.continuation.SearchContinuationFetcher
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
@@ -92,9 +94,9 @@ class AppContainer {
         onFavoriteChanged = { track, nowFavorite -> favoriteAudioHook?.invoke(track, nowFavorite) },
     )
     val matcher = TrackMatcher()
-    val sample = SampleCatalogProvider()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
+    private val sampleUnavailable = MutableStateFlow(ProviderState.UNAVAILABLE)
     val local = LocalMusicProvider(
         source = createLocalTrackSource { localLibraryScanConfig() },
         cache = createLocalLibraryScanCache(),
@@ -170,9 +172,9 @@ class AppContainer {
                 ProviderId.LOCAL -> local
                 ProviderId.SPOTIFY -> spotify
                 ProviderId.YOUTUBE_MUSIC -> youtube
-                ProviderId.SAMPLE -> sample
+                ProviderId.SAMPLE -> null
             }
-            provider.getStream(track) ?: source
+            provider?.getStream(track) ?: source
         },
         isFavorite = library::isFavorite,
         prepareTrack = { heartedAudio.applyCacheToTrack(it) },
@@ -332,43 +334,84 @@ class AppContainer {
                 result.tracks.onSuccess { _spotifyTracks.value = it }
                 result.playlists.onSuccess { playlists ->
                     _spotifyPlaylists.value = playlists
-                    _spotifyDiscoverWeekly.value = findDiscoverWeekly(playlists)
+                    _spotifyDiscoverWeekly.value = resolveDiscoverWeekly(playlists)
                 }
                 val failedSections = buildList {
                     if (result.tracks.isFailure) add("liked songs")
                     if (result.playlists.isFailure) add("playlists")
                 }
                 if (failedSections.isNotEmpty()) {
-                    val quota = listOf(result.tracks, result.playlists).any { part ->
-                        part.exceptionOrNull()?.message?.contains("quota", ignoreCase = true) == true ||
-                            part.exceptionOrNull()?.message?.contains("QUOTA", ignoreCase = false) == true
-                    }
-                    _spotifyLibraryError.value = if (quota) {
-                        "Spotify development quota exceeded. Keep using the library already loaded; try refreshing later."
-                    } else {
-                        "Could not load Spotify ${failedSections.joinToString(" and ")}. Successfully loaded sections are still available. Try refreshing."
-                    }
+                    val failureText = listOf(result.tracks, result.playlists)
+                        .mapNotNull { it.exceptionOrNull()?.message }
+                        .joinToString(" ")
+                    _spotifyLibraryError.value = spotifyLibraryFailureMessage(failedSections, failureText)
                 }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             val message = failure.message.orEmpty()
-            _spotifyLibraryError.value = if ("quota" in message.lowercase() || "QUOTA" in message) {
-                "Spotify development quota exceeded. Keep using the library already loaded; try refreshing later."
-            } else {
-                "Could not load your Spotify library. Check your connection and Spotify access, then refresh."
-            }
+            _spotifyLibraryError.value = spotifyLibraryFailureMessage(
+                sections = listOf("library"),
+                failureText = message,
+                wholeLibrary = true,
+            )
         } finally {
             _spotifyLibraryLoading.value = false
         }
+    }
+
+    private fun spotifyLibraryFailureMessage(
+        sections: List<String>,
+        failureText: String,
+        wholeLibrary: Boolean = false,
+    ): String {
+        val lower = failureText.lowercase()
+        val rateLimited = "429" in lower ||
+            "rate" in lower ||
+            "quota" in lower ||
+            spotify.state.value == ProviderState.RATE_LIMITED
+        if (rateLimited) {
+            return "Spotify is rate-limiting right now. Wait a few minutes, then refresh once. Spamming refresh makes it worse."
+        }
+        return if (wholeLibrary) {
+            "Could not load your Spotify library. Check your connection and Spotify access, then refresh once."
+        } else {
+            "Could not load Spotify ${sections.joinToString(" and ")}. Successfully loaded sections are still available. Wait a bit, then refresh once."
+        }
+    }
+
+    /**
+     * Resolve Discover Weekly via desktop librespot (algorithmic ids) first, then a
+     * user-library playlist named Discover Weekly. Never use Web API search copies.
+     */
+    private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
+        val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
+        val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }.getOrNull()
+        if (fromLibrespot != null) return fromLibrespot
+        return findDiscoverWeekly(playlists)
     }
 
     /** Load full track list for a Spotify playlist and return playable tracks. */
     suspend fun loadSpotifyPlaylistTracks(playlistId: String): List<Track> {
         val id = playlistId.trim()
         require(id.isNotEmpty()) { "Playlist id is required" }
-        return spotify.getPlaylistTracks(id)
+        val cached = _spotifyDiscoverWeekly.value
+        if (cached?.source?.providerEntityId == id && cached.tracks.isNotEmpty()) {
+            return cached.tracks
+        }
+        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.getOrElse { emptyList() }
+        if (webTracks.isNotEmpty()) return webTracks
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }.getOrNull()
+        if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
+            val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
+            if (cached?.source?.providerEntityId == id || configured == id) {
+                _spotifyDiscoverWeekly.value = fromLibrespot
+            }
+            return fromLibrespot.tracks
+        }
+        return emptyList()
     }
 
     fun refreshLocalLibrary() {
@@ -443,7 +486,7 @@ class AppContainer {
         ProviderId.LOCAL -> local.state
         ProviderId.SPOTIFY -> spotify.state
         ProviderId.YOUTUBE_MUSIC -> youtube.state
-        ProviderId.SAMPLE -> sample.state
+        ProviderId.SAMPLE -> sampleUnavailable
     }
 }
 

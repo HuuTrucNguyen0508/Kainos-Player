@@ -101,7 +101,7 @@ fun SearchScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(bottom = 88.dp)) {
+    Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },

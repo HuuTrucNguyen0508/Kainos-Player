@@ -27,10 +27,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,18 +57,23 @@ fun ArtworkImage(
     contentDescription: String,
     modifier: Modifier = Modifier,
     seed: String = contentDescription,
+    shape: Shape = ArtCorner,
 ) {
-    if (artwork != null) {
+    // Failed Coil loads used to leave a blank area; letter tile is only for null Artwork.
+    // Treat load errors like missing art so Now Playing never shows an empty square.
+    var loadFailed by remember(artwork?.url) { mutableStateOf(false) }
+    if (artwork != null && !loadFailed) {
         AsyncImage(
             model = artwork.url,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
-            modifier = modifier.clip(ArtCorner),
+            modifier = modifier.clip(shape),
+            onError = { loadFailed = true },
         )
     } else {
         Box(
             modifier = modifier
-                .clip(ArtCorner)
+                .clip(shape)
                 .background(placeholderColor(seed)),
             contentAlignment = Alignment.Center,
         ) {
@@ -163,7 +173,10 @@ fun TrackRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trailing: @Composable (() -> Unit)? = null,
+    compact: Boolean = false,
 ) {
+    val artSize = if (compact) 48.dp else 56.dp
+    val gap = if (compact) 12.dp else 16.dp
     Surface(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -174,8 +187,8 @@ fun TrackRow(
             Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(track.artwork, track.title, Modifier.size(56.dp), track.title)
-            Spacer(Modifier.width(16.dp))
+            ArtworkImage(track.artwork, track.title, Modifier.size(artSize), track.title)
+            Spacer(Modifier.width(gap))
             Column(Modifier.weight(1f)) {
                 Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -188,11 +201,13 @@ fun TrackRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                ProviderChips(
-                    providers = track.sources.map { it.provider },
-                    available = track.playableSources().map { it.provider },
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                if (!compact) {
+                    ProviderChips(
+                        providers = track.sources.map { it.provider },
+                        available = track.playableSources().map { it.provider },
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
             trailing?.invoke()
         }
@@ -258,11 +273,11 @@ fun MiniPlayerBar(
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ArtworkImage(artwork, title, Modifier.size(48.dp), title)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(

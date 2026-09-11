@@ -33,6 +33,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -101,11 +102,16 @@ fun NowPlayingScreen(
             .padding(if (compact) 16.dp else 24.dp),
     ) {
         if (onClose != null) {
-            TextButton(onClick = onClose, modifier = Modifier.align(Alignment.Start)) {
+            TextButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .align(Alignment.Start)
+                    .padding(bottom = 4.dp),
+            ) {
                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
                 Text("Back")
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
         }
 
         ArtworkImage(
@@ -243,11 +249,18 @@ fun NowPlayingScreen(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            IconButton(onClick = { container.player.toggleShuffle() }) {
+            IconToggleButton(
+                checked = queue.shuffle,
+                onCheckedChange = { container.player.toggleShuffle() },
+                colors = IconButtonDefaults.iconToggleButtonColors(
+                    checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    checkedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            ) {
                 Icon(
                     Icons.Default.Shuffle,
                     contentDescription = if (queue.shuffle) "Turn shuffle off" else "Turn shuffle on",
-                    tint = if (queue.shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(onClick = { container.player.cycleRepeat() }) {

@@ -147,24 +147,15 @@ class AndroidPlaybackEngine(
                 withContext(Dispatchers.Main.immediate) {
                     activeBackend = ActiveBackend.SPOTIFY
                     ticker?.cancel()
-                    val player = controller.await()
+                    // Await the service connection so MediaSession exists, but do not drive
+                    // silence setup through MediaController.pause — that re-enters
+                    // PlayerSession.pauseTransport and cancels buffering Spotify startup.
+                    controller.await()
                     val track = AndroidMediaControls.currentTrack()
                     publishState(EngineState(
                         status = EngineStatus.BUFFERING,
                         durationMs = handle.durationMs ?: track?.durationMs,
                     ))
-                    player.setMediaItem(
-                        mediaItemForMetadata(
-                            track = track,
-                            durationMs = handle.durationMs ?: track?.durationMs,
-                            placeholderUri = AndroidPlaybackService.silenceUri(),
-                        ),
-                    )
-                    player.prepare()
-                    player.pause()
-                    AndroidMediaControls.forwardingPlayer?.setSpotifyActive(true)
-                    // Ensure MediaSession sees overlay PLAYING even when session bridge
-                    // has not yet published (instrumented engine path).
                     AndroidMediaControls.forwardingPlayer?.publishSessionState(
                         mediaId = track?.canonicalId ?: handle.trackId,
                         metadata = track?.toMediaMetadata(handle.durationMs ?: track?.durationMs)

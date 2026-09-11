@@ -102,6 +102,28 @@ class MetadataArtworkCacheTest {
     }
 
     @Test
+    fun resolveArtworkFallsBackToRemoteWhenLocalMissing() = runTest {
+        val root = createTempDirectory("kainos-meta-cache-stale-local")
+        try {
+            val disk = FileMetadataCacheDisk(root)
+            val cache = DefaultMetadataArtworkCache(
+                disk = disk,
+                downloadArtwork = { ByteArray(8) { 4 } },
+                ttlMs = 60_000,
+            )
+            val remote = "https://example.test/fresh.jpg"
+            val track = sampleTrack(artwork = remote)
+            val entry = cache.put(track, nowMs = 1_000)
+            val local = checkNotNull(entry.artworkLocalUri)
+            disk.deleteArtwork(track.canonicalId)
+            assertTrue(!disk.artworkExists(local))
+            assertEquals(remote, cache.resolveArtworkUrl(track.canonicalId, remote))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun evictExpiredRemovesStaleEntries() = runTest {
         val root = createTempDirectory("kainos-meta-cache-ttl")
         try {
