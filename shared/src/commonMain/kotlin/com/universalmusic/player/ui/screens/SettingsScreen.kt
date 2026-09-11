@@ -488,7 +488,7 @@ fun SettingsScreen(container: AppContainer) {
         Text("Advanced", style = MaterialTheme.typography.titleMedium)
         Text("Platform: ${platformLabel()}", style = MaterialTheme.typography.bodyMedium)
         Text(
-            "Cache is metadata-only. Protected audio streams are never stored. App favorites are not written back to Spotify Liked.",
+            "Metadata cache stores titles and artwork only. Hearted YouTube tracks (and Spotify hearts via a YouTube match) download audio for offline play. Spotify DRM audio is never stored. App favorites are not written back to Spotify Liked.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -503,6 +503,17 @@ fun SettingsScreen(container: AppContainer) {
             },
         ) {
             Text("Clear metadata & artwork cache")
+        }
+        OutlinedButton(
+            onClick = {
+                scope.launch {
+                    val stats = container.clearHeartedAudioCache()
+                    cacheNotice =
+                        "Cleared hearted audio cache (${stats.entryCount} files, ${stats.bytesUsed / (1024 * 1024)} MiB)."
+                }
+            },
+        ) {
+            Text("Clear hearted audio cache")
         }
         cacheNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

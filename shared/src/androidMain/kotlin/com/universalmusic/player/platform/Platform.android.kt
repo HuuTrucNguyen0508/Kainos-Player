@@ -6,8 +6,11 @@ import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
 import android.net.Uri
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
+import com.universalmusic.player.data.cache.AndroidHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.AndroidMetadataCacheDisk
+import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.DefaultMetadataArtworkCache
+import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.AndroidUserLibraryStore
@@ -101,6 +104,12 @@ actual fun createMetadataArtworkCache(): MetadataArtworkCache {
         downloadArtwork = ::downloadArtworkBytes,
     )
 }
+
+actual fun createHeartedAudioCache(): HeartedAudioCache =
+    DefaultHeartedAudioCache(AndroidHeartedAudioCacheDisk(androidContext))
+
+actual fun createYouTubeAudioDownloader(streams: YouTubeStreamResolver): YouTubeAudioDownloader =
+    AndroidYouTubeAudioDownloader(streams)
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
     java.net.URI(url).toURL().openStream().use { it.readBytes() }

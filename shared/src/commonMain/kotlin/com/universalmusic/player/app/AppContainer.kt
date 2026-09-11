@@ -3,6 +3,9 @@ package com.universalmusic.player.app
 import com.universalmusic.player.data.catalog.SampleCatalogProvider
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.MetadataCacheStats
+import com.universalmusic.player.data.cache.HeartedAudioCacheService
+import com.universalmusic.player.data.cache.HeartedAudioCacheStats
+import com.universalmusic.player.data.cache.toLocalPlaybackSource
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
@@ -26,7 +29,9 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
+import com.universalmusic.player.platform.createYouTubeAudioDownloader
 import com.universalmusic.player.platform.createYouTubeStreamResolver
+import com.universalmusic.player.platform.createHeartedAudioCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
@@ -79,10 +84,12 @@ class AppContainer {
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
+    private var favoriteAudioHook: ((Track, Boolean) -> Unit)? = null
     val library = LibraryRepository(
         scope = scope,
         store = userLibraryStore,
         metadataCache = metadataCache,
+        onFavoriteChanged = { track, nowFavorite -> favoriteAudioHook?.invoke(track, nowFavorite) },
     )
     val matcher = TrackMatcher()
     val sample = SampleCatalogProvider()
@@ -109,6 +116,24 @@ class AppContainer {
     }
     val youtubeStreams = createYouTubeStreamResolver()
     val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
+    val heartedAudio = HeartedAudioCacheService(
+        scope = scope,
+        cache = createHeartedAudioCache(),
+        downloader = createYouTubeAudioDownloader(youtubeStreams),
+        youtubeSearch = { query -> youtube.search(query).tracks },
+        matcher = matcher,
+        onCached = { canonicalId, entry ->
+            library.attachHeartedCacheSource(canonicalId, entry.toLocalPlaybackSource())
+        },
+        onRemoved = { canonicalId ->
+            library.stripHeartedCacheSource(canonicalId)
+        },
+    ).also { service ->
+        favoriteAudioHook = { track, nowFavorite ->
+            if (nowFavorite) service.enqueue(track)
+            else service.cancelAndRemove(track.canonicalId)
+        }
+    }
     val resolver = DefaultSourceResolver()
     private val settingsMutex = Mutex()
     private val _ready = MutableStateFlow(false)
@@ -150,6 +175,7 @@ class AppContainer {
             provider.getStream(track) ?: source
         },
         isFavorite = library::isFavorite,
+        prepareTrack = { heartedAudio.applyCacheToTrack(it) },
         onQueueExhausted = { exclude ->
             when (val outcome = searchAutoplay.requestContinuation(exclude)) {
                 is ContinuationOutcome.Appended -> outcome.tracks
@@ -201,6 +227,9 @@ class AppContainer {
             player.updatePreferences(loaded.toPlaybackPreferences())
             applyProviderSettings(loaded, clearSessionOnChange = false)
             library.load(spotify.currentUserId())
+            val favorites = library.favoriteIds.value
+            val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
+            heartedAudio.enqueueMissing(hearted)
             runCatching { local.hydrateFromCache() }
             refreshLocalLibrary()
             _ready.value = true
@@ -283,6 +312,15 @@ class AppContainer {
     }
 
     suspend fun metadataCacheStats(): MetadataCacheStats = metadataCache.stats()
+
+    suspend fun clearHeartedAudioCache(): HeartedAudioCacheStats {
+        val before = heartedAudio.stats()
+        heartedAudio.clear()
+        library.favoriteIds.value.forEach { library.stripHeartedCacheSource(it) }
+        return before
+    }
+
+    suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
 
     suspend fun refreshSpotifyLibrary() = libraryMutex.withLock {
         _spotifyLibraryLoading.value = true

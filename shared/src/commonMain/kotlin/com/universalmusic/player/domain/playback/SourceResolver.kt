@@ -49,6 +49,8 @@ class DefaultSourceResolver : SourceResolver {
     private fun qualityThenPreference(preferences: PlaybackPreferences): Comparator<com.universalmusic.player.domain.model.PlaybackSource> =
         compareByDescending<com.universalmusic.player.domain.model.PlaybackSource> { qualityScore(it, preferences) }
             .thenByDescending { providerPreferenceScore(it.provider, preferences) }
+            // Prefer on-disk hearted cache over streaming when quality ties.
+            .thenByDescending { if (it.provider == ProviderId.LOCAL) 1 else 0 }
 
     private fun qualityScore(
         source: com.universalmusic.player.domain.model.PlaybackSource,

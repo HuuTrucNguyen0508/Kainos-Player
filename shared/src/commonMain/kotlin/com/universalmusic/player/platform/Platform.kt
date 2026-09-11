@@ -31,6 +31,12 @@ expect fun createUserLibraryStore(): UserLibraryStore
 
 expect fun createMetadataArtworkCache(): MetadataArtworkCache
 
+expect fun createHeartedAudioCache(): com.universalmusic.player.data.cache.HeartedAudioCache
+
+expect fun createYouTubeAudioDownloader(
+    streams: YouTubeStreamResolver,
+): YouTubeAudioDownloader
+
 expect fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource
 
 expect fun createLocalLibraryScanCache(): LocalLibraryScanCache?

@@ -45,6 +45,8 @@ class PlayerSession(
     initialPreferences: PlaybackPreferences = PlaybackPreferences.Default,
     private val enrichSource: suspend (Track, PlaybackSource) -> PlaybackSource = { _, source -> source },
     private val isFavorite: (canonicalId: String) -> Boolean = { false },
+    /** Merge hearted audio cache / other offline sources before resolution. */
+    private val prepareTrack: (Track) -> Track = { it },
     /**
      * Natural completion at queue end may request one continuation batch.
      * Empty / null means stop cleanly; callers must append only at the tail.
@@ -311,21 +313,22 @@ class PlayerSession(
     private suspend fun playTrack(track: Track, queueItemId: String, generation: Long) {
         currentCoroutineContext().ensureActive()
         if (generation != playGeneration) return
+        val playable = prepareTrack(track)
         _nowPlaying.update {
             it.copy(
-                track = track,
+                track = playable,
                 queueItemId = queueItemId,
                 resolved = null,
                 isPlaying = false,
                 positionMs = 0,
-                durationMs = track.durationMs,
+                durationMs = playable.durationMs,
                 buffering = true,
                 error = null,
                 fallback = null,
-                favorite = isFavorite(track.canonicalId),
+                favorite = isFavorite(playable.canonicalId),
             )
         }
-        val resolved = runCatching { resolver.resolve(track, _preferences.value) }
+        val resolved = runCatching { resolver.resolve(playable, _preferences.value) }
             .getOrElse { error ->
                 if (error is CancellationException) throw error
                 if (generation != playGeneration) return

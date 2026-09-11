@@ -2,8 +2,11 @@ package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
+import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.DefaultMetadataArtworkCache
+import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.FileMetadataCacheDisk
+import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.FileUserLibraryStore
@@ -82,6 +85,12 @@ actual fun createMetadataArtworkCache(): MetadataArtworkCache {
         downloadArtwork = ::downloadArtworkBytes,
     )
 }
+
+actual fun createHeartedAudioCache(): HeartedAudioCache =
+    DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(configDir() / "audio-cache"))
+
+actual fun createYouTubeAudioDownloader(streams: YouTubeStreamResolver): YouTubeAudioDownloader =
+    JvmYouTubeAudioDownloader()
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
     URI(url).toURL().openStream().use { input ->

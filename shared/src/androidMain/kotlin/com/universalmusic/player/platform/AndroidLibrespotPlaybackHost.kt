@@ -104,6 +104,9 @@ internal class AndroidLibrespotPlaybackHost(
                     .setOutput(PlayerConfiguration.AudioOutput.CUSTOM)
                     .setOutputClass(AndroidSinkOutput::class.java.name)
                     .setPreferredQuality(AudioQuality.VERY_HIGH)
+                    // Match Spotify's Loud volume normalisation (+3 dB pregain).
+                    .setEnableNormalisation(true)
+                    .setNormalisationPregain(SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB)
                     .build()
                 val (createdSession, createdPlayer) = createSessionWithRetry(
                     conf = conf,
@@ -211,6 +214,8 @@ internal class AndroidLibrespotPlaybackHost(
         private const val TAG = "KainosSpotify"
         private const val CONNECT_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 750L
+        /** Spotify client "Loud" preset. */
+        private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
         @Volatile
         private var decodersRegistered = false
 

@@ -124,6 +124,9 @@ internal class JvmLibrespotPlaybackHost(
                     "--device-type", "computer",
                     "--bitrate", "320",
                     "--format", "S16",
+                    // Match Spotify's Loud volume normalisation (+3 dB pregain).
+                    "--enable-volume-normalisation",
+                    "--normalisation-pregain", SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB,
                 ),
             )
             if (interactive) add("--enable-oauth")
@@ -197,6 +200,8 @@ internal class JvmLibrespotPlaybackHost(
     }
 
     private companion object {
+        /** Spotify client "Loud" preset. */
+        const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = "3"
         val DIRECTORY_PERMISSIONS = setOf(
             PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE,

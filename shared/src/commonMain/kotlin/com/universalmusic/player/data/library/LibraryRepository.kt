@@ -2,8 +2,10 @@ package com.universalmusic.player.data.library
 
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.putPreservingOnFailure
+import com.universalmusic.player.data.cache.withoutHeartedAudioCache
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.currentTimeMillis
@@ -23,6 +25,7 @@ class LibraryRepository(
     private val store: UserLibraryStore? = null,
     private val metadataCache: MetadataArtworkCache? = null,
     private val clock: () -> Long = ::currentTimeMillis,
+    private val onFavoriteChanged: ((Track, Boolean) -> Unit)? = null,
 ) {
     private val _favorites = MutableStateFlow<Set<String>>(emptySet())
     val favoriteIds: StateFlow<Set<String>> = _favorites.asStateFlow()
@@ -49,7 +52,34 @@ class LibraryRepository(
         } else {
             schedulePersist()
         }
+        onFavoriteChanged?.invoke(track, nowFavorite)
         return nowFavorite
+    }
+
+    /** Attach or replace a LOCAL hearted-cache source on a remembered track. */
+    fun attachHeartedCacheSource(canonicalId: String, source: PlaybackSource) {
+        fun merge(track: Track): Track {
+            val withoutOld = track.withoutHeartedAudioCache()
+            return withoutOld.copy(sources = listOf(source) + withoutOld.sources).withPersistedSourcesOnly()
+        }
+        _saved.update { current ->
+            current.map { if (it.canonicalId == canonicalId) merge(it) else it }
+        }
+        _recent.update { current ->
+            current.map { if (it.canonicalId == canonicalId) merge(it) else it }
+        }
+        schedulePersist()
+    }
+
+    fun stripHeartedCacheSource(canonicalId: String) {
+        fun strip(track: Track): Track = track.withoutHeartedAudioCache().withPersistedSourcesOnly()
+        _saved.update { current ->
+            current.map { if (it.canonicalId == canonicalId) strip(it) else it }
+        }
+        _recent.update { current ->
+            current.map { if (it.canonicalId == canonicalId) strip(it) else it }
+        }
+        schedulePersist()
     }
 
     fun remember(track: Track) {
