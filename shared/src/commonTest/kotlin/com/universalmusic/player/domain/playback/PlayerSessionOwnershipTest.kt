@@ -1,6 +1,7 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.domain.matching.track
+import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
@@ -43,6 +44,28 @@ class PlayerSessionOwnershipTest {
         assertEquals("Three", session.nowPlaying.value.track?.title)
         assertFalse(session.nowPlaying.value.isPlaying)
         assertEquals(EngineStatus.IDLE, engine.state.value.status)
+    }
+
+    @Test
+    fun lateArtworkFillsCurrentTrackAndQueueRowOnly() = runTest {
+        val engine = ControllableEngine()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        val first = track("One", "A", provider = ProviderId.SAMPLE)
+        val second = track("Two", "B", provider = ProviderId.SAMPLE)
+        session.play(listOf(first, second), startIndex = 0)
+        runCurrent()
+        assertNull(session.nowPlaying.value.track?.artwork)
+
+        session.updateCurrentTrackArtwork(second.canonicalId, Artwork("file:/late.jpg"))
+        assertNull(session.nowPlaying.value.track?.artwork, "must not touch a non-current track")
+
+        session.updateCurrentTrackArtwork(first.canonicalId, Artwork("file:/late.jpg"))
+        assertEquals("file:/late.jpg", session.nowPlaying.value.track?.artwork?.url)
+        assertEquals("file:/late.jpg", session.queue.queue.value.current?.track?.artwork?.url)
+        assertNull(session.queue.queue.value.items[1].track.artwork)
+
+        session.updateCurrentTrackArtwork(first.canonicalId, Artwork("file:/other.jpg"))
+        assertEquals("file:/late.jpg", session.nowPlaying.value.track?.artwork?.url, "existing art wins")
     }
 
     @Test

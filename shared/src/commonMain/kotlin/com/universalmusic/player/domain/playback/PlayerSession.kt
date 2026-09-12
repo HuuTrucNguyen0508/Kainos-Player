@@ -1,5 +1,6 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
@@ -279,6 +280,25 @@ class PlayerSession(
 
     fun setFavorite(favorite: Boolean) {
         _nowPlaying.update { it.copy(favorite = favorite) }
+    }
+
+    /**
+     * Late-arriving cover (e.g. embedded art extracted after playback started). Only fills a
+     * missing artwork on the track that is still current; never overrides existing art.
+     */
+    fun updateCurrentTrackArtwork(canonicalId: String, artwork: Artwork) {
+        val current = _nowPlaying.value.track ?: return
+        if (current.canonicalId != canonicalId || current.artwork != null) return
+        val updated = current.copy(
+            artwork = artwork,
+            album = current.album?.let { it.copy(artwork = it.artwork ?: artwork) },
+        )
+        _nowPlaying.update { state ->
+            if (state.track?.canonicalId == canonicalId) state.copy(track = updated) else state
+        }
+        if (queue.queue.value.current?.track?.canonicalId == canonicalId) {
+            queue.replaceCurrentTrack(updated)
+        }
     }
 
     private fun handleNaturalCompletion(generation: Long) {

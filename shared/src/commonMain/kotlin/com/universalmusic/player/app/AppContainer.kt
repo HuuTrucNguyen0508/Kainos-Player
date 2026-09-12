@@ -12,6 +12,10 @@ import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.local.cacheKey
+import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.map
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
@@ -101,6 +105,7 @@ class AppContainer {
         source = createLocalTrackSource { localLibraryScanConfig() },
         cache = createLocalLibraryScanCache(),
         configKey = { localLibraryScanConfig().cacheKey() },
+        embeddedArtwork = createLocalEmbeddedArtworkExtractor(),
     )
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
@@ -221,6 +226,21 @@ class AppContainer {
 
     init {
         bindPlatformMediaControls(player, scope)
+        // Local track with no cover yet: pull the embedded picture and show it on Now Playing,
+        // the queue row and the media session without waiting for the background pass.
+        scope.launch {
+            player.nowPlaying
+                .map { it.track }
+                .distinctUntilChangedBy { it?.canonicalId }
+                .collectLatest { track ->
+                    if (track == null || track.artwork != null) return@collectLatest
+                    if (track.sourceFor(ProviderId.LOCAL) == null) return@collectLatest
+                    val artwork = runCatching { local.resolveEmbeddedArtwork(track) }
+                        .getOrElse { if (it is CancellationException) throw it else null }
+                        ?: return@collectLatest
+                    player.updateCurrentTrackArtwork(track.canonicalId, artwork)
+                }
+        }
         scope.launch {
             val raw = settingsStore.read()
             val loaded = migrateLocalLibrarySettings(raw)
@@ -423,6 +443,9 @@ class AppContainer {
                     if (failure is CancellationException) return@launch
                     _localLibraryMessage.value = failure.message ?: "Local library scan failed"
                 }
+            // Embedded covers for whatever the scan could not attach (sidecar / MediaStore).
+            runCatching { local.enrichEmbeddedArtwork() }
+                .onFailure { if (it is CancellationException) throw it }
         }
     }
 
