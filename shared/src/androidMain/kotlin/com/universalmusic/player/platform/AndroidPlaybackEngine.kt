@@ -41,6 +41,7 @@ class AndroidPlaybackEngine(
     /** Default scope for Spotify I/O and service connect. ExoPlayer work uses Main.immediate. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
+    private val mediaCommands = Channel<MediaCommand>(Channel.UNLIMITED)
     private val controller = CompletableDeferred<MediaController>()
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaPlayer: MediaController? = null
@@ -57,10 +58,18 @@ class AndroidPlaybackEngine(
     private var spotifyStartedAt = 0L
     private var spotifyOffset = 0L
 
+    private fun trace(message: String) =
+        PlaybackTrace.log("Engine", "$message | backend=$activeBackend gen=$activePlayGeneration")
+
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
+            val player = mediaPlayer
+            trace(
+                "controller state=${playbackStateName(playbackState)} isPlaying=${player?.isPlaying} " +
+                    "playWhenReady=${player?.playWhenReady} suppression=${player?.let { suppressionName(it.playbackSuppressionReason) }}",
+            )
             if (activeBackend != ActiveBackend.MEDIA3) return
-            val player = mediaPlayer ?: return
+            if (player == null) return
             val status = when (playbackState) {
                 Player.STATE_BUFFERING -> EngineStatus.BUFFERING
                 Player.STATE_READY -> if (player.isPlaying) EngineStatus.PLAYING else EngineStatus.PAUSED
@@ -76,8 +85,14 @@ class AndroidPlaybackEngine(
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            val player = mediaPlayer
+            trace(
+                "controller isPlaying=$isPlaying state=${player?.let { playbackStateName(it.playbackState) }} " +
+                    "playWhenReady=${player?.playWhenReady} suppression=${player?.let { suppressionName(it.playbackSuppressionReason) }} " +
+                    "error=${player?.playerError?.errorCodeName} pos=${player?.currentPosition}",
+            )
             if (activeBackend != ActiveBackend.MEDIA3) return
-            val player = mediaPlayer ?: return
+            if (player == null) return
             if (!isPlaying &&
                 (player.playerError != null || _state.value.status == EngineStatus.FAILED)
             ) return
@@ -91,7 +106,23 @@ class AndroidPlaybackEngine(
             if (isPlaying) startTicker() else ticker?.cancel()
         }
 
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            trace("controller playWhenReady=$playWhenReady reason=${playWhenReadyReasonName(reason)}")
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+            trace("controller suppression=${suppressionName(playbackSuppressionReason)}")
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            trace(
+                "controller mediaItemTransition id=${mediaItem?.mediaId} " +
+                    "reason=${mediaItemTransitionReasonName(reason)}",
+            )
+        }
+
         override fun onPlayerError(error: PlaybackException) {
+            trace("controller error=${error.errorCodeName} msg=${error.message} cause=${error.cause}")
             if (activeBackend != ActiveBackend.MEDIA3) return
             ticker?.cancel()
             publishState(_state.value.copy(
@@ -111,22 +142,43 @@ class AndroidPlaybackEngine(
                 }
             }
         }
+        // Single consumer on Main: MediaController mutations execute in submission order.
+        // stop() and the next play() used to race each other onto the main looper from
+        // different Default threads; when play won, the stale clear killed the new track.
+        scope.launch(Dispatchers.Main.immediate) {
+            for (command in mediaCommands) {
+                if (command.cancelled) continue
+                val result = runCatching { command.action(controller.await()) }
+                if (command.completion != null) {
+                    command.completion.complete(result)
+                } else {
+                    result.onFailure { failure -> markMediaCommandFailed(failure) }
+                }
+            }
+        }
         connectToPlaybackService()
     }
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        val previousBackend = activeBackend
         activePlayGeneration = playGeneration
         when (handle) {
             is PlaybackHandle.Url -> {
+                trace("play(Url ${handle.url.hostForTrace()}) from=$previousBackend pendingSpotifyStop=${pendingSpotifyStop != null}")
                 awaitPendingSpotifyStop()
                 stopSpotifyIfActive()
-                withContext(Dispatchers.Main.immediate) {
-                    val player = controller.await()
+                // Same FIFO as stop(): a pending clearRetainedMedia from the previous track
+                // always runs before this setMediaItem, never after it.
+                runMediaCommand { player ->
                     activeBackend = ActiveBackend.MEDIA3
                     AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
                     ticker?.cancel()
                     publishState(EngineState(status = EngineStatus.BUFFERING))
                     val track = AndroidMediaControls.currentTrack()
+                    trace(
+                        "controller setMediaItem+prepare+play track='${track?.title}' " +
+                            "(before: state=${playbackStateName(player.playbackState)} items=${player.mediaItemCount})",
+                    )
                     player.setMediaItem(
                         mediaItemForUrl(
                             url = handle.url,
@@ -144,13 +196,14 @@ class AndroidPlaybackEngine(
                         "${handle.provider.displayName} does not expose a supported playback handle on Android.",
                     )
                 }
-                withContext(Dispatchers.Main.immediate) {
+                trace("play(Spotify ${handle.trackId}) from=$previousBackend dur=${handle.durationMs}")
+                // Queued behind any pending stop() clear so the silence item is not wiped
+                // right after it is published. Do not drive silence setup through
+                // MediaController.pause — that re-enters PlayerSession.pauseTransport and
+                // cancels buffering Spotify startup.
+                runMediaCommand {
                     activeBackend = ActiveBackend.SPOTIFY
                     ticker?.cancel()
-                    // Await the service connection so MediaSession exists, but do not drive
-                    // silence setup through MediaController.pause — that re-enters
-                    // PlayerSession.pauseTransport and cancels buffering Spotify startup.
-                    controller.await()
                     val track = AndroidMediaControls.currentTrack()
                     publishState(EngineState(
                         status = EngineStatus.BUFFERING,
@@ -177,8 +230,9 @@ class AndroidPlaybackEngine(
                 try {
                     runSpotifyCommand("Spotify Connect playback") { spotify.play(handle.trackId) }
                 } catch (failure: Throwable) {
+                    trace("Spotify Connect playback failed: ${failure.message}")
                     activeBackend = ActiveBackend.NONE
-                    withContext(Dispatchers.Main.immediate) {
+                    launchMediaCommand {
                         AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
                     }
                     throw failure
@@ -193,7 +247,7 @@ class AndroidPlaybackEngine(
                     positionMs = 0,
                     durationMs = duration,
                 ))
-                withContext(Dispatchers.Main.immediate) {
+                runMediaCommand {
                     AndroidMediaControls.forwardingPlayer?.publishSessionState(
                         mediaId = AndroidMediaControls.currentTrack()?.canonicalId ?: handle.trackId,
                         metadata = AndroidMediaControls.currentTrack()?.toMediaMetadata(duration)
@@ -218,6 +272,7 @@ class AndroidPlaybackEngine(
     }
 
     override fun pause() {
+        trace("pause() status=${_state.value.status} pos=${_state.value.positionMs}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             spotifyOffset = state.value.positionMs
             ticker?.cancel()
@@ -229,6 +284,7 @@ class AndroidPlaybackEngine(
     }
 
     override fun resume() {
+        trace("resume() status=${_state.value.status} pos=${_state.value.positionMs}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             spotifyStartedAt = System.currentTimeMillis()
             publishState(_state.value.copy(status = EngineStatus.PLAYING))
@@ -240,6 +296,7 @@ class AndroidPlaybackEngine(
     }
 
     override fun seekTo(positionMs: Long) {
+        trace("seekTo($positionMs)")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             val target = positionMs.coerceAtLeast(0)
             spotifyOffset = target
@@ -255,10 +312,15 @@ class AndroidPlaybackEngine(
 
     override fun stop() {
         val pauseSpotify = activeBackend == ActiveBackend.SPOTIFY
+        trace("stop() status=${_state.value.status} pos=${_state.value.positionMs} (clearRetainedMedia queued on Main)")
         activeBackend = ActiveBackend.NONE
         ticker?.cancel()
         publishState(EngineState())
         launchMediaCommand {
+            trace(
+                "stop() -> clearRetainedMedia on Main; controller state=${playbackStateName(it.playbackState)} " +
+                    "items=${it.mediaItemCount} id=${it.currentMediaItem?.mediaId}",
+            )
             AndroidMediaControls.forwardingPlayer?.clearRetainedMedia()
                 ?: run {
                     AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
@@ -295,6 +357,7 @@ class AndroidPlaybackEngine(
                 controller.complete(player)
             } catch (failure: Throwable) {
                 val cause = (failure as? ExecutionException)?.cause ?: failure
+                trace("MediaController connect failed: ${cause.message}")
                 controller.completeExceptionally(cause)
                 publishState(EngineState(
                     status = EngineStatus.FAILED,
@@ -324,30 +387,46 @@ class AndroidPlaybackEngine(
             }
         }
 
+    /** Fire-and-forget MediaController mutation, executed in FIFO order on Main. */
     private fun launchMediaCommand(command: (MediaController) -> Unit) {
-        scope.launch {
-            runCatching {
-                val player = controller.await()
-                withContext(Dispatchers.Main.immediate) { command(player) }
-            }
-                .onFailure { failure ->
-                    if (activeBackend == ActiveBackend.MEDIA3) {
-                        ticker?.cancel()
-                        publishState(_state.value.copy(
-                            status = EngineStatus.FAILED,
-                            error = failure.message ?: "Playback service command failed",
-                        ))
-                    }
-                }
+        mediaCommands.trySend(MediaCommand(command))
+    }
+
+    /**
+     * Same FIFO as [launchMediaCommand], but suspends until the command ran and rethrows its
+     * failure. If the caller is cancelled while waiting (PlayerSession superseded this play),
+     * the queued command is skipped so a dead generation never touches the player.
+     */
+    private suspend fun runMediaCommand(command: (MediaController) -> Unit) {
+        val queued = MediaCommand(command, CompletableDeferred())
+        mediaCommands.send(queued)
+        val result = try {
+            queued.completion!!.await()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            queued.cancelled = true
+            throw cancelled
+        }
+        result.getOrThrow()
+    }
+
+    private fun markMediaCommandFailed(failure: Throwable) {
+        trace("media command failed: ${failure.message}")
+        if (activeBackend == ActiveBackend.MEDIA3) {
+            ticker?.cancel()
+            publishState(_state.value.copy(
+                status = EngineStatus.FAILED,
+                error = failure.message ?: "Playback service command failed",
+            ))
         }
     }
 
     private suspend fun stopSpotifyIfActive() {
         if (activeBackend != ActiveBackend.SPOTIFY) return
+        trace("stopSpotifyIfActive -> Connect pause before URL playback")
         ticker?.cancel()
         runSpotifyCommand("Spotify Connect stop", spotify.pause)
         activeBackend = ActiveBackend.NONE
-        withContext(Dispatchers.Main.immediate) {
+        runMediaCommand {
             AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
         }
     }
@@ -364,6 +443,8 @@ class AndroidPlaybackEngine(
     private fun startTicker() {
         ticker?.cancel()
         ticker = scope.launch {
+            var lastPosition = Long.MIN_VALUE
+            var stalledTicks = 0
             while (true) {
                 val position = when (activeBackend) {
                     ActiveBackend.SPOTIFY -> spotifyOffset +
@@ -373,6 +454,19 @@ class AndroidPlaybackEngine(
                         controller.await().currentPosition
                     }
                     ActiveBackend.NONE -> return@launch
+                }
+                // Media3 reports PLAYING but the clock is frozen: audio stalled without a state change.
+                if (activeBackend == ActiveBackend.MEDIA3 && _state.value.status == EngineStatus.PLAYING) {
+                    if (position == lastPosition) {
+                        stalledTicks++
+                        if (stalledTicks == STALL_TICKS_BEFORE_TRACE) {
+                            trace("position stalled at $position while PLAYING for ~${stalledTicks * TICK_MS}ms")
+                        }
+                    } else {
+                        if (stalledTicks >= STALL_TICKS_BEFORE_TRACE) trace("position resumed at $position")
+                        stalledTicks = 0
+                    }
+                    lastPosition = position
                 }
                 val duration = _state.value.durationMs
                     ?: AndroidMediaControls.currentDurationMs()
@@ -387,6 +481,7 @@ class AndroidPlaybackEngine(
                     duration != null &&
                     position >= duration
                 ) {
+                    trace("Spotify ticker reached duration=$duration -> synthetic ENDED")
                     ticker?.cancel()
                     publishState(_state.value.copy(
                         status = EngineStatus.ENDED,
@@ -396,15 +491,18 @@ class AndroidPlaybackEngine(
                     return@launch
                 }
                 publishState(_state.value.copy(positionMs = capped, durationMs = duration ?: _state.value.durationMs))
-                delay(400)
+                delay(TICK_MS)
             }
         }
     }
 
     private suspend fun runSpotifyCommand(name: String, action: suspend () -> Unit) {
         val completion = CompletableDeferred<Result<Unit>>()
+        val startedAt = System.currentTimeMillis()
         spotifyCommands.send(SpotifyCommand(name, action, completion))
-        completion.await().getOrThrow()
+        val result = completion.await()
+        trace("$name ${if (result.isSuccess) "ok" else "failed: ${result.exceptionOrNull()?.message}"} in ${System.currentTimeMillis() - startedAt}ms")
+        result.getOrThrow()
     }
 
     private fun enqueueSpotifyCommand(name: String, action: suspend () -> Unit) {
@@ -421,6 +519,7 @@ class AndroidPlaybackEngine(
     }
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
+        trace("$name failed: ${failure.message}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             ticker?.cancel()
             publishState(_state.value.copy(
@@ -441,4 +540,24 @@ class AndroidPlaybackEngine(
         val action: suspend () -> Unit,
         val completion: CompletableDeferred<Result<Unit>>? = null,
     )
+
+    private class MediaCommand(
+        val action: (MediaController) -> Unit,
+        val completion: CompletableDeferred<Result<Unit>>? = null,
+    ) {
+        @Volatile var cancelled: Boolean = false
+    }
+
+    private companion object {
+        const val TICK_MS = 400L
+        /** ~2 s of frozen position while PLAYING before the ticker writes a stall line. */
+        const val STALL_TICKS_BEFORE_TRACE = 5
+    }
+}
+
+/** Stream URLs carry signed tokens; the trace keeps only scheme + host. */
+private fun String.hostForTrace(): String {
+    val uri = runCatching { android.net.Uri.parse(this) }.getOrNull() ?: return "<unparseable>"
+    val scheme = uri.scheme ?: return "<no-scheme>"
+    return if (uri.host != null) "$scheme://${uri.host}" else "$scheme:${uri.path?.substringAfterLast('/') ?: ""}"
 }

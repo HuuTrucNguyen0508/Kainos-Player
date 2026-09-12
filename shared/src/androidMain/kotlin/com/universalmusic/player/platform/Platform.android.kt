@@ -53,6 +53,9 @@ private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 internal lateinit var androidContext: Context
 
+internal fun androidContextOrNull(): Context? =
+    if (::androidContext.isInitialized) androidContext else null
+
 /** Activity registers OpenDocumentTree and assigns this launcher. */
 var launchMusicFolderPicker: (() -> Unit)? = null
 

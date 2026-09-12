@@ -1,0 +1,96 @@
+package com.universalmusic.player.platform
+
+import androidx.media3.common.Player
+
+/** Human-readable Media3 constants for the playback trace. */
+internal fun playbackStateName(state: Int): String = when (state) {
+    Player.STATE_IDLE -> "IDLE"
+    Player.STATE_BUFFERING -> "BUFFERING"
+    Player.STATE_READY -> "READY"
+    Player.STATE_ENDED -> "ENDED"
+    else -> "STATE_$state"
+}
+
+internal fun playWhenReadyReasonName(reason: Int): String = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "USER_REQUEST"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "AUDIO_FOCUS_LOSS"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "AUDIO_BECOMING_NOISY"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "REMOTE"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "END_OF_MEDIA_ITEM"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "SUPPRESSED_TOO_LONG"
+    else -> "REASON_$reason"
+}
+
+internal fun suppressionName(reason: Int): String = when (reason) {
+    Player.PLAYBACK_SUPPRESSION_REASON_NONE -> "NONE"
+    Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS -> "TRANSIENT_AUDIO_FOCUS_LOSS"
+    2 -> "UNSUITABLE_AUDIO_ROUTE" // deprecated constant, kept readable
+    Player.PLAYBACK_SUPPRESSION_REASON_UNSUITABLE_AUDIO_OUTPUT -> "UNSUITABLE_AUDIO_OUTPUT"
+    Player.PLAYBACK_SUPPRESSION_REASON_SCRUBBING -> "SCRUBBING"
+    else -> "SUPPRESSION_$reason"
+}
+
+internal fun mediaItemTransitionReasonName(reason: Int): String = when (reason) {
+    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
+    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
+    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
+    Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
+    else -> "TRANSITION_$reason"
+}
+
+internal fun discontinuityReasonName(reason: Int): String = when (reason) {
+    Player.DISCONTINUITY_REASON_AUTO_TRANSITION -> "AUTO_TRANSITION"
+    Player.DISCONTINUITY_REASON_SEEK -> "SEEK"
+    Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT -> "SEEK_ADJUSTMENT"
+    Player.DISCONTINUITY_REASON_SKIP -> "SKIP"
+    Player.DISCONTINUITY_REASON_REMOVE -> "REMOVE"
+    Player.DISCONTINUITY_REASON_INTERNAL -> "INTERNAL"
+    Player.DISCONTINUITY_REASON_SILENCE_SKIP -> "SILENCE_SKIP"
+    else -> "DISCONTINUITY_$reason"
+}
+
+internal fun playerCommandName(command: Int): String = when (command) {
+    Player.COMMAND_PLAY_PAUSE -> "PLAY_PAUSE"
+    Player.COMMAND_PREPARE -> "PREPARE"
+    Player.COMMAND_STOP -> "STOP"
+    Player.COMMAND_SEEK_TO_DEFAULT_POSITION -> "SEEK_TO_DEFAULT_POSITION"
+    Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> "SEEK_IN_CURRENT_MEDIA_ITEM"
+    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> "SEEK_TO_PREVIOUS_MEDIA_ITEM"
+    Player.COMMAND_SEEK_TO_PREVIOUS -> "SEEK_TO_PREVIOUS"
+    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> "SEEK_TO_NEXT_MEDIA_ITEM"
+    Player.COMMAND_SEEK_TO_NEXT -> "SEEK_TO_NEXT"
+    Player.COMMAND_SEEK_TO_MEDIA_ITEM -> "SEEK_TO_MEDIA_ITEM"
+    Player.COMMAND_SEEK_BACK -> "SEEK_BACK"
+    Player.COMMAND_SEEK_FORWARD -> "SEEK_FORWARD"
+    Player.COMMAND_SET_SPEED_AND_PITCH -> "SET_SPEED_AND_PITCH"
+    Player.COMMAND_SET_SHUFFLE_MODE -> "SET_SHUFFLE_MODE"
+    Player.COMMAND_SET_REPEAT_MODE -> "SET_REPEAT_MODE"
+    Player.COMMAND_SET_MEDIA_ITEM -> "SET_MEDIA_ITEM"
+    Player.COMMAND_CHANGE_MEDIA_ITEMS -> "CHANGE_MEDIA_ITEMS"
+    Player.COMMAND_SET_VOLUME -> "SET_VOLUME"
+    Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS -> "SET_DEVICE_VOLUME"
+    Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS -> "ADJUST_DEVICE_VOLUME"
+    Player.COMMAND_RELEASE -> "RELEASE"
+    else -> "COMMAND_$command"
+}
+
+/** Only the commands that can stop or move audio are worth a trace line. */
+internal fun isTransportCommand(command: Int): Boolean = when (command) {
+    Player.COMMAND_PLAY_PAUSE,
+    Player.COMMAND_PREPARE,
+    Player.COMMAND_STOP,
+    Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
+    Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+    Player.COMMAND_SEEK_TO_PREVIOUS,
+    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+    Player.COMMAND_SEEK_TO_NEXT,
+    Player.COMMAND_SEEK_TO_MEDIA_ITEM,
+    Player.COMMAND_SEEK_BACK,
+    Player.COMMAND_SEEK_FORWARD,
+    Player.COMMAND_SET_MEDIA_ITEM,
+    Player.COMMAND_CHANGE_MEDIA_ITEMS,
+    Player.COMMAND_RELEASE,
+    -> true
+    else -> false
+}

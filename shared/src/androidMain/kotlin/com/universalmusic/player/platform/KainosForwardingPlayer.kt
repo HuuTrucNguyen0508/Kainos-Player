@@ -30,6 +30,14 @@ class KainosForwardingPlayer(
     @Volatile private var canSeek = true
     @Volatile private var lastMediaId: String? = null
 
+    /** Commands here arrive from MediaSession controllers (system UI, Bluetooth, our MediaController). */
+    private fun trace(message: String) =
+        PlaybackTrace.log(
+            "Forwarding",
+            "$message | spotifyActive=$spotifyActive items=${exo.mediaItemCount} " +
+                "exoState=${playbackStateName(exo.playbackState)} exoPlayWhenReady=${exo.playWhenReady}",
+        )
+
     private val exoForwarder = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             if (spotifyActive) return
@@ -184,6 +192,7 @@ class KainosForwardingPlayer(
     }
 
     fun setSpotifyActive(active: Boolean) {
+        if (active != spotifyActive) trace("setSpotifyActive($active)")
         val prevPlaying = overlayPlaying
         val prevBuffering = overlayBuffering
         val prevCommands = getAvailableCommands()
@@ -202,6 +211,7 @@ class KainosForwardingPlayer(
     }
 
     fun clearRetainedMedia(notify: Boolean = true) {
+        trace("clearRetainedMedia(notify=$notify) -> exo.stop + clearMediaItems id=${exo.currentMediaItem?.mediaId}")
         val prevPlaying = overlayPlaying
         val prevBuffering = overlayBuffering
         val prevCommands = getAvailableCommands()
@@ -266,22 +276,32 @@ class KainosForwardingPlayer(
     override fun getContentPosition(): Long = currentPosition
 
     override fun seekToNextMediaItem() {
+        trace("seekToNextMediaItem")
         AndroidMediaControls.skipToNext()
     }
 
     override fun seekToPreviousMediaItem() {
+        trace("seekToPreviousMediaItem")
         AndroidMediaControls.skipToPrevious()
     }
 
     override fun seekToNext() {
+        trace("seekToNext")
         AndroidMediaControls.skipToNext()
     }
 
     override fun seekToPrevious() {
+        trace("seekToPrevious")
         AndroidMediaControls.skipToPrevious()
     }
 
+    override fun stop() {
+        trace("stop() from controller")
+        super.stop()
+    }
+
     override fun seekTo(positionMs: Long) {
+        trace("seekTo($positionMs)")
         if (spotifyActive) {
             AndroidMediaControls.seekTo(positionMs)
             overlayPositionMs = positionMs
@@ -299,6 +319,7 @@ class KainosForwardingPlayer(
     }
 
     override fun play() {
+        trace("play()")
         if (spotifyActive) {
             AndroidMediaControls.play()
         } else {
@@ -312,6 +333,7 @@ class KainosForwardingPlayer(
     }
 
     override fun pause() {
+        trace("pause()")
         if (spotifyActive) {
             AndroidMediaControls.pause()
         } else {
@@ -323,6 +345,7 @@ class KainosForwardingPlayer(
     }
 
     override fun setPlayWhenReady(playWhenReady: Boolean) {
+        trace("setPlayWhenReady($playWhenReady)")
         if (spotifyActive) {
             if (playWhenReady) AndroidMediaControls.play() else AndroidMediaControls.pause()
         } else if (exo.mediaItemCount == 0) {

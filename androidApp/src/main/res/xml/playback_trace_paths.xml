@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Matches AndroidPlaybackTraceFile: external app files first, private files as fallback. -->
+    <external-files-path name="logs" path="logs/" />
+    <files-path name="logs-private" path="logs/" />
+</paths>

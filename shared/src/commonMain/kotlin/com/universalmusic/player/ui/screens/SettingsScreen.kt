@@ -46,6 +46,9 @@ import com.universalmusic.player.platform.authenticateSpotify
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
 import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.platform.clearPlaybackTrace
+import com.universalmusic.player.platform.playbackTraceInfo
+import com.universalmusic.player.platform.sharePlaybackTrace
 import com.universalmusic.player.platform.supportsMusicFolderPicker
 import com.universalmusic.player.ui.theme.colorSchemeFor
 import kotlinx.coroutines.CancellationException
@@ -542,6 +545,44 @@ fun SettingsScreen(container: AppContainer) {
             Text("Clear hearted audio cache")
         }
         cacheNotice?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        Text("Playback log", style = MaterialTheme.typography.titleMedium)
+        var traceInfo by remember { mutableStateOf(playbackTraceInfo()) }
+        var traceNotice by remember { mutableStateOf<String?>(null) }
+        Text(
+            "Records transport decisions, Media3 pause reasons, which controller sent a command, and Spotify receiver events. Share it after a track paused on its own.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "${traceInfo.location} (${traceInfo.sizeBytes / 1024} KiB)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (traceInfo.canShare) {
+                OutlinedButton(
+                    onClick = {
+                        traceNotice = if (sharePlaybackTrace()) null else "Nothing to share yet, or no app accepted the file."
+                        traceInfo = playbackTraceInfo()
+                    },
+                ) {
+                    Text("Share playback log")
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    clearPlaybackTrace()
+                    traceInfo = playbackTraceInfo()
+                    traceNotice = "Playback log cleared."
+                },
+            ) {
+                Text("Clear")
+            }
+        }
+        traceNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

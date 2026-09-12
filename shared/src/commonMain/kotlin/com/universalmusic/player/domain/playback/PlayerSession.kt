@@ -8,6 +8,7 @@ import com.universalmusic.player.domain.model.ResolvedPlayback
 import com.universalmusic.player.domain.model.SourceFallbackEvent
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.queue.QueueController
+import com.universalmusic.player.platform.PlaybackTrace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -64,13 +65,33 @@ class PlayerSession(
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
     private var completionArmed: Boolean = false
+    /** Last engine status seen by the collector; trace only on change, never per position tick. */
+    private var lastTracedStatus: EngineStatus? = null
+
+    private fun trace(message: String) = PlaybackTrace.log("Session", message)
+
+    private fun Track?.label(): String =
+        if (this == null) "<none>" else "'$title' [${sources.firstOrNull()?.provider}] $canonicalId"
 
     init {
         scope.launch {
             engine.state.collectLatest { engineState ->
                 val eventGeneration = engineState.playGeneration
+                if (engineState.status != lastTracedStatus) {
+                    lastTracedStatus = engineState.status
+                    trace(
+                        "engine -> ${engineState.status} gen=$eventGeneration (session gen=$playGeneration " +
+                            "armed=$completionArmed) pos=${engineState.positionMs} dur=${engineState.durationMs}" +
+                            (engineState.error?.let { " error=$it" } ?: ""),
+                    )
+                }
                 // Reject stale engine events before touching nowPlaying.
-                if (eventGeneration != playGeneration) return@collectLatest
+                if (eventGeneration != playGeneration) {
+                    if (engineState.status == EngineStatus.ENDED || engineState.status == EngineStatus.FAILED) {
+                        trace("dropped stale ${engineState.status} gen=$eventGeneration current=$playGeneration")
+                    }
+                    return@collectLatest
+                }
 
                 _nowPlaying.update { current ->
                     current.copy(
@@ -91,17 +112,25 @@ class PlayerSession(
                 if (eventGeneration != playGeneration) return@collectLatest
                 when (engineState.status) {
                     EngineStatus.ENDED -> {
-                        if (!completionArmed) return@collectLatest
+                        if (!completionArmed) {
+                            trace("ENDED ignored: completion not armed gen=$eventGeneration")
+                            return@collectLatest
+                        }
                         if (eventGeneration != playGeneration) return@collectLatest
                         completionArmed = false
+                        trace("natural completion of ${_nowPlaying.value.track.label()}")
                         handleNaturalCompletion(eventGeneration)
                     }
                     EngineStatus.FAILED -> {
                         if (eventGeneration != playGeneration) return@collectLatest
-                        if (!completionArmed && _nowPlaying.value.resolved == null) return@collectLatest
+                        if (!completionArmed && _nowPlaying.value.resolved == null) {
+                            trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
+                            return@collectLatest
+                        }
                         completionArmed = false
                         val current = _nowPlaying.value.resolved ?: return@collectLatest
                         val reason = engineState.error
+                        trace("engine FAILED for ${current.track.label()}: $reason -> fallback")
                         playJob?.cancel()
                         playJob = scope.launch { tryFallback(current, reason, eventGeneration) }
                     }
@@ -141,6 +170,7 @@ class PlayerSession(
     fun playNext(track: Track) = queue.playNext(track)
 
     fun clearQueue() {
+        trace("clearQueue")
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -170,6 +200,7 @@ class PlayerSession(
 
     fun togglePlayPause() {
         val now = _nowPlaying.value
+        trace("togglePlayPause buffering=${now.buffering} isPlaying=${now.isPlaying}")
         when {
             now.buffering || now.isPlaying -> pauseTransport()
             else -> playTransport()
@@ -178,7 +209,12 @@ class PlayerSession(
 
     /** Idempotent pause; cancels in-flight resolve/buffering. */
     fun pauseTransport() {
+        val engineStatus = engine.state.value.status
         if (_nowPlaying.value.buffering) {
+            trace(
+                "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.label()} " +
+                    "(engine=$engineStatus gen=$playGeneration)",
+            )
             beginTransition()
             playJob?.cancel()
             playJob = null
@@ -186,7 +222,8 @@ class PlayerSession(
             _nowPlaying.update { it.copy(buffering = false, isPlaying = false) }
             return
         }
-        when (engine.state.value.status) {
+        trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
+        when (engineStatus) {
             EngineStatus.PLAYING, EngineStatus.BUFFERING -> engine.pause()
             else -> Unit
         }
@@ -194,7 +231,9 @@ class PlayerSession(
 
     /** Idempotent play/resume; no-op when already playing or buffering. */
     fun playTransport() {
-        if (_nowPlaying.value.buffering || _nowPlaying.value.isPlaying) return
+        val now = _nowPlaying.value
+        trace("playTransport buffering=${now.buffering} isPlaying=${now.isPlaying} engine=${engine.state.value.status}")
+        if (now.buffering || now.isPlaying) return
         when (engine.state.value.status) {
             EngineStatus.PAUSED -> engine.resume()
             EngineStatus.IDLE, EngineStatus.ENDED, EngineStatus.FAILED -> startCurrent()
@@ -205,10 +244,14 @@ class PlayerSession(
     fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
 
     /** Manual next: escapes Repeat One. */
-    fun skipToNext() = advance(manual = true)
+    fun skipToNext() {
+        trace("skipToNext")
+        advance(manual = true)
+    }
 
     fun skipToPrevious() {
         val current = _nowPlaying.value
+        trace("skipToPrevious pos=${current.positionMs}")
         if (current.positionMs > 3_000) {
             engine.seekTo(0)
             return
@@ -244,8 +287,16 @@ class PlayerSession(
     }
 
     private fun advance(manual: Boolean, fromGeneration: Long? = null) {
-        if (fromGeneration != null && fromGeneration != playGeneration) return
+        if (fromGeneration != null && fromGeneration != playGeneration) {
+            trace("advance dropped: gen=$fromGeneration current=$playGeneration")
+            return
+        }
+        val snapshot = queue.queue.value
         val next = queue.nextIndex(respectRepeatOne = !manual)
+        trace(
+            "advance manual=$manual current=${snapshot.currentIndex} next=$next size=${snapshot.items.size} " +
+                "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
+        )
         if (next == null) {
             if (!manual && onQueueExhausted != null) {
                 val generationAtExhaustion = playGeneration
@@ -283,6 +334,7 @@ class PlayerSession(
     }
 
     private fun stopAtQueueEnd() {
+        trace("stopAtQueueEnd")
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -302,6 +354,7 @@ class PlayerSession(
         val item = snapshot.current ?: return null
         beginTransition()
         val generation = playGeneration
+        trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stop)")
         playJob?.cancel()
         engine.stop()
         playJob = scope.launch {
@@ -333,6 +386,7 @@ class PlayerSession(
                 if (error is CancellationException) throw error
                 if (generation != playGeneration) return
                 currentCoroutineContext().ensureActive()
+                trace("resolve failed for ${playable.label()} gen=$generation: ${error.message}")
                 _nowPlaying.update { it.copy(buffering = false, error = error.message, isPlaying = false) }
                 advanceAfterTerminalFailure(generation)
                 return
@@ -354,10 +408,14 @@ class PlayerSession(
                 if (error is CancellationException) throw error
                 if (generation != playGeneration) return
                 currentCoroutineContext().ensureActive()
+                trace("enrich failed for ${resolved.track.label()} via ${resolved.source.provider}: ${error.message}")
                 tryFallback(resolved, error.message, generation)
                 return
             }
-        if (generation != playGeneration) return
+        if (generation != playGeneration) {
+            trace("startResolved dropped after enrich: gen=$generation current=$playGeneration")
+            return
+        }
         val playable = resolved.copy(source = enrichedSource)
         currentCoroutineContext().ensureActive()
         _nowPlaying.update {
@@ -371,21 +429,34 @@ class PlayerSession(
                 favorite = isFavorite(playable.track.canonicalId),
             )
         }
+        trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
         runCatching {
             engine.play(playable.source.handle, playable.source.quality, playGeneration = generation)
         }.onFailure { error ->
-            if (error is CancellationException) throw error
+            if (error is CancellationException) {
+                trace("engine.play cancelled gen=$generation (current=$playGeneration)")
+                throw error
+            }
             if (generation != playGeneration) return
             currentCoroutineContext().ensureActive()
+            trace("engine.play failed gen=$generation: ${error.message}")
             tryFallback(playable, error.message, generation)
             return
         }
-        if (generation != playGeneration) return
+        if (generation != playGeneration) {
+            trace("engine.play returned for superseded gen=$generation current=$playGeneration; not arming")
+            return
+        }
         completionArmed = true
+        trace("engine.play ok gen=$generation; completion armed")
     }
 
     private suspend fun tryFallback(current: ResolvedPlayback, reason: String? = null, generation: Long) {
         if (generation != playGeneration) return
+        trace(
+            "tryFallback from ${current.source.provider} reason=$reason remaining=" +
+                current.fallbacks.map { it.provider },
+        )
         val next = current.fallbacks.firstOrNull() ?: run {
             _nowPlaying.update {
                 it.copy(

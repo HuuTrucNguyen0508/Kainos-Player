@@ -15,11 +15,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import xyz.gianlu.librespot.android.sink.AndroidSinkOutput
+import xyz.gianlu.librespot.audio.MetadataWrapper
 import xyz.gianlu.librespot.audio.decoders.AudioQuality
 import xyz.gianlu.librespot.audio.decoders.Decoders
 import xyz.gianlu.librespot.audio.format.SuperAudioFormat
 import xyz.gianlu.librespot.core.Session
 import xyz.gianlu.librespot.core.Session.SpotifyAuthenticationException
+import xyz.gianlu.librespot.metadata.PlayableId
 import xyz.gianlu.librespot.player.Player
 import xyz.gianlu.librespot.player.PlayerConfiguration
 import xyz.gianlu.librespot.player.decoders.AndroidNativeDecoder
@@ -194,7 +196,9 @@ internal class AndroidLibrespotPlaybackHost(
                 Log.i(TAG, "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS")
                 val createdSession = builder.create()
                 Log.i(TAG, "AP connected")
-                return createdSession to Player(playerConf, createdSession)
+                val createdPlayer = Player(playerConf, createdSession)
+                createdPlayer.addEventsListener(LibrespotEventsTrace)
+                return createdSession to createdPlayer
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (auth: SpotifyAuthenticationException) {
@@ -208,6 +212,49 @@ internal class AndroidLibrespotPlaybackHost(
             }
         }
         throw lastFailure ?: IllegalStateException("librespot session creation failed")
+    }
+
+    /**
+     * What the in-process Spotify receiver actually did. Kainos drives transport through the
+     * Web API, so a pause here that no Engine line asked for came from Spotify's side
+     * (another Connect device, a halt while buffering, an inactive session).
+     */
+    private object LibrespotEventsTrace : Player.EventsListener {
+        private fun trace(message: String) = PlaybackTrace.log("Librespot", message)
+
+        override fun onContextChanged(player: Player, newUri: String) = trace("context=$newUri")
+
+        override fun onTrackChanged(
+            player: Player,
+            id: PlayableId,
+            metadata: MetadataWrapper?,
+            userInitiated: Boolean,
+        ) = trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
+
+        override fun onPlaybackEnded(player: Player) = trace("playbackEnded")
+
+        override fun onPlaybackPaused(player: Player, trackTime: Long) = trace("paused at $trackTime")
+
+        override fun onPlaybackResumed(player: Player, trackTime: Long) = trace("resumed at $trackTime")
+
+        override fun onPlaybackFailed(player: Player, e: Exception) = trace("playbackFailed: $e")
+
+        override fun onTrackSeeked(player: Player, trackTime: Long) = trace("seeked to $trackTime")
+
+        override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
+
+        override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) =
+            trace("halted=$halted at $trackTime (true = buffer ran dry)")
+
+        override fun onInactiveSession(player: Player, timeout: Boolean) = trace("inactiveSession timeout=$timeout")
+
+        override fun onVolumeChanged(player: Player, volume: Float) = Unit
+
+        override fun onPanicState(player: Player) = trace("PANIC state")
+
+        override fun onStartedLoading(player: Player) = trace("startedLoading")
+
+        override fun onFinishedLoading(player: Player) = trace("finishedLoading")
     }
 
     private companion object {
