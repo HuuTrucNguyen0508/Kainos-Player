@@ -30,6 +30,14 @@ interface PlaybackEngine {
     fun resume()
     fun seekTo(positionMs: Long)
     fun stop()
+
+    /**
+     * Silence the current track because another one is about to start. Engines may keep the
+     * output open (audio focus, media session item) instead of a full teardown; a real stop
+     * still goes through [stop]. Defaults to [stop].
+     */
+    fun stopForTransition() = stop()
+
     fun setVolume(volume: Float)
 }
 

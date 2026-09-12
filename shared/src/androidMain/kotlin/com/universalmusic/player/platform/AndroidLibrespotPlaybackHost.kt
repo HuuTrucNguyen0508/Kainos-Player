@@ -229,7 +229,10 @@ internal class AndroidLibrespotPlaybackHost(
             id: PlayableId,
             metadata: MetadataWrapper?,
             userInitiated: Boolean,
-        ) = trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
+        ) {
+            lastHalted = null
+            trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
+        }
 
         override fun onPlaybackEnded(player: Player) = trace("playbackEnded")
 
@@ -243,8 +246,14 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
 
-        override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) =
+        /** librespot fires this dozens of times per second while loading; only log the flips. */
+        @Volatile private var lastHalted: Boolean? = null
+
+        override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
+            if (halted == lastHalted) return
+            lastHalted = halted
             trace("halted=$halted at $trackTime (true = buffer ran dry)")
+        }
 
         override fun onInactiveSession(player: Player, timeout: Boolean) = trace("inactiveSession timeout=$timeout")
 

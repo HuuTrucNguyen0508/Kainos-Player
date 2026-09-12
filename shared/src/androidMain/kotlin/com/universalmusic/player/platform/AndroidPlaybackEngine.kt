@@ -57,6 +57,36 @@ class AndroidPlaybackEngine(
     private var activeBackend = ActiveBackend.NONE
     private var spotifyStartedAt = 0L
     private var spotifyOffset = 0L
+    /** Wall clock of the last Media3 `play()` we issued; focus loss right after it is retried once. */
+    @Volatile private var media3PlayRequestedAt = 0L
+    private var focusRetryGeneration = -1L
+
+    /**
+     * A focus request refused within [FOCUS_RETRY_WINDOW_MS] of our own play() is almost
+     * always the abandon/re-request glitch, not a phone call or another player. Ask once more;
+     * if it fails again the track stays paused so a genuine loss is still honoured.
+     */
+    private fun retryAfterStartupFocusLoss() {
+        if (activeBackend != ActiveBackend.MEDIA3) return
+        val sincePlay = System.currentTimeMillis() - media3PlayRequestedAt
+        if (sincePlay > FOCUS_RETRY_WINDOW_MS) return
+        if (focusRetryGeneration == activePlayGeneration) {
+            trace("focus lost again ${sincePlay}ms after play; not retrying")
+            return
+        }
+        focusRetryGeneration = activePlayGeneration
+        val generation = activePlayGeneration
+        trace("focus refused ${sincePlay}ms after play -> retry once in ${FOCUS_RETRY_DELAY_MS}ms")
+        scope.launch {
+            delay(FOCUS_RETRY_DELAY_MS)
+            launchMediaCommand { player ->
+                if (activeBackend != ActiveBackend.MEDIA3 || activePlayGeneration != generation) return@launchMediaCommand
+                if (player.playWhenReady) return@launchMediaCommand
+                trace("focus retry -> play()")
+                player.play()
+            }
+        }
+    }
 
     private fun trace(message: String) =
         PlaybackTrace.log("Engine", "$message | backend=$activeBackend gen=$activePlayGeneration")
@@ -108,6 +138,9 @@ class AndroidPlaybackEngine(
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             trace("controller playWhenReady=$playWhenReady reason=${playWhenReadyReasonName(reason)}")
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) {
+                retryAfterStartupFocusLoss()
+            }
         }
 
         override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
@@ -188,6 +221,7 @@ class AndroidPlaybackEngine(
                     )
                     player.prepare()
                     player.play()
+                    media3PlayRequestedAt = System.currentTimeMillis()
                 }
             }
             is PlaybackHandle.ProviderPlayback -> {
@@ -308,6 +342,24 @@ class AndroidPlaybackEngine(
         val target = positionMs.coerceAtLeast(0)
         publishState(_state.value.copy(positionMs = target))
         launchMediaCommand { it.seekTo(target) }
+    }
+
+    /**
+     * Between two Media3 tracks the player is only paused, never stopped. `stop()` takes
+     * ExoPlayer to IDLE, which abandons audio focus; the re-request a few ms later can be
+     * refused (seen on HyperOS as `playWhenReady=false reason=AUDIO_FOCUS_LOSS`) and the new
+     * track starts paused. Pausing keeps focus and the next `setMediaItem` replaces the item.
+     */
+    override fun stopForTransition() {
+        if (activeBackend != ActiveBackend.MEDIA3) {
+            stop()
+            return
+        }
+        trace("stopForTransition() status=${_state.value.status} pos=${_state.value.positionMs} -> pause Exo, keep item + audio focus")
+        activeBackend = ActiveBackend.NONE
+        ticker?.cancel()
+        publishState(EngineState())
+        launchMediaCommand { it.pause() }
     }
 
     override fun stop() {
@@ -552,6 +604,8 @@ class AndroidPlaybackEngine(
         const val TICK_MS = 400L
         /** ~2 s of frozen position while PLAYING before the ticker writes a stall line. */
         const val STALL_TICKS_BEFORE_TRACE = 5
+        const val FOCUS_RETRY_WINDOW_MS = 1_500L
+        const val FOCUS_RETRY_DELAY_MS = 250L
     }
 }
 

@@ -354,9 +354,9 @@ class PlayerSession(
         val item = snapshot.current ?: return null
         beginTransition()
         val generation = playGeneration
-        trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stop)")
+        trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
-        engine.stop()
+        engine.stopForTransition()
         playJob = scope.launch {
             playTrack(item.track, item.id, generation)
         }
