@@ -124,6 +124,8 @@ internal class JvmLibrespotPlaybackHost(
                     "--device-type", "computer",
                     "--bitrate", "320",
                     "--format", "S16",
+                    // Default is 50% on a log scale, which is far quieter than local mpv at 100%.
+                    "--initial-volume", "100",
                     // Match Spotify's Loud volume normalisation (+3 dB pregain).
                     "--enable-volume-normalisation",
                     "--normalisation-pregain", SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB,

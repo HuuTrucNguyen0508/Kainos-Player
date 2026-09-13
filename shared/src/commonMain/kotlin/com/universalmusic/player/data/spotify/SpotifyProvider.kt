@@ -469,6 +469,9 @@ class SpotifyProvider(
                     mapOf("attempt" to attempt + 1),
                 )
                 // #endregion
+                if (target.kainosLocal) {
+                    ensureMaxLocalReceiverVolume(token, target.deviceId)
+                }
                 if (requireExplicitPlaybackDevice) {
                     confirmPlaybackOnTarget(token, target, spotifyTrackId)
                 }
@@ -659,6 +662,29 @@ class SpotifyProvider(
                 "Open Spotify on that device, check its volume and output, then try again. " +
                 "Or pick a different Connect device in Settings → Spotify output.",
         )
+    }
+
+    /**
+     * Local mpv/ExoPlayer run at full gain. librespot defaults to 50% Connect soft-volume on a log
+     * scale, which sounds much quieter. Force the in-app receiver to 100% when we start playback;
+     * failures here must not block audio (device may still be registering).
+     */
+    private suspend fun ensureMaxLocalReceiverVolume(token: String, deviceId: String) {
+        val response = runCatching {
+            http.put("$API/me/player/volume") {
+                bearerAuth(token)
+                parameter("volume_percent", 100)
+                parameter("device_id", deviceId)
+            }
+        }.getOrNull() ?: return
+        if (!response.status.isSuccess()) {
+            debugSpotifyLog(
+                "H1",
+                "SpotifyProvider.ensureMaxLocalReceiverVolume",
+                "volume bump skipped",
+                mapOf("status" to response.status.value),
+            )
+        }
     }
 
     private suspend fun listConnectDevices(token: String): List<SpotifyDevice> =

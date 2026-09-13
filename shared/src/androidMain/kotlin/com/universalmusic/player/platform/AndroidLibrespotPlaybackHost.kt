@@ -106,6 +106,8 @@ internal class AndroidLibrespotPlaybackHost(
                     .setOutput(PlayerConfiguration.AudioOutput.CUSTOM)
                     .setOutputClass(AndroidSinkOutput::class.java.name)
                     .setPreferredQuality(AudioQuality.VERY_HIGH)
+                    // Max Connect soft-volume (0–65536). Keep parity with local ExoPlayer at full gain.
+                    .setInitialVolume(SPOTIFY_MAX_CONNECT_VOLUME)
                     // Match Spotify's Loud volume normalisation (+3 dB pregain).
                     .setEnableNormalisation(true)
                     .setNormalisationPregain(SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB)
@@ -272,6 +274,8 @@ internal class AndroidLibrespotPlaybackHost(
         private const val RETRY_DELAY_MS = 750L
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
+        /** librespot-java Connect volume scale; 65536 is unity / max. */
+        private const val SPOTIFY_MAX_CONNECT_VOLUME = 65_536
         @Volatile
         private var decodersRegistered = false
 

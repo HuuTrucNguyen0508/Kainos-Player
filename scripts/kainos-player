@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Update the packaged app with Gradle's incremental checks, then launch it.
+# Refresh the packaged app jars, then launch with the system JDK.
+# The Compose/jpackage stub crashes on this host (jlink --strip-native-commands
+# removes bin/java and the native launcher SIGSEGVs against current glibc).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,7 +18,9 @@ elif [[ -x "${HOME}/.local/bin/yt-dlp" ]]; then
   export KAINOS_YT_DLP="${HOME}/.local/bin/yt-dlp"
 fi
 
-APP_BIN="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player/bin/Kainos Player"
+APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+APP_DIR="$APP_ROOT/lib/app"
+JAVA_BIN="$JAVA_HOME/bin/java"
 
 cd "$ROOT"
 
@@ -24,12 +28,39 @@ mkdir -p "$ROOT/logs"
 LOG="$ROOT/logs/desktop-run-$(date +%Y%m%d-%H%M%S).log"
 ln -sfn "$(basename "$LOG")" "$ROOT/logs/desktop-run-latest.log"
 
-# An existing executable can contain old shared code. Let Gradle check all
-# inputs, including resources and dependencies, rather than checking existence.
+if [[ ! -x "$JAVA_BIN" ]]; then
+  echo "Kainos Player needs a JDK at $JAVA_HOME (expected bin/java)." >&2
+  exit 1
+fi
+
+# Keep packaged jars / Skiko natives current. createDistributable is still useful
+# even though we do not exec the broken native stub.
 echo "Checking Kainos Player for updates…" >&2
 if ! ./gradlew :desktopApp:createDistributable --console=plain >>"$LOG" 2>&1; then
   echo "Kainos Player build failed. See log: $LOG" >&2
   exit 1
 fi
 
-exec "$APP_BIN" "$@" >>"$LOG" 2>&1
+if [[ ! -d "$APP_DIR" ]]; then
+  echo "Kainos Player package is missing ($APP_DIR). See log: $LOG" >&2
+  exit 1
+fi
+
+shopt -s nullglob
+jars=("$APP_DIR"/*.jar)
+shopt -u nullglob
+if (( ${#jars[@]} == 0 )); then
+  echo "Kainos Player package has no jars in $APP_DIR. See log: $LOG" >&2
+  exit 1
+fi
+
+classpath="$(IFS=:; echo "${jars[*]}")"
+
+exec "$JAVA_BIN" \
+  -Dcompose.application.configure.swing.globals=true \
+  -Dcompose.application.resources.dir="$APP_DIR/resources" \
+  -Dskiko.library.path="$APP_DIR" \
+  -Djpackage.app-version=1.0.0 \
+  -cp "$classpath" \
+  com.universalmusic.player.desktop.MainKt \
+  "$@" >>"$LOG" 2>&1

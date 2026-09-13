@@ -46,7 +46,10 @@ class SpotifyProviderTest {
 
         provider.startConnectPlayback("song")
 
-        assertEquals(listOf("/v1/me/player", "/v1/me/player/play"), requests)
+        assertEquals(
+            listOf("/v1/me/player", "/v1/me/player/play", "/v1/me/player/volume"),
+            requests,
+        )
     }
 
     @Test
@@ -99,6 +102,7 @@ class SpotifyProviderTest {
                 "/v1/me/player/devices?",
                 "/v1/me/player?",
                 "/v1/me/player/play?device_id=kainos-device",
+                "/v1/me/player/volume?volume_percent=100&device_id=kainos-device",
             ),
             requests,
         )
