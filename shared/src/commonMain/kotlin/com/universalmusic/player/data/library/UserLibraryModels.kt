@@ -1,5 +1,8 @@
 package com.universalmusic.player.data.library
 
+import com.universalmusic.player.data.sync.HeartOp
+import com.universalmusic.player.data.sync.compacted
+import com.universalmusic.player.data.sync.favoriteIdsFromOps
 import com.universalmusic.player.domain.model.AlbumRef
 import com.universalmusic.player.domain.model.ArtistRef
 import com.universalmusic.player.domain.model.Artwork
@@ -11,7 +14,7 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import kotlinx.serialization.Serializable
 
-const val USER_LIBRARY_FORMAT_VERSION = 1
+const val USER_LIBRARY_FORMAT_VERSION = 2
 
 /**
  * Versioned on-disk user library. Stores provider identities and display metadata only —
@@ -24,6 +27,11 @@ data class UserLibrarySnapshot(
     val spotifyAccountId: String? = null,
     /** App favorites (canonicalIds). Distinct from Spotify Liked Songs. */
     val favoriteIds: List<String> = emptyList(),
+    /**
+     * Durable heart/unheart ops for LAN sync. Compacted to one winning op per id.
+     * Absent in format v1; synthesized on migrate from [favoriteIds].
+     */
+    val heartOps: List<HeartOp> = emptyList(),
     val remembered: List<PersistedTrack> = emptyList(),
     val recents: List<PersistedTrack> = emptyList(),
 )
@@ -183,12 +191,39 @@ fun UserLibrarySnapshot.scopedToSpotifyAccount(activeAccountId: String?): UserLi
         version = version.coerceAtLeast(USER_LIBRARY_FORMAT_VERSION),
         spotifyAccountId = activeAccountId,
         favoriteIds = favoriteIds.filterNot(::isSpotifyCanonical),
+        heartOps = heartOps.filterNot { isSpotifyCanonical(it.canonicalId) },
         remembered = remembered.filterNot { it.isSpotifyOnly() },
         recents = recents.filterNot { it.isSpotifyOnly() },
     )
 }
 
-fun UserLibrarySnapshot.migrated(): UserLibrarySnapshot {
-    if (version >= USER_LIBRARY_FORMAT_VERSION) return this
-    return copy(version = USER_LIBRARY_FORMAT_VERSION)
+fun UserLibrarySnapshot.migrated(deviceId: String = "local"): UserLibrarySnapshot {
+    var next = this
+    if (next.version < 2 || (next.heartOps.isEmpty() && next.favoriteIds.isNotEmpty())) {
+        val synthesized = next.favoriteIds.map { id ->
+            HeartOp(
+                canonicalId = id,
+                action = com.universalmusic.player.data.sync.HeartAction.FAVORITE,
+                revision = 1L,
+                deviceId = deviceId,
+                spotifyAccountId = if (id.startsWith("spotify:")) next.spotifyAccountId else null,
+            )
+        }
+        next = next.copy(
+            version = USER_LIBRARY_FORMAT_VERSION,
+            heartOps = synthesized.compacted(),
+        )
+    }
+    if (next.version < USER_LIBRARY_FORMAT_VERSION) {
+        next = next.copy(version = USER_LIBRARY_FORMAT_VERSION)
+    }
+    // Keep favoriteIds aligned with compacted ops when ops exist.
+    if (next.heartOps.isNotEmpty()) {
+        val fromOps = next.heartOps.favoriteIdsFromOps()
+        val localOnly = next.favoriteIds.filterNot {
+            it.startsWith("spotify:") || it.startsWith("yt:")
+        }
+        next = next.copy(favoriteIds = (fromOps + localOnly).toSortedSet().toList())
+    }
+    return next
 }

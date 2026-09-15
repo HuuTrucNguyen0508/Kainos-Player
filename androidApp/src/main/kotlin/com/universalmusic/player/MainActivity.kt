@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
             MusicFolderPickerRelay.complete(null)
             return@registerForActivityResult
         }
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         runCatching {
             contentResolver.takePersistableUriPermission(uri, flags)
         }
@@ -54,6 +54,11 @@ class MainActivity : ComponentActivity() {
         }
         requestLocalMediaPermission()
         handleSpotifyCallback(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ensureAppContainer().homeLanSync.onAppForeground()
     }
 
     override fun onDestroy() {

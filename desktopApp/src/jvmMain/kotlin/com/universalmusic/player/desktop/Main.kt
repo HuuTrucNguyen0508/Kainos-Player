@@ -16,8 +16,15 @@ import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.unbindPlatformMediaControls
 import com.universalmusic.player.ui.UniversalMusicApp
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
-fun main() {
+fun main(args: Array<String>) {
+    if (args.any { it == "--hub-only" }) {
+        runHubOnly()
+        return
+    }
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
         val container = ensureAppContainer()
@@ -30,13 +37,9 @@ fun main() {
             title = "Kainos Player",
             state = state,
             icon = icon,
-            onKeyEvent = { event ->
+            // Preview so Space is not delivered to the last-focused Button / list row.
+            onPreviewKeyEvent = { event ->
                 if (event.type != KeyEventType.KeyDown) return@Window false
-                if (event.key == Key.Escape) {
-                    container.requestUi(UiRequest.DISMISS_OVERLAY)
-                    return@Window true
-                }
-                // Typing in Search/Library must not trigger transport shortcuts.
                 if (container.textInputFocused.value) return@Window false
                 when {
                     event.key == Key.Spacebar -> {
@@ -62,8 +65,32 @@ fun main() {
                     else -> false
                 }
             },
+            onKeyEvent = { event ->
+                if (event.type != KeyEventType.KeyDown) return@Window false
+                if (event.key == Key.Escape) {
+                    container.requestUi(UiRequest.DISMISS_OVERLAY)
+                    return@Window true
+                }
+                false
+            },
         ) {
             UniversalMusicApp(container)
         }
     }
+}
+
+/** Headless hub for login autostart (Phase 3). */
+private fun runHubOnly() = runBlocking {
+    val container = ensureAppContainer()
+    while (!container.ready.value) {
+        delay(50)
+    }
+    val settings = container.settings.value
+    if (!settings.homeLanSyncEnabled || settings.homeLanSyncPairing == null) {
+        System.err.println("kainos-player --hub-only: home sync not paired/enabled; exiting")
+        return@runBlocking
+    }
+    container.homeLanSync.startHubIfNeeded()
+    println("Kainos home sync hub listening (Ctrl+C to quit)")
+    CompletableDeferred<Unit>().await()
 }

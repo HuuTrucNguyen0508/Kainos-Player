@@ -61,6 +61,9 @@ class PlayerSession(
     private val _preferences = MutableStateFlow(initialPreferences)
     val preferences: StateFlow<PlaybackPreferences> = _preferences.asStateFlow()
 
+    private val _volume = MutableStateFlow(1f)
+    val volume: StateFlow<Float> = _volume.asStateFlow()
+
     private var playJob: Job? = null
     /** Bumped on every play/stop transition so late ENDED/FAILED from a prior track are ignored. */
     private var playGeneration: Long = 0L
@@ -243,6 +246,13 @@ class PlayerSession(
     }
 
     fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
+
+    /** Linear gain 0–1 applied to the active engine (and remembered for the next track). */
+    fun setVolume(volume: Float) {
+        val next = volume.coerceIn(0f, 1f)
+        _volume.value = next
+        engine.setVolume(next)
+    }
 
     /** Manual next: escapes Repeat One. */
     fun skipToNext() {
@@ -452,6 +462,9 @@ class PlayerSession(
         trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
         runCatching {
             engine.play(playable.source.handle, playable.source.quality, playGeneration = generation)
+            if (generation == playGeneration) {
+                engine.setVolume(_volume.value)
+            }
         }.onFailure { error ->
             if (error is CancellationException) {
                 trace("engine.play cancelled gen=$generation (current=$playGeneration)")

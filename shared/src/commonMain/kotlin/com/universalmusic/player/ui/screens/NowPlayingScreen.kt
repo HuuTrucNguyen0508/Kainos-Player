@@ -19,6 +19,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -50,6 +53,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
@@ -57,6 +63,7 @@ import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.RepeatMode
+import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.theme.providerColor
@@ -72,11 +79,13 @@ fun NowPlayingScreen(
 ) {
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
+    val volume by container.player.volume.collectAsState()
     val settings by container.settings.collectAsState()
     val spotifyState by container.spotify.state.collectAsState()
     val scope = rememberCoroutineScope()
     val track = now.track
     var scrubPosition by remember(track?.canonicalId) { mutableStateOf<Float?>(null) }
+    var volumeDrag by remember { mutableStateOf<Float?>(null) }
     var spotifyDevices by remember { mutableStateOf<List<SpotifyConnectDevice>>(emptyList()) }
     var spotifyDevicesLoaded by remember { mutableStateOf(false) }
     var spotifyDeviceBusy by remember { mutableStateOf(false) }
@@ -286,6 +295,63 @@ fun NowPlayingScreen(
                     if (now.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     contentDescription = if (now.favorite) "Remove from favorites" else "Add to favorites",
                     tint = if (now.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (compact || platformLabel() == "Linux") {
+            Spacer(Modifier.height(8.dp))
+            val shownVolume = volumeDrag ?: volume
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                if (event.type != PointerEventType.Scroll) continue
+                                val scrollY = event.changes.sumOf { it.scrollDelta.y.toDouble() }.toFloat()
+                                if (scrollY == 0f) continue
+                                // Wheel up (negative Y on desktop) raises volume.
+                                val step = (-scrollY * 0.04f).coerceIn(-0.2f, 0.2f)
+                                val current = volumeDrag ?: container.player.volume.value
+                                val next = (current + step).coerceIn(0f, 1f)
+                                container.setPlaybackVolume(next)
+                                event.changes.forEach { it.consume() }
+                            }
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                IconButton(
+                    onClick = {
+                        container.setPlaybackVolume(if (shownVolume > 0.001f) 0f else 1f)
+                    },
+                ) {
+                    Icon(
+                        when {
+                            shownVolume <= 0.001f -> Icons.AutoMirrored.Filled.VolumeMute
+                            shownVolume < 0.5f -> Icons.AutoMirrored.Filled.VolumeDown
+                            else -> Icons.AutoMirrored.Filled.VolumeUp
+                        },
+                        contentDescription = if (shownVolume <= 0.001f) "Unmute" else "Mute",
+                    )
+                }
+                Slider(
+                    value = shownVolume,
+                    onValueChange = { volumeDrag = it; container.player.setVolume(it) },
+                    onValueChangeFinished = {
+                        val next = volumeDrag ?: volume
+                        volumeDrag = null
+                        container.setPlaybackVolume(next)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${(shownVolume * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.widthIn(min = 36.dp),
                 )
             }
         }

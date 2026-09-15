@@ -3,6 +3,7 @@ package com.universalmusic.player.platform
 import android.content.Context
 import android.content.Intent
 import android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+import android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 import android.net.Uri
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.auth.TokenStore
@@ -310,7 +311,7 @@ actual fun releaseMusicFolderAccess(folder: String) {
     runCatching {
         androidContext.contentResolver.releasePersistableUriPermission(
             uri,
-            FLAG_GRANT_READ_URI_PERMISSION,
+            FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION,
         )
     }
 }
@@ -325,6 +326,33 @@ actual fun bindPlatformMediaControls(
 actual fun unbindPlatformMediaControls() {
     AndroidMediaControls.unbind()
 }
+
+actual fun createHomeLanSyncHub(
+    pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
+    onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
+    vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
+    heartedVaultFileNames: () -> Set<String>?,
+): com.universalmusic.player.data.sync.HomeLanSyncHub =
+    com.universalmusic.player.data.sync.NoOpHomeLanSyncHub()
+
+actual fun createHomeLanVaultStore(
+    vaultRootProvider: () -> String?,
+): com.universalmusic.player.data.sync.HomeLanVaultStore =
+    com.universalmusic.player.data.sync.AndroidHomeLanVaultStore(
+        context = androidContext,
+        vaultRootProvider = vaultRootProvider,
+    )
+
+actual fun detectLanHostAddress(): String? = null
+
+actual suspend fun <T> withVaultSyncForeground(
+    label: String,
+    block: suspend () -> T,
+): T = com.universalmusic.player.data.sync.AndroidVaultSyncForeground.run(label, block)
+
+actual fun setHomeLanHubAutostart(enabled: Boolean) = Unit
+
+actual suspend fun rematchLocalHeartsAfterVaultSync(): Int = 0
 
 private class PrefsStore(context: Context) : TokenStore {
     private val prefs = context.getSharedPreferences("ump_tokens", Context.MODE_PRIVATE)

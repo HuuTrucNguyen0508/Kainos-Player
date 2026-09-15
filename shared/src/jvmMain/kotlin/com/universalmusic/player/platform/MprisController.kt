@@ -50,7 +50,11 @@ class MprisController(
             conn.exportObject(OBJECT_PATH, facade)
             syncJob.getAndSet(
                 scope.launch {
-                    combine(session.nowPlaying, session.queue.queue) { now, queue -> now to queue }
+                    combine(
+                        session.nowPlaying,
+                        session.queue.queue,
+                        session.volume,
+                    ) { now, queue, _ -> now to queue }
                         .collectLatest { (now, queue) ->
                             facade.publish(now, queue.shuffle, queue.repeat)
                             emitPropertiesChanged(conn)
@@ -152,7 +156,7 @@ private class MprisFacade(
             "Rate" to Variant(java.lang.Double.valueOf(1.0)),
             "Shuffle" to Variant(java.lang.Boolean.valueOf(lastShuffle)),
             "Metadata" to Variant(buildMetadata(now), "a{sv}"),
-            "Volume" to Variant(java.lang.Double.valueOf(1.0)),
+            "Volume" to Variant(java.lang.Double.valueOf(session.volume.value.toDouble().coerceIn(0.0, 1.0))),
             "Position" to Variant(java.lang.Long.valueOf(position)),
             "MinimumRate" to Variant(java.lang.Double.valueOf(1.0)),
             "MaximumRate" to Variant(java.lang.Double.valueOf(1.0)),
@@ -260,6 +264,15 @@ private class MprisFacade(
                 while (session.queue.queue.value.repeat != target && guard++ < 3) {
                     session.cycleRepeat()
                 }
+            }
+            "Volume" -> {
+                val want = when (raw) {
+                    is Double -> raw.toFloat()
+                    is Float -> raw
+                    is Number -> raw.toFloat()
+                    else -> return
+                }
+                session.setVolume(want)
             }
         }
     }

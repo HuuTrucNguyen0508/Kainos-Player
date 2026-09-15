@@ -66,6 +66,25 @@ data class AppSettings(
      * Default is off so playback stops at the end of the Search results unless the user opts in.
      */
     val searchAutoplayEnabled: Boolean = false,
+    /** In-app playback gain 0–1 (desktop mpv / Android ExoPlayer). Default full. */
+    val playbackVolume: Float = 1f,
+    /** Home LAN hearts sync (phone client ↔ desktop hub). */
+    val homeLanSyncEnabled: Boolean = false,
+    val homeLanSyncRole: com.universalmusic.player.data.sync.HomeLanSyncRole =
+        com.universalmusic.player.data.sync.HomeLanSyncRole.AUTO,
+    val homeLanSyncDeviceId: String? = null,
+    val homeLanSyncPairing: com.universalmusic.player.data.sync.HomeLanSyncPairing? = null,
+    val homeLanSyncVaultFolder: String? = null,
+    /**
+     * When true, vault blob sync only transfers files whose basename matches an app-hearted
+     * local library track (not the whole vault folder). Hearts ops still sync fully.
+     */
+    val homeLanSyncVaultHeartsOnly: Boolean = true,
+    /** Desktop: write ~/.config/autostart entry for --hub-only. */
+    val homeLanSyncHubAutostart: Boolean = false,
+    val homeLanSyncLastAtMs: Long? = null,
+    val homeLanSyncLastError: String? = null,
+    val homeLanSyncLastDetail: String? = null,
 ) {
     fun toPlaybackPreferences(): PlaybackPreferences = PlaybackPreferences(
         sourceSelection = sourceSelection,

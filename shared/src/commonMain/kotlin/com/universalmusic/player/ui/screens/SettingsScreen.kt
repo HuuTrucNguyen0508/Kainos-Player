@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.spotify.SpotifyConnectDevice
@@ -512,6 +515,363 @@ fun SettingsScreen(container: AppContainer) {
                     )
                 }
             }
+        }
+
+        Text("Home sync", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Sync app hearts and vault music files with your PC over home Wi‑Fi (HTTPS with a pinned hub cert). Pair with the kainos-homesync:2 URI from Start hub pairing, then Sync now. Does not write Spotify Liked or sync audio-cache / DRM files. Keep the PC firewall closed on 43822 until you have soaked pairing.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val syncStatus by container.homeLanSync.status.collectAsState()
+        val syncPairing by container.homeLanSync.pairing.collectAsState()
+        val clipboard = LocalClipboardManager.current
+        var syncBusy by remember { mutableStateOf(false) }
+        var syncNotice by remember { mutableStateOf<String?>(null) }
+        var clientHost by remember { mutableStateOf(syncPairing?.hubHost.orEmpty()) }
+        var clientSecret by remember { mutableStateOf("") }
+        var clientPeerId by remember { mutableStateOf(syncPairing?.peerDeviceId.orEmpty()) }
+        var clientPin by remember { mutableStateOf("") }
+        var clientCert by remember { mutableStateOf(syncPairing?.hubCertSha256Hex.orEmpty()) }
+        var clientPairingUri by remember { mutableStateOf("") }
+        var tombstonePath by remember { mutableStateOf("") }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Enable home sync", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = syncStatus.enabled,
+                onCheckedChange = { enabled ->
+                    scope.launch { container.homeLanSync.enable(enabled) }
+                },
+            )
+        }
+        Text("Vault folder", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            settings.homeLanSyncVaultFolder?.ifBlank { null } ?: "Not set — pick a writable music folder",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Vault: hearted tracks only", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Only sync local files that are app-hearted (by filename). Spotify/YouTube hearts still sync as metadata.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = settings.homeLanSyncVaultHeartsOnly,
+                onCheckedChange = { enabled ->
+                    scope.launch {
+                        container.updateSettings { it.copy(homeLanSyncVaultHeartsOnly = enabled) }
+                    }
+                },
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { container.pickHomeLanVaultFolder() }) {
+                Text("Pick vault folder")
+            }
+            if (!settings.homeLanSyncVaultFolder.isNullOrBlank()) {
+                OutlinedButton(onClick = { container.setHomeLanVaultFolder(null) }) {
+                    Text("Clear vault")
+                }
+            }
+        }
+        if (platformLabel() == "Linux") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Start hub at login", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Writes ~/.config/autostart for kainos-player --hub-only",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = settings.homeLanSyncHubAutostart,
+                    onCheckedChange = { container.setHomeLanHubAutostartEnabled(it) },
+                )
+            }
+            Button(
+                enabled = !syncBusy,
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        runCatching {
+                            val pairing = container.homeLanSync.beginHubPairing()
+                            val uri = container.homeLanSync.pairingUri()
+                            if (uri != null) {
+                                clipboard.setText(AnnotatedString(uri))
+                                syncNotice =
+                                    "Hub on port ${pairing.hubPort}. PIN ${pairing.pairingPin}. Pairing URI copied to clipboard."
+                            } else {
+                                syncNotice =
+                                    "Hub on port ${pairing.hubPort}. PIN ${pairing.pairingPin}. URI unavailable — rotate pairing again."
+                            }
+                        }.onFailure { syncNotice = it.message }
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text(if (syncPairing == null) "Start hub pairing" else "Rotate hub pairing")
+            }
+            if (syncStatus.hubListening) {
+                Text(
+                    "HTTPS hub listening on port ${syncPairing?.hubPort ?: 43822}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            syncPairing?.sharedSecretHex?.let { secret ->
+                SelectionContainer {
+                    Text(
+                        "Shared secret:\n$secret",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    "This device id: ${syncPairing?.deviceId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (syncPairing?.hubCertSha256Hex.isNullOrBlank()) {
+                    Text(
+                        "This pairing predates HTTPS. Press Rotate hub pairing, then paste the new URI on the phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else {
+                    val uri = container.homeLanSync.pairingUri()
+                    if (uri != null) {
+                        OutlinedTextField(
+                            value = uri,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Pairing URI") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = false,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(uri))
+                                syncNotice = "Pairing URI copied"
+                            },
+                        ) {
+                            Text("Copy pairing URI")
+                        }
+                    }
+                }
+            }
+        } else {
+            if (syncPairing != null && syncPairing?.hubCertSha256Hex.isNullOrBlank()) {
+                Text(
+                    "Saved pairing has no TLS cert pin. Paste a new kainos-homesync:2 URI from the PC.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            OutlinedTextField(
+                value = clientPairingUri,
+                onValueChange = { clientPairingUri = it },
+                label = { Text("Paste pairing URI from PC") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+            )
+            Button(
+                enabled = !syncBusy && clientPairingUri.isNotBlank(),
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        runCatching {
+                            container.homeLanSync.completeClientPairingFromUri(clientPairingUri)
+                            syncNotice = "Paired from URI"
+                        }.onFailure { syncNotice = it.message }
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text("Pair from URI")
+            }
+            OutlinedTextField(
+                value = clientHost,
+                onValueChange = { clientHost = it },
+                label = { Text("PC LAN IP / hostname") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientSecret,
+                onValueChange = { clientSecret = it },
+                label = { Text("Shared secret from PC") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientPin,
+                onValueChange = { clientPin = it },
+                label = { Text("Pairing PIN from PC") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientCert,
+                onValueChange = { clientCert = it },
+                label = { Text("Hub cert pin (64 hex from URI cert=)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientPeerId,
+                onValueChange = { clientPeerId = it },
+                label = { Text("PC device id (optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Button(
+                enabled = !syncBusy &&
+                    clientHost.isNotBlank() &&
+                    clientSecret.isNotBlank() &&
+                    clientCert.trim().length == 64,
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        runCatching {
+                            container.homeLanSync.completeClientPairing(
+                                hubHost = clientHost.trim(),
+                                hubPort = syncPairing?.hubPort
+                                    ?: com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT,
+                                sharedSecretHex = clientSecret.trim(),
+                                peerDeviceId = clientPeerId.trim(),
+                                pairingPin = clientPin.trim(),
+                                hubCertSha256Hex = clientCert.trim(),
+                            )
+                            syncNotice = "Paired with $clientHost"
+                        }.onFailure { syncNotice = it.message }
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text("Save phone pairing")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                enabled = !syncBusy && syncStatus.enabled && syncPairing != null,
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        val result = container.homeLanSync.syncNow()
+                        syncNotice = result.getOrElse { it.message ?: "Sync failed" }
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text("Sync now")
+            }
+            OutlinedButton(
+                enabled = !syncBusy && syncPairing != null,
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        container.homeLanSync.unpair()
+                        clientSecret = ""
+                        clientPin = ""
+                        clientCert = ""
+                        syncNotice = "Unpaired"
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text("Unpair")
+            }
+        }
+        syncStatus.vaultProgress?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            if (syncStatus.bytesTotal > 0) {
+                Text(
+                    "${syncStatus.bytesTransferred / (1024 * 1024)} / ${syncStatus.bytesTotal / (1024 * 1024)} MiB",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (syncStatus.pendingConflicts.isNotEmpty()) {
+            Text(
+                "Conflicts (${syncStatus.pendingConflicts.size}) — same path, different content",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            syncStatus.pendingConflicts.take(5).forEach { conflict ->
+                Text(conflict.relPath, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !syncBusy,
+                        onClick = {
+                            syncBusy = true
+                            scope.launch {
+                                syncNotice = container.homeLanSync.resolveConflictKeepLocal(conflict.relPath)
+                                    .getOrElse { it.message ?: "Failed" }
+                                syncBusy = false
+                            }
+                        },
+                    ) { Text("Keep local") }
+                    OutlinedButton(
+                        enabled = !syncBusy,
+                        onClick = {
+                            syncBusy = true
+                            scope.launch {
+                                syncNotice = container.homeLanSync.resolveConflictKeepRemote(conflict.relPath)
+                                    .getOrElse { it.message ?: "Failed" }
+                                syncBusy = false
+                            }
+                        },
+                    ) { Text("Keep remote") }
+                }
+            }
+        }
+        OutlinedTextField(
+            value = tombstonePath,
+            onValueChange = { tombstonePath = it },
+            label = { Text("Remove from vault (relative path)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        OutlinedButton(
+            enabled = !syncBusy && tombstonePath.isNotBlank(),
+            onClick = {
+                syncBusy = true
+                scope.launch {
+                    syncNotice = container.homeLanSync.tombstoneVaultPath(tombstonePath.trim())
+                        .getOrElse { it.message ?: "Failed" }
+                    tombstonePath = ""
+                    syncBusy = false
+                }
+            },
+        ) {
+            Text("Tombstone + delete local vault file")
+        }
+        syncStatus.lastDetail?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        syncStatus.lastError?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        syncNotice?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         Text("Advanced", style = MaterialTheme.typography.titleMedium)

@@ -67,6 +67,8 @@ class DesktopPlaybackEngine internal constructor(
     private var elapsedOffset = 0L
     private var lastHandle: PlaybackHandle? = null
     private var lastQuality: AudioQuality? = null
+    @Volatile
+    private var volumePercent: Int = 100
     private val shutdownHook = if (runtime === SystemDesktopPlaybackRuntime) {
         Thread({ shutdown() }, "kainos-mpv-shutdown").also(Runtime.getRuntime()::addShutdownHook)
     } else {
@@ -285,6 +287,7 @@ class DesktopPlaybackEngine internal constructor(
 
     override fun setVolume(volume: Float) {
         val percent = (volume.coerceIn(0f, 1f) * 100).toInt()
+        volumePercent = percent
         synchronized(lifecycleLock) {
             activeProcess?.let { runtime.sendIpc("""["set_property","volume",$percent]""", it.socket) }
         }
@@ -310,6 +313,7 @@ class DesktopPlaybackEngine internal constructor(
                 add("--no-terminal")
                 add("--idle=no")
                 add("--keep-open=no")
+                add("--volume=$volumePercent")
                 add("--input-ipc-server=$socket")
                 if (targetStatus == EngineStatus.PAUSED) add("--pause")
                 if (startSeconds > 0) add("--start=$startSeconds")

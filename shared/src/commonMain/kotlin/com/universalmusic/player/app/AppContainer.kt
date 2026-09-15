@@ -48,7 +48,15 @@ import com.universalmusic.player.domain.playback.DefaultSourceResolver
 import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
+import com.universalmusic.player.data.sync.HomeLanSyncService
+import com.universalmusic.player.data.sync.HttpHomeLanSyncClient
+import com.universalmusic.player.platform.createHomeLanSyncHub
+import com.universalmusic.player.platform.createHomeLanVaultStore
+import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
+import com.universalmusic.player.platform.detectLanHostAddress
+import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
 import com.universalmusic.player.platform.createLocalTrackSource
 import com.universalmusic.player.platform.bindPlatformMediaControls
@@ -90,16 +98,17 @@ class AppContainer {
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
+    private val _settings = MutableStateFlow(AppSettings())
+    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
     private var favoriteAudioHook: ((Track, Boolean) -> Unit)? = null
     val library = LibraryRepository(
         scope = scope,
         store = userLibraryStore,
         metadataCache = metadataCache,
         onFavoriteChanged = { track, nowFavorite -> favoriteAudioHook?.invoke(track, nowFavorite) },
+        deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
     )
     val matcher = TrackMatcher()
-    private val _settings = MutableStateFlow(AppSettings())
-    val settings: StateFlow<AppSettings> = _settings.asStateFlow()
     private val sampleUnavailable = MutableStateFlow(ProviderState.UNAVAILABLE)
     val local = LocalMusicProvider(
         source = createLocalTrackSource { localLibraryScanConfig() },
@@ -141,6 +150,29 @@ class AppContainer {
             else service.cancelAndRemove(track.canonicalId)
         }
     }
+    val homeLanVault = createHomeLanVaultStore(
+        vaultRootProvider = { _settings.value.homeLanSyncVaultFolder },
+    )
+    val homeLanSync = HomeLanSyncService(
+        scope = scope,
+        settings = { _settings.value },
+        updateSettings = { transform -> updateSettings(transform) },
+        library = library,
+        hubFactory = { pairing, onHearts, vault, heartedNames ->
+            createHomeLanSyncHub(pairing, onHearts, vault, heartedNames)
+        },
+        clientFactory = { pairing ->
+            val pin = pairing.hubCertSha256Hex?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException(
+                    "Hub certificate pin required; re-pair from kainos-homesync:2 URI",
+                )
+            HttpHomeLanSyncClient(pairing, library, createPinnedHomeLanHttpClient(pin))
+        },
+        vaultStore = homeLanVault,
+        refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
+        rematchLocalHearts = { rematchLocalHeartsByFileName() },
+        detectedLanHost = { detectLanHostAddress() },
+    )
     val resolver = DefaultSourceResolver()
     private val settingsMutex = Mutex()
     private val _ready = MutableStateFlow(false)
@@ -246,7 +278,12 @@ class AppContainer {
             val loaded = migrateLocalLibrarySettings(raw)
             if (loaded != raw) settingsStore.write(loaded)
             _settings.value = loaded
+            homeLanSync.hydrateFromSettings(loaded)
+            if (loaded.homeLanSyncHubAutostart) {
+                setHomeLanHubAutostart(true)
+            }
             player.updatePreferences(loaded.toPlaybackPreferences())
+            player.setVolume(loaded.playbackVolume)
             applyProviderSettings(loaded, clearSessionOnChange = false)
             library.load(spotify.currentUserId())
             val favorites = library.favoriteIds.value
@@ -256,6 +293,7 @@ class AppContainer {
             refreshLocalLibrary()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
+            homeLanSync.onAppForeground()
         }
     }
 
@@ -434,18 +472,104 @@ class AppContainer {
         return emptyList()
     }
 
+    fun setPlaybackVolume(volume: Float) {
+        val next = volume.coerceIn(0f, 1f)
+        player.setVolume(next)
+        scope.launch {
+            updateSettings { it.copy(playbackVolume = next) }
+        }
+    }
+
     fun refreshLocalLibrary() {
         localLibraryRefreshJob?.cancel()
         localLibraryRefreshJob = scope.launch {
-            _localLibraryMessage.value = null
-            runCatching { local.refresh() }
-                .onFailure { failure ->
-                    if (failure is CancellationException) return@launch
-                    _localLibraryMessage.value = failure.message ?: "Local library scan failed"
+            refreshLocalLibraryAndAwait()
+        }
+    }
+
+    suspend fun refreshLocalLibraryAndAwait() {
+        _localLibraryMessage.value = null
+        runCatching { local.refresh() }
+            .onFailure { failure ->
+                if (failure is CancellationException) throw failure
+                _localLibraryMessage.value = failure.message ?: "Local library scan failed"
+            }
+        runCatching { local.enrichEmbeddedArtwork() }
+            .onFailure { if (it is CancellationException) throw it }
+    }
+
+    /**
+     * Phase 3: if a local heart's file disappeared after vault sync, re-heart a unique
+     * same-filename track now present in the library.
+     */
+    private suspend fun rematchLocalHeartsByFileName(): Int {
+        val localTracks = local.libraryTracks.value
+        val byName = localTracks.mapNotNull { track ->
+            val url = (track.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
+                ?: return@mapNotNull null
+            val name = url.substringAfterLast('/').substringBefore('?').lowercase()
+            if (name.isBlank()) null else name to track
+        }.groupBy({ it.first }, { it.second })
+
+        var rematched = 0
+        val favoriteIds = library.favoriteIds.value.toList()
+        for (id in favoriteIds) {
+            if (!id.startsWith("local:")) continue
+            val saved = library.savedTracks.value.firstOrNull { it.canonicalId == id } ?: continue
+            val location = (saved.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
+            val stillPresent = localTracks.any { it.canonicalId == id }
+            if (stillPresent) continue
+            val name = location?.substringAfterLast('/')?.substringBefore('?')?.lowercase() ?: continue
+            val match = byName[name]?.singleOrNull() ?: continue
+            if (library.isFavorite(id)) {
+                library.toggleFavorite(saved)
+            }
+            if (!library.isFavorite(match.canonicalId)) {
+                library.toggleFavorite(match)
+            }
+            rematched += 1
+        }
+        return rematched
+    }
+
+    fun setHomeLanVaultFolder(folder: String?) {
+        scope.launch {
+            updateSettings { it.copy(homeLanSyncVaultFolder = folder) }
+        }
+    }
+
+    fun setHomeLanHubAutostartEnabled(enabled: Boolean) {
+        scope.launch {
+            updateSettings { it.copy(homeLanSyncHubAutostart = enabled) }
+            setHomeLanHubAutostart(enabled)
+        }
+    }
+
+    fun pickHomeLanVaultFolder() {
+        if (!supportsMusicFolderPicker()) return
+        scope.launch {
+            val picked = pickMusicFolder() ?: return@launch
+            updateSettings { current ->
+                val base = if (current.localMusicFoldersConfigured) {
+                    current.localMusicFolders
+                } else {
+                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
-            // Embedded covers for whatever the scan could not attach (sidecar / MediaStore).
-            runCatching { local.enrichEmbeddedArtwork() }
-                .onFailure { if (it is CancellationException) throw it }
+                val nextFolders = (base + picked).distinct()
+                current.copy(
+                    localMusicFoldersConfigured = true,
+                    localMusicFolders = nextFolders,
+                    homeLanSyncVaultFolder = picked,
+                    includeMediaStoreLibrary = if (
+                        !current.localMusicFoldersConfigured || current.localMusicFolders.isEmpty()
+                    ) {
+                        false
+                    } else {
+                        current.includeMediaStoreLibrary
+                    },
+                )
+            }
+            refreshLocalLibrary()
         }
     }
 

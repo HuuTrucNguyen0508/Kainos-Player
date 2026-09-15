@@ -75,6 +75,8 @@ kotlin {
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.server.core)
             implementation(libs.ktor.server.cio)
+            implementation(libs.ktor.server.netty)
+            implementation(libs.ktor.network.tls.certificates)
             implementation(libs.dbus.java.core)
             implementation(libs.dbus.java.transport.native.unixsocket)
         }
