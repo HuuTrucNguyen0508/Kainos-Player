@@ -519,7 +519,7 @@ fun SettingsScreen(container: AppContainer) {
 
         Text("Home sync", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Sync app hearts and vault music files with your PC over home Wi‑Fi (HTTPS with a pinned hub cert). Pair with the kainos-homesync:2 URI from Start hub pairing, then Sync now. Does not write Spotify Liked or sync audio-cache / DRM files. Keep the PC firewall closed on 43822 until you have soaked pairing.",
+            "Sync YouTube and local-file hearts both ways (by filename). Spotify stays on the Spotify account, not this LAN mirror. Missing audio files show up as confirm-to-transfer. Pair with the kainos-homesync:2 URI from Start hub pairing, then Sync now.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -807,6 +807,49 @@ fun SettingsScreen(container: AppContainer) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        if (syncStatus.pendingTransfers.isNotEmpty()) {
+            Text(
+                "Transfers (${syncStatus.pendingTransfers.size}) — confirm to copy missing hearted files",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            syncStatus.pendingTransfers.take(8).forEach { transfer ->
+                Text(
+                    transfer.label + if (transfer.sizeBytes > 0) {
+                        " (${transfer.sizeBytes / 1024} KiB)"
+                    } else {
+                        ""
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !syncBusy,
+                        onClick = {
+                            syncBusy = true
+                            scope.launch {
+                                syncNotice = container.homeLanSync
+                                    .confirmVaultTransfer(transfer.relPath, transfer.direction)
+                                    .getOrElse { it.message ?: "Failed" }
+                                syncBusy = false
+                            }
+                        },
+                    ) { Text("Transfer") }
+                    OutlinedButton(
+                        enabled = !syncBusy,
+                        onClick = {
+                            syncBusy = true
+                            scope.launch {
+                                syncNotice = container.homeLanSync
+                                    .dismissVaultTransfer(transfer.relPath, transfer.direction)
+                                    .getOrElse { it.message ?: "Failed" }
+                                syncBusy = false
+                            }
+                        },
+                    ) { Text("Skip") }
+                }
             }
         }
         if (syncStatus.pendingConflicts.isNotEmpty()) {

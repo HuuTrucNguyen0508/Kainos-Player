@@ -189,88 +189,156 @@ class HomeLanSyncService(
         return pairing.toPairingUri(host)
     }
 
-    override suspend fun syncNow(): Result<String> = mutex.withLock {
-        val pairing = _pairing.value
-            ?: return Result.failure(IllegalStateException("Not paired"))
-        if (!_status.value.enabled) {
-            return Result.failure(IllegalStateException("Home sync is disabled"))
+    override suspend fun syncNow(): Result<String> {
+        // Hub must be up before the PC acts as its own client (avoids Connection refused).
+        if (shouldRunHub()) {
+            startHubIfNeeded()
         }
-        if (shouldRunClient() && pairing.hubCertSha256Hex.isNullOrBlank()) {
-            val msg = "Re-pair with kainos-homesync:2 URI from the PC (TLS cert pin required)"
-            _status.update { it.copy(lastError = msg) }
-            return Result.failure(IllegalStateException(msg))
-        }
-        return runCatching {
-            ensureDeviceId()
-            withVaultSyncForeground("Home library sync") {
-                val client = clientFactory(pairing)
-                val remoteHearts = client.syncHearts().getOrThrow()
-                library.mergeAndPersistSyncState(remoteHearts)
+        return mutex.withLock {
+            val pairing = _pairing.value
+                ?: return@withLock Result.failure(IllegalStateException("Not paired"))
+            if (!_status.value.enabled) {
+                return@withLock Result.failure(IllegalStateException("Home sync is disabled"))
+            }
+            if (pairing.hubCertSha256Hex.isNullOrBlank() && shouldRunClient()) {
+                val msg = "Re-pair with kainos-homesync:2 URI from the PC (TLS cert pin required)"
+                _status.update { it.copy(lastError = msg) }
+                return@withLock Result.failure(IllegalStateException(msg))
+            }
+            // Hub Sync now also talks to the local HTTPS endpoint as a client.
+            if (pairing.hubCertSha256Hex.isNullOrBlank()) {
+                val msg = "Re-pair with kainos-homesync:2 URI (TLS cert pin required)"
+                _status.update { it.copy(lastError = msg) }
+                return@withLock Result.failure(IllegalStateException(msg))
+            }
+            runCatching {
+                ensureDeviceId()
+                withVaultSyncForeground("Home library sync") {
+                    val client = clientFactory(pairing)
+                    val remoteHearts = client.syncHearts().getOrThrow()
+                    library.mergeAndPersistSyncState(remoteHearts)
+                    val rematchedPortable = rematchLocalHearts()
+                    refreshLocalLibrary()
+                    val rematchedAgain = rematchLocalHearts()
 
-                var vaultDetail = "vault skipped (not configured)"
-                var conflicts = emptyList<VaultConflict>()
-                if (vaultStore.isConfigured()) {
-                    val heartsOnly = settings().homeLanSyncVaultHeartsOnly
-                    val heartedNames = heartedLocalAudioFileNames(library)
-                    val result = transferVaultFiles(
-                        deviceId = pairing.deviceId,
-                        store = vaultStore,
-                        client = client,
-                        heartsOnly = heartsOnly,
-                        heartedBasenamesLower = heartedNames,
-                    ) { detail, transferred, total ->
-                        _status.update {
-                            it.copy(
-                                vaultProgress = detail,
-                                bytesTransferred = transferred,
-                                bytesTotal = total,
-                            )
+                    var vaultDetail = "vault skipped (not configured)"
+                    var conflicts = emptyList<VaultConflict>()
+                    var pending = emptyList<PendingVaultTransfer>()
+                    if (vaultStore.isConfigured()) {
+                        val heartsOnly = settings().homeLanSyncVaultHeartsOnly
+                        val heartedNames = heartedLocalAudioFileNames(library)
+                        val result = planVaultTransfers(
+                            deviceId = pairing.deviceId,
+                            store = vaultStore,
+                            client = client,
+                            heartsOnly = heartsOnly,
+                            heartedBasenamesLower = heartedNames,
+                        )
+                        conflicts = result.conflicts
+                        pending = result.pendingTransfers
+                        vaultDetail =
+                            "vault pending ↓${pending.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
+                                "↑${pending.count { it.direction == VaultCopyDirection.TO_REMOTE }} " +
+                                "tombs=${result.tombstonesApplied}" +
+                                if (heartsOnly) " (hearted only, ${heartedNames.size} names)" else ""
+                    }
+                    val rematched = rematchedPortable + rematchedAgain
+                    val detail = buildString {
+                        append("Hearts (${remoteHearts.ops.size} peer ops); $vaultDetail")
+                        if (rematched > 0) append(", rematched $rematched local hearts")
+                        if (pending.isNotEmpty()) {
+                            append("; confirm ${pending.size} file transfer(s)")
                         }
                     }
-                    conflicts = result.conflicts
-                    vaultDetail =
-                        "vault ↓${result.downloaded} ↑${result.uploaded} tombs=${result.tombstonesApplied}" +
-                            if (heartsOnly) " (hearted only, ${heartedNames.size} names)" else ""
-                    refreshLocalLibrary()
-                    val rematched = rematchLocalHearts()
-                    if (rematched > 0) {
-                        vaultDetail += ", rematched $rematched local hearts"
+                    val now = clock()
+                    updateSettings {
+                        it.copy(
+                            homeLanSyncLastAtMs = now,
+                            homeLanSyncLastError = null,
+                            homeLanSyncLastDetail = detail,
+                        )
                     }
-                }
-
-                val detail = "Hearts (${remoteHearts.ops.size} peer ops); $vaultDetail"
-                val now = clock()
-                updateSettings {
-                    it.copy(
-                        homeLanSyncLastAtMs = now,
-                        homeLanSyncLastError = null,
-                        homeLanSyncLastDetail = detail,
-                    )
-                }
-                _status.update {
-                    it.copy(
-                        lastSyncAtMs = now,
-                        lastError = null,
-                        lastDetail = detail,
-                        vaultProgress = null,
-                        pendingConflicts = conflicts,
-                        bytesTransferred = 0,
-                        bytesTotal = 0,
-                    )
-                }
-                if (conflicts.isNotEmpty()) {
-                    "$detail; ${conflicts.size} conflict(s) skipped"
-                } else {
+                    _status.update {
+                        it.copy(
+                            lastSyncAtMs = now,
+                            lastError = null,
+                            lastDetail = detail,
+                            vaultProgress = null,
+                            pendingConflicts = conflicts,
+                            pendingTransfers = pending,
+                            bytesTransferred = 0,
+                            bytesTotal = 0,
+                        )
+                    }
                     detail
                 }
-            }
-        }.onFailure { err ->
-            val message = err.message ?: err.toString()
-            updateSettings { it.copy(homeLanSyncLastError = message) }
-            _status.update {
-                it.copy(lastError = message, vaultProgress = null)
+            }.onFailure { err ->
+                val message = err.message ?: err.toString()
+                updateSettings { it.copy(homeLanSyncLastError = message) }
+                _status.update {
+                    it.copy(lastError = message, vaultProgress = null)
+                }
             }
         }
+    }
+
+    override suspend fun confirmVaultTransfer(
+        relPath: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val pairing = _pairing.value
+            ?: return Result.failure(IllegalStateException("Not paired"))
+        val path = relPath.normalizeVaultRelPath()
+        val transfer = _status.value.pendingTransfers.firstOrNull {
+            it.relPath == path && it.direction == direction
+        } ?: return Result.failure(IllegalStateException("No pending transfer for $path"))
+        runCatching {
+            require(vaultStore.isConfigured()) { "Vault not configured" }
+            val client = clientFactory(pairing)
+            withVaultSyncForeground("Vault transfer") {
+                executeVaultTransfer(vaultStore, client, transfer) { detail, transferred, total ->
+                    _status.update {
+                        it.copy(
+                            vaultProgress = detail,
+                            bytesTransferred = transferred,
+                            bytesTotal = total,
+                        )
+                    }
+                }
+            }
+            refreshLocalLibrary()
+            rematchLocalHearts()
+            _status.update {
+                it.copy(
+                    pendingTransfers = it.pendingTransfers.filterNot { t ->
+                        t.relPath == path && t.direction == direction
+                    },
+                    vaultProgress = null,
+                    bytesTransferred = 0,
+                    bytesTotal = 0,
+                    lastDetail = "Transferred $path",
+                )
+            }
+            "Transferred $path"
+        }.onFailure { err ->
+            val message = err.message ?: err.toString()
+            _status.update { it.copy(lastError = message, vaultProgress = null) }
+        }
+    }
+
+    override suspend fun dismissVaultTransfer(
+        relPath: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val path = relPath.normalizeVaultRelPath()
+        _status.update {
+            it.copy(
+                pendingTransfers = it.pendingTransfers.filterNot { t ->
+                    t.relPath == path && t.direction == direction
+                },
+            )
+        }
+        Result.success("Skipped $path")
     }
 
     override suspend fun tombstoneVaultPath(relPath: String): Result<String> = runCatching {

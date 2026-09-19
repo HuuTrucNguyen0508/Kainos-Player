@@ -50,6 +50,7 @@ import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
 import com.universalmusic.player.data.sync.HomeLanSyncService
 import com.universalmusic.player.data.sync.HttpHomeLanSyncClient
+import com.universalmusic.player.data.sync.basenameFromLocalLocation
 import com.universalmusic.player.platform.createHomeLanSyncHub
 import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
@@ -159,7 +160,16 @@ class AppContainer {
         updateSettings = { transform -> updateSettings(transform) },
         library = library,
         hubFactory = { pairing, onHearts, vault, heartedNames ->
-            createHomeLanSyncHub(pairing, onHearts, vault, heartedNames)
+            createHomeLanSyncHub(
+                pairing,
+                { remote ->
+                    onHearts(remote)
+                    rematchLocalHeartsByFileName()
+                    library.exportHeartsSyncDocument()
+                },
+                vault,
+                heartedNames,
+            )
         },
         clientFactory = { pairing ->
             val pin = pairing.hubCertSha256Hex?.takeIf { it.isNotBlank() }
@@ -499,19 +509,23 @@ class AppContainer {
     }
 
     /**
-     * Phase 3: if a local heart's file disappeared after vault sync, re-heart a unique
-     * same-filename track now present in the library.
+     * After heart/vault sync: map portable localfile: hearts onto unique same-basename
+     * library tracks, and re-heart local: favorites whose path went missing.
      */
     private suspend fun rematchLocalHeartsByFileName(): Int {
         val localTracks = local.libraryTracks.value
         val byName = localTracks.mapNotNull { track ->
             val url = (track.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
                 ?: return@mapNotNull null
-            val name = url.substringAfterLast('/').substringBefore('?').lowercase()
-            if (name.isBlank()) null else name to track
+            val name = basenameFromLocalLocation(url) ?: return@mapNotNull null
+            name to track
         }.groupBy({ it.first }, { it.second })
+        val unique = byName.mapNotNull { (name, tracks) ->
+            tracks.singleOrNull()?.let { name to it }
+        }.toMap()
 
-        var rematched = 0
+        var rematched = library.rematchPortableLocalFileHearts(unique)
+
         val favoriteIds = library.favoriteIds.value.toList()
         for (id in favoriteIds) {
             if (!id.startsWith("local:")) continue
@@ -519,8 +533,8 @@ class AppContainer {
             val location = (saved.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
             val stillPresent = localTracks.any { it.canonicalId == id }
             if (stillPresent) continue
-            val name = location?.substringAfterLast('/')?.substringBefore('?')?.lowercase() ?: continue
-            val match = byName[name]?.singleOrNull() ?: continue
+            val name = location?.let { basenameFromLocalLocation(it) } ?: continue
+            val match = unique[name] ?: continue
             if (library.isFavorite(id)) {
                 library.toggleFavorite(saved)
             }

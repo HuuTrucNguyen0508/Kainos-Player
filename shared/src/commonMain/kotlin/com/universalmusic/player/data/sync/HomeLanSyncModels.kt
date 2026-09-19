@@ -47,6 +47,8 @@ data class HomeLanSyncStatus(
     val hubListening: Boolean = false,
     val vaultProgress: String? = null,
     val pendingConflicts: List<VaultConflict> = emptyList(),
+    /** Missing hearted (or vault) files waiting for user confirm before blob copy. */
+    val pendingTransfers: List<PendingVaultTransfer> = emptyList(),
     val bytesTransferred: Long = 0,
     val bytesTotal: Long = 0,
 )
@@ -102,6 +104,8 @@ interface HomeLanSyncController {
     suspend fun completeClientPairingFromUri(uri: String)
     suspend fun unpair()
     suspend fun syncNow(): Result<String>
+    suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
+    suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
     suspend fun startHubIfNeeded()
     suspend fun stopHub()
     suspend fun tombstoneVaultPath(relPath: String): Result<String>

@@ -25,8 +25,8 @@ data class HeartOp(
 )
 
 /**
- * Portable hearts exchange document. Favorites metadata must be URI-sanitized and
- * provider-only (`spotify:` / `yt:`). Recents and non-favorite remembered stay local.
+ * Portable hearts exchange document. Favorites metadata must be URI-sanitized.
+ * Wire ids on the LAN: `yt:` and `localfile:<basename>`. Spotify is not mirrored here.
  */
 @Serializable
 data class HeartsSyncDocument(
@@ -36,17 +36,110 @@ data class HeartsSyncDocument(
     val favoritesMetadata: List<PersistedTrack> = emptyList(),
 )
 
+const val LOCALFILE_HEART_PREFIX = "localfile:"
+
 fun isProviderHeartCanonicalId(canonicalId: String): Boolean =
     canonicalId.startsWith("spotify:") || canonicalId.startsWith("yt:")
+
+fun isLocalFileHeartCanonicalId(canonicalId: String): Boolean =
+    canonicalId.startsWith(LOCALFILE_HEART_PREFIX)
+
+/** Spotify, YouTube, and basename-keyed local files (portable across devices). */
+fun isPortableHeartCanonicalId(canonicalId: String): Boolean =
+    isProviderHeartCanonicalId(canonicalId) || isLocalFileHeartCanonicalId(canonicalId)
 
 fun isSpotifyHeartCanonicalId(canonicalId: String): Boolean =
     canonicalId.startsWith("spotify:")
 
+fun localFileHeartId(basename: String): String =
+    LOCALFILE_HEART_PREFIX + basename.trim().lowercase()
+
+fun localFileHeartBasename(canonicalId: String): String? =
+    canonicalId.takeIf { isLocalFileHeartCanonicalId(it) }
+        ?.removePrefix(LOCALFILE_HEART_PREFIX)
+        ?.takeIf { it.isNotBlank() }
+
+/**
+ * Basename from a local file URL / path (query stripped, lowercased).
+ *
+ * Android SAF document URIs end with a percent-encoded document id such as
+ * `primary%3AMusic%2Ffolder%2Fsong.flac`. Taking the last `/` segment alone leaves
+ * that whole id as the "basename", which cannot rematch desktop paths. Decode and
+ * take the true filename after the last path separator.
+ */
+fun basenameFromLocalLocation(location: String): String? {
+    var name = location
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .substringBefore('?')
+        .substringBefore('#')
+        .trim()
+    if (name.isBlank()) return null
+    name = percentDecodeLight(name)
+    if ('/' in name || '\\' in name) {
+        name = name.substringAfterLast('/').substringAfterLast('\\').trim()
+    }
+    return name.takeIf { it.isNotBlank() }?.lowercase()
+}
+
+/** True filename for a [localfile:] id, including repair of mangled SAF document-id suffixes. */
+fun normalizedLocalFileHeartBasename(canonicalId: String): String? {
+    val raw = localFileHeartBasename(canonicalId) ?: return null
+    return basenameFromLocalLocation(raw) ?: raw.lowercase().takeIf { it.isNotBlank() }
+}
+
+internal fun percentDecodeLight(value: String): String {
+    if ('%' !in value && '+' !in value) return value
+    return buildString(value.length) {
+        var i = 0
+        while (i < value.length) {
+            val c = value[i]
+            when {
+                c == '+' -> {
+                    append(' ')
+                    i += 1
+                }
+                c == '%' && i + 2 < value.length -> {
+                    val code = value.substring(i + 1, i + 3).toIntOrNull(16)
+                    if (code != null) {
+                        append(code.toChar())
+                        i += 3
+                    } else {
+                        append(c)
+                        i += 1
+                    }
+                }
+                else -> {
+                    append(c)
+                    i += 1
+                }
+            }
+        }
+    }
+}
+
 /**
  * Strip peer-local URIs and non-provider sources so sync payloads stay portable.
- * Drops local-only tracks entirely.
+ * Provider tracks keep Spotify/YouTube sources; local hearts become [localfile:] metadata.
  */
 fun PersistedTrack.forHeartsSync(): PersistedTrack? {
+    if (isLocalFileHeartCanonicalId(canonicalId)) {
+        val basename = normalizedLocalFileHeartBasename(canonicalId) ?: return null
+        val portableId = localFileHeartId(basename)
+        val art = artworkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        return copy(
+            canonicalId = portableId,
+            artworkUrl = art,
+            sources = listOf(
+                PersistedSource(
+                    provider = ProviderId.LOCAL.name,
+                    providerTrackId = basename,
+                    localLocation = null,
+                ),
+            ),
+            cachedAtMs = 0,
+        )
+    }
     if (!isProviderHeartCanonicalId(canonicalId)) return null
     val portableSources = sources.mapNotNull { source ->
         val provider = runCatching { ProviderId.valueOf(source.provider) }.getOrNull() ?: return@mapNotNull null
@@ -63,6 +156,29 @@ fun PersistedTrack.forHeartsSync(): PersistedTrack? {
         sources = portableSources,
         cachedAtMs = 0,
     )
+}
+
+/**
+ * Map a device-local favorite to a portable [localfile:] heart for the wire.
+ * Returns null when the track has no usable basename.
+ */
+fun PersistedTrack.toLocalFileHeartExport(
+    deviceId: String,
+    revision: Long,
+): Pair<HeartOp, PersistedTrack>? {
+    if (!canonicalId.startsWith("local:")) return null
+    val location = sources.firstOrNull { it.provider == ProviderId.LOCAL.name }?.localLocation
+        ?: return null
+    val basename = basenameFromLocalLocation(location) ?: return null
+    val portableId = localFileHeartId(basename)
+    val portable = copy(canonicalId = portableId).forHeartsSync() ?: return null
+    val op = HeartOp(
+        canonicalId = portableId,
+        action = HeartAction.FAVORITE,
+        revision = revision,
+        deviceId = deviceId,
+    )
+    return op to portable
 }
 
 fun List<PersistedTrack>.portableFavoriteMetadata(): List<PersistedTrack> =
@@ -82,16 +198,17 @@ fun mergeHeartOps(
     remoteSpotifyAccountId: String?,
 ): List<HeartOp> {
     val acceptedRemote = remoteOps.filter { op ->
-        if (!isProviderHeartCanonicalId(op.canonicalId)) return@filter false
+        if (!isPortableHeartCanonicalId(op.canonicalId)) return@filter false
+        if (isLocalFileHeartCanonicalId(op.canonicalId)) return@filter true
         if (!isSpotifyHeartCanonicalId(op.canonicalId)) return@filter true
         val local = localSpotifyAccountId
         val remote = remoteSpotifyAccountId
         local != null && remote != null && local == remote
     }
-    // Keep all local ops (including local-file hearts); never accept remote local: ops.
-    val remoteProviderOnly = acceptedRemote.filter { isProviderHeartCanonicalId(it.canonicalId) }
+    // Keep all local ops (including device `local:` hearts); never accept remote `local:` ops.
+    val remotePortableOnly = acceptedRemote.filter { isPortableHeartCanonicalId(it.canonicalId) }
     val byId = LinkedHashMap<String, HeartOp>()
-    for (op in localOps + remoteProviderOnly) {
+    for (op in localOps + remotePortableOnly) {
         val existing = byId[op.canonicalId]
         if (existing == null || op.beats(existing)) {
             byId[op.canonicalId] = op

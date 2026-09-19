@@ -95,9 +95,15 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 - Writing app hearts back to Spotify Liked Songs
 - Syncing hearted audio cache binaries (`audio-cache/`) or librespot DRM cache
 - Syncing resolved streaming URLs
-- Syncing local-file hearts by path on the wire (provider hearts only; local rematch is post-vault)
 - Syncing `recents` or non-favorite `remembered` history
 - Multi-device simultaneous editing / CRDTs
+- Auto-copying vault blobs without user confirm (missing files become pending Transfer/Skip)
+
+## Local hearts (post Phase 3)
+
+- Wire id: `localfile:<basename>` (lowercase). Device `local:` ids stay on-device.
+- Home-LAN heart ops: YouTube + localfile only (not Spotify — same account already covers Spotify).
+- When the basename is missing on a peer, Sync now lists pending transfers; confirm copies the blob, then rematch hearts.
 
 ## Architecture
 

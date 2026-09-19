@@ -128,6 +128,173 @@ class HeartSyncMergeTest {
         assertEquals(2, migrated.heartOps.size)
         assertTrue(migrated.heartOps.all { it.action == HeartAction.FAVORITE })
     }
+
+    @Test
+    fun basenameFromAndroidSafDocumentUriUsesFilenameOnly() {
+        val uri =
+            "content://com.android.externalstorage.documents/tree/primary%3AMusic%2Fstorage-2/" +
+                "document/primary%3AMusic%2Fstorage-2%2FHOYO-MiX%20-%20pinKing.flac"
+        assertEquals("hoyo-mix - pinking.flac", basenameFromLocalLocation(uri))
+        assertEquals(
+            "hoyo-mix - pinking.flac",
+            normalizedLocalFileHeartBasename(
+                "localfile:primary%3amusic%2fstorage-2%2fhoyo-mix%20-%20pinking.flac",
+            ),
+        )
+        assertEquals(
+            "love.flac",
+            basenameFromLocalLocation("file:///home/music/Love.FLAC"),
+        )
+    }
+
+    @Test
+    fun androidSafLocalFavoriteExportsTrueFilename() = runTest {
+        val library = LibraryRepository(
+            scope = this,
+            store = InMemoryUserLibraryStore(),
+            clock = { 5_000L },
+            deviceIdProvider = { "phone" },
+        )
+        library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = null))
+        val local = Track(
+            canonicalId = "local:abc",
+            title = "pinKing",
+            artists = listOf(ArtistRef("a", "A")),
+            sources = listOf(
+                PlaybackSource(
+                    provider = ProviderId.LOCAL,
+                    providerTrackId = "abc",
+                    isPlayable = true,
+                    handle = PlaybackHandle.Url(
+                        "content://com.android.externalstorage.documents/tree/primary%3AMusic%2Fstorage-2/" +
+                            "document/primary%3AMusic%2Fstorage-2%2FHOYO-MiX%20-%20pinKing.flac",
+                    ),
+                ),
+            ),
+        )
+        library.toggleFavorite(local)
+        val doc = library.exportHeartsSyncDocument()
+        assertEquals("localfile:hoyo-mix - pinking.flac", doc.ops.single().canonicalId)
+        assertFalse(doc.ops.any { "primary" in it.canonicalId })
+    }
+
+    @Test
+    fun rematchRepairsMangledSafLocalfileIds() = runTest {
+        val library = LibraryRepository(
+            scope = this,
+            store = InMemoryUserLibraryStore(),
+            clock = { 5_000L },
+            deviceIdProvider = { "pc" },
+        )
+        library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = null))
+        library.mergeAndPersistSyncState(
+            HeartsSyncDocument(
+                deviceId = "phone",
+                spotifyAccountId = null,
+                ops = listOf(
+                    HeartOp(
+                        "localfile:primary%3amusic%2fstorage-2%2fhoyo-mix%20-%20pinking.flac",
+                        HeartAction.FAVORITE,
+                        9_000L,
+                        "phone",
+                    ),
+                ),
+                favoritesMetadata = emptyList(),
+            ),
+        )
+        val pcTrack = Track(
+            canonicalId = "local:pc-1",
+            title = "pinKing",
+            artists = listOf(ArtistRef("a", "A")),
+            sources = listOf(
+                PlaybackSource(
+                    provider = ProviderId.LOCAL,
+                    providerTrackId = "pc-1",
+                    isPlayable = true,
+                    handle = PlaybackHandle.Url("/home/music/HOYO-MiX - pinKing.flac"),
+                ),
+            ),
+        )
+        val n = library.rematchPortableLocalFileHearts(mapOf("hoyo-mix - pinking.flac" to pcTrack))
+        assertEquals(1, n)
+        assertTrue(library.isFavorite("local:pc-1"))
+    }
+
+    @Test
+    fun localFileHeartsExportAsPortableBasenameOps() = runTest {
+        val library = LibraryRepository(
+            scope = this,
+            store = InMemoryUserLibraryStore(),
+            clock = { 5_000L },
+            deviceIdProvider = { "phone" },
+        )
+        library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = "user-a"))
+        val local = Track(
+            canonicalId = "local:abc",
+            title = "Song",
+            artists = listOf(ArtistRef("a", "A")),
+            sources = listOf(
+                PlaybackSource(
+                    provider = ProviderId.LOCAL,
+                    providerTrackId = "abc",
+                    isPlayable = true,
+                    handle = PlaybackHandle.Url("file:///music/Love.FLAC"),
+                ),
+            ),
+        )
+        library.toggleFavorite(local)
+        val doc = library.exportHeartsSyncDocument()
+        assertTrue(doc.ops.any { it.canonicalId == "localfile:love.flac" && it.action == HeartAction.FAVORITE })
+        assertTrue(doc.favoritesMetadata.any { it.canonicalId == "localfile:love.flac" })
+        assertFalse(doc.ops.any { it.canonicalId.startsWith("local:") })
+    }
+
+    @Test
+    fun mergeAcceptsRemoteLocalFileHeartsAndRematchMapsToLocalId() = runTest {
+        val library = LibraryRepository(
+            scope = this,
+            store = InMemoryUserLibraryStore(),
+            clock = { 5_000L },
+            deviceIdProvider = { "pc" },
+        )
+        library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = "user-a"))
+        library.mergeAndPersistSyncState(
+            HeartsSyncDocument(
+                deviceId = "phone",
+                spotifyAccountId = "user-a",
+                ops = listOf(
+                    HeartOp("localfile:love.flac", HeartAction.FAVORITE, 9_000L, "phone"),
+                ),
+                favoritesMetadata = listOf(
+                    PersistedTrack(
+                        canonicalId = "localfile:love.flac",
+                        title = "Love",
+                        artists = listOf(PersistedArtist("a", "A")),
+                        sources = listOf(PersistedSource(ProviderId.LOCAL.name, "love.flac")),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(library.isFavorite("localfile:love.flac"))
+
+        val pcTrack = Track(
+            canonicalId = "local:pc-1",
+            title = "Love",
+            artists = listOf(ArtistRef("a", "A")),
+            sources = listOf(
+                PlaybackSource(
+                    provider = ProviderId.LOCAL,
+                    providerTrackId = "pc-1",
+                    isPlayable = true,
+                    handle = PlaybackHandle.Url("/home/music/Love.FLAC"),
+                ),
+            ),
+        )
+        val n = library.rematchPortableLocalFileHearts(mapOf("love.flac" to pcTrack))
+        assertEquals(1, n)
+        assertTrue(library.isFavorite("local:pc-1"))
+        assertFalse(library.isFavorite("localfile:love.flac"))
+    }
 }
 
 class VaultUnionTest {

@@ -261,6 +261,66 @@ class QueueControllerTest {
     }
 
     @Test
+    fun jumpToWithoutReshuffleKeepsShuffleOrder() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+                track("D", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        val order = queue.queue.value.shuffleOrder
+        val second = order[1]
+        queue.jumpTo(second)
+        assertEquals(order, queue.queue.value.shuffleOrder)
+        assertEquals(second, queue.queue.value.currentIndex)
+    }
+
+    @Test
+    fun jumpToWithReshufflePinsNewCurrentFirst() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+                track("D", "X", provider = ProviderId.SPOTIFY),
+                track("E", "X", provider = ProviderId.SPOTIFY),
+                track("F", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        queue.jumpTo(4, reshuffle = true)
+        assertEquals(4, queue.queue.value.shuffleOrder.first())
+        assertEquals(4, queue.queue.value.currentIndex)
+        assertEquals(6, queue.queue.value.shuffleOrder.distinct().size)
+    }
+
+    @Test
+    fun isWrapToStartWhenAtEndOfShuffleWithRepeatAll() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        queue.setShuffle(true)
+        queue.setRepeat(RepeatMode.ALL)
+        val last = queue.queue.value.shuffleOrder.last()
+        queue.jumpTo(last)
+        assertTrue(queue.isWrapToStart(respectRepeatOne = true))
+        assertEquals(queue.queue.value.shuffleOrder.first(), queue.nextIndex())
+    }
+
+    @Test
     fun upcomingReflectsPlaybackOrderNotStorageOrderWhenShuffled() {
         var n = 0
         val queue = QueueController { "id-${n++}" }

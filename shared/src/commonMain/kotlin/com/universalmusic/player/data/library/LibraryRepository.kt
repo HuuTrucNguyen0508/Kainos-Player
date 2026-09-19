@@ -6,13 +6,19 @@ import com.universalmusic.player.data.cache.withoutHeartedAudioCache
 import com.universalmusic.player.data.sync.HeartAction
 import com.universalmusic.player.data.sync.HeartOp
 import com.universalmusic.player.data.sync.HeartsSyncDocument
+import com.universalmusic.player.data.sync.LOCALFILE_HEART_PREFIX
 import com.universalmusic.player.data.sync.compacted
 import com.universalmusic.player.data.sync.favoriteIdsFromOps
 import com.universalmusic.player.data.sync.forHeartsSync
+import com.universalmusic.player.data.sync.isLocalFileHeartCanonicalId
+import com.universalmusic.player.data.sync.isPortableHeartCanonicalId
 import com.universalmusic.player.data.sync.isProviderHeartCanonicalId
+import com.universalmusic.player.data.sync.isSpotifyHeartCanonicalId
 import com.universalmusic.player.data.sync.mergeFavoriteMetadata
 import com.universalmusic.player.data.sync.mergeHeartOps
+import com.universalmusic.player.data.sync.normalizedLocalFileHeartBasename
 import com.universalmusic.player.data.sync.portableFavoriteMetadata
+import com.universalmusic.player.data.sync.toLocalFileHeartExport
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
@@ -169,22 +175,52 @@ class LibraryRepository(
 
     fun exportHeartsSyncDocument(): HeartsSyncDocument {
         val favorites = _favorites.value
-        val metadata = _saved.value
-            .filter { it.canonicalId in favorites && isProviderHeartCanonicalId(it.canonicalId) }
-            .map { it.toPersisted(0).forHeartsSync() }
-            .filterNotNull()
-            .portableFavoriteMetadata()
+        val deviceId = deviceIdProvider()
+        val now = clock()
+        // Home-LAN hearts: YouTube + portable local files only. Spotify is already
+        // available on both devices via the same account / Web API — not mirrored here.
+        val youtubeMeta = _saved.value
+            .filter { it.canonicalId in favorites && it.canonicalId.startsWith("yt:") }
+            .mapNotNull { it.toPersisted(0).forHeartsSync() }
+        val youtubeOps = heartOps.compacted().filter { it.canonicalId.startsWith("yt:") }
+        val localExports = _saved.value
+            .filter { it.canonicalId in favorites && it.canonicalId.startsWith("local:") }
+            .mapNotNull { track ->
+                val revision = heartOps
+                    .filter { it.canonicalId == track.canonicalId }
+                    .maxOfOrNull { it.revision }
+                    ?: now
+                track.toPersisted(0).toLocalFileHeartExport(deviceId, revision)
+            }
+        val pendingLocalFileMeta = _saved.value
+            .filter { it.canonicalId in favorites && isLocalFileHeartCanonicalId(it.canonicalId) }
+            .mapNotNull { it.toPersisted(0).forHeartsSync() }
+        val pendingLocalFileOps = heartOps.compacted().filter { isLocalFileHeartCanonicalId(it.canonicalId) }
+        val localfileOps = localExports.map { it.first } + pendingLocalFileOps
+        val localfileMeta = localExports.map { it.second } + pendingLocalFileMeta
+        val opsById = LinkedHashMap<String, HeartOp>()
+        for (op in youtubeOps + localfileOps) {
+            val existing = opsById[op.canonicalId]
+            if (existing == null || op.revision > existing.revision ||
+                (op.revision == existing.revision && op.deviceId > existing.deviceId)
+            ) {
+                opsById[op.canonicalId] = op
+            }
+        }
         return HeartsSyncDocument(
-            deviceId = deviceIdProvider(),
+            deviceId = deviceId,
             spotifyAccountId = spotifyAccountId,
-            ops = heartOps.compacted().filter { isProviderHeartCanonicalId(it.canonicalId) },
-            favoritesMetadata = metadata,
+            ops = opsById.values.sortedWith(compareBy({ it.canonicalId }, { it.revision }, { it.deviceId })),
+            favoritesMetadata = (youtubeMeta + localfileMeta).portableFavoriteMetadata(),
         )
     }
 
     /**
      * Merge a remote hearts document into local state, persist under [persistMutex], and
      * fire [onFavoriteChanged] for favorite deltas so hearted-audio cache stays aligned.
+     *
+     * Portable [localfile:] hearts are kept until [rematchPortableLocalFileHearts] maps them
+     * onto device `local:` tracks after the file is present.
      */
     suspend fun mergeAndPersistSyncState(remote: HeartsSyncDocument): HeartsSyncDocument {
         persistJob?.cancel()
@@ -194,14 +230,16 @@ class LibraryRepository(
             val before = _favorites.value
             val mergedOps = mergeHeartOps(
                 localOps = heartOps,
-                remoteOps = remote.ops,
+                remoteOps = remote.ops.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) },
                 localSpotifyAccountId = spotifyAccountId,
                 remoteSpotifyAccountId = remote.spotifyAccountId,
             ).compacted()
-            // Preserve local-only favorite ids (local files) that are not in provider ops.
-            val providerFavorites = mergedOps.favoriteIdsFromOps()
-            val localOnlyFavorites = before.filterNot { isProviderHeartCanonicalId(it) }
-            val after = providerFavorites + localOnlyFavorites
+            // Preserve device-local favorite ids; portable wire ids come from ops.
+            val portableFavorites = mergedOps.favoriteIdsFromOps()
+            val localOnlyFavorites = before.filter {
+                it.startsWith("local:") && !isPortableHeartCanonicalId(it)
+            }
+            val after = portableFavorites + localOnlyFavorites
 
             val localRemembered = _saved.value.map { it.toPersisted(clock()) }
             val mergedMeta = mergeFavoriteMetadata(
@@ -267,6 +305,55 @@ class LibraryRepository(
             onFavoriteChanged?.invoke(track, nowFavorite)
         }
         return exportHeartsSyncDocument()
+    }
+
+    /**
+     * When a [localfile:] heart's basename matches a unique library track, heart that
+     * `local:` id and drop the portable stub. [uniqueLocalTracksByBasenameLower] must
+     * only contain basenames with exactly one library match.
+     */
+    suspend fun rematchPortableLocalFileHearts(
+        uniqueLocalTracksByBasenameLower: Map<String, Track>,
+    ): Int {
+        val deltas = mutableListOf<Pair<Track, Boolean>>()
+        var rematched = 0
+        persistMutex.withLock {
+            val favorites = _favorites.value.toMutableSet()
+            val portableIds = favorites.filter { isLocalFileHeartCanonicalId(it) }
+            if (portableIds.isEmpty()) return@withLock
+            var ops = heartOps
+            val saved = _saved.value.toMutableList()
+            for (portableId in portableIds) {
+                val key = normalizedLocalFileHeartBasename(portableId) ?: continue
+                val match = uniqueLocalTracksByBasenameLower[key] ?: continue
+                favorites.remove(portableId)
+                favorites.add(match.canonicalId)
+                val portableOp = ops.filter { it.canonicalId == portableId }.maxByOrNull { it.revision }
+                val revision = portableOp?.revision ?: clock()
+                ops = (
+                    ops.filterNot { it.canonicalId == portableId } + HeartOp(
+                        canonicalId = match.canonicalId,
+                        action = HeartAction.FAVORITE,
+                        revision = revision,
+                        deviceId = deviceIdProvider(),
+                    )
+                    ).compacted()
+                if (saved.none { it.canonicalId == match.canonicalId }) {
+                    saved += match
+                }
+                saved.firstOrNull { it.canonicalId == portableId }?.let { deltas += it to false }
+                deltas += match to true
+                rematched += 1
+            }
+            heartOps = ops
+            _favorites.value = favorites
+            _saved.value = saved.distinctBy { it.canonicalId }
+            store?.write(toSnapshot())
+        }
+        for ((track, nowFavorite) in deltas) {
+            onFavoriteChanged?.invoke(track, nowFavorite)
+        }
+        return rematched
     }
 
     private fun recordHeartOp(canonicalId: String, action: HeartAction) {

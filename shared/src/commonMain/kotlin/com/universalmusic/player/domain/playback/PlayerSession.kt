@@ -163,9 +163,13 @@ class PlayerSession(
         startCurrent()
     }
 
-    /** Play the already-queued item at [index] without rebuilding the queue. */
+    /**
+     * Play the already-queued item at [index] without rebuilding the queue.
+     * Under shuffle, starts a fresh random order with that track first so short sessions
+     * do not keep walking the same leftover permutation.
+     */
     fun playQueueIndex(index: Int) {
-        queue.jumpTo(index)
+        queue.jumpTo(index, reshuffle = true)
         startCurrent()
     }
 
@@ -339,7 +343,8 @@ class PlayerSession(
             stopAtQueueEnd()
             return
         }
-        queue.jumpTo(next)
+        val wrapReshuffle = snapshot.shuffle && queue.isWrapToStart(respectRepeatOne = !manual)
+        queue.jumpTo(next, reshuffle = wrapReshuffle)
         startCurrent()
     }
 

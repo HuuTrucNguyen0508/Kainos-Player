@@ -214,10 +214,34 @@ class QueueController(
         }
     }
 
-    fun jumpTo(index: Int) {
+    /**
+     * Move the current index. When [reshuffle] is true and shuffle is on, builds a fresh
+     * playback order with [index] first so a new listening start does not reuse the old
+     * permutation (skips should pass [reshuffle] = false).
+     */
+    fun jumpTo(index: Int, reshuffle: Boolean = false) {
         _queue.update { current ->
-            if (index !in current.items.indices) current else current.copy(currentIndex = index)
+            if (index !in current.items.indices) return@update current
+            if (reshuffle && current.shuffle) {
+                current.copy(
+                    currentIndex = index,
+                    shuffleOrder = freshShuffleOrder(true, current.items.size, index),
+                )
+            } else {
+                current.copy(currentIndex = index)
+            }
         }
+    }
+
+    /** True when the next advance under Repeat All would wrap to the start of [playbackOrder]. */
+    fun isWrapToStart(respectRepeatOne: Boolean): Boolean {
+        val current = _queue.value
+        if (current.items.isEmpty()) return false
+        if (respectRepeatOne && current.repeat == RepeatMode.ONE) return false
+        if (current.repeat != RepeatMode.ALL) return false
+        val order = current.playbackOrder()
+        val pos = order.indexOf(current.currentIndex)
+        return pos >= 0 && (pos + 1) !in order.indices
     }
 
     fun replaceCurrentTrack(track: Track) {

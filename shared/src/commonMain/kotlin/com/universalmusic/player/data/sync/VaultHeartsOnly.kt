@@ -12,9 +12,12 @@ import com.universalmusic.player.domain.model.ProviderId
 fun heartedLocalAudioFileNames(library: LibraryRepository): Set<String> {
     val favorites = library.favoriteIds.value
     if (favorites.isEmpty()) return emptySet()
-    return library.savedTracks.value.asSequence()
+    val fromFiles = library.savedTracks.value.asSequence()
         .filter { it.canonicalId in favorites }
         .mapNotNull { track ->
+            if (isLocalFileHeartCanonicalId(track.canonicalId)) {
+                return@mapNotNull normalizedLocalFileHeartBasename(track.canonicalId)
+            }
             val source = track.sourceFor(ProviderId.LOCAL) ?: return@mapNotNull null
             if (source.providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX)) {
                 return@mapNotNull null
@@ -22,18 +25,12 @@ fun heartedLocalAudioFileNames(library: LibraryRepository): Set<String> {
             val url = (source.handle as? PlaybackHandle.Url)?.url ?: return@mapNotNull null
             vaultAudioBasename(url)
         }
-        .toSet()
+    val fromIds = favorites.asSequence()
+        .mapNotNull { id -> normalizedLocalFileHeartBasename(id) }
+    return (fromFiles + fromIds).toSet()
 }
 
-fun vaultAudioBasename(location: String): String? {
-    val raw = location.substringAfterLast('/')
-        .substringBefore('?')
-        .substringBefore('#')
-        .trim()
-    if (raw.isBlank()) return null
-    val decoded = decodeLight(raw)
-    return decoded.lowercase().takeIf { it.isNotBlank() }
-}
+fun vaultAudioBasename(location: String): String? = basenameFromLocalLocation(location)
 
 /** Keep tombstones; drop live entries whose basename is not in [allowedBasenamesLower]. */
 fun VaultIndexDocument.filterEntriesByBasenames(allowedBasenamesLower: Set<String>): VaultIndexDocument {
@@ -42,7 +39,7 @@ fun VaultIndexDocument.filterEntriesByBasenames(allowedBasenamesLower: Set<Strin
     }
     return copy(
         entries = entries.filter { entry ->
-            val base = entry.relPath.substringAfterLast('/').lowercase()
+            val base = basenameFromLocalLocation(entry.relPath) ?: entry.relPath.substringAfterLast('/').lowercase()
             base in allowedBasenamesLower
         },
     )
@@ -54,35 +51,4 @@ fun VaultIndexDocument.applyHeartsOnlyVaultFilter(
 ): VaultIndexDocument {
     if (!heartsOnly) return this
     return filterEntriesByBasenames(heartedBasenamesLower)
-}
-
-private fun decodeLight(value: String): String {
-    if ('%' !in value && '+' !in value) return value
-    return buildString(value.length) {
-        var i = 0
-        while (i < value.length) {
-            val c = value[i]
-            when {
-                c == '+' -> {
-                    append(' ')
-                    i += 1
-                }
-                c == '%' && i + 2 < value.length -> {
-                    val hex = value.substring(i + 1, i + 3)
-                    val code = hex.toIntOrNull(16)
-                    if (code != null) {
-                        append(code.toChar())
-                        i += 3
-                    } else {
-                        append(c)
-                        i += 1
-                    }
-                }
-                else -> {
-                    append(c)
-                    i += 1
-                }
-            }
-        }
-    }
 }
