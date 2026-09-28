@@ -5,6 +5,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.RepeatMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -360,5 +361,28 @@ class QueueControllerTest {
         )
         assertEquals(0, queue.queue.value.currentIndex)
         assertEquals(1, queue.nextIndex(respectRepeatOne = false))
+    }
+
+    @Test
+    fun removeAndClearCanBeUndone() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        val secondId = queue.queue.value.items[1].id
+        queue.remove(secondId)
+        assertEquals(listOf("A"), queue.queue.value.items.map { it.track.title })
+        assertTrue(queue.undo())
+        assertEquals(listOf("A", "B"), queue.queue.value.items.map { it.track.title })
+        assertFalse(queue.canUndo())
+
+        queue.clear()
+        assertTrue(queue.queue.value.items.isEmpty())
+        assertTrue(queue.undo())
+        assertEquals(listOf("A", "B"), queue.queue.value.items.map { it.track.title })
     }
 }

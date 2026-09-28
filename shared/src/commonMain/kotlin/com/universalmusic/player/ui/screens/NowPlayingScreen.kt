@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -63,6 +64,7 @@ import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.RepeatMode
+import com.universalmusic.player.domain.playback.friendlyPlaybackMessage
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.ui.components.ArtworkImage
@@ -90,6 +92,8 @@ fun NowPlayingScreen(
     var spotifyDevicesLoaded by remember { mutableStateOf(false) }
     var spotifyDeviceBusy by remember { mutableStateOf(false) }
     var spotifyDeviceNotice by remember { mutableStateOf<String?>(null) }
+    var showAudioDetails by remember(track?.canonicalId) { mutableStateOf(false) }
+    var showErrorDiagnostics by remember(now.error) { mutableStateOf(false) }
     val knownDurationMs = now.durationMs?.takeIf { it > 0 } ?: track?.durationMs?.takeIf { it > 0 }
     val progress = if (knownDurationMs != null) {
         (now.positionMs.toFloat() / knownDurationMs.toFloat()).coerceIn(0f, 1f)
@@ -117,7 +121,7 @@ fun NowPlayingScreen(
                     .align(Alignment.Start)
                     .padding(bottom = 4.dp),
             ) {
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Back")
                 Text("Back")
             }
             Spacer(Modifier.height(16.dp))
@@ -150,6 +154,16 @@ fun NowPlayingScreen(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
+        now.syncWarning?.let { warning ->
+            Text(
+                warning,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 4.dp),
+            )
+        }
 
         Spacer(Modifier.height(20.dp))
         Text(
@@ -165,30 +179,6 @@ fun NowPlayingScreen(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        quality?.technicalDetail?.let { detail ->
-            Text(
-                detail,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        now.resolved?.reason?.takeIf { it.isNotBlank() && now.fallback == null }?.let { reason ->
-            Text(
-                reason,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        now.fallback?.let {
-            Text(
-                it.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
         Spacer(Modifier.height(16.dp))
         if (now.buffering) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -355,8 +345,50 @@ fun NowPlayingScreen(
                 )
             }
         }
-        now.error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        now.error?.let { raw ->
+            Text(
+                friendlyPlaybackMessage(raw),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { container.player.retryPlayback() }) { Text("Retry") }
+                if (!now.resolved?.fallbacks.isNullOrEmpty()) {
+                    TextButton(onClick = { container.player.tryAnotherSource() }) { Text("Try another source") }
+                }
+                TextButton(onClick = { showErrorDiagnostics = !showErrorDiagnostics }) {
+                    Text(if (showErrorDiagnostics) "Hide diagnostics" else "Diagnostics")
+                }
+            }
+            if (showErrorDiagnostics) {
+                Text(
+                    raw,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        val detailLines = buildList {
+            quality?.technicalDetail?.let(::add)
+            now.resolved?.reason?.takeIf { it.isNotBlank() }?.let(::add)
+            now.fallback?.message?.let(::add)
+        }
+        if (detailLines.isNotEmpty()) {
+            TextButton(onClick = { showAudioDetails = !showAudioDetails }) {
+                Text(if (showAudioDetails) "Hide audio details" else "Audio details")
+            }
+            if (showAudioDetails) {
+                HorizontalDivider()
+                detailLines.forEach { line ->
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
         }
         if (showSpotifyOutput) {
             Spacer(Modifier.height(16.dp))

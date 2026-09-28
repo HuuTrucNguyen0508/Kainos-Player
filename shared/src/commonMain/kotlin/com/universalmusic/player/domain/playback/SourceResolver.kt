@@ -1,6 +1,7 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.domain.model.PlaybackPreferences
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.ResolvedPlayback
@@ -46,33 +47,34 @@ class DefaultSourceResolver : SourceResolver {
         )
     }
 
-    private fun qualityThenPreference(preferences: PlaybackPreferences): Comparator<com.universalmusic.player.domain.model.PlaybackSource> =
-        compareByDescending<com.universalmusic.player.domain.model.PlaybackSource> { qualityScore(it, preferences) }
+    /**
+     * Tier, then bitrate, then provider preference.
+     * Bitrate is not added into the tier score, so a 320 kbps High source cannot outrank
+     * lossless with an unknown bitrate. Unverified quality (no source data) ranks below every known tier.
+     */
+    private fun qualityThenPreference(preferences: PlaybackPreferences): Comparator<PlaybackSource> {
+        val bitrateFirst = preferences.sourceSelection == SourceSelectionMode.PREFER_HIGHEST_BITRATE
+        return compareByDescending<PlaybackSource> { source ->
+            if (bitrateFirst) source.quality?.bitrateKbps ?: -1 else tierRank(source, preferences)
+        }
+            .thenByDescending { source ->
+                if (bitrateFirst) tierRank(source, preferences) else source.quality?.bitrateKbps ?: -1
+            }
             .thenByDescending { providerPreferenceScore(it.provider, preferences) }
             // Prefer on-disk hearted cache over streaming when quality ties.
             .thenByDescending { if (it.provider == ProviderId.LOCAL) 1 else 0 }
+    }
 
-    private fun qualityScore(
-        source: com.universalmusic.player.domain.model.PlaybackSource,
-        preferences: PlaybackPreferences,
-    ): Int {
+    private fun tierRank(source: PlaybackSource, preferences: PlaybackPreferences): Int {
         val quality = source.quality
-        val bitrate = quality?.bitrateKbps ?: 0
-        val tierScore = when (quality?.tier) {
-            QualityTier.HI_RES -> 500
-            QualityTier.LOSSLESS -> 400
-            QualityTier.HIGH -> 300
-            QualityTier.STANDARD -> 200
-            QualityTier.LOW -> 100
-            null -> 0
-        }
-        return when (preferences.sourceSelection) {
-            SourceSelectionMode.PREFER_LOSSLESS -> {
-                val losslessBonus = if (quality?.tier == QualityTier.LOSSLESS || quality?.tier == QualityTier.HI_RES) 1000 else 0
-                losslessBonus + tierScore + bitrate
-            }
-            SourceSelectionMode.PREFER_HIGHEST_BITRATE -> bitrate * 10 + tierScore
-            else -> tierScore + bitrate
+        val rank = quality?.tierRank() ?: 0
+        val lossless = quality != null &&
+            (quality.tier == QualityTier.LOSSLESS || quality.tier == QualityTier.HI_RES) &&
+            rank > 0
+        return if (preferences.sourceSelection == SourceSelectionMode.PREFER_LOSSLESS && lossless) {
+            rank + 10
+        } else {
+            rank
         }
     }
 

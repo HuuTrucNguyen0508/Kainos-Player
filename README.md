@@ -2,7 +2,18 @@
 
 A Material 3 music player for **Android** and **Linux** with one search, one library, one queue, and one player across local files, Spotify, and YouTube Music.
 
-Search once. Matching recordings are grouped. The highest-quality playable source starts automatically. The queue stores unified tracks, so the provider can change without rebuilding the queue.
+Search once. Matching recordings are grouped. Playable sources are ranked by quality tier, then bitrate, then provider preference. The queue stores unified tracks, so the provider can change without rebuilding the queue.
+
+## Known limitations
+
+- Spotify’s Web API does not report source quality. The player shows **Unknown** for Spotify tracks. A typical Connect decode is 16-bit / 44.1 kHz output, not proof the source is lossless.
+- In-app Spotify decode uses unofficial librespot (Linux) and librespot-java (Android). It needs Spotify Premium and can break if Spotify changes the protocol. Web Playback / the Spotify desktop app is only a fallback.
+- YouTube playback resolves audio with yt-dlp (desktop) or NewPipe Extractor (Android). There is no YouTube Music account library.
+- Search is Spotify and YouTube only. Local files stay in Library.
+- Home sync is on the local network. It mirrors YouTube and local-file hearts. It does not copy Spotify DRM audio.
+- The sample catalog is a small demo source. It is not a connected streaming session, and Search does not include it.
+
+Details and credential requirements are in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 This is a Kotlin Multiplatform project: shared domain, data, and Compose UI, with platform playback behind interfaces.
 
@@ -15,7 +26,7 @@ UI (Compose Multiplatform)
 Domain   Track, Queue, MusicProvider, TrackMatcher, SourceResolver
         │
         ▼
-Data     LocalMusicProvider · SpotifyProvider · YouTubeMusicProvider · sample catalog
+Data     LocalMusicProvider · SpotifyProvider · YouTubeMusicProvider
         │
         ▼
 Platform Android Media3 · Linux desktop player · Spotify Connect
@@ -38,7 +49,7 @@ Install a menu launcher (uses `~/Pictures/4.png` as the app icon, copied into `d
 kainos-player
 ```
 
-That installs `~/.local/bin/kainos-player` and a desktop entry. The launcher checks the native distributable with Gradle on each launch, rebuilding changed code before starting it. Build and app output are saved in `logs/desktop-run-latest.log`.
+That installs `~/.local/bin/kainos-player` and a desktop entry. The installed launcher starts the packaged jars directly. Rebuild with `scripts/kainos-player-dev` or `kainos-player --rebuild` (or `KAINOS_REBUILD=1`). Build and app output are saved in `logs/desktop-run-latest.log`. Desktop also shows the last library snapshot immediately and re-reads only files whose size or modification time changed.
 
 Keyboard shortcuts:
 
@@ -71,7 +82,7 @@ Open the project in Android Studio, or:
 ./gradlew :androidApp:assembleDebug
 ```
 
-Install `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Local and HTTP audio use a Media3 foreground playback service with system media controls. Spotify uses Connect to an available Spotify device; Android does not run the Linux librespot receiver. YouTube search uses the Data API; playback resolves an audio URL with NewPipe Extractor into ExoPlayer.
+Install `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Local and HTTP audio use a Media3 foreground playback service with system media controls. Spotify on Android uses in-process librespot-java (Premium, personal use), with Connect device selection when that mode is enabled. YouTube search uses the Data API; playback resolves an audio URL with NewPipe Extractor into ExoPlayer.
 
 On first launch, allow music and audio access. The app reads the Android MediaStore index and refreshes the local library after permission is granted; it does not copy audio into the app.
 
@@ -108,16 +119,31 @@ On Linux desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh`) so Search can p
 
 The adapter uses the official [search](https://developers.google.com/youtube/v3/docs/search/list) and [video metadata](https://developers.google.com/youtube/v3/docs/videos/list) endpoints. Quota and credential errors appear in search. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
+## Capability matrix
+
+| | Linux | Android |
+| --- | --- | --- |
+| Local files | Folder scan, ffprobe, headless mpv | SAF folders, optional MediaStore, ExoPlayer |
+| Spotify search and library | Web API + Client ID | Web API + Client ID |
+| Spotify playback | librespot Connect receiver (Premium, experimental/unofficial) | librespot-java on device (Premium, experimental/unofficial) |
+| YouTube search | Data API key | Data API key |
+| YouTube audio | yt-dlp → mpv | NewPipe Extractor → ExoPlayer |
+| System media keys | MPRIS / playerctl | Notification, lock screen, Bluetooth |
+| Home sync | HTTPS hub on port 43822 | Phone starts sync while the app is open |
+
+Spotify Client ID, YouTube Data API key, and Spotify Premium are required for those providers. Local playback does not need them.
+
 ## Quality selection
 
 Default: **Automatic — Best available**.
 
 1. Drop sources that are not playable.
-2. Rank known quality (tier, then bitrate).
-3. On a tie, prefer the user’s preferred provider.
-4. If start fails, fall back to the next source and show a quiet “Playback source changed” note.
+2. Rank verified quality tier. Unverified source quality (Spotify, today) ranks below every known tier and is labeled **Unknown**.
+3. Break tier ties with bitrate. A missing bitrate does not outrank a lower number in the same tier, and it does not pull a lower tier above a higher one.
+4. On a tie, prefer the user’s preferred provider, then a local file.
+5. If start fails, fall back to the next source. Now Playing can retry or try another source.
 
-You can force Spotify or YouTube Music in Settings.
+You can force Spotify or YouTube Music in Settings. Nyquist, theoretical dynamic range, and the selection reason sit under **Audio details**.
 
 ## Tests
 

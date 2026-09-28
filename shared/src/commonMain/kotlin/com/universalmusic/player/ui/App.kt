@@ -47,6 +47,7 @@ import com.universalmusic.player.ui.screens.LibraryScreen
 import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
+import com.universalmusic.player.ui.screens.SearchUiState
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
 
@@ -70,6 +71,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
     }
     val tabStateHolder = rememberSaveableStateHolder()
+    val searchUi = remember { SearchUiState() }
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
     val canSkipNext = run {
@@ -240,6 +242,7 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                                 onPlayTrackInList = { tracks, index, query ->
                                     playSearchTracks(tracks, index, query)
                                 },
+                                state = searchUi,
                                 requestFocus = true,
                             )
                             AppDestination.Library -> LibraryScreen(container, ::playTracks)

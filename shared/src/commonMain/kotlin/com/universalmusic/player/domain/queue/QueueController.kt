@@ -15,12 +15,24 @@ class QueueController(
 ) {
     private val _queue = MutableStateFlow(PlaybackQueue())
     val queue: StateFlow<PlaybackQueue> = _queue.asStateFlow()
+    private var undoSnapshot: PlaybackQueue? = null
+
+    fun canUndo(): Boolean = undoSnapshot != null
+
+    /** Restore the queue from before the last remove or clear. Returns false when nothing is stored. */
+    fun undo(): Boolean {
+        val snapshot = undoSnapshot ?: return false
+        undoSnapshot = null
+        _queue.value = snapshot
+        return true
+    }
 
     fun playNow(track: Track) {
         playNow(listOf(track), startIndex = 0)
     }
 
     fun playNow(tracks: List<Track>, startIndex: Int = 0) {
+        undoSnapshot = null
         val items = tracks.map { QueueItem(idFactory(), it) }
         if (items.isEmpty()) {
             _queue.value = PlaybackQueue()
@@ -98,6 +110,7 @@ class QueueController(
         _queue.update { current ->
             val index = current.items.indexOfFirst { it.id == itemId }
             if (index < 0) return@update current
+            undoSnapshot = current
             val items = current.items.toMutableList().also { it.removeAt(index) }
             if (items.isEmpty()) return@update PlaybackQueue(shuffle = current.shuffle, repeat = current.repeat)
             val newIndex = when {
@@ -164,7 +177,11 @@ class QueueController(
     }
 
     fun clear() {
-        _queue.value = PlaybackQueue()
+        if (_queue.value.items.isNotEmpty()) undoSnapshot = _queue.value
+        _queue.value = PlaybackQueue(
+            shuffle = _queue.value.shuffle,
+            repeat = _queue.value.repeat,
+        )
     }
 
     fun setShuffle(enabled: Boolean) {

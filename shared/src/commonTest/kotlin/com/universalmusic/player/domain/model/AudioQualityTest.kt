@@ -3,6 +3,7 @@ package com.universalmusic.player.domain.model
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AudioQualityTest {
     @Test
@@ -24,6 +25,27 @@ class AudioQualityTest {
     fun formatsFractionalSampleRates() {
         assertEquals("44.1 kHz", formatAudioRate(44_100))
         assertEquals(22_050, AudioQuality(QualityTier.LOSSLESS, sampleRateHz = 44_100).nyquistHz)
+    }
+
+    @Test
+    fun unknownSourceQualityIsLabeledUnknown() {
+        val quality = AudioQuality(
+            tier = QualityTier.LOSSLESS,
+            sampleRateHz = 44_100,
+            bitDepth = 16,
+            confidence = QualityConfidence.UNKNOWN,
+        )
+        assertEquals("Unknown", quality.label)
+        assertEquals(0, quality.tierRank())
+        assertTrue(quality.technicalDetail!!.contains("not reported"))
+        assertTrue(quality.technicalDetail!!.contains("44.1 kHz"))
+    }
+
+    @Test
+    fun assumedFormatIsLabeledSeparatelyFromVerified() {
+        val assumed = AudioQuality(tier = QualityTier.LOSSLESS, codec = "flac", confidence = QualityConfidence.ASSUMED)
+        assertEquals("Lossless · assumed · FLAC", assumed.label)
+        assertTrue(assumed.technicalDetail!!.contains("assumed"))
     }
 
     @Test

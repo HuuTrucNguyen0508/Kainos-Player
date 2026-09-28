@@ -1,8 +1,10 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.domain.matching.track
+import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.domain.model.Track
@@ -58,6 +60,41 @@ class SourceResolverTest {
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 160, quality = QualityTier.STANDARD),
             track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 256, quality = QualityTier.HIGH),
             track("Song", "Artist", provider = ProviderId.LOCAL, playable = false),
+        )
+        val resolved = resolver.resolve(track, PlaybackPreferences.Default)
+        assertEquals(ProviderId.YOUTUBE_MUSIC, resolved.source.provider)
+    }
+
+    @Test
+    fun losslessWithUnknownBitrateBeatsHighBitrate() = runTest {
+        val track = merged(
+            track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 320, quality = QualityTier.HIGH),
+            track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = null, quality = QualityTier.LOSSLESS),
+        )
+        val resolved = resolver.resolve(track, PlaybackPreferences.Default)
+        assertEquals(ProviderId.LOCAL, resolved.source.provider)
+    }
+
+    @Test
+    fun unverifiedSourceQualityDoesNotOutrankVerifiedHigh() = runTest {
+        val spotify = track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = null, quality = QualityTier.LOSSLESS)
+            .let { original ->
+                original.copy(
+                    sources = original.sources.map { source ->
+                        source.copy(
+                            quality = AudioQuality(
+                                tier = QualityTier.LOSSLESS,
+                                sampleRateHz = 44_100,
+                                bitDepth = 16,
+                                confidence = QualityConfidence.UNKNOWN,
+                            ),
+                        )
+                    },
+                )
+            }
+        val track = merged(
+            spotify,
+            track("Song", "Artist", provider = ProviderId.YOUTUBE_MUSIC, bitrate = 128, quality = QualityTier.HIGH),
         )
         val resolved = resolver.resolve(track, PlaybackPreferences.Default)
         assertEquals(ProviderId.YOUTUBE_MUSIC, resolved.source.provider)

@@ -33,6 +33,8 @@ data class NowPlayingState(
     val favorite: Boolean = false,
     val fallback: SourceFallbackEvent? = null,
     val error: String? = null,
+    /** Set when Spotify playback cannot be confirmed against the receiver. */
+    val syncWarning: String? = null,
 )
 
 /**
@@ -110,6 +112,7 @@ class PlayerSession(
                         } else {
                             current.error
                         },
+                        syncWarning = engineState.syncWarning,
                     )
                 }
 
@@ -185,6 +188,39 @@ class PlayerSession(
         queue.clear()
         engine.stop()
         _nowPlaying.value = NowPlayingState()
+    }
+
+    fun undoQueueEdit(): Boolean {
+        val restored = queue.undo()
+        if (!restored) return false
+        val snapshot = queue.queue.value
+        val currentId = _nowPlaying.value.queueItemId
+        when {
+            snapshot.items.isEmpty() -> {
+                beginTransition()
+                playJob?.cancel()
+                playJob = null
+                engine.stop()
+                _nowPlaying.value = NowPlayingState()
+            }
+            snapshot.current?.id != currentId || _nowPlaying.value.track == null -> startCurrent()
+        }
+        return true
+    }
+
+    fun retryPlayback() {
+        if (queue.queue.value.current == null) return
+        startCurrent()
+    }
+
+    fun tryAnotherSource() {
+        val resolved = _nowPlaying.value.resolved ?: return
+        if (resolved.fallbacks.isEmpty()) return
+        val generation = playGeneration
+        playJob?.cancel()
+        playJob = scope.launch {
+            tryFallback(resolved, "Trying another source", generation)
+        }
     }
 
     fun removeFromQueue(itemId: String) {
@@ -414,6 +450,7 @@ class PlayerSession(
                 error = null,
                 fallback = null,
                 favorite = isFavorite(playable.canonicalId),
+                syncWarning = null,
             )
         }
         val resolved = runCatching { resolver.resolve(playable, _preferences.value) }

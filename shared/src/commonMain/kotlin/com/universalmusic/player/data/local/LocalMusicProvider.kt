@@ -14,6 +14,7 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.MusicProvider
+import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -34,6 +35,8 @@ class LocalMusicProvider(
 
     /** Latest platform snapshot; embedded artwork is filled in here and persisted back to [cache]. */
     private val scanned = MutableStateFlow<List<LocalTrack>>(emptyList())
+    var lastScanStats: LocalScanStats? = null
+        private set
     private val mutableLibraryTracks = MutableStateFlow<List<Track>>(emptyList())
     val libraryTracks: StateFlow<List<Track>> = mutableLibraryTracks.asStateFlow()
 
@@ -131,12 +134,21 @@ class LocalMusicProvider(
     suspend fun refresh(): List<Track> {
         mutableState.value = ProviderState.LOADING
         return try {
-            source.scan()
-                .distinctBy(LocalTrack::id)
+            val started = currentTimeMillis()
+            val previous = scanned.value
+            val incremental = (source as? IncrementalLocalTrackSource)?.scanReusing(previous)
+            val raw = incremental?.tracks ?: source.scan()
+            raw.distinctBy(LocalTrack::id)
                 .let(::publish)
-                .also {
+                .also { published ->
                     persistScanned()
                     mutableState.value = ProviderState.AVAILABLE
+                    lastScanStats = LocalScanStats(
+                        trackCount = published.size,
+                        reused = incremental?.reused ?: 0,
+                        probed = incremental?.probed ?: published.size,
+                        elapsedMs = (currentTimeMillis() - started).coerceAtLeast(0),
+                    )
                 }
         } catch (cancelled: CancellationException) {
             // Keep previous tracks / AVAILABLE when a scan is cancelled by a newer refresh.
@@ -192,6 +204,13 @@ class LocalMusicProvider(
         const val PERSIST_EVERY = 20
     }
 }
+
+data class LocalScanStats(
+    val trackCount: Int,
+    val reused: Int,
+    val probed: Int,
+    val elapsedMs: Long,
+)
 
 private fun LocalTrack.toDomain(): Track {
     val artwork = artworkUri?.let(::Artwork)

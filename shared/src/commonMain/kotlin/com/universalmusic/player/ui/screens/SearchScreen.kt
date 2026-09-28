@@ -1,17 +1,23 @@
 package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -26,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -45,16 +52,36 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+/**
+ * Survives leaving Search for Now Playing or another tab. Held above the screen
+ * so results and scroll are still here when the screen returns to composition.
+ */
+class SearchUiState {
+    var query by mutableStateOf("")
+    var loading by mutableStateOf(false)
+    var result by mutableStateOf<UnifiedSearchResult?>(null)
+    var error by mutableStateOf<String?>(null)
+    var listIndex by mutableStateOf(0)
+    var listOffset by mutableStateOf(0)
+}
+
 @Composable
 fun SearchScreen(
     container: AppContainer,
     onPlayTrackInList: (List<Track>, Int, query: String) -> Unit,
+    state: SearchUiState,
     requestFocus: Boolean = false,
 ) {
-    var query by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<UnifiedSearchResult?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val query = state.query
+    val loading = state.loading
+    val result = state.result
+    val error = state.error
+    val listState = remember(state) {
+        LazyListState(
+            firstVisibleItemIndex = state.listIndex,
+            firstVisibleItemScrollOffset = state.listOffset,
+        )
+    }
     val focusRequester = remember { FocusRequester() }
     val settings by container.settings.collectAsState()
     val spotify by container.spotify.state.collectAsState()
@@ -72,50 +99,58 @@ fun SearchScreen(
         }
     }
 
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                state.listIndex = index
+                state.listOffset = offset
+            }
+    }
+
     LaunchedEffect(query, settings.spotifyClientId, settings.youtubeDataApiKey) {
         val value = query.trim()
-        error = null
+        state.error = null
         if (value.isBlank()) {
-            result = null
-            loading = false
+            state.result = null
+            state.loading = false
             return@LaunchedEffect
         }
         if (!providersConfigured) {
-            result = null
-            loading = false
+            state.result = null
+            state.loading = false
             return@LaunchedEffect
         }
 
-        loading = true
+        state.loading = true
         delay(220)
         try {
-            result = withContext(Dispatchers.IO) {
+            state.result = withContext(Dispatchers.IO) {
                 container.unifiedSearch().search(value)
             }
-            loading = false
+            state.loading = false
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Throwable) {
-            error = failure.message ?: "Search failed. Try again."
-            loading = false
+            state.error = failure.message ?: "Search failed. Try again."
+            state.loading = false
         }
     }
 
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
-            onValueChange = { query = it },
+            onValueChange = { state.query = it },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
                 .focusRequester(focusRequester)
                 .onFocusChanged { container.setTextInputFocused(it.isFocused) },
             singleLine = true,
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
             placeholder = { Text("Search Spotify and YouTube") },
             trailingIcon = {
                 if (query.isNotEmpty()) {
-                    IconButton(onClick = { query = "" }) {
+                    IconButton(onClick = { state.query = "" }) {
                         Icon(Icons.Default.Clear, contentDescription = "Clear search")
                     }
                 }
@@ -126,6 +161,9 @@ fun SearchScreen(
                 ProviderId.SPOTIFY to spotify,
                 ProviderId.YOUTUBE_MUSIC to youtube,
             )
+        if (loading && result != null) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         ProviderStatusRow(statuses, Modifier.padding(horizontal = 20.dp))
         result?.let { current ->
             val counts = current.providerStatuses.values.joinToString("   ") { statusLine(it) }
@@ -163,7 +201,7 @@ fun SearchScreen(
             )
             loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
             error != null -> Text(
-                error ?: "",
+                error,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(20.dp),
             )
@@ -179,7 +217,7 @@ fun SearchScreen(
                     "Nothing matched on Spotify or YouTube. Try a different title or artist, or check provider status above.",
                 )
             }
-            else -> LazyColumn {
+            else -> LazyColumn(state = listState) {
                 val trackList = tracks.orEmpty()
                 itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
@@ -202,7 +240,21 @@ fun SearchScreen(
                         modifier = Modifier.padding(horizontal = 8.dp),
                         trailing = {
                             if (youtubeSource != null) {
-                                TextButton(onClick = ::openYouTube) { Text("Open YouTube") }
+                                var menuOpen by remember(track.canonicalId) { mutableStateOf(false) }
+                                Row {
+                                    IconButton(onClick = { menuOpen = true }) {
+                                        Icon(Icons.Default.MoreVert, contentDescription = "More actions for ${track.title}")
+                                    }
+                                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("Open YouTube") },
+                                            onClick = {
+                                                menuOpen = false
+                                                openYouTube()
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         },
                     )

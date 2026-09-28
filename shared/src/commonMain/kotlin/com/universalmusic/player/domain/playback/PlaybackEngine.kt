@@ -20,6 +20,8 @@ data class EngineState(
     val error: String? = null,
     /** Playback attempt id from [PlaybackEngine.play]; stale events from older attempts are ignored. */
     val playGeneration: Long = 0L,
+    /** Non-fatal note when receiver state cannot be confirmed. */
+    val syncWarning: String? = null,
 )
 
 interface PlaybackEngine {

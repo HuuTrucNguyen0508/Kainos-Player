@@ -1,10 +1,12 @@
 package com.universalmusic.player.data.local
 
-import android.content.Context
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
-import java.io.File
+import com.universalmusic.player.platform.homeLanConfigDir
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -12,50 +14,44 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
- * Persists the last successful Android local library scan so launch can show tracks
- * immediately while a background rescan runs.
+ * Disk snapshot of the last desktop library scan so the next launch can show tracks
+ * immediately and skip ffprobe for files whose path, size, and mtime are unchanged.
  */
-internal class AndroidLocalLibraryScanCache(
-    context: Context,
+internal class JvmLocalLibraryScanCache(
+    private val file: Path = homeLanConfigDir().resolve("local-library-cache.json"),
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) : LocalLibraryScanCache {
-    private val file = File(context.applicationContext.filesDir, "local-library-cache.json")
-
     override suspend fun read(configKey: String): List<LocalTrack>? = withContext(Dispatchers.IO) {
-        if (!file.exists()) return@withContext null
+        if (!Files.exists(file)) return@withContext null
         runCatching {
-            val snapshot = json.decodeFromString<LocalLibraryCacheSnapshot>(file.readText())
+            val snapshot = json.decodeFromString<JvmLibraryCacheSnapshot>(Files.readString(file))
             if (snapshot.configKey != configKey) return@withContext null
             snapshot.tracks.mapNotNull { it.toLocalTrackOrNull() }
         }.getOrNull()
     }
 
-    override suspend fun write(configKey: String, tracks: List<LocalTrack>) = withContext(Dispatchers.IO) {
-        val snapshot = LocalLibraryCacheSnapshot(
-            configKey = configKey,
-            tracks = tracks.map { it.toCached() },
-        )
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(json.encodeToString(snapshot))
-        if (!tmp.renameTo(file)) {
-            tmp.copyTo(file, overwrite = true)
-            tmp.delete()
+    override suspend fun write(configKey: String, tracks: List<LocalTrack>) {
+        withContext(Dispatchers.IO) {
+            val snapshot = JvmLibraryCacheSnapshot(
+                configKey = configKey,
+                tracks = tracks.map { it.toCached() },
+            )
+            Files.createDirectories(file.parent)
+            val tmp = file.resolveSibling("${file.fileName}.tmp")
+            Files.writeString(tmp, json.encodeToString(snapshot))
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         }
-    }
-
-    suspend fun clear() = withContext(Dispatchers.IO) {
-        runCatching { file.delete() }
     }
 }
 
 @Serializable
-private data class LocalLibraryCacheSnapshot(
+private data class JvmLibraryCacheSnapshot(
     val configKey: String,
-    val tracks: List<CachedLocalTrack> = emptyList(),
+    val tracks: List<JvmCachedLocalTrack> = emptyList(),
 )
 
 @Serializable
-private data class CachedLocalTrack(
+private data class JvmCachedLocalTrack(
     val id: String,
     val title: String,
     val artists: List<String> = emptyList(),
@@ -76,7 +72,7 @@ private data class CachedLocalTrack(
     val fileModifiedEpochMs: Long? = null,
 )
 
-private fun LocalTrack.toCached() = CachedLocalTrack(
+private fun LocalTrack.toCached() = JvmCachedLocalTrack(
     id = id,
     title = title,
     artists = artists,
@@ -97,7 +93,7 @@ private fun LocalTrack.toCached() = CachedLocalTrack(
     fileModifiedEpochMs = fileModifiedEpochMs,
 )
 
-private fun CachedLocalTrack.toLocalTrackOrNull(): LocalTrack? {
+private fun JvmCachedLocalTrack.toLocalTrackOrNull(): LocalTrack? {
     if (id.isBlank() || title.isBlank() || location.isBlank()) return null
     val quality = qualityTier?.let { tierName ->
         val tier = runCatching { QualityTier.valueOf(tierName) }.getOrNull() ?: return@let null

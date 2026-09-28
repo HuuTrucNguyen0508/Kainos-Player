@@ -211,6 +211,7 @@ class AppContainer {
         engine = createPlaybackEngine(SpotifyPlaybackController(
             spotify::startConnectPlayback, spotify::pauseConnectPlayback,
             spotify::resumeConnectPlayback, spotify::seekConnectPlayback,
+            observe = spotify::observeConnectPlayback,
         )),
         resolver = resolver,
         scope = scope,
@@ -500,6 +501,13 @@ class AppContainer {
     suspend fun refreshLocalLibraryAndAwait() {
         _localLibraryMessage.value = null
         runCatching { local.refresh() }
+            .onSuccess {
+                local.lastScanStats?.let { stats ->
+                    _localLibraryMessage.value =
+                        "Library updated · ${stats.trackCount} tracks · ${stats.probed} read · " +
+                        "${stats.reused} unchanged · ${stats.elapsedMs} ms"
+                }
+            }
             .onFailure { failure ->
                 if (failure is CancellationException) throw failure
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"

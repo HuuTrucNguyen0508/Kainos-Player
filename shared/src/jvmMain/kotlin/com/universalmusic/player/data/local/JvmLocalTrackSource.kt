@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.local
 
 import com.universalmusic.player.domain.model.AudioQuality
+import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import java.io.File
 import java.io.IOException
@@ -17,19 +18,41 @@ import kotlinx.coroutines.withContext
 
 class JvmLocalTrackSource(
     private val rootsProvider: () -> List<Path> = { defaultMusicRoots() },
-) : LocalTrackSource {
+) : IncrementalLocalTrackSource {
     constructor(roots: List<Path>) : this({ roots })
 
-    override suspend fun scan(): List<LocalTrack> = withContext(Dispatchers.IO) {
+    override suspend fun scan(): List<LocalTrack> = scanReusing(emptyList()).tracks
+
+    override suspend fun scanReusing(previous: List<LocalTrack>): IncrementalScan = withContext(Dispatchers.IO) {
         val discovered = linkedMapOf<Path, Path>()
         rootsProvider()
             .mapNotNull(::normalizedPathOrNull)
             .distinct()
             .forEach { root -> scanRoot(root, discovered) }
 
-        discovered.entries
+        val previousByLocation = previous.associateBy(LocalTrack::location)
+        var reused = 0
+        var probed = 0
+        val tracks = discovered.entries
             .sortedBy { it.key.toString() }
-            .map { (file, root) -> file.toLocalTrack(root) }
+            .map { (file, root) ->
+                val fingerprint = file.fingerprintOrNull()
+                val cached = fingerprint?.let { previousByLocation[it.location] }
+                if (
+                    cached != null &&
+                    fingerprint.sizeBytes != null &&
+                    fingerprint.modifiedEpochMs != null &&
+                    cached.contentLength == fingerprint.sizeBytes &&
+                    cached.fileModifiedEpochMs == fingerprint.modifiedEpochMs
+                ) {
+                    reused++
+                    cached
+                } else {
+                    probed++
+                    file.toLocalTrack(root, fingerprint)
+                }
+            }
+        IncrementalScan(tracks = tracks, reused = reused, probed = probed)
     }
 
     private fun scanRoot(root: Path, discovered: MutableMap<Path, Path>) {
@@ -95,7 +118,20 @@ private fun defaultMusicRoots(): List<Path> = resolveMusicRoots(
     additionalRoots = System.getenv("KAINOS_MUSIC_DIRS"),
 )
 
-private fun Path.toLocalTrack(root: Path): LocalTrack {
+private data class FileFingerprint(
+    val location: String,
+    val sizeBytes: Long?,
+    val modifiedEpochMs: Long?,
+)
+
+private fun Path.fingerprintOrNull(): FileFingerprint? {
+    val location = runCatching { toUri().toASCIIString() }.getOrNull() ?: return null
+    val size = runCatching { Files.size(this) }.getOrNull()?.takeIf { it > 0 }
+    val modified = runCatching { Files.getLastModifiedTime(this).toMillis() }.getOrNull()
+    return FileFingerprint(location, size, modified)
+}
+
+private fun Path.toLocalTrack(root: Path, fingerprint: FileFingerprint? = fingerprintOrNull()): LocalTrack {
     val relative = runCatching { root.relativize(this) }.getOrElse { fileName }
     val stem = fileName.toString().substringBeforeLast('.', fileName.toString())
     val cleanedStem = stem.withoutTrackNumber().humanized()
@@ -125,7 +161,6 @@ private fun Path.toLocalTrack(root: Path): LocalTrack {
         else -> emptyList()
     }
     val album = probed.album?.takeIf { it.isNotBlank() } ?: directoryAlbum
-    val length = runCatching { Files.size(this) }.getOrNull()?.takeIf { it > 0 }
     val artworkUri = resolveLocalArtworkUri(this, probed.embeddedArtworkPath)
 
     return LocalTrack(
@@ -134,8 +169,9 @@ private fun Path.toLocalTrack(root: Path): LocalTrack {
         artists = artists,
         album = album,
         albumGroupKey = albumGroupKey,
-        location = toUri().toASCIIString(),
-        contentLength = length,
+        location = fingerprint?.location ?: toUri().toASCIIString(),
+        contentLength = fingerprint?.sizeBytes,
+        fileModifiedEpochMs = fingerprint?.modifiedEpochMs,
         artworkUri = artworkUri,
         quality = probed.quality,
         durationMs = probed.durationMs,
@@ -173,6 +209,7 @@ private fun Path.audioExtension(): String? {
 
 private fun String.toQuality(): AudioQuality = AudioQuality(
     tier = if (this in LOSSLESS_AUDIO_EXTENSIONS) QualityTier.LOSSLESS else QualityTier.STANDARD,
+    confidence = QualityConfidence.ASSUMED,
     codec = when (this) {
         "aif" -> "aiff"
         "wave" -> "wav"
