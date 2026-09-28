@@ -12,6 +12,17 @@ fun interface LocalTrackSource {
     suspend fun scan(): List<LocalTrack>
 }
 
+/** Desktop scans can reuse a previous snapshot when path, size, and mtime are unchanged. */
+interface IncrementalLocalTrackSource : LocalTrackSource {
+    suspend fun scanReusing(previous: List<LocalTrack>): IncrementalScan
+}
+
+data class IncrementalScan(
+    val tracks: List<LocalTrack>,
+    val reused: Int,
+    val probed: Int,
+)
+
 data class LocalTrack(
     /** A stable platform identifier, such as a MediaStore id or normalized file path. */
     val id: String,
@@ -32,6 +43,8 @@ data class LocalTrack(
     val quality: AudioQuality? = null,
     val explicit: Boolean = false,
     val isrc: String? = null,
+    /** File mtime in epoch millis, when the platform recorded it. Used to skip unchanged probes. */
+    val fileModifiedEpochMs: Long? = null,
 ) {
     init {
         require(id.isNotBlank()) { "Local track id must not be blank" }

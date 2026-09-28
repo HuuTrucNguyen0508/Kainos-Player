@@ -129,6 +129,25 @@ class JvmLocalTrackSourceTest {
         val track = JvmLocalTrackSource(listOf(root)).scan().single()
         assertEquals(cover.toUri().toASCIIString(), track.artworkUri)
     }
+
+    @Test
+    fun unchangedFilesAreReusedWithoutAnotherProbe() = withTempDirectory { root ->
+        Files.write(root.resolve("01 - Blue_Hour.mp3"), byteArrayOf(1, 2, 3))
+        val source = JvmLocalTrackSource(listOf(root))
+        val first = source.scanReusing(emptyList())
+        assertEquals(1, first.probed)
+        assertEquals(0, first.reused)
+        val second = source.scanReusing(first.tracks)
+        assertEquals(0, second.probed)
+        assertEquals(1, second.reused)
+        assertEquals(first.tracks.single().title, second.tracks.single().title)
+
+        val file = root.resolve("01 - Blue_Hour.mp3")
+        Files.write(file, byteArrayOf(9, 9, 9, 9))
+        val third = source.scanReusing(second.tracks)
+        assertEquals(1, third.probed)
+        assertEquals(0, third.reused)
+    }
 }
 
 private fun withTempDirectory(test: suspend (Path) -> Unit) = runTest {

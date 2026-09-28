@@ -13,6 +13,7 @@ import com.universalmusic.player.data.library.FileUserLibraryStore
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.local.JvmLocalTrackSource
 import com.universalmusic.player.data.local.LocalLibraryRootMode
+import com.universalmusic.player.data.local.JvmLocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrackSource
@@ -112,7 +113,7 @@ actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTr
         )
     }
 
-actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = null
+actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = JvmLocalLibraryScanCache()
 
 actual fun loadAppConfig(): AppConfig {
     val env = System.getenv()

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Refresh the packaged app jars, then launch with the system JDK.
+# Launch the packaged desktop app with the system JDK.
 # The Compose/jpackage stub crashes on this host (jlink --strip-native-commands
 # removes bin/java and the native launcher SIGSEGVs against current glibc).
+#
+# Installed launches start the existing package directly.
+# Set KAINOS_REBUILD=1, or pass --rebuild, to run Gradle createDistributable first.
+# scripts/kainos-player-dev always rebuilds.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,6 +28,12 @@ JAVA_BIN="$JAVA_HOME/bin/java"
 
 cd "$ROOT"
 
+REBUILD="${KAINOS_REBUILD:-0}"
+if [[ "${1:-}" == "--rebuild" ]]; then
+  REBUILD=1
+  shift
+fi
+
 mkdir -p "$ROOT/logs"
 LOG="$ROOT/logs/desktop-run-$(date +%Y%m%d-%H%M%S).log"
 ln -sfn "$(basename "$LOG")" "$ROOT/logs/desktop-run-latest.log"
@@ -33,12 +43,12 @@ if [[ ! -x "$JAVA_BIN" ]]; then
   exit 1
 fi
 
-# Keep packaged jars / Skiko natives current. createDistributable is still useful
-# even though we do not exec the broken native stub.
-echo "Checking Kainos Player for updates…" >&2
-if ! ./gradlew :desktopApp:createDistributable --console=plain >>"$LOG" 2>&1; then
-  echo "Kainos Player build failed. See log: $LOG" >&2
-  exit 1
+if [[ "$REBUILD" == "1" || ! -d "$APP_DIR" ]]; then
+  echo "Building Kainos Player…" >&2
+  if ! ./gradlew :desktopApp:createDistributable --console=plain >>"$LOG" 2>&1; then
+    echo "Kainos Player build failed. See log: $LOG" >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -d "$APP_DIR" ]]; then

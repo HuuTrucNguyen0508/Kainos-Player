@@ -21,7 +21,9 @@ On **Android**, Kainos embeds [librespot-java](https://github.com/librespot-org/
 
 If no Kainos receiver is ready and no other Connect device is listed, Linux may try to launch the Spotify client as a fallback. Remote player state is not polled, so changes made directly in Spotify are not synchronized into Kainos Player.
 
-Quality: The Web API does not report per-track format. The app assumes CD-quality Connect output at **16-bit / 44.1 kHz** (Nyquist 22.05 kHz). It still does not invent a lossy bitrate such as 320 kbps.
+Quality: The Web API does not report per-track source format. Kainos labels Spotify quality **Unknown** and does not treat Connect output as lossless. A typical decode is still 16-bit / 44.1 kHz; that figure is output format, shown in Audio details, not a source badge. The app does not invent a lossy bitrate such as 320 kbps.
+
+While Spotify is playing on desktop, Kainos keeps a local clock and reconciles it about every four seconds with `GET /v1/me/player` (pause, seek, and completion). If those reads fail repeatedly, Now Playing shows **Playback state unavailable**.
 
 ## Local files
 
@@ -39,7 +41,7 @@ Save a YouTube Data API key in Settings or set `YOUTUBE_DATA_API_KEY` to enable 
 
 ## Sample catalog
 
-The in-app sample library is royalty-free SoundHelix audio used so the UI and player can be exercised without credentials. It is labeled as a sample catalog and is not presented as a connected Spotify or YouTube Music session.
+A small demo catalog can still exist in the domain model for tests and empty-library exercises. It is labeled as a sample catalog, it is not a connected Spotify or YouTube Music session, and Search does not include it. Library empty states do not invent sample albums or playlists.
 
 ## Adding another provider
 

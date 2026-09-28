@@ -145,6 +145,7 @@ internal data class SpotifyCurrentPlaybackResponse(
     val device: SpotifyDevice? = null,
     val item: SpotifyPlaybackItem? = null,
     @SerialName("is_playing") val isPlaying: Boolean = false,
+    @SerialName("progress_ms") val progressMs: Long? = null,
 )
 
 @Serializable

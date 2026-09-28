@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.local
 
 import com.universalmusic.player.domain.model.AudioQuality
+import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.refineQualityTier
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -140,6 +141,7 @@ internal fun parseFfprobeMetadata(rawJson: String, fallback: AudioQuality): Pars
             (streamItem.codecType == "video" && streamItem.codecName != null)
     }
 
+    val measured = stream?.codecName != null || sampleRateHz != null || bitDepth != null || bitrateKbps != null
     return ParsedFfprobeMetadata(
         quality = AudioQuality(
             tier = refineQualityTier(fallback.tier, sampleRateHz, bitDepth),
@@ -147,6 +149,7 @@ internal fun parseFfprobeMetadata(rawJson: String, fallback: AudioQuality): Pars
             bitrateKbps = bitrateKbps ?: fallback.bitrateKbps,
             sampleRateHz = sampleRateHz ?: fallback.sampleRateHz,
             bitDepth = bitDepth ?: fallback.bitDepth,
+            confidence = if (measured) QualityConfidence.VERIFIED else fallback.confidence,
         ),
         title = title,
         artists = artists,

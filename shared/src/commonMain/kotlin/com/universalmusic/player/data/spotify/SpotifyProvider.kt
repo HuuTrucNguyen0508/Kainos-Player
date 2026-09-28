@@ -12,6 +12,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.SpotifyObservedPlayback
 import com.universalmusic.player.domain.provider.AuthSession
 import com.universalmusic.player.domain.provider.AuthenticatingProvider
 import com.universalmusic.player.platform.SpotifyWebPlaybackHost
@@ -728,6 +729,23 @@ class SpotifyProvider(
         }
         else -> null
     }
+
+    /**
+     * One Connect state read for desktop reconciliation. Failures return null so a
+     * rate limit or empty player does not fail the local transport.
+     */
+    suspend fun observeConnectPlayback(): SpotifyObservedPlayback? =
+        runCatching {
+            val token = accessToken()
+            val response = http.get("$API/me/player") { bearerAuth(token) }
+            if (!response.status.isSuccess() || response.status == HttpStatusCode.NoContent) return@runCatching null
+            val playback = response.body<SpotifyCurrentPlaybackResponse>()
+            SpotifyObservedPlayback(
+                isPlaying = playback.isPlaying,
+                progressMs = playback.progressMs,
+                trackId = playback.item?.id,
+            )
+        }.getOrNull()
 
     suspend fun pauseConnectPlayback() {
         val response = http.put("$API/me/player/pause") {

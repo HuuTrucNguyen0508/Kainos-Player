@@ -11,6 +11,7 @@ import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 
@@ -36,17 +37,18 @@ internal fun SpotifyTrack.toDomainOrNull(premium: Boolean): Track? {
 }
 
 internal fun SpotifyTrack.toSource(premium: Boolean): PlaybackSource {
-    // Web API does not report per-track format. Assume CD-quality Connect output (16-bit / 44.1 kHz).
-    // Do not invent a lossy bitrate such as 320 kbps.
+    // Web API does not report per-track source format. Do not label Connect output as lossless.
+    // 16-bit / 44.1 kHz is kept only as a typical decode note, with confidence UNKNOWN.
     @Suppress("UNUSED_PARAMETER")
     val unusedPremium = premium
     return PlaybackSource(
         provider = ProviderId.SPOTIFY,
         providerTrackId = id,
         quality = AudioQuality(
-            tier = QualityTier.LOSSLESS,
+            tier = QualityTier.STANDARD,
             sampleRateHz = 44_100,
             bitDepth = 16,
+            confidence = QualityConfidence.UNKNOWN,
         ),
         isPlayable = is_playable ?: true,
         handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, id, durationMs = duration_ms?.takeIf { it > 0 }),

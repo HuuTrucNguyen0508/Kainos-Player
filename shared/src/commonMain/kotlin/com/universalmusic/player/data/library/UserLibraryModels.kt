@@ -10,6 +10,7 @@ import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import kotlinx.serialization.Serializable
@@ -72,6 +73,7 @@ data class PersistedSource(
     val qualityBitrateKbps: Int? = null,
     val qualitySampleRateHz: Int? = null,
     val qualityBitDepth: Int? = null,
+    val qualityConfidence: String? = null,
 )
 
 interface UserLibraryStore {
@@ -126,6 +128,7 @@ private fun PlaybackSource.toPersisted(): PersistedSource {
         qualityBitrateKbps = quality?.bitrateKbps,
         qualitySampleRateHz = quality?.sampleRateHz,
         qualityBitDepth = quality?.bitDepth,
+        qualityConfidence = quality?.confidence?.name,
     )
 }
 
@@ -133,12 +136,16 @@ private fun PersistedSource.toDomain(durationMs: Long?): PlaybackSource? {
     val provider = runCatching { ProviderId.valueOf(provider) }.getOrNull() ?: return null
     val quality = qualityTier?.let { tierName ->
         val tier = runCatching { QualityTier.valueOf(tierName) }.getOrNull() ?: return@let null
+        val confidence = qualityConfidence
+            ?.let { runCatching { QualityConfidence.valueOf(it) }.getOrNull() }
+            ?: if (provider == ProviderId.SPOTIFY) QualityConfidence.UNKNOWN else QualityConfidence.VERIFIED
         AudioQuality(
             tier = tier,
             codec = qualityCodec,
             bitrateKbps = qualityBitrateKbps,
             sampleRateHz = qualitySampleRateHz,
             bitDepth = qualityBitDepth,
+            confidence = confidence,
         )
     }
     return when (provider) {

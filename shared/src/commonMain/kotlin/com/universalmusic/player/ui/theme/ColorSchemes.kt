@@ -490,7 +490,7 @@ private val CATPPUCCIN_LIGHT = lightColorScheme(
 )
 private val NORD_LIGHT = lightColorScheme(
     primary = Color(0xFF6FA3B3),
-    onPrimary = Color(0xFF88C0D0),
+    onPrimary = Color(0xFF242933),
     primaryContainer = Color(0xFF88C0D0),
     onPrimaryContainer = Color(0xFF2E3440),
     secondary = Color(0xFF434C5E),
@@ -600,8 +600,8 @@ private val ROSE_PINE_LIGHT = lightColorScheme(
     scrim = Color(0xFF000000),
 )
 private val TOKYO_NIGHT_LIGHT = lightColorScheme(
-    primary = Color(0xFF5A7FD7),
-    onPrimary = Color(0xFF7AA2F7),
+    primary = Color(0xFF7AA2F7),
+    onPrimary = Color(0xFF1A1B26),
     primaryContainer = Color(0xFF7AA2F7),
     onPrimaryContainer = Color(0xFF1A1B26),
     secondary = Color(0xFF2A2F41),
@@ -637,8 +637,8 @@ private val TOKYO_NIGHT_LIGHT = lightColorScheme(
     scrim = Color(0xFF000000),
 )
 private val DRACULA_LIGHT = lightColorScheme(
-    primary = Color(0xFF9D73D9),
-    onPrimary = Color(0xFFBD93F9),
+    primary = Color(0xFFBD93F9),
+    onPrimary = Color(0xFF282A36),
     primaryContainer = Color(0xFFBD93F9),
     onPrimaryContainer = Color(0xFF282A36),
     secondary = Color(0xFF3E4153),
@@ -674,8 +674,8 @@ private val DRACULA_LIGHT = lightColorScheme(
     scrim = Color(0xFF000000),
 )
 private val EVERFOREST_LIGHT = lightColorScheme(
-    primary = Color(0xFF5A9A8F),
-    onPrimary = Color(0xFF7FBBB3),
+    primary = Color(0xFF7FBBB3),
+    onPrimary = Color(0xFF2D353B),
     primaryContainer = Color(0xFF7FBBB3),
     onPrimaryContainer = Color(0xFF2D353B),
     secondary = Color(0xFF374145),

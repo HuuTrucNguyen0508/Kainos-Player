@@ -48,4 +48,11 @@ data class PlaybackQueue(
             items.indices.toList()
         }
     }
+
+    /** Position in [playbackOrder] for a queue entry, or -1 when it is gone. */
+    fun orderIndexOf(itemId: String): Int {
+        val storageIndex = items.indexOfFirst { it.id == itemId }
+        if (storageIndex < 0) return -1
+        return playbackOrder().indexOf(storageIndex)
+    }
 }

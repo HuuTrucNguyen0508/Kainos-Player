@@ -1,6 +1,7 @@
 package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -28,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -102,6 +105,21 @@ fun SettingsScreen(container: AppContainer) {
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
+        var sectionName by rememberSaveable { mutableStateOf(SettingsSection.Playback.name) }
+        val section = SettingsSection.entries.firstOrNull { it.name == sectionName } ?: SettingsSection.Playback
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SettingsSection.entries.forEach { item ->
+                FilterChip(
+                    selected = section == item,
+                    onClick = { sectionName = item.name },
+                    label = { Text(item.label) },
+                )
+            }
+        }
+        if (section == SettingsSection.Playback) {
         Text("Playback", style = MaterialTheme.typography.titleMedium)
         Text("Quality preference", style = MaterialTheme.typography.labelLarge)
         SourceSelectionMode.entries.filterNot { it.name.startsWith("FORCE") }.forEach { mode ->
@@ -138,8 +156,10 @@ fun SettingsScreen(container: AppContainer) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        }
 
-        Text("Providers", style = MaterialTheme.typography.titleMedium)
+        if (section == SettingsSection.Sources) {
+        Text("Music sources", style = MaterialTheme.typography.titleMedium)
         ProviderAccountRow(
             name = "Local library",
             state = local,
@@ -451,6 +471,9 @@ fun SettingsScreen(container: AppContainer) {
             detail = "Search videos and playlists via the YouTube Data API. Linux desktop resolves audio with yt-dlp into mpv when installed. Android resolves audio with NewPipe Extractor into the in-app ExoPlayer service.",
         )
 
+        }
+
+        if (section == SettingsSection.Appearance) {
         Text("Appearance", style = MaterialTheme.typography.titleMedium)
         Text("Light / dark", style = MaterialTheme.typography.labelLarge)
         ThemeMode.entries.forEach { mode ->
@@ -517,9 +540,12 @@ fun SettingsScreen(container: AppContainer) {
             }
         }
 
-        Text("Home sync", style = MaterialTheme.typography.titleMedium)
+        }
+
+        if (section == SettingsSection.Devices || section == SettingsSection.Advanced) {
+        Text(if (section == SettingsSection.Devices) "Devices and sync" else "Certificate and device fields", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Sync YouTube and local-file hearts both ways (by filename). Spotify stays on the Spotify account, not this LAN mirror. Missing audio files show up as confirm-to-transfer. Pair with the kainos-homesync:2 URI from Start hub pairing, then Sync now.",
+            "1. On the computer, start hub pairing and copy the pairing link. 2. On the phone, paste that link. 3. Choose Sync now. Spotify hearts stay on the Spotify account. YouTube and local-file hearts sync both ways. Missing audio waits for you to confirm a transfer.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -635,20 +661,16 @@ fun SettingsScreen(container: AppContainer) {
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            syncPairing?.sharedSecretHex?.let { secret ->
-                SelectionContainer {
-                    Text(
-                        "Shared secret:\n$secret",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            syncPairing?.pairingPin?.takeIf { it.isNotBlank() }?.let { pin ->
+                Text("Pairing code", style = MaterialTheme.typography.titleSmall)
+                Text(pin, style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    "This device id: ${syncPairing?.deviceId}",
+                    "On the phone, open Settings → Devices and sync and paste the pairing link.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (syncPairing?.hubCertSha256Hex.isNullOrBlank()) {
+            }
+            if (syncPairing?.hubCertSha256Hex.isNullOrBlank() && syncPairing != null) {
                     Text(
                         "This pairing predates HTTPS. Press Rotate hub pairing, then paste the new URI on the phone.",
                         style = MaterialTheme.typography.bodySmall,
@@ -675,7 +697,6 @@ fun SettingsScreen(container: AppContainer) {
                         }
                     }
                 }
-            }
         } else {
             if (syncPairing != null && syncPairing?.hubCertSha256Hex.isNullOrBlank()) {
                 Text(
@@ -706,6 +727,7 @@ fun SettingsScreen(container: AppContainer) {
             ) {
                 Text("Pair from URI")
             }
+            if (section == SettingsSection.Advanced) {
             OutlinedTextField(
                 value = clientHost,
                 onValueChange = { clientHost = it },
@@ -766,6 +788,7 @@ fun SettingsScreen(container: AppContainer) {
                 },
             ) {
                 Text("Save phone pairing")
+            }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -886,10 +909,32 @@ fun SettingsScreen(container: AppContainer) {
                 }
             }
         }
+        if (section == SettingsSection.Advanced) {
+        syncPairing?.sharedSecretHex?.let { secret ->
+            SelectionContainer {
+                Text(
+                    "Shared secret:\n$secret",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                "This device id: ${syncPairing?.deviceId}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            syncPairing?.hubCertSha256Hex?.let { pin ->
+                Text(
+                    "Certificate fingerprint: $pin",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         OutlinedTextField(
             value = tombstonePath,
             onValueChange = { tombstonePath = it },
-            label = { Text("Remove from vault (relative path)") },
+            label = { Text("File to remove (path inside the vault)") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
@@ -905,7 +950,13 @@ fun SettingsScreen(container: AppContainer) {
                 }
             },
         ) {
-            Text("Tombstone + delete local vault file")
+            Text("Remove file from shared vault")
+        }
+        Text(
+            "Removes the file from the vault on this device and asks the other device to delete its copy the next time you sync.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         }
         syncStatus.lastDetail?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -916,7 +967,9 @@ fun SettingsScreen(container: AppContainer) {
         syncNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        }
 
+        if (section == SettingsSection.Advanced) {
         Text("Advanced", style = MaterialTheme.typography.titleMedium)
         Text("Platform: ${platformLabel()}", style = MaterialTheme.typography.bodyMedium)
         Text(
@@ -988,6 +1041,7 @@ fun SettingsScreen(container: AppContainer) {
         traceNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        }
     }
 }
 
@@ -1052,6 +1106,14 @@ private fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): S
     }
     is SpotifyWebPlaybackFailure.Message -> failure.detail
     else -> "Spotify receiver setup failed. Try setup again."
+}
+
+private enum class SettingsSection(val label: String) {
+    Playback("Playback"),
+    Appearance("Appearance"),
+    Sources("Music sources"),
+    Devices("Devices and sync"),
+    Advanced("Advanced"),
 }
 
 private fun SourceSelectionMode.label(): String = when (this) {

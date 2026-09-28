@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Development launcher: rebuild the desktop package, then start it.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export KAINOS_REBUILD=1
+exec "$ROOT/scripts/kainos-player" "$@"

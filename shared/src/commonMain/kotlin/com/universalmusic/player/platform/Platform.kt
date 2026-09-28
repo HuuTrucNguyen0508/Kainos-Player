@@ -11,6 +11,7 @@ import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PlayerSession
+import com.universalmusic.player.domain.playback.SpotifyObservedPlayback
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 
@@ -55,6 +56,8 @@ data class SpotifyPlaybackController(
     val pause: suspend () -> Unit,
     val resume: suspend () -> Unit,
     val seekTo: suspend (positionMs: Long) -> Unit,
+    /** Bounded Connect state read. Null when the platform cannot observe the receiver. */
+    val observe: (suspend () -> SpotifyObservedPlayback?)? = null,
 )
 
 expect fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine
