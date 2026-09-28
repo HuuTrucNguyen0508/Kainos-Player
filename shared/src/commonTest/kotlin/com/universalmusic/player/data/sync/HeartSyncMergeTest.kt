@@ -348,6 +348,38 @@ class VaultUnionTest {
     }
 
     @Test
+    fun sameSizeDifferentMtimeIsNotConflictWithoutHashes() {
+        // SAF often reports whole-second mtimes; desktop keeps ms precision.
+        val local = VaultIndexDocument(
+            deviceId = "pc",
+            entries = listOf(VaultFileEntry("love.flac", sizeBytes = 21_575_529, mtimeMs = 1_788_632_244_483)),
+        )
+        val remote = VaultIndexDocument(
+            deviceId = "phone",
+            entries = listOf(VaultFileEntry("love.flac", sizeBytes = 21_575_529, mtimeMs = 1_788_632_244_000)),
+        )
+        val plan = planVaultUnion(local, remote)
+        assertTrue(plan.conflicts.isEmpty())
+        assertTrue(plan.copyToLocal.isEmpty())
+        assertTrue(plan.copyToRemote.isEmpty())
+    }
+
+    @Test
+    fun sizeMismatchWithoutHashesIsConflict() {
+        val local = VaultIndexDocument(
+            deviceId = "pc",
+            entries = listOf(VaultFileEntry("love.flac", sizeBytes = 100, mtimeMs = 1)),
+        )
+        val remote = VaultIndexDocument(
+            deviceId = "phone",
+            entries = listOf(VaultFileEntry("love.flac", sizeBytes = 99, mtimeMs = 1)),
+        )
+        val plan = planVaultUnion(local, remote)
+        assertEquals(1, plan.conflicts.size)
+        assertEquals("love.flac", plan.conflicts.single().relPath)
+    }
+
+    @Test
     fun heartsOnlyFilterKeepsMatchingBasenamesAndTombstones() {
         val index = VaultIndexDocument(
             deviceId = "pc",

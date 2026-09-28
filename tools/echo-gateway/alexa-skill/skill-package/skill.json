@@ -1,0 +1,52 @@
+{
+  "manifest": {
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "uri": "https://theadenkingof.taila3d69a.ts.net/alexa",
+          "sslCertificateType": "Trusted"
+        },
+        "interfaces": [
+          {
+            "type": "AUDIO_PLAYER"
+          }
+        ]
+      }
+    },
+    "publishingInformation": {
+      "locales": {
+        "fr-FR": {
+          "name": "Kainos Test",
+          "summary": "Lit un flux FLAC local de test Kainos sur Echo.",
+          "description": "Skill de développement pour la passerelle Echo Kainos (phase 4). Lance le flux de test configuré.",
+          "examplePhrases": [
+            "Alexa, lance test",
+            "Alexa, ouvre test"
+          ],
+          "keywords": [
+            "musique",
+            "kainos",
+            "test"
+          ]
+        }
+      },
+      "isAvailableWorldwide": false,
+      "testingInstructions": "Activer ce skill en Development sur le compte Alexa FR. La passerelle Tailscale Funnel doit tourner.",
+      "category": "STREAMING_SERVICE",
+      "distributionCountries": [
+        "FR"
+      ]
+    },
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "usesPersonalInfo": false,
+      "isExportCompliant": true,
+      "isChildDirected": false,
+      "locales": {
+        "fr-FR": {
+          "privacyPolicyUrl": "https://theadenkingof.taila3d69a.ts.net/health"
+        }
+      }
+    }
+  }
+}

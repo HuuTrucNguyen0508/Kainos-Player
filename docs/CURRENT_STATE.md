@@ -7,7 +7,7 @@ Kotlin Multiplatform Compose music player (`androidApp`, `desktopApp`, `shared`)
 - Shared Material 3 UI themed to the Caelestia shell palette (olive tonalspot): separate light (`#fafaf1` paper / `#4e6634` primary) and dark (`#0d0f0a` / `#b8ce9d` primary) schemes, default Material type, surface containers, chips, and a filled play control
 - Home, Search, Library, Settings, Now Playing, Queue
 - Local library as a provider (desktop folder scan + Android MediaStore)
-- Desktop local scans probe sample rate / bit depth via ffprobe; Now Playing shows Nyquist and theoretical PCM DR under Audio details. A disk snapshot in `~/.universal-music-player/local-library-cache.json` is shown on launch, and unchanged files (path, size, mtime) are not probed again
+- Desktop and Android hydrate Library from `local-library-cache.json` on launch, then rescan in the background (desktop: `~/.universal-music-player/local-library-cache.json`). Desktop ffprobe skips unchanged files (path, size, mtime); Now Playing shows Nyquist and theoretical PCM DR under Audio details
 - **Local library roots (Milestone 5):** Settings stores an explicit configured-roots flag so empty folder lists do not silently restore `~/Music`. Desktop keeps zenity/kdialog/Swing pickers and run logs. Android uses SAF `OpenDocumentTree` with persistable URI grants, recursive scan, root removal (releases grants), and clear errors when all grants are revoked. MediaStore remains an optional Android source with title/artist/album/duration/size dedupe against SAF.
 - **Album identity (Milestone 5):** local albums key on artist + title + directory/group path (not title alone), so same-titled albums no longer collide.
 - **Artwork policy (Milestone 5):** shared precedence embedded → sidecar `cover.*`/`folder.*` (bounded ≤2 MiB) → MediaStore album art; used by Library, Now Playing, and system controls via `track.artwork`. Desktop caches unchanged ffprobe metadata by path+size+mtime and extracts embedded covers under `~/.universal-music-player/art-cache/`.
@@ -61,6 +61,7 @@ Highlights:
 
 ## Incomplete / platform gaps
 
+- **Echo / Alexa local playback (Phases 1–4 started 2026-09-21):** `tools/echo-gateway` serves loopback AAC streams, token URL for Funnel, and `POST /alexa` AudioPlayer handler. Funnel needs a one-time tailnet enable; Alexa skill is Development-only (see `alexa-skill/README.md`). No `PlayerSession` integration yet.
 - **System media controls (Milestone 3)** — code + emulator AndroidPlaybackTest (8/8) and JVM suite green after follow-up fixes. Physical Bluetooth / HyperOS island still need a device.
 - **Spotify (Android)** — in-app librespot-java receiver is wired; live Premium playback and background/FGS survival still need physical-device confirmation. Optional Connect device picker remains available only when explicit-device mode is re-enabled.
 - **Spotify (desktop)** — native librespot sign-in, cached headless restart, and audio-backend initialization are verified live; device selection and transfer pass automated tests. Progress still interpolates locally between polls. While Spotify playback is active, the engine reconciles pause, seek, and completion with `GET /v1/me/player` about every four seconds and shows **Playback state unavailable** after repeated misses.
@@ -92,7 +93,7 @@ Do **not** publish a GitHub Release or copy the APK to `release/` unless explici
 
 P0 fixes for HyperOS device feedback (not yet re-verified on device):
 
-- SAF scan uses `DocumentsContract` child cursors (one query per directory); scan snapshot cache `local-library-cache.json`; single-flight refresh; adding the first SAF folder turns MediaStore off by default.
+- SAF scan uses `DocumentsContract` child cursors (one query per directory); scan snapshot cache `local-library-cache.json` (Android app files + desktop `~/.universal-music-player/`); single-flight refresh; adding the first SAF folder turns MediaStore off by default.
 - Library row tap queues the chip-filtered list (text search is display-only); terminal play failure auto-advances when the queue has a next item.
 - MediaSession `notifyOverlayChanges` runs for all backends so notification Next stays in sync for local/YouTube.
 - Spotify Connect start uses a 20s wall-clock deadline; Spotify command I/O runs off Main; MediaController connect is non-blocking await. Log tags: `KainosSpotify`, `KainosPlayback` (service destroy / task removed).

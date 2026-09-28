@@ -57,7 +57,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,7 +89,6 @@ import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.TrackRow
 import com.universalmusic.player.ui.theme.LocalSignal
 import com.universalmusic.player.ui.theme.SpotifyGreen
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 private enum class LibraryTab { Songs, Albums, Artists, Playlists }
@@ -204,7 +202,9 @@ fun LibraryScreen(
     val spotifyInQueue = remember(queueSongs) { queueSongs.count { it.sources.any { s -> s.provider == ProviderId.SPOTIFY } } }
 
     val density = LocalDensity.current
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    // Collapse on the way down; expand only after the list is back at the top so upward
+    // scroll moves tracks first (enterAlways stole those gestures for the chrome).
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var chromeHeightPx by remember { mutableIntStateOf(0) }
     SideEffect {
         if (chromeHeightPx > 0) {
@@ -215,18 +215,22 @@ fun LibraryScreen(
         scrollBehavior.state.heightOffset = 0f
     }
 
+    // Skip the first run so returning to Library keeps scroll; later filter/sort changes
+    // jump to top. Do not combine LaunchedEffect(filterKeys) with snapshotFlow.drop(1):
+    // restarting the effect made drop(1) discard the filter change itself.
+    var skipFilterScrollReset by remember { mutableStateOf(true) }
     LaunchedEffect(settings.librarySongSort, needle, localOnly, favoritesOnly) {
-        snapshotFlow { listOf(settings.librarySongSort, needle, localOnly, favoritesOnly) }
-            .drop(1)
-            .collect {
-                scrollBehavior.state.heightOffset = 0f
-                when (tab) {
-                    LibraryTab.Songs -> songsListState.scrollToItem(0)
-                    LibraryTab.Albums -> albumsListState.scrollToItem(0)
-                    LibraryTab.Artists -> artistsListState.scrollToItem(0)
-                    LibraryTab.Playlists -> playlistsListState.scrollToItem(0)
-                }
-            }
+        if (skipFilterScrollReset) {
+            skipFilterScrollReset = false
+            return@LaunchedEffect
+        }
+        scrollBehavior.state.heightOffset = 0f
+        when (tab) {
+            LibraryTab.Songs -> songsListState.scrollToItem(0)
+            LibraryTab.Albums -> albumsListState.scrollToItem(0)
+            LibraryTab.Artists -> artistsListState.scrollToItem(0)
+            LibraryTab.Playlists -> playlistsListState.scrollToItem(0)
+        }
     }
 
     Column(
@@ -301,49 +305,6 @@ fun LibraryScreen(
                         }
                     },
                 )
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    FilterChip(
-                        selected = localOnly,
-                        onClick = {
-                            scope.launch {
-                                container.updateSettings { it.copy(libraryLocalOnly = !it.libraryLocalOnly) }
-                            }
-                        },
-                        label = { Text("Local files only") },
-                        leadingIcon = if (localOnly) {
-                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                        } else {
-                            null
-                        },
-                    )
-                    FilterChip(
-                        selected = favoritesOnly,
-                        onClick = {
-                            scope.launch {
-                                container.updateSettings { it.copy(libraryFavoritesOnly = !it.libraryFavoritesOnly) }
-                            }
-                        },
-                        label = { Text("Favorites only") },
-                        leadingIcon = if (favoritesOnly) {
-                            {
-                                Icon(
-                                    Icons.Default.Favorite,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                    )
-                }
                 if (showSpotifyError) {
                     Row(
                         Modifier
@@ -364,15 +325,60 @@ fun LibraryScreen(
                         }
                     }
                 }
-                TabRow(selectedTabIndex = tab.ordinal) {
-                    LibraryTab.entries.forEach { item ->
-                        Tab(
-                            selected = tab == item,
-                            onClick = { tabName = item.name },
-                            text = { Text(item.name) },
+            }
+        }
+        // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
+        // the header can fully hide; without this the Favorites chip is unreachable.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterChip(
+                selected = localOnly,
+                onClick = {
+                    scope.launch {
+                        container.updateSettings { it.copy(libraryLocalOnly = !it.libraryLocalOnly) }
+                    }
+                },
+                label = { Text("Local files only") },
+                leadingIcon = if (localOnly) {
+                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else {
+                    null
+                },
+            )
+            FilterChip(
+                selected = favoritesOnly,
+                onClick = {
+                    scope.launch {
+                        container.updateSettings { it.copy(libraryFavoritesOnly = !it.libraryFavoritesOnly) }
+                    }
+                },
+                label = { Text("Favorites only") },
+                leadingIcon = if (favoritesOnly) {
+                    {
+                        Icon(
+                            Icons.Default.Favorite,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
                         )
                     }
-                }
+                } else {
+                    null
+                },
+            )
+        }
+        TabRow(selectedTabIndex = tab.ordinal) {
+            LibraryTab.entries.forEach { item ->
+                Tab(
+                    selected = tab == item,
+                    onClick = { tabName = item.name },
+                    text = { Text(item.name) },
+                )
             }
         }
         when (tab) {

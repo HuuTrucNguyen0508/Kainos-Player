@@ -1,0 +1,14 @@
+{
+  "name": "alexa-skill",
+  "version": "1.0.0",
+  "description": "Private development skill that starts the gateway test stream on a physical Echo.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "ask-cli": "^2.30.7"
+  }
+}

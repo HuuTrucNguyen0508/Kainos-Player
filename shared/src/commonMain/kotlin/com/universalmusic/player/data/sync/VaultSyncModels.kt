@@ -117,11 +117,19 @@ fun mergeTombstones(local: List<VaultTombstone>, remote: List<VaultTombstone>): 
     return byPath.values.sortedBy { it.relPath }
 }
 
+/**
+ * When both sides have a content hash, hashes must match.
+ *
+ * Otherwise compare size only. Android SAF / DocumentsContract often truncates
+ * [VaultFileEntry.mtimeMs] to whole seconds while desktop keeps milliseconds, so
+ * exact mtime equality caused false "same path, different content" conflicts for
+ * identical mirrored files. Size mismatch still conflicts (different encodes).
+ */
 fun sameContent(a: VaultFileEntry, b: VaultFileEntry): Boolean {
     if (a.contentHash.isNotBlank() && b.contentHash.isNotBlank()) {
         return a.contentHash == b.contentHash
     }
-    return a.sizeBytes == b.sizeBytes && a.mtimeMs == b.mtimeMs
+    return a.sizeBytes == b.sizeBytes
 }
 
 fun String.normalizeVaultRelPath(): String =

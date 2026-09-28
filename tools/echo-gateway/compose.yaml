@@ -1,0 +1,26 @@
+services:
+  echo-gateway:
+    build: .
+    image: kainos-echo-gateway:local
+    # Loopback only. Tailscale Funnel on the host proxies to this port.
+    ports:
+      - "127.0.0.1:8787:8787"
+    env_file:
+      - .env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8787"
+      MUSIC_ROOT: "/music"
+    volumes:
+      - "${ECHO_MUSIC_DIR:-./fixtures}:/music:ro"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    restart: "no"
