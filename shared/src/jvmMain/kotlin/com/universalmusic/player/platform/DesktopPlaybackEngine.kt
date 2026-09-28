@@ -6,7 +6,9 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
+import com.universalmusic.player.domain.playback.SpotifyObservationGate
 import com.universalmusic.player.domain.playback.reconcileSpotifyObservation
+import com.universalmusic.player.domain.playback.spotifyObservationStillValid
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -62,6 +64,8 @@ class DesktopPlaybackEngine internal constructor(
     private var requestToken = 0L
     private var activeProcess: ActiveProcess? = null
     private var userPaused = false
+    private var spotifyPauseAcknowledged = false
+    private var transportGeneration = 0L
     private var ticker: Job? = null
     private var spotifyReconcile: Job? = null
     private var spotifyMisses = 0
@@ -105,6 +109,8 @@ class DesktopPlaybackEngine internal constructor(
             lastHandle = handle
             lastQuality = quality
             userPaused = false
+            spotifyPauseAcknowledged = false
+            noteLocalTransportLocked()
             elapsedOffset = 0
             publishState(EngineState(status = EngineStatus.BUFFERING))
             requestToken
@@ -142,6 +148,8 @@ class DesktopPlaybackEngine internal constructor(
                 elapsedOffset = _state.value.positionMs
                 cancelTickerLocked()
                 userPaused = true
+                spotifyPauseAcknowledged = false
+                noteLocalTransportLocked()
                 publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
             }
             enqueueSpotifyCommand("Spotify Connect pause", spotify.pause)
@@ -176,6 +184,8 @@ class DesktopPlaybackEngine internal constructor(
             synchronized(lifecycleLock) {
                 if (_state.value.status != EngineStatus.PAUSED) return
                 userPaused = false
+                spotifyPauseAcknowledged = false
+                noteLocalTransportLocked()
                 startedAt = System.currentTimeMillis()
                 publishState(_state.value.copy(status = EngineStatus.PLAYING, error = null))
                 startTickerLocked()
@@ -222,6 +232,7 @@ class DesktopPlaybackEngine internal constructor(
             synchronized(lifecycleLock) {
                 elapsedOffset = target
                 startedAt = System.currentTimeMillis()
+                noteLocalTransportLocked()
                 publishState(_state.value.copy(positionMs = target, error = null))
             }
             enqueueSpotifyCommand("Spotify Connect seek") { spotify.seekTo(target) }
@@ -273,6 +284,8 @@ class DesktopPlaybackEngine internal constructor(
         synchronized(lifecycleLock) {
             invalidatePendingStartLocked()
             userPaused = false
+            spotifyPauseAcknowledged = false
+            noteLocalTransportLocked()
             cancelTickerLocked()
             cancelSpotifyReconcileLocked()
             if (!stopProcessLocked()) {
@@ -469,6 +482,8 @@ class DesktopPlaybackEngine internal constructor(
                         durationMs = _state.value.durationMs,
                         expectedTrackId = (lastHandle as? PlaybackHandle.ProviderPlayback)?.trackId,
                         userPaused = userPaused,
+                        pauseAcknowledged = spotifyPauseAcknowledged,
+                        transportGeneration = transportGeneration,
                         misses = spotifyMisses,
                     )
                 }
@@ -481,9 +496,24 @@ class DesktopPlaybackEngine internal constructor(
                     userPaused = snapshot.userPaused,
                     misses = snapshot.misses,
                     observed = observed,
+                    pauseAcknowledged = snapshot.pauseAcknowledged,
                 )
                 synchronized(lifecycleLock) {
-                    if (token != requestToken || !spotifyIsActive()) return@synchronized
+                    val currentGate = SpotifyObservationGate(
+                        requestToken = requestToken,
+                        transportGeneration = transportGeneration,
+                        userPaused = userPaused,
+                    )
+                    val capturedGate = SpotifyObservationGate(
+                        requestToken = token,
+                        transportGeneration = snapshot.transportGeneration,
+                        userPaused = snapshot.userPaused,
+                    )
+                    if (!spotifyObservationStillValid(capturedGate, currentGate, spotifyIsActive())) {
+                        return@synchronized
+                    }
+                    spotifyPauseAcknowledged = decision.pauseAcknowledged
+                    if (decision.clearUserPause) userPaused = false
                     spotifyMisses = decision.misses
                     if (decision.snapClock) {
                         elapsedOffset = decision.positionMs
@@ -511,8 +541,14 @@ class DesktopPlaybackEngine internal constructor(
         val durationMs: Long?,
         val expectedTrackId: String?,
         val userPaused: Boolean,
+        val pauseAcknowledged: Boolean,
+        val transportGeneration: Long,
         val misses: Int,
     )
+
+    private fun noteLocalTransportLocked() {
+        transportGeneration++
+    }
 
     private fun spotifyIsActive(): Boolean = synchronized(lifecycleLock) {
         (lastHandle as? PlaybackHandle.ProviderPlayback)?.provider == ProviderId.SPOTIFY

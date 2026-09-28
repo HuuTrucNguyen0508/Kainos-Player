@@ -67,6 +67,27 @@ class QueueControllerTest {
     }
 
     @Test
+    fun dragLookupFollowsTheGrabbedItemAfterEachMove() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+        )
+        val grabbed = queue.queue.value.items.first().id
+        assertEquals(0, queue.queue.value.orderIndexOf(grabbed))
+        queue.moveInPlaybackOrder(queue.queue.value.orderIndexOf(grabbed), 1)
+        assertEquals(1, queue.queue.value.orderIndexOf(grabbed))
+        val from = queue.queue.value.orderIndexOf(grabbed)
+        queue.moveInPlaybackOrder(from, from + 1)
+        assertEquals(listOf("B", "C", "A"), queue.queue.value.items.map { it.track.title })
+        assertEquals(2, queue.queue.value.orderIndexOf(grabbed))
+    }
+
+    @Test
     fun shuffleKeepsCurrentFirstInOrder() {
         var n = 0
         val queue = QueueController { "id-${n++}" }

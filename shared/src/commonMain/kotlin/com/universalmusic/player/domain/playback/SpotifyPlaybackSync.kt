@@ -13,7 +13,31 @@ data class SpotifySyncDecision(
     val misses: Int,
     /** True when the local clock should restart from [positionMs]. */
     val snapClock: Boolean,
+    /** True after Spotify has reported paused for this local pause. */
+    val pauseAcknowledged: Boolean = false,
+    /** True when a later remote play should clear the local pause guard. */
+    val clearUserPause: Boolean = false,
 )
+
+/** Values captured before a Spotify observe request, compared again after it returns. */
+data class SpotifyObservationGate(
+    val requestToken: Long,
+    val transportGeneration: Long,
+    val userPaused: Boolean,
+)
+
+/**
+ * An observation captured before a local pause, resume, or seek must not be applied.
+ * [current] is read after the network call.
+ */
+fun spotifyObservationStillValid(
+    captured: SpotifyObservationGate,
+    current: SpotifyObservationGate,
+    spotifyActive: Boolean,
+): Boolean = spotifyActive &&
+    captured.requestToken == current.requestToken &&
+    captured.transportGeneration == current.transportGeneration &&
+    captured.userPaused == current.userPaused
 
 private const val SEEK_DRIFT_MS = 2_000L
 private const val COMPLETION_SLACK_MS = 1_500L
@@ -32,9 +56,17 @@ fun reconcileSpotifyObservation(
     userPaused: Boolean,
     misses: Int,
     observed: SpotifyObservedPlayback?,
+    pauseAcknowledged: Boolean = false,
 ): SpotifySyncDecision {
     if (userPaused) {
-        return SpotifySyncDecision(status, positionMs, syncWarning = null, misses = misses, snapClock = false)
+        return reconcileWhileUserPaused(
+            status = status,
+            positionMs = positionMs,
+            expectedTrackId = expectedTrackId,
+            misses = misses,
+            observed = observed,
+            pauseAcknowledged = pauseAcknowledged,
+        )
     }
     if (observed == null) {
         val nextMisses = misses + 1
@@ -96,6 +128,74 @@ fun reconcileSpotifyObservation(
         misses = 0,
         snapClock = false,
     )
+}
+
+private fun reconcileWhileUserPaused(
+    status: EngineStatus,
+    positionMs: Long,
+    expectedTrackId: String?,
+    misses: Int,
+    observed: SpotifyObservedPlayback?,
+    pauseAcknowledged: Boolean,
+): SpotifySyncDecision {
+    if (!pauseAcknowledged) {
+        val paused = observed?.takeIf { !it.isPlaying && tracksMatch(it, expectedTrackId) }
+        return SpotifySyncDecision(
+            status = status,
+            positionMs = paused?.progressMs?.coerceAtLeast(0) ?: positionMs,
+            syncWarning = null,
+            misses = misses,
+            snapClock = paused != null,
+            pauseAcknowledged = paused != null,
+        )
+    }
+    if (observed != null && observed.isPlaying && tracksMatch(observed, expectedTrackId)) {
+        return SpotifySyncDecision(
+            status = EngineStatus.PLAYING,
+            positionMs = observed.progressMs?.coerceAtLeast(0) ?: positionMs,
+            syncWarning = null,
+            misses = 0,
+            snapClock = true,
+            pauseAcknowledged = false,
+            clearUserPause = true,
+        )
+    }
+    if (observed == null) {
+        val nextMisses = misses + 1
+        val warning = if (nextMisses >= MISSES_BEFORE_WARNING) "Playback state unavailable" else null
+        return SpotifySyncDecision(
+            status = status,
+            positionMs = positionMs,
+            syncWarning = warning,
+            misses = nextMisses,
+            snapClock = false,
+            pauseAcknowledged = true,
+        )
+    }
+    if (!tracksMatch(observed, expectedTrackId)) {
+        return SpotifySyncDecision(
+            status = status,
+            positionMs = positionMs,
+            syncWarning = "Spotify is playing a different track",
+            misses = 0,
+            snapClock = false,
+            pauseAcknowledged = true,
+        )
+    }
+    return SpotifySyncDecision(
+        status = status,
+        positionMs = observed.progressMs?.coerceAtLeast(0) ?: positionMs,
+        syncWarning = null,
+        misses = 0,
+        snapClock = true,
+        pauseAcknowledged = true,
+    )
+}
+
+private fun tracksMatch(observed: SpotifyObservedPlayback, expectedTrackId: String?): Boolean {
+    val observedId = observed.trackId ?: return true
+    val expected = expectedTrackId ?: return true
+    return observedId == expected
 }
 
 fun friendlyPlaybackMessage(raw: String?): String {

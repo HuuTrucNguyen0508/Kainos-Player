@@ -167,12 +167,10 @@ fun QueueScreen(
                                                     val rowPx = with(density) { 72.dp.toPx() }
                                                     val steps = (dragDy / rowPx).toInt()
                                                     if (steps == 0) return@detectDragGesturesAfterLongPress
-                                                    val from = container.player.queue.queue.value.playbackOrder()
-                                                        .indexOf(storageIndex)
+                                                    val queueNow = container.player.queue.queue.value
+                                                    val from = queueNow.orderIndexOf(item.id)
                                                     if (from < 0) return@detectDragGesturesAfterLongPress
-                                                    val to = (from + steps).coerceIn(0, from.let {
-                                                        container.player.queue.queue.value.playbackOrder().lastIndex
-                                                    })
+                                                    val to = (from + steps).coerceIn(0, queueNow.playbackOrder().lastIndex)
                                                     if (to != from) {
                                                         container.player.moveInPlaybackOrder(from, to)
                                                         dragDy = 0f
