@@ -9,13 +9,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -43,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -68,7 +69,6 @@ import com.universalmusic.player.domain.playback.friendlyPlaybackMessage
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.ui.components.ArtworkImage
-import com.universalmusic.player.ui.theme.providerColor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -115,14 +115,20 @@ fun NowPlayingScreen(
             .padding(if (compact) 16.dp else 24.dp),
     ) {
         if (onClose != null) {
-            TextButton(
-                onClick = onClose,
-                modifier = Modifier
-                    .align(Alignment.Start)
-                    .padding(bottom = 4.dp),
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Back")
-                Text("Back")
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Back")
+                }
+                Text(
+                    "Now playing",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(48.dp))
             }
             Spacer(Modifier.height(16.dp))
         }
@@ -132,40 +138,14 @@ fun NowPlayingScreen(
             contentDescription = track?.title ?: "Artwork",
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .widthIn(max = 360.dp)
+                // Constrain width first, then derive height. A height cap followed by
+                // aspectRatio can force artwork outside its measured height.
+                .widthIn(max = if (compact) 360.dp else 320.dp)
                 .fillMaxWidth()
-                .then(
-                    if (compact) {
-                        Modifier.aspectRatio(1f)
-                    } else {
-                        Modifier
-                            .heightIn(max = 280.dp)
-                            .aspectRatio(1f)
-                    },
-                ),
+                .aspectRatio(1f),
             seed = track?.title ?: "U",
         )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            spineLabel,
-            style = MaterialTheme.typography.labelLarge,
-            color = provider?.displayName?.let(::providerColor) ?: MaterialTheme.colorScheme.primary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-        )
-        now.syncWarning?.let { warning ->
-            Text(
-                warning,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 4.dp),
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(24.dp))
         Text(
             track?.title ?: "Nothing playing",
             style = MaterialTheme.typography.headlineSmall,
@@ -173,12 +153,36 @@ fun NowPlayingScreen(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            track?.artistLine ?: "Pick a track from Home, Search, or Library",
+            if (track == null) "Pick a track from Home, Search, or Library"
+            else track.artistLine.ifBlank { "Unknown artist" },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp),
         )
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            Text(
+                spineLabel,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+        now.syncWarning?.let { warning ->
+            Text(
+                warning,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
         Spacer(Modifier.height(16.dp))
         if (now.buffering) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -207,7 +211,7 @@ fun NowPlayingScreen(
                 style = MaterialTheme.typography.labelMedium,
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -219,7 +223,7 @@ fun NowPlayingScreen(
             FilledIconButton(
                 onClick = { container.player.togglePlayPause() },
                 enabled = track != null,
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(72.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -244,6 +248,7 @@ fun NowPlayingScreen(
                 Icon(Icons.Default.SkipNext, contentDescription = "Next", Modifier.size(34.dp))
             }
         }
+        Spacer(Modifier.height(12.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,

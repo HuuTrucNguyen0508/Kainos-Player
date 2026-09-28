@@ -11,9 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.MusicFolderPickerRelay
+import com.universalmusic.player.platform.AndroidPlaybackService
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
 import com.universalmusic.player.ui.UniversalMusicApp
@@ -21,6 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
 class MainActivity : ComponentActivity() {
+    private var openPlayerRequest by mutableIntStateOf(0)
+
     private val requestAudioPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -49,8 +55,10 @@ class MainActivity : ComponentActivity() {
         initAndroidPlatform(applicationContext)
         launchMusicFolderPicker = { openMusicFolder.launch(null) }
         val container = ensureAppContainer()
+        openPlayerRequest = savedInstanceState?.getInt(PLAYER_REQUEST_KEY) ?: 0
+        if (savedInstanceState == null) handlePlayerIntent(intent)
         setContent {
-            UniversalMusicApp(container)
+            UniversalMusicApp(container, openNowPlayingRequest = openPlayerRequest)
         }
         requestLocalMediaPermission()
         handleSpotifyCallback(intent)
@@ -72,7 +80,24 @@ class MainActivity : ComponentActivity() {
     // arrives here instead of onCreate.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        handlePlayerIntent(intent)
         handleSpotifyCallback(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt(PLAYER_REQUEST_KEY, openPlayerRequest)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun handlePlayerIntent(intent: Intent?) {
+        if (intent?.action == AndroidPlaybackService.ACTION_SHOW_PLAYER) {
+            openPlayerRequest++
+        }
+    }
+
+    private companion object {
+        const val PLAYER_REQUEST_KEY = "kainos.openPlayerRequest"
     }
 
     private fun handleSpotifyCallback(intent: Intent?) {

@@ -52,21 +52,32 @@ import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
 
 @Composable
-fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
+fun UniversalMusicApp(
+    container: AppContainer = ensureAppContainer(),
+    openNowPlayingRequest: Int = 0,
+) {
     val settings by container.settings.collectAsState()
     UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            AppScaffold(container, desktop = maxWidth >= 840.dp)
+            AppScaffold(container, desktop = maxWidth >= 840.dp, openNowPlayingRequest = openNowPlayingRequest)
         }
     }
 }
 
 @Composable
-private fun AppScaffold(container: AppContainer, desktop: Boolean) {
+private fun AppScaffold(container: AppContainer, desktop: Boolean, openNowPlayingRequest: Int) {
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var showNowPlaying by remember { mutableStateOf(false) }
+    var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    var handledPlayerRequest by rememberSaveable { mutableStateOf(0) }
+    LaunchedEffect(openNowPlayingRequest) {
+        if (openNowPlayingRequest != 0 && openNowPlayingRequest != handledPlayerRequest) {
+            showQueue = false
+            showNowPlaying = true
+            handledPlayerRequest = openNowPlayingRequest
+        }
+    }
     val destination = remember(destinationName) {
         runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
     }
