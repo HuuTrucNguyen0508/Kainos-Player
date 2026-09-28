@@ -104,6 +104,39 @@ class SpotifyPlaybackSyncTest {
     }
 
     @Test
+    fun remotePlayResumesWhenThePauseGuardReleasesWithoutAPausedReading() {
+        val playing = SpotifyObservedPlayback(isPlaying = true, progressMs = 9_000, trackId = "track")
+        assertTrue(spotifyPauseGuardOpen(pauseCommandCompleted = false, observationsSincePause = 0))
+        val releasedByCommand = spotifyPauseGuardOpen(
+            pauseCommandCompleted = true,
+            observationsSincePause = 0,
+        )
+        val releasedByBound = spotifyPauseGuardOpen(
+            pauseCommandCompleted = false,
+            observationsSincePause = SPOTIFY_PAUSE_GUARD_MAX_OBSERVATIONS,
+        )
+        assertFalse(releasedByCommand)
+        assertFalse(releasedByBound)
+        for (guardOpen in listOf(releasedByCommand, releasedByBound)) {
+            val decision = reconcileSpotifyObservation(
+                status = EngineStatus.PAUSED,
+                positionMs = 5_000,
+                durationMs = 180_000,
+                expectedTrackId = "track",
+                userPaused = true,
+                misses = 0,
+                observed = playing,
+                pauseAcknowledged = false,
+                pauseGuardOpen = guardOpen,
+            )
+            assertEquals(EngineStatus.PLAYING, decision.status)
+            assertEquals(9_000, decision.positionMs)
+            assertTrue(decision.clearUserPause)
+            assertFalse(decision.pauseAcknowledged)
+        }
+    }
+
+    @Test
     fun remotePlayAfterAcknowledgedPauseClearsTheLocalGuard() {
         val decision = reconcileSpotifyObservation(
             status = EngineStatus.PAUSED,

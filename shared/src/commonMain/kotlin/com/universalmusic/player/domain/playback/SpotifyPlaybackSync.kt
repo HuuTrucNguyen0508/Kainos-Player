@@ -44,6 +44,19 @@ private const val COMPLETION_SLACK_MS = 1_500L
 private const val MISSES_BEFORE_WARNING = 3
 
 /**
+ * Playing observations ignored after a local pause when the pause command has not
+ * finished. The next observation can be a remote resume even if Spotify never
+ * reported paused.
+ */
+const val SPOTIFY_PAUSE_GUARD_MAX_OBSERVATIONS = 2
+
+/** The local pause is still protected from a playing observation. */
+fun spotifyPauseGuardOpen(
+    pauseCommandCompleted: Boolean,
+    observationsSincePause: Int,
+): Boolean = !pauseCommandCompleted && observationsSincePause < SPOTIFY_PAUSE_GUARD_MAX_OBSERVATIONS
+
+/**
  * Fold one Spotify Connect observation into the local engine status.
  * A missing observation does not invent progress; repeated misses surface
  * "Playback state unavailable".
@@ -57,6 +70,7 @@ fun reconcileSpotifyObservation(
     misses: Int,
     observed: SpotifyObservedPlayback?,
     pauseAcknowledged: Boolean = false,
+    pauseGuardOpen: Boolean = true,
 ): SpotifySyncDecision {
     if (userPaused) {
         return reconcileWhileUserPaused(
@@ -66,6 +80,7 @@ fun reconcileSpotifyObservation(
             misses = misses,
             observed = observed,
             pauseAcknowledged = pauseAcknowledged,
+            pauseGuardOpen = pauseGuardOpen,
         )
     }
     if (observed == null) {
@@ -137,7 +152,21 @@ private fun reconcileWhileUserPaused(
     misses: Int,
     observed: SpotifyObservedPlayback?,
     pauseAcknowledged: Boolean,
+    pauseGuardOpen: Boolean,
 ): SpotifySyncDecision {
+    if (observed != null && observed.isPlaying && tracksMatch(observed, expectedTrackId) &&
+        (pauseAcknowledged || !pauseGuardOpen)
+    ) {
+        return SpotifySyncDecision(
+            status = EngineStatus.PLAYING,
+            positionMs = observed.progressMs?.coerceAtLeast(0) ?: positionMs,
+            syncWarning = null,
+            misses = 0,
+            snapClock = true,
+            pauseAcknowledged = false,
+            clearUserPause = true,
+        )
+    }
     if (!pauseAcknowledged) {
         val paused = observed?.takeIf { !it.isPlaying && tracksMatch(it, expectedTrackId) }
         return SpotifySyncDecision(
@@ -147,17 +176,6 @@ private fun reconcileWhileUserPaused(
             misses = misses,
             snapClock = paused != null,
             pauseAcknowledged = paused != null,
-        )
-    }
-    if (observed != null && observed.isPlaying && tracksMatch(observed, expectedTrackId)) {
-        return SpotifySyncDecision(
-            status = EngineStatus.PLAYING,
-            positionMs = observed.progressMs?.coerceAtLeast(0) ?: positionMs,
-            syncWarning = null,
-            misses = 0,
-            snapClock = true,
-            pauseAcknowledged = false,
-            clearUserPause = true,
         )
     }
     if (observed == null) {
