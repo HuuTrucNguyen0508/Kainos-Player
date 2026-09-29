@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -43,6 +44,20 @@ class AndroidPlaybackService : MediaSessionService() {
         AndroidMediaControls.attachPlayer(player)
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(sessionTrace)
+            .apply {
+                // System UI (including OEM media surfaces) launches this session's UI,
+                // regardless of which provider supplied the current audio.
+                packageManager.getLaunchIntentForPackage(packageName)?.let { launch ->
+                    launch.action = ACTION_SHOW_PLAYER
+                    launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    setSessionActivity(PendingIntent.getActivity(
+                        this@AndroidPlaybackService,
+                        0,
+                        launch,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    ))
+                }
+            }
             .build()
     }
 
@@ -198,6 +213,7 @@ class AndroidPlaybackService : MediaSessionService() {
 
     companion object {
         private const val TAG = "KainosPlayback"
+        const val ACTION_SHOW_PLAYER = "com.universalmusic.player.action.SHOW_PLAYER"
 
         @Volatile
         private var silenceUri: Uri? = null

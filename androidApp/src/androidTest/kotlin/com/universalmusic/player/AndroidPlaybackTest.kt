@@ -5,6 +5,7 @@ import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.media.session.MediaSessionManager
+import android.media.session.MediaController
 import android.media.session.PlaybackState
 import android.os.Build
 import android.provider.MediaStore
@@ -12,6 +13,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -20,6 +23,7 @@ import com.universalmusic.player.platform.createLocalTrackSource
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.AndroidPlaybackEngine
+import com.universalmusic.player.platform.AndroidPlaybackService
 import com.universalmusic.player.platform.AndroidYouTubeStreamResolver
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import java.io.File
@@ -109,6 +113,7 @@ class AndroidPlaybackTest {
                     val session = manager.getActiveSessions(null).firstOrNull { it.packageName == context.packageName }
                     assertNotNull("Spotify playback should keep a MediaSession for notification/island", session)
                     assertEquals(PlaybackState.STATE_PLAYING, session!!.playbackState!!.state)
+                    assertSessionLaunchesKainos(session, context)
                 } finally { wav.delete() }
             }
         } finally { automation.dropShellPermissionIdentity() }
@@ -161,6 +166,7 @@ class AndroidPlaybackTest {
                     val session = manager.getActiveSessions(null).firstOrNull { it.packageName == context.packageName }
                     assertNotNull("Android has no media session for notification/headset controls", session)
                     assertEquals(PlaybackState.STATE_PLAYING, session!!.playbackState!!.state)
+                    assertSessionLaunchesKainos(session, context)
                     session.transportControls.pause()
                     awaitStatus(engine, EngineStatus.PAUSED)
                 } finally { wav.delete() }
@@ -213,6 +219,27 @@ class AndroidPlaybackTest {
             engine.pause()
             awaitStatus(engine, EngineStatus.PAUSED, attempts = 80)
         }
+    }
+
+    /** Exercise the real platform session launch target, used by notification and OEM media UI. */
+    private suspend fun assertSessionLaunchesKainos(session: MediaController, context: Context) {
+        val launch = session.sessionActivity
+        assertNotNull("Media session is missing its notification/island tap target", launch)
+        assertEquals(context.packageName, launch!!.creatorPackage)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            assertTrue("Media taps must launch an Activity directly", launch.isActivity)
+        }
+        launch.send()
+        repeat(100) {
+            val opened = withContext(Dispatchers.Main) {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<MainActivity>()
+                    .any { it.intent.action == AndroidPlaybackService.ACTION_SHOW_PLAYER }
+            }
+            if (opened) return
+            delay(50)
+        }
+        fail("Session tap did not bring Kainos to the foreground with the Now Playing action")
     }
 
     private fun grantAudioPermission(context: Context) {
