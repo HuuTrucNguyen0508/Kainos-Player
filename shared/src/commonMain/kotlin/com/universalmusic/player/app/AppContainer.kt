@@ -8,14 +8,25 @@ import com.universalmusic.player.data.cache.toLocalPlaybackSource
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.playlist.KainosPlaylistRepository
+import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.local.cacheKey
 import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
+import com.universalmusic.player.data.local.isLocationInFolder
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
+import kotlin.coroutines.EmptyCoroutineContext
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
@@ -39,6 +50,7 @@ import com.universalmusic.player.platform.createYouTubeAudioDownloader
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import com.universalmusic.player.platform.createHeartedAudioCache
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,6 +58,8 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
 import com.universalmusic.player.domain.playback.PlayerSession
+import com.universalmusic.player.domain.playback.SessionPersistenceController
+import com.universalmusic.player.domain.playback.SleepTimerController
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
 import com.universalmusic.player.data.sync.HomeLanSyncService
@@ -64,8 +78,10 @@ import com.universalmusic.player.platform.bindPlatformMediaControls
 import com.universalmusic.player.platform.createMetadataArtworkCache
 import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
+import com.universalmusic.player.platform.createSessionSnapshotStore
 import com.universalmusic.player.platform.createTokenStore
 import com.universalmusic.player.platform.createUserLibraryStore
+import com.universalmusic.player.platform.createKainosPlaylistStore
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import com.universalmusic.player.platform.loadAppConfig
 import com.universalmusic.player.platform.pickMusicFolder
@@ -74,12 +90,11 @@ import com.universalmusic.player.platform.supportsMusicFolderPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /** UI actions that platform shells (keyboard shortcuts, media integrations) can request. */
@@ -87,6 +102,9 @@ enum class UiRequest {
     FOCUS_SEARCH,
     TOGGLE_QUEUE,
     DISMISS_OVERLAY,
+    OPEN_NOW_PLAYING,
+    /** Desktop type-to-search: open Library search and hand it [AppContainer.libraryTypeAhead]. */
+    FOCUS_LIBRARY_SEARCH,
 }
 
 class AppContainer {
@@ -98,15 +116,25 @@ class AppContainer {
     val tokens = createTokenStore()
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
+    val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
+    val sessionSnapshotStore: SessionSnapshotStore = createSessionSnapshotStore()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
     private var favoriteAudioHook: ((Track, Boolean) -> Unit)? = null
+    private var currentPlayingCanonicalId: () -> String? = { null }
+    private fun protectedCacheOwners(): Set<String> =
+        setOfNotNull(currentPlayingCanonicalId())
     val library = LibraryRepository(
         scope = scope,
         store = userLibraryStore,
         metadataCache = metadataCache,
         onFavoriteChanged = { track, nowFavorite -> favoriteAudioHook?.invoke(track, nowFavorite) },
+        deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
+    )
+    val kainosPlaylists = KainosPlaylistRepository(
+        scope = scope,
+        store = kainosPlaylistStore,
         deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
     )
     val matcher = TrackMatcher()
@@ -139,6 +167,7 @@ class AppContainer {
         downloader = createYouTubeAudioDownloader(youtubeStreams),
         youtubeSearch = { query -> youtube.search(query).tracks },
         matcher = matcher,
+        protectedOwners = { protectedCacheOwners() },
         onCached = { canonicalId, entry ->
             library.attachHeartedCacheSource(canonicalId, entry.toLocalPlaybackSource())
         },
@@ -159,13 +188,19 @@ class AppContainer {
         settings = { _settings.value },
         updateSettings = { transform -> updateSettings(transform) },
         library = library,
-        hubFactory = { pairing, onHearts, vault, heartedNames ->
+        playlists = kainosPlaylists,
+        hubFactory = { pairing, onHearts, onPlaylists, vault, heartedNames ->
             createHomeLanSyncHub(
                 pairing,
                 { remote ->
                     onHearts(remote)
                     rematchLocalHeartsByFileName()
                     library.exportHeartsSyncDocument()
+                },
+                { remote ->
+                    onPlaylists(remote)
+                    rematchPlaylistLocalsByFileName()
+                    kainosPlaylists.exportSyncDocument()
                 },
                 vault,
                 heartedNames,
@@ -176,11 +211,12 @@ class AppContainer {
                 ?: throw IllegalStateException(
                     "Hub certificate pin required; re-pair from kainos-homesync:2 URI",
                 )
-            HttpHomeLanSyncClient(pairing, library, createPinnedHomeLanHttpClient(pin))
+            HttpHomeLanSyncClient(pairing, library, kainosPlaylists, createPinnedHomeLanHttpClient(pin))
         },
         vaultStore = homeLanVault,
         refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
+        rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
         detectedLanHost = { detectLanHostAddress() },
     )
     val resolver = DefaultSourceResolver()
@@ -232,18 +268,48 @@ class AppContainer {
                 else -> emptyList()
             }
         },
+        confineTo = playbackDispatcher(),
+        workContext = Dispatchers.Default,
+    ).also {
+        currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
+    }
+    val sessionPersistence = SessionPersistenceController(
+        player = player,
+        store = sessionSnapshotStore,
+        scope = scope,
+    )
+    val sleepTimer = SleepTimerController(
+        player = player,
+        scope = scope,
     )
 
-    private val _uiRequests = MutableSharedFlow<UiRequest>(extraBufferCapacity = 4)
-    val uiRequests: SharedFlow<UiRequest> = _uiRequests.asSharedFlow()
+    // A Channel keeps requests sent before Compose starts collecting. SharedFlow's
+    // extraBufferCapacity only helps when a subscriber already exists.
+    private val _uiRequests = Channel<UiRequest>(capacity = Channel.BUFFERED)
+    val uiRequests: Flow<UiRequest> = _uiRequests.receiveAsFlow()
 
-    /** True while a search/library text field is focused; desktop shortcuts should no-op. */
+    /** True while any text field is focused; desktop shortcuts and type-to-search should no-op. */
     private val _textInputFocused = MutableStateFlow(false)
     val textInputFocused: StateFlow<Boolean> = _textInputFocused.asStateFlow()
+    private val focusedTextInputs = mutableSetOf<Any>()
 
-    fun setTextInputFocused(focused: Boolean) {
-        _textInputFocused.value = focused
+    /** Called by [com.universalmusic.player.ui.reportsTextInputFocus] on the UI thread. */
+    fun setTextInputFocused(field: Any, focused: Boolean) {
+        if (focused) focusedTextInputs += field else focusedTextInputs -= field
+        _textInputFocused.value = focusedTextInputs.isNotEmpty()
     }
+
+    /** Keystrokes typed while no field had focus, waiting for Library search to pick them up. */
+    private val _libraryTypeAhead = MutableStateFlow("")
+    val libraryTypeAhead: StateFlow<String> = _libraryTypeAhead.asStateFlow()
+
+    fun typeAheadLibrarySearch(text: String) {
+        if (text.isEmpty()) return
+        _libraryTypeAhead.update { it + text }
+        requestUi(UiRequest.FOCUS_LIBRARY_SEARCH)
+    }
+
+    fun consumeLibraryTypeAhead(): String = _libraryTypeAhead.getAndUpdate { "" }
 
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
         searchAutoplay.clearSearchSession()
@@ -264,11 +330,22 @@ class AppContainer {
         spotify.ensureRecommendationsAccess()
 
     fun requestUi(request: UiRequest) {
-        _uiRequests.tryEmit(request)
+        _uiRequests.trySend(request)
     }
 
     init {
-        bindPlatformMediaControls(player, scope)
+        bindPlatformMediaControls(player, scope) { track ->
+            library.toggleFavorite(track).also(player::setFavorite)
+        }
+        // The Now Playing / media-session heart follows the library, including hearts that
+        // arrive from Home sync while the same track keeps playing.
+        scope.launch {
+            combine(
+                player.nowPlaying.map { it.track?.canonicalId }.distinctUntilChanged(),
+                library.favoriteIds,
+            ) { id, favorites -> id to (id != null && id in favorites) }
+                .collect { (id, favorite) -> if (id != null) player.syncFavorite(id, favorite) }
+        }
         // Local track with no cover yet: pull the embedded picture and show it on Now Playing,
         // the queue row and the media session without waiting for the background pass.
         scope.launch {
@@ -297,11 +374,15 @@ class AppContainer {
             player.setVolume(loaded.playbackVolume)
             applyProviderSettings(loaded, clearSessionOnChange = false)
             library.load(spotify.currentUserId())
+            kainosPlaylists.load()
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
             heartedAudio.enqueueMissing(hearted)
             runCatching { local.hydrateFromCache() }
             refreshLocalLibrary()
+            // Restore listening session paused; never auto-start audio after process death.
+            runCatching { sessionPersistence.restore() }
+            sessionPersistence.startObserving()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
             homeLanSync.onAppForeground()
@@ -393,6 +474,27 @@ class AppContainer {
 
     suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
 
+    fun trackAvailability(track: Track) = heartedAudio.availabilityFor(track)
+
+    fun retryHeartedDownload(canonicalId: String) = heartedAudio.retry(canonicalId)
+
+    fun removeHeartedDownload(canonicalId: String) = heartedAudio.cancelAndRemove(canonicalId)
+
+    fun setHeartedDownloadPinned(canonicalId: String, pinned: Boolean) =
+        heartedAudio.setPinned(canonicalId, pinned)
+
+    fun setYouTubeMatchOverride(track: Track, youtubeVideoId: String) =
+        heartedAudio.setYouTubeMatchOverride(track, youtubeVideoId)
+
+    fun clearYouTubeMatchOverride(track: Track) =
+        heartedAudio.clearYouTubeMatchOverride(track)
+
+    suspend fun searchYouTubeMatchCandidates(track: Track, query: String? = null) =
+        heartedAudio.searchMatchCandidates(track, query)
+
+    suspend fun youTubeMatchOverride(canonicalId: String): String? =
+        heartedAudio.matchOverride(canonicalId)
+
     suspend fun refreshSpotifyLibrary() = libraryMutex.withLock {
         _spotifyLibraryLoading.value = true
         _spotifyLibraryError.value = null
@@ -483,12 +585,23 @@ class AppContainer {
         return emptyList()
     }
 
+    private var volumePersistJob: Job? = null
+
+    /** Applies volume immediately; the durable setting is written once the wheel/slider settles. */
     fun setPlaybackVolume(volume: Float) {
         val next = volume.coerceIn(0f, 1f)
         player.setVolume(next)
-        scope.launch {
+        volumePersistJob?.cancel()
+        volumePersistJob = scope.launch {
+            delay(VOLUME_PERSIST_DEBOUNCE_MS)
             updateSettings { it.copy(playbackVolume = next) }
         }
+    }
+
+    /** Write the listening session now (app exit / backgrounding) instead of waiting on the debounce. */
+    suspend fun flushListeningSession() {
+        runCatching { sessionPersistence.flush() }
+            .onFailure { if (it is CancellationException) throw it }
     }
 
     fun refreshLocalLibrary() {
@@ -535,12 +648,13 @@ class AppContainer {
         var rematched = library.rematchPortableLocalFileHearts(unique)
 
         val favoriteIds = library.favoriteIds.value.toList()
+        val savedById = library.savedTracks.value.associateBy { it.canonicalId }
+        val presentIds = localTracks.mapTo(HashSet()) { it.canonicalId }
         for (id in favoriteIds) {
             if (!id.startsWith("local:")) continue
-            val saved = library.savedTracks.value.firstOrNull { it.canonicalId == id } ?: continue
+            if (id in presentIds) continue
+            val saved = savedById[id] ?: continue
             val location = (saved.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
-            val stillPresent = localTracks.any { it.canonicalId == id }
-            if (stillPresent) continue
             val name = location?.let { basenameFromLocalLocation(it) } ?: continue
             val match = unique[name] ?: continue
             if (library.isFavorite(id)) {
@@ -552,6 +666,80 @@ class AppContainer {
             rematched += 1
         }
         return rematched
+    }
+
+    private suspend fun rematchPlaylistLocalsByFileName(): Int {
+        val localTracks = local.libraryTracks.value
+        val byName = localTracks.mapNotNull { track ->
+            val url = (track.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
+                ?: return@mapNotNull null
+            val name = basenameFromLocalLocation(url) ?: return@mapNotNull null
+            name to track
+        }.groupBy({ it.first }, { it.second })
+        val unique = byName.mapNotNull { (name, tracks) ->
+            tracks.singleOrNull()?.let { name to it }
+        }.toMap()
+        return kainosPlaylists.rematchPortableLocalFileEntries(unique)
+    }
+
+    fun playKainosPlaylist(playlistId: String): Boolean {
+        val tracks = kainosPlaylists.tracksForPlayback(playlistId)
+        if (tracks.isEmpty()) return false
+        playTracks(tracks, startIndex = 0)
+        return true
+    }
+
+    /** App-hearted tracks from remembered + local + Spotify liked, ordered for Play favorites. */
+    fun resolveFavoriteTracks(): List<Track> {
+        val favoriteIds = library.favoriteIds.value
+        if (favoriteIds.isEmpty()) return emptyList()
+        val catalog = (
+            local.libraryTracks.value +
+                library.savedTracks.value +
+                spotifyTracks.value
+            ).distinctBy { it.canonicalId }
+        val byId = catalog.associateBy { it.canonicalId }
+        return favoriteIds.mapNotNull { byId[it] }
+    }
+
+    fun playFavorites(): Boolean {
+        val tracks = resolveFavoriteTracks()
+        if (tracks.isEmpty()) return false
+        playTracks(tracks, startIndex = 0)
+        return true
+    }
+
+    fun playAlbumById(albumCanonicalId: String): Boolean {
+        val tracks = local.libraryTracks.value.filter { it.album?.canonicalId == albumCanonicalId }
+        if (tracks.isEmpty()) return false
+        playTracks(tracks, startIndex = 0)
+        return true
+    }
+
+    fun playLocalFolder(folder: String): Boolean {
+        val tracks = tracksInLocalFolder(folder)
+        if (tracks.isEmpty()) return false
+        playTracks(tracks, startIndex = 0)
+        return true
+    }
+
+    fun tracksInLocalFolder(folder: String): List<Track> {
+        if (folder.isBlank()) return emptyList()
+        return local.libraryTracks.value.filter { track ->
+            val location = (track.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
+                ?: return@filter false
+            isLocationInFolder(location, folder)
+        }
+    }
+
+    fun hasRestorableSession(): Boolean =
+        player.nowPlaying.value.track != null ||
+            player.queue.queue.value.items.isNotEmpty()
+
+    fun resumeListening() {
+        if (player.nowPlaying.value.track == null && player.queue.queue.value.items.isEmpty()) return
+        if (player.nowPlaying.value.isPlaying) return
+        player.playTransport()
     }
 
     fun setHomeLanVaultFolder(folder: String?) {
@@ -658,6 +846,16 @@ class AppContainer {
         ProviderId.SAMPLE -> sampleUnavailable
     }
 }
+
+private const val VOLUME_PERSIST_DEBOUNCE_MS = 400L
+
+/**
+ * Thread that owns [PlayerSession] state: the platform UI thread when there is one (Android main
+ * looper, Swing EDT), so UI calls stay synchronous; otherwise a single serialized worker.
+ */
+private fun playbackDispatcher(): CoroutineDispatcher =
+    runCatching { Dispatchers.Main.immediate.also { it.isDispatchNeeded(EmptyCoroutineContext) } }
+        .getOrElse { Dispatchers.Default.limitedParallelism(1) }
 
 lateinit var appContainer: AppContainer
 

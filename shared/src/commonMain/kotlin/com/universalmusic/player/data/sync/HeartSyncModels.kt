@@ -3,6 +3,7 @@ package com.universalmusic.player.data.sync
 import com.universalmusic.player.data.library.PersistedArtist
 import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.data.local.percentDecodeUtf8
 import com.universalmusic.player.domain.model.ProviderId
 import kotlinx.serialization.Serializable
 
@@ -84,38 +85,27 @@ fun basenameFromLocalLocation(location: String): String? {
 
 /** True filename for a [localfile:] id, including repair of mangled SAF document-id suffixes. */
 fun normalizedLocalFileHeartBasename(canonicalId: String): String? {
-    val raw = localFileHeartBasename(canonicalId) ?: return null
+    val raw = localFileHeartBasename(canonicalId)?.let(::repairLatin1Mojibake) ?: return null
     return basenameFromLocalLocation(raw) ?: raw.lowercase().takeIf { it.isNotBlank() }
 }
 
-internal fun percentDecodeLight(value: String): String {
-    if ('%' !in value && '+' !in value) return value
-    return buildString(value.length) {
-        var i = 0
-        while (i < value.length) {
-            val c = value[i]
-            when {
-                c == '+' -> {
-                    append(' ')
-                    i += 1
-                }
-                c == '%' && i + 2 < value.length -> {
-                    val code = value.substring(i + 1, i + 3).toIntOrNull(16)
-                    if (code != null) {
-                        append(code.toChar())
-                        i += 3
-                    } else {
-                        append(c)
-                        i += 1
-                    }
-                }
-                else -> {
-                    append(c)
-                    i += 1
-                }
-            }
-        }
-    }
+/**
+ * Percent-decode a file name or SAF document id as UTF-8. `+` stays literal: it is a valid
+ * file-name character, and file/SAF URIs encode spaces as `%20`. (Decoding each `%XX` byte
+ * as its own char used to turn CJK names into Latin-1 mojibake that could never rematch.)
+ */
+internal fun percentDecodeLight(value: String): String = percentDecodeUtf8(value)
+
+/**
+ * Undo mojibake stored by older builds: a UTF-8 name whose bytes were decoded one char per
+ * byte. Only applies when every char fits in a byte and those bytes form strictly valid UTF-8
+ * that differs from the input; anything else is returned unchanged.
+ */
+internal fun repairLatin1Mojibake(value: String): String {
+    if (value.none { it.code in 0x80..0xFF } || value.any { it.code > 0xFF }) return value
+    val bytes = ByteArray(value.length) { value[it].code.toByte() }
+    val decoded = runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrNull()
+    return decoded?.takeIf { it != value } ?: value
 }
 
 /**

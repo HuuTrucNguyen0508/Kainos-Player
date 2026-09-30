@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -222,7 +223,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
         body = await request.body()
         try:
             if not cfg.skip_alexa_signature_verify:
-                verify_alexa_signature(
+                await asyncio.to_thread(
+                    verify_alexa_signature,
                     body=body,
                     signature_cert_chain_url=request.headers.get("SignatureCertChainUrl")
                     or request.headers.get("signaturecertchainurl"),

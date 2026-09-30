@@ -83,6 +83,7 @@ class HeartedAudioCacheTest {
                         videoId: String,
                         destinationDirectory: String,
                         fileBaseName: String,
+                        onProgress: ((Long, Long?) -> Unit)?,
                     ): DownloadedYouTubeAudio {
                         gate.await()
                         order += videoId
@@ -160,6 +161,103 @@ class HeartedAudioCacheTest {
             } finally {
                 root.toFile().deleteRecursively()
             }
+        }
+    }
+
+    @Test
+    fun budgetEvictionSkipsPinnedAndRecordsHistory() {
+        val root = createTempDirectory("kainos-hearted-evict")
+        try {
+            val disk = FileHeartedAudioCacheDisk(root)
+            val cache = DefaultHeartedAudioCache(disk, maxBytes = 120)
+            val audio = root.resolve("audio")
+            Files.createDirectories(audio)
+            fun writeEntry(id: String, size: Int, at: Long): HeartedAudioCacheEntry {
+                val file = audio.resolve("$id.m4a")
+                Files.write(file, ByteArray(size) { 1 })
+                return HeartedAudioCacheEntry(
+                    ownerCanonicalId = id,
+                    youtubeVideoId = id,
+                    localUri = file.toUri().toASCIIString(),
+                    sizeBytes = size.toLong(),
+                    downloadedAtMs = at,
+                )
+            }
+            runBlocking {
+                cache.put(writeEntry("old", 50, 1))
+                cache.put(writeEntry("pinned", 50, 2))
+                cache.setPinned("pinned", true)
+                cache.put(
+                    writeEntry("incoming", 50, 3),
+                    eviction = EvictionRequest(protectedOwners = setOf("pinned")),
+                )
+                assertNull(cache.get("old"))
+                assertNotNull(cache.get("pinned"))
+                assertNotNull(cache.get("incoming"))
+                val evictions = cache.recentEvictions()
+                assertTrue(evictions.any { it.ownerCanonicalId == "old" && it.reason == "storage budget" })
+                assertTrue(evictions.none { it.ownerCanonicalId == "pinned" })
+            }
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun matchOverridePersistsAndSurvivesRestartIndex() {
+        val root = createTempDirectory("kainos-hearted-override")
+        try {
+            val disk = FileHeartedAudioCacheDisk(root)
+            val cache = DefaultHeartedAudioCache(disk)
+            runBlocking {
+                cache.setMatchOverride("spotify:1", "better-video")
+                assertEquals("better-video", cache.matchOverride("spotify:1"))
+            }
+            val reloaded = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(root))
+            runBlocking {
+                assertEquals("better-video", reloaded.matchOverride("spotify:1"))
+                reloaded.clearMatchOverride("spotify:1")
+                assertNull(reloaded.matchOverride("spotify:1"))
+            }
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun playingOwnerIsNotEvictedForBudget() {
+        val root = createTempDirectory("kainos-hearted-playing")
+        try {
+            val disk = FileHeartedAudioCacheDisk(root)
+            val cache = DefaultHeartedAudioCache(disk, maxBytes = 100)
+            val audio = root.resolve("audio")
+            Files.createDirectories(audio)
+            fun writeEntry(id: String, size: Int, at: Long): HeartedAudioCacheEntry {
+                val file = audio.resolve("$id.m4a")
+                Files.write(file, ByteArray(size) { 2 })
+                return HeartedAudioCacheEntry(
+                    ownerCanonicalId = id,
+                    youtubeVideoId = id,
+                    localUri = file.toUri().toASCIIString(),
+                    sizeBytes = size.toLong(),
+                    downloadedAtMs = at,
+                )
+            }
+            runBlocking {
+                cache.put(writeEntry("playing", 60, 1))
+                cache.put(writeEntry("other", 30, 2))
+                runCatching {
+                    cache.put(
+                        writeEntry("new", 60, 3),
+                        eviction = EvictionRequest(protectedOwners = setOf("playing")),
+                    )
+                }
+                assertNotNull(cache.get("playing"))
+                // "other" may be evicted; playing must remain.
+                assertTrue(cache.recentEvictions().none { it.ownerCanonicalId == "playing" })
+            }
+        } finally {
+            root.toFile().deleteRecursively()
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.reportsTextInputFocus
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +54,8 @@ fun QueueScreen(
     val currentOrderPos = order.indexOf(queue.currentIndex)
     val listState = rememberLazyListState()
     var confirmClear by remember { mutableStateOf(false) }
+    var savePlaylistDraft by remember { mutableStateOf<String?>(null) }
+    var saveMessage by remember { mutableStateOf<String?>(null) }
     var undoMessage by remember { mutableStateOf<String?>(null) }
     val playing = queue.current != null
     LaunchedEffect(Unit) {
@@ -79,6 +83,12 @@ fun QueueScreen(
             Row {
                 TextButton(
                     onClick = {
+                        savePlaylistDraft = "Queue"
+                    },
+                    enabled = orderedItems.isNotEmpty(),
+                ) { Text("Save as playlist") }
+                TextButton(
+                    onClick = {
                         if (playing) confirmClear = true else {
                             container.clearPlaybackQueue()
                             undoMessage = "Queue cleared"
@@ -88,6 +98,43 @@ fun QueueScreen(
                 ) { Text("Clear") }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close queue") }
             }
+        }
+        saveMessage?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        if (savePlaylistDraft != null) {
+            AlertDialog(
+                onDismissRequest = { savePlaylistDraft = null },
+                title = { Text("Save queue as playlist") },
+                text = {
+                    OutlinedTextField(
+                        value = savePlaylistDraft!!,
+                        onValueChange = { savePlaylistDraft = it },
+                        singleLine = true,
+                        label = { Text("Playlist name") },
+                        modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val name = savePlaylistDraft?.trim().orEmpty().ifBlank { "Queue" }
+                            val tracks = orderedItems.map { it.second.track }
+                            val saved = container.kainosPlaylists.saveQueueAsPlaylist(name, tracks)
+                            saveMessage = "Saved \"${saved.title}\" (${saved.entries.size} tracks)"
+                            savePlaylistDraft = null
+                        },
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { savePlaylistDraft = null }) { Text("Cancel") }
+                },
+            )
         }
         undoMessage?.let { message ->
             Row(

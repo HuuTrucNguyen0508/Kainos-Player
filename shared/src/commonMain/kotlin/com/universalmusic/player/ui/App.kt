@@ -7,15 +7,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -25,9 +28,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -40,6 +45,7 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.ui.components.MiniPlayerBar
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
@@ -55,18 +61,35 @@ import com.universalmusic.player.ui.theme.UniversalMusicTheme
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
     val settings by container.settings.collectAsState()
     UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            AppScaffold(container, desktop = maxWidth >= 840.dp)
+        CompositionLocalProvider(LocalTextInputFocus provides container::setTextInputFocused) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                AppScaffold(
+                    container = container,
+                    layoutBand = desktopLayoutBand(maxWidth),
+                    compactPlayer = settings.compactMode,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AppScaffold(container: AppContainer, desktop: Boolean) {
+private fun AppScaffold(
+    container: AppContainer,
+    layoutBand: DesktopLayoutBand,
+    compactPlayer: Boolean,
+) {
+    val desktop = layoutBand != DesktopLayoutBand.Narrow
+    val wide = layoutBand == DesktopLayoutBand.Wide
+
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var showNowPlaying by remember { mutableStateOf(false) }
-    var showQueue by remember { mutableStateOf(false) }
+    var showNowPlaying by rememberSaveable { mutableStateOf(false) }
+    var showQueue by rememberSaveable { mutableStateOf(false) }
+    var nowPlayingPaneExpanded by rememberSaveable { mutableStateOf(true) }
+    var nowPlayingPaneWidthDp by rememberSaveable {
+        mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
+    }
     val destination = remember(destinationName) {
         runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
     }
@@ -82,12 +105,63 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         container.player.canSkipNext()
     }
 
+    // Side pane vs overlay: crossing the narrow breakpoint must not cover the content pane
+    // or wipe tab SaveableState. Collapse overlays when entering narrow; expand the side
+    // pane when entering desktop if the user just opened Now Playing from play.
+    var previousBand by remember { mutableStateOf(layoutBand) }
+    LaunchedEffect(layoutBand) {
+        val wasNarrow = previousBand == DesktopLayoutBand.Narrow
+        val isNarrow = layoutBand == DesktopLayoutBand.Narrow
+        when {
+            !wasNarrow && isNarrow -> {
+                showNowPlaying = false
+                showQueue = false
+            }
+            wasNarrow && !isNarrow -> {
+                if (showNowPlaying) {
+                    nowPlayingPaneExpanded = true
+                    showNowPlaying = false
+                }
+            }
+        }
+        previousBand = layoutBand
+    }
+
+    // Compact mode prefers the mini bar; expanding remains available via Open Now Playing.
+    var previousCompactPlayer by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(compactPlayer, desktop) {
+        if (!desktop) {
+            previousCompactPlayer = compactPlayer
+            return@LaunchedEffect
+        }
+        val was = previousCompactPlayer
+        previousCompactPlayer = compactPlayer
+        when {
+            // First observation while already compact, or newly enabled.
+            compactPlayer && (was == null || was == false) -> nowPlayingPaneExpanded = false
+        }
+    }
+
+    // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
+    val showWideQueueColumn = desktop && showQueue && wide
+    val queueReplacesSidePane = desktop && showQueue && !wide
+    val showSideNowPlaying = desktop && nowPlayingPaneExpanded && !queueReplacesSidePane
+    val showDesktopMiniBar = desktop &&
+        now.track != null &&
+        !showSideNowPlaying &&
+        !queueReplacesSidePane
+
     fun dismissOverlayStack(): Boolean = when {
         showQueue -> {
             showQueue = false
             true
         }
-        showNowPlaying -> {
+        !desktop && showNowPlaying -> {
+            showNowPlaying = false
+            true
+        }
+        desktop && nowPlayingPaneExpanded && (compactPlayer || showNowPlaying) -> {
+            nowPlayingPaneExpanded = false
             showNowPlaying = false
             true
         }
@@ -95,8 +169,10 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
     }
 
     fun navigateToTab(next: AppDestination) {
-        showNowPlaying = false
-        showQueue = false
+        if (!desktop) {
+            showNowPlaying = false
+            showQueue = false
+        }
         if (next == destination) return
         if (next == AppDestination.Home) {
             // Home is the root: clear history so the next back can leave the app.
@@ -118,12 +194,23 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         return false
     }
 
+    fun openNowPlaying() {
+        if (desktop) {
+            nowPlayingPaneExpanded = true
+            showNowPlaying = false
+            if (!wide) showQueue = false
+        } else {
+            showQueue = false
+            showNowPlaying = true
+        }
+    }
+
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
         container.playTracks(tracks, startIndex = index)
-        showNowPlaying = true
+        openNowPlaying()
     }
 
     fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0, query: String) {
@@ -131,11 +218,16 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
         container.playSearchResults(tracks, startIndex = index, query = query)
-        showNowPlaying = true
+        openNowPlaying()
     }
 
     // Queue → Now Playing → previous tab → … → Home. At root Home, let the system leave the app.
-    PlatformBackHandler(enabled = showQueue || showNowPlaying || tabBackStackNames.isNotEmpty()) {
+    PlatformBackHandler(
+        enabled = showQueue ||
+            showNowPlaying ||
+            (desktop && nowPlayingPaneExpanded && compactPlayer) ||
+            tabBackStackNames.isNotEmpty(),
+    ) {
         handleSystemBack()
     }
 
@@ -145,6 +237,11 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                 UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
                 UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
                 UiRequest.DISMISS_OVERLAY -> handleSystemBack()
+                UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
+                UiRequest.FOCUS_LIBRARY_SEARCH -> {
+                    showQueue = false
+                    navigateToTab(AppDestination.Library)
+                }
             }
         }
     }
@@ -155,16 +252,12 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
                     now.track?.let { track ->
-                        MiniPlayerBar(
-                            title = track.title,
-                            artist = track.artistLine,
-                            artwork = track.artwork,
-                            isPlaying = now.isPlaying,
-                            providerLabel = now.resolved?.source?.provider?.displayName,
+                        DesktopMiniPlayer(
+                            container = container,
+                            track = track,
+                            now = now,
                             canSkipNext = canSkipNext,
-                            onOpen = { showNowPlaying = true },
-                            onToggle = { container.player.togglePlayPause() },
-                            onNext = { container.player.skipToNext() },
+                            onOpen = { openNowPlaying() },
                         )
                     }
                     NavigationBar(
@@ -206,11 +299,22 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                 ) {
                     AppDestination.entries.forEach { item ->
                         NavigationRailItem(
-                            selected = destination == item && !showQueue,
+                            selected = destination == item,
                             onClick = { navigateToTab(item) },
                             icon = { Icon(item.icon(), contentDescription = item.label) },
                             label = { Text(item.label) },
                         )
+                    }
+                    if (!nowPlayingPaneExpanded) {
+                        IconButton(
+                            onClick = { openNowPlaying() },
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Show now playing",
+                            )
+                        }
                     }
                 }
                 Box(
@@ -220,38 +324,76 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         .background(MaterialTheme.colorScheme.outlineVariant),
                 )
             }
-            Box(Modifier.weight(1f).fillMaxSize()) {
-                when {
-                    showQueue && !desktop -> QueueScreen(container) { showQueue = false }
-                    showNowPlaying && !desktop -> NowPlayingScreen(
-                        container,
-                        onOpenQueue = { showQueue = true },
-                        onClose = { showNowPlaying = false },
-                    )
-                    else -> tabStateHolder.SaveableStateProvider(destination.name) {
-                        when (destination) {
-                            AppDestination.Home -> HomeScreen(
+
+            // Main content column: tabs stay composed across resize so Library scroll survives.
+            Column(Modifier.weight(1f).fillMaxSize()) {
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    Box(Modifier.weight(1f).fillMaxSize()) {
+                        when {
+                            showQueue && !desktop -> QueueScreen(container) { showQueue = false }
+                            showNowPlaying && !desktop -> NowPlayingScreen(
                                 container,
-                                onPlayTracks = ::playTracks,
-                                onOpenNowPlaying = { showNowPlaying = true },
-                                onOpenSettings = { navigateToTab(AppDestination.Settings) },
-                                onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                onOpenQueue = { showQueue = true },
+                                onClose = { showNowPlaying = false },
                             )
-                            AppDestination.Search -> SearchScreen(
-                                container,
-                                onPlayTrackInList = { tracks, index, query ->
-                                    playSearchTracks(tracks, index, query)
-                                },
-                                state = searchUi,
-                                requestFocus = true,
-                            )
-                            AppDestination.Library -> LibraryScreen(container, ::playTracks)
-                            AppDestination.Settings -> SettingsScreen(container)
+                            else -> tabStateHolder.SaveableStateProvider(destination.name) {
+                                when (destination) {
+                                    AppDestination.Home -> HomeScreen(
+                                        container,
+                                        onPlayTracks = ::playTracks,
+                                        onOpenNowPlaying = { openNowPlaying() },
+                                        onOpenSettings = { navigateToTab(AppDestination.Settings) },
+                                        onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                    )
+                                    AppDestination.Search -> SearchScreen(
+                                        container,
+                                        onPlayTrackInList = { tracks, index, query ->
+                                            playSearchTracks(tracks, index, query)
+                                        },
+                                        state = searchUi,
+                                        requestFocus = true,
+                                    )
+                                    AppDestination.Library -> LibraryScreen(container, ::playTracks)
+                                    AppDestination.Settings -> SettingsScreen(container)
+                                }
+                            }
+                        }
+                    }
+
+                    if (showWideQueueColumn) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .width(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant),
+                        )
+                        Surface(
+                            Modifier
+                                .width(DesktopQueueBesideWidth)
+                                .fillMaxHeight(),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            tonalElevation = 0.dp,
+                            shadowElevation = 0.dp,
+                        ) {
+                            QueueScreen(container) { showQueue = false }
                         }
                     }
                 }
+
+                if (showDesktopMiniBar) {
+                    now.track?.let { track ->
+                        DesktopMiniPlayer(
+                            container = container,
+                            track = track,
+                            now = now,
+                            canSkipNext = canSkipNext,
+                            onOpen = { openNowPlaying() },
+                        )
+                    }
+                }
             }
-            if (desktop) {
+
+            if (queueReplacesSidePane) {
                 Box(
                     Modifier
                         .fillMaxHeight()
@@ -259,20 +401,108 @@ private fun AppScaffold(container: AppContainer, desktop: Boolean) {
                         .background(MaterialTheme.colorScheme.outlineVariant),
                 )
                 Surface(
-                    Modifier.widthIn(min = 360.dp, max = 420.dp).fillMaxSize(),
+                    Modifier
+                        .width(
+                            nowPlayingPaneWidthDp.dp.coerceIn(
+                                DesktopNowPlayingPaneMinWidth,
+                                DesktopNowPlayingPaneMaxWidth,
+                            ),
+                        )
+                        .fillMaxSize(),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
-                    if (showQueue) {
-                        QueueScreen(container) { showQueue = false }
-                    } else {
-                        NowPlayingScreen(container, onOpenQueue = { showQueue = true }, compact = true)
+                    QueueScreen(container) { showQueue = false }
+                }
+            } else if (showSideNowPlaying) {
+                DesktopResizeHandle(
+                    onDragWidthDelta = { delta ->
+                        nowPlayingPaneWidthDp = (nowPlayingPaneWidthDp + delta.value)
+                            .coerceIn(
+                                DesktopNowPlayingPaneMinWidth.value,
+                                DesktopNowPlayingPaneMaxWidth.value,
+                            )
+                    },
+                )
+                Surface(
+                    Modifier
+                        .width(
+                            nowPlayingPaneWidthDp.dp.coerceIn(
+                                DesktopNowPlayingPaneMinWidth,
+                                DesktopNowPlayingPaneMaxWidth,
+                            ),
+                        )
+                        .fillMaxSize(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, end = 4.dp, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(onClick = {
+                                nowPlayingPaneExpanded = false
+                                showNowPlaying = false
+                            }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Hide now playing",
+                                )
+                            }
+                            Text(
+                                "Now playing",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            NowPlayingScreen(
+                                container,
+                                onOpenQueue = { showQueue = true },
+                                compact = true,
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun DesktopMiniPlayer(
+    container: AppContainer,
+    track: Track,
+    now: NowPlayingState,
+    canSkipNext: Boolean,
+    onOpen: () -> Unit,
+) {
+    val durationMs = now.durationMs?.takeIf { it > 0 }
+        ?: track.durationMs?.takeIf { it > 0 }
+    val miniProgress = if (durationMs != null) {
+        (now.positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    MiniPlayerBar(
+        title = track.title,
+        artist = track.artistLine,
+        artwork = track.artwork,
+        isPlaying = now.isPlaying,
+        providerLabel = now.resolved?.source?.provider?.displayName,
+        canSkipNext = canSkipNext,
+        progress = miniProgress,
+        buffering = now.buffering,
+        onOpen = onOpen,
+        onToggle = { container.player.togglePlayPause() },
+        onNext = { container.player.skipToNext() },
+    )
 }
 
 private fun AppDestination.icon() = when (this) {

@@ -14,6 +14,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -182,6 +184,91 @@ class PlayerSessionFallbackTest {
         runCurrent()
 
         assertEquals("Alive", session.nowPlaying.value.track?.title)
+    }
+
+    @Test
+    fun repeatAllWithEveryTrackDeadStopsInsteadOfCycling() = runTest {
+        var resolutions = 0
+        val resolver = object : SourceResolver {
+            val delegate = DefaultSourceResolver()
+            override suspend fun resolve(track: Track, preferences: PlaybackPreferences): ResolvedPlayback {
+                resolutions++
+                return delegate.resolve(track, preferences)
+            }
+        }
+        val session = PlayerSession(RecordingEngine {}, resolver, backgroundScope)
+        session.cycleRepeat() // OFF -> ALL
+        session.play(
+            listOf(
+                track("Dead one", "Artist", provider = ProviderId.SAMPLE).copy(sources = emptyList()),
+                track("Dead two", "Artist", provider = ProviderId.SAMPLE).copy(sources = emptyList()),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+
+        assertEquals(2, resolutions, "each dead entry is tried once per unsuccessful pass")
+        assertFalse(session.nowPlaying.value.buffering)
+        assertFalse(session.nowPlaying.value.isPlaying)
+        assertNotNull(session.nowPlaying.value.error)
+    }
+
+    @Test
+    fun repeatOneDeadTrackSkipsToHealthySuccessor() = runTest {
+        val session = PlayerSession(RecordingEngine {}, DefaultSourceResolver(), backgroundScope)
+        session.cycleRepeat() // OFF -> ALL
+        session.cycleRepeat() // ALL -> ONE
+        session.play(
+            listOf(
+                track("Dead", "Artist", provider = ProviderId.SAMPLE).copy(sources = emptyList()),
+                track("Alive", "Artist", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+
+        assertEquals("Alive", session.nowPlaying.value.track?.title)
+        assertTrue(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun removingFinalCurrentItemStopsOnPredecessor() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(
+            listOf(
+                track("First", "Artist", provider = ProviderId.SAMPLE),
+                track("Last", "Artist", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 1,
+        )
+        runCurrent()
+        assertEquals("Last", session.nowPlaying.value.track?.title)
+
+        session.removeFromQueue(session.queue.queue.value.current!!.id)
+        runCurrent()
+
+        assertEquals("First", session.nowPlaying.value.track?.title)
+        assertFalse(session.nowPlaying.value.isPlaying)
+        assertEquals(EngineStatus.IDLE, engine.state.value.status)
+    }
+
+    @Test
+    fun syncFavoriteOnlyTouchesTheCurrentTrack() = runTest {
+        val session = PlayerSession(RecordingEngine {}, DefaultSourceResolver(), backgroundScope)
+        val current = track("Current", "Artist", provider = ProviderId.SAMPLE)
+        val other = track("Other", "Artist", provider = ProviderId.SAMPLE)
+        session.play(listOf(current, other), startIndex = 0)
+        runCurrent()
+
+        session.syncFavorite(other.canonicalId, favorite = true)
+        assertFalse(session.nowPlaying.value.favorite)
+
+        session.syncFavorite(current.canonicalId, favorite = true)
+        assertTrue(session.nowPlaying.value.favorite)
+
+        session.syncFavorite(current.canonicalId, favorite = false)
+        assertFalse(session.nowPlaying.value.favorite)
     }
 }
 

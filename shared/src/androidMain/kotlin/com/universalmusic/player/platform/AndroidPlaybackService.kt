@@ -1,8 +1,10 @@
 package com.universalmusic.player.platform
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import androidx.media3.common.AudioAttributes
@@ -15,14 +17,23 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.universalmusic.player.domain.model.RepeatMode
 import java.io.File
 import java.io.IOException
 
 class AndroidPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var forwardingPlayer: KainosForwardingPlayer? = null
+    private val favoriteCommand = SessionCommand(COMMAND_TOGGLE_FAVORITE, Bundle.EMPTY)
+    private val repeatCommand = SessionCommand(COMMAND_CYCLE_REPEAT, Bundle.EMPTY)
+    private var mediaButtonState = MediaButtonState()
 
     override fun onCreate() {
         super.onCreate()
@@ -41,9 +52,19 @@ class AndroidPlaybackService : MediaSessionService() {
         val player = KainosForwardingPlayer(exo)
         forwardingPlayer = player
         AndroidMediaControls.attachPlayer(player)
-        mediaSession = MediaSession.Builder(this, player)
+        val session = MediaSession.Builder(this, player)
             .setCallback(sessionTrace)
+            .setSessionActivity(createSessionActivity())
+            .setMediaButtonPreferences(mediaButtonPreferences(mediaButtonState))
             .build()
+        mediaSession = session
+        AndroidMediaControls.attachButtonStateListener { favorite, repeat, hasTrack ->
+            val next = MediaButtonState(favorite, repeat, hasTrack)
+            if (next != mediaButtonState) {
+                mediaButtonState = next
+                session.setMediaButtonPreferences(mediaButtonPreferences(next))
+            }
+        }
     }
 
     private fun trace(message: String) = PlaybackTrace.log("Exo", message)
@@ -144,7 +165,45 @@ class AndroidPlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
             PlaybackTrace.log("Session3", "controller connected ${controller.describe()}")
-            return super.onConnect(session, controller)
+            val base = super.onConnect(session, controller)
+            if (!base.isAccepted) return base
+            val sessionCommands = base.availableSessionCommands.buildUpon()
+                .add(favoriteCommand)
+                .add(repeatCommand)
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(sessionCommands)
+                .setAvailablePlayerCommands(base.availablePlayerCommands)
+                .setMediaButtonPreferences(mediaButtonPreferences(mediaButtonState))
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            val result = when (customCommand.customAction) {
+                COMMAND_TOGGLE_FAVORITE -> {
+                    PlaybackTrace.log("Session3", "favorite requested by ${controller.describe()}")
+                    if (AndroidMediaControls.toggleCurrentFavorite()) {
+                        SessionResult.RESULT_SUCCESS
+                    } else {
+                        SessionResult.RESULT_ERROR_INVALID_STATE
+                    }
+                }
+                COMMAND_CYCLE_REPEAT -> {
+                    PlaybackTrace.log("Session3", "repeat requested by ${controller.describe()}")
+                    if (AndroidMediaControls.cycleRepeat()) {
+                        SessionResult.RESULT_SUCCESS
+                    } else {
+                        SessionResult.RESULT_ERROR_INVALID_STATE
+                    }
+                }
+                else -> return super.onCustomCommand(session, controller, customCommand, args)
+            }
+            return Futures.immediateFuture(SessionResult(result))
         }
 
         override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
@@ -187,6 +246,7 @@ class AndroidPlaybackService : MediaSessionService() {
             "onDestroy session=${mediaSession != null} player=${forwardingPlayer != null}",
         )
         AndroidMediaControls.attachPlayer(null)
+        AndroidMediaControls.attachButtonStateListener(null)
         mediaSession?.run {
             player.release()
             release()
@@ -198,11 +258,44 @@ class AndroidPlaybackService : MediaSessionService() {
 
     companion object {
         private const val TAG = "KainosPlayback"
+        const val EXTRA_OPEN_NOW_PLAYING = "com.universalmusic.player.extra.OPEN_NOW_PLAYING"
+        private const val COMMAND_TOGGLE_FAVORITE = "com.universalmusic.player.command.TOGGLE_FAVORITE"
+        private const val COMMAND_CYCLE_REPEAT = "com.universalmusic.player.command.CYCLE_REPEAT"
+        private const val SESSION_ACTIVITY_REQUEST_CODE = 1201
 
         @Volatile
         private var silenceUri: Uri? = null
 
         fun silenceUri(): Uri = silenceUri ?: Uri.EMPTY
+
+        private data class MediaButtonState(
+            val favorite: Boolean = false,
+            val repeat: RepeatMode = RepeatMode.OFF,
+            val hasTrack: Boolean = false,
+        )
+
+        private fun mediaButtonPreferences(state: MediaButtonState): List<CommandButton> = listOf(
+            CommandButton.Builder(
+                if (state.favorite) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED,
+            )
+                .setDisplayName(if (state.favorite) "Remove from favorites" else "Add to favorites")
+                .setSessionCommand(SessionCommand(COMMAND_TOGGLE_FAVORITE, Bundle.EMPTY))
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .setEnabled(state.hasTrack)
+                .build(),
+            CommandButton.Builder(
+                when (state.repeat) {
+                    RepeatMode.OFF -> CommandButton.ICON_REPEAT_OFF
+                    RepeatMode.ALL -> CommandButton.ICON_REPEAT_ALL
+                    RepeatMode.ONE -> CommandButton.ICON_REPEAT_ONE
+                },
+            )
+                .setDisplayName("Repeat ${state.repeat.name.lowercase()}")
+                .setSessionCommand(SessionCommand(COMMAND_CYCLE_REPEAT, Bundle.EMPTY))
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .setEnabled(state.hasTrack)
+                .build(),
+        )
 
         private fun ensureSilenceFile(context: Context): Uri {
             val file = File(context.cacheDir, "kainos-session-silence.wav")
@@ -250,5 +343,19 @@ class AndroidPlaybackService : MediaSessionService() {
             buffer[offset] = (value and 0xff).toByte()
             buffer[offset + 1] = ((value shr 8) and 0xff).toByte()
         }
+    }
+
+    private fun createSessionActivity(): PendingIntent {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?: Intent().setClassName(packageName, "$packageName.MainActivity")
+        launchIntent
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_OPEN_NOW_PLAYING, true)
+        return PendingIntent.getActivity(
+            this,
+            SESSION_ACTIVITY_REQUEST_CODE,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 }

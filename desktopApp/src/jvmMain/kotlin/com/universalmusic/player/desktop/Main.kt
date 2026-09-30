@@ -3,7 +3,11 @@ package com.universalmusic.player.desktop
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.loadImageBitmap
@@ -19,6 +23,7 @@ import com.universalmusic.player.ui.UniversalMusicApp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 fun main(args: Array<String>) {
     if (args.any { it == "--hub-only" }) {
@@ -32,6 +37,8 @@ fun main(args: Array<String>) {
         Window(
             onCloseRequest = {
                 unbindPlatformMediaControls()
+                // Bounded so a wedged disk never blocks quitting.
+                runBlocking { withTimeoutOrNull(2_000) { container.flushListeningSession() } }
                 exitApplication()
             },
             title = "Kainos Player",
@@ -62,7 +69,12 @@ fun main(args: Array<String>) {
                         container.player.skipToPrevious()
                         true
                     }
-                    else -> false
+                    else -> {
+                        // Type-to-search: a printable key with nothing focused starts a Library search.
+                        val typed = event.typedText() ?: return@Window false
+                        container.typeAheadLibrarySearch(typed)
+                        true
+                    }
                 }
             },
             onKeyEvent = { event ->
@@ -78,6 +90,18 @@ fun main(args: Array<String>) {
         }
     }
 }
+
+/** The character a plain keystroke types, or null for modifiers, shortcuts, controls and Space. */
+private fun KeyEvent.typedText(): String? {
+    if (isCtrlPressed || isAltPressed || isMetaPressed) return null
+    val codePoint = utf16CodePoint
+    if (codePoint <= 0 || codePoint == CHAR_UNDEFINED) return null
+    if (Character.isISOControl(codePoint) || Character.isWhitespace(codePoint)) return null
+    if (!Character.isDefined(codePoint)) return null
+    return String(Character.toChars(codePoint))
+}
+
+private const val CHAR_UNDEFINED = 0xFFFF
 
 /** Headless hub for login autostart (Phase 3). */
 private fun runHubOnly() = runBlocking {

@@ -35,11 +35,25 @@ object AndroidMediaControls {
     private var syncJob: Job? = null
 
     @Volatile
+    private var toggleFavoriteAction: ((Track) -> Boolean)? = null
+
+    @Volatile
+    private var buttonStateListener: ((Boolean, RepeatMode, Boolean) -> Unit)? = null
+
+    private var artworkLoader: AndroidMediaArtworkLoader? = null
+
+    @Volatile
     var forwardingPlayer: KainosForwardingPlayer? = null
         private set
 
-    fun bind(session: PlayerSession, scope: CoroutineScope) {
+    fun bind(
+        session: PlayerSession,
+        scope: CoroutineScope,
+        toggleFavorite: (Track) -> Boolean,
+    ) {
         this.session = session
+        toggleFavoriteAction = toggleFavorite
+        artworkLoader = androidContextOrNull()?.let(::AndroidMediaArtworkLoader)
         syncJob?.cancel()
         syncJob = scope.launch {
             // Metadata / transport: skip HyperOS island rebuilds on position ticks.
@@ -59,6 +73,34 @@ object AndroidMediaControls {
                         }
                     }
             }
+            // Artwork bytes: load off-main and verify both track and artwork identity before apply.
+            launch {
+                session.nowPlaying
+                    .map { now ->
+                        now.track?.let { track ->
+                            ArtworkRequest(track.canonicalId, track.artwork?.url)
+                        }
+                    }
+                    .distinctUntilChanged()
+                    .collectLatest { request ->
+                        if (request == null) return@collectLatest
+                        val artworkData = request.artworkUrl?.let { artworkLoader?.load(it) }
+                        val current = session.nowPlaying.value.track
+                        if (current?.canonicalId != request.mediaId || current.artwork?.url != request.artworkUrl) {
+                            return@collectLatest
+                        }
+                        onMain {
+                            val latest = session.nowPlaying.value.track
+                            if (latest?.canonicalId == request.mediaId && latest.artwork?.url == request.artworkUrl) {
+                                forwardingPlayer?.updateArtwork(
+                                    mediaId = request.mediaId,
+                                    artworkUri = request.artworkUrl?.let(Uri::parse),
+                                    artworkData = artworkData,
+                                )
+                            }
+                        }
+                    }
+            }
         }
     }
 
@@ -66,6 +108,8 @@ object AndroidMediaControls {
         syncJob?.cancel()
         syncJob = null
         session = null
+        toggleFavoriteAction = null
+        buttonStateListener = null
     }
 
     fun attachPlayer(player: KainosForwardingPlayer?) {
@@ -73,6 +117,17 @@ object AndroidMediaControls {
             forwardingPlayer = player
             if (player != null) {
                 session?.let { publishOnMain(it.nowPlaying.value, it.queue.queue.value) }
+            }
+        }
+    }
+
+    fun attachButtonStateListener(listener: ((Boolean, RepeatMode, Boolean) -> Unit)?) {
+        onMain {
+            buttonStateListener = listener
+            if (listener != null) {
+                val now = session?.nowPlaying?.value
+                val queue = session?.queue?.queue?.value
+                listener(now?.favorite == true, queue?.repeat ?: RepeatMode.OFF, now?.track != null)
             }
         }
     }
@@ -104,7 +159,20 @@ object AndroidMediaControls {
 
     fun toggleShuffle() = session?.toggleShuffle()
 
-    fun cycleRepeat() = session?.cycleRepeat()
+    fun cycleRepeat(): Boolean {
+        val current = session ?: return false
+        if (current.nowPlaying.value.track == null) return false
+        current.cycleRepeat()
+        return true
+    }
+
+    fun toggleCurrentFavorite(): Boolean {
+        val current = session ?: return false
+        val track = current.nowPlaying.value.track ?: return false
+        val favorite = toggleFavoriteAction?.invoke(track) ?: return false
+        current.setFavorite(favorite)
+        return true
+    }
 
     fun isShuffleEnabled(): Boolean = session?.queue?.queue?.value?.shuffle == true
 
@@ -136,6 +204,7 @@ object AndroidMediaControls {
             canSkipPrevious = canSkipPrevious(),
             spotifyActive = playingSpotify,
         )
+        buttonStateListener?.invoke(now.favorite, queue.repeat, track != null)
     }
 
     private fun sessionIdentity(now: NowPlayingState, queue: PlaybackQueue): SessionIdentity {
@@ -146,6 +215,8 @@ object AndroidMediaControls {
             artist = track?.artistLine,
             album = track?.album?.title,
             artwork = track?.artwork?.url,
+            favorite = now.favorite,
+            repeat = queue.repeat,
             isPlaying = now.isPlaying,
             buffering = now.buffering,
             durationMs = now.durationMs,
@@ -166,12 +237,19 @@ object AndroidMediaControls {
 
     private data class PositionTick(val positionMs: Long, val durationMs: Long?)
 
+    private data class ArtworkRequest(
+        val mediaId: String,
+        val artworkUrl: String?,
+    )
+
     private data class SessionIdentity(
         val mediaId: String,
         val title: String?,
         val artist: String?,
         val album: String?,
         val artwork: String?,
+        val favorite: Boolean,
+        val repeat: RepeatMode,
         val isPlaying: Boolean,
         val buffering: Boolean,
         val durationMs: Long?,

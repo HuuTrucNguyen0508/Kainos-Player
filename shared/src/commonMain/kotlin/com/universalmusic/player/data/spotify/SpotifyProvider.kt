@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -56,6 +57,7 @@ private const val AUTH_URL = "https://accounts.spotify.com/authorize"
 private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
 private const val API = "https://api.spotify.com/v1"
 private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
+private const val OBSERVE_RATE_LIMIT_DEFAULT_MS = 30_000L
 private val SCOPES = listOf(
     "user-read-email",
     "user-read-private",
@@ -84,8 +86,23 @@ class SpotifyProvider(
     private val _state = MutableStateFlow(ProviderState.AUTH_REQUIRED)
     override val state: StateFlow<ProviderState> = _state.asStateFlow()
 
+    /**
+     * Credential transaction boundary: token read/refresh/persist, login persistence and
+     * logout all run under this lock. Lock order is [authMutex] → [mutex], never the reverse.
+     */
     private val mutex = Mutex()
     private val authMutex = Mutex()
+
+    /**
+     * Bumped (before taking [mutex]) by logout and credential config changes. A refresh or
+     * login that finishes under an older generation must not persist or publish its tokens.
+     */
+    @Volatile
+    private var authGeneration: Long = 0
+
+    /** Retry-After deadline from a Connect observer 429; observer calls return null until then. */
+    @Volatile
+    private var observeCooldownUntilMs: Long = 0
     private var config: AppConfig = initialConfig
     private var pendingLogin: PendingLogin? = null
     private var premium: Boolean = false
@@ -164,14 +181,20 @@ class SpotifyProvider(
             _state.value = ProviderState.NOT_CONFIGURED
             return
         }
-        val stored = tokens.read(ProviderId.SPOTIFY)
-        if (stored == null) {
-            _state.value = ProviderState.AUTH_REQUIRED
-            return
-        }
+        val generation = authGeneration
         try {
-            refreshIfNeeded(stored)
-            when (loadProfileStatus()) {
+            val stored = mutex.withLock {
+                if (generation != authGeneration) return
+                tokens.read(ProviderId.SPOTIFY)?.let { refreshIfNeeded(it, generation) }
+            }
+            if (stored == null) {
+                if (generation == authGeneration) _state.value = ProviderState.AUTH_REQUIRED
+                return
+            }
+            val status = loadProfileStatus(generation)
+            // A logout or config change landed while the profile loaded; its state wins.
+            if (generation != authGeneration) return
+            when (status) {
                 ProfileStatus.Ok -> _state.value = ProviderState.AVAILABLE
                 ProfileStatus.QuotaExceeded -> {
                     // Tokens are valid; development-mode account quota is exhausted.
@@ -186,6 +209,7 @@ class SpotifyProvider(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
+            if (generation != authGeneration) return
             premium = false
             _state.value = ProviderState.UNAVAILABLE
         }
@@ -215,6 +239,7 @@ class SpotifyProvider(
 
     override suspend fun completeLogin(redirectUri: String) {
         authMutex.withLock {
+            val generation = authGeneration
             val pending = pendingLogin ?: error("No Spotify login is in progress")
             require(matchesRedirect(redirectUri, pending.redirectUri)) {
                 "Spotify returned an unexpected redirect URI"
@@ -238,9 +263,11 @@ class SpotifyProvider(
                 },
             )
             val response = tokenResponse.successBody<SpotifyTokenResponse>("Spotify token exchange")
-            persist(response)
+            mutex.withLock { persist(response, generation = generation) }
             pendingLogin = null
-            when (loadProfileStatus()) {
+            val status = loadProfileStatus(generation)
+            check(generation == authGeneration) { "Spotify session changed during login" }
+            when (status) {
                 ProfileStatus.Ok -> _state.value = ProviderState.AVAILABLE
                 ProfileStatus.QuotaExceeded -> {
                     premium = true
@@ -256,7 +283,12 @@ class SpotifyProvider(
     }
 
     override suspend fun logout() {
-        tokens.clear(ProviderId.SPOTIFY)
+        // Bump first so an in-flight refresh/login holding [mutex] drops its tokens.
+        authGeneration++
+        mutex.withLock {
+            authGeneration++
+            tokens.clear(ProviderId.SPOTIFY)
+        }
         authMutex.withLock { pendingLogin = null }
         premium = false
         userId = null
@@ -734,18 +766,29 @@ class SpotifyProvider(
      * One Connect state read for desktop reconciliation. Failures return null so a
      * rate limit or empty player does not fail the local transport.
      */
-    suspend fun observeConnectPlayback(): SpotifyObservedPlayback? =
-        runCatching {
+    suspend fun observeConnectPlayback(): SpotifyObservedPlayback? {
+        // Honour a previous 429's Retry-After instead of re-hitting the API every poll.
+        if (clock() < observeCooldownUntilMs) return null
+        return try {
             val token = accessToken()
             val response = http.get("$API/me/player") { bearerAuth(token) }
-            if (!response.status.isSuccess() || response.status == HttpStatusCode.NoContent) return@runCatching null
+            if (response.status == HttpStatusCode.TooManyRequests) {
+                observeCooldownUntilMs = clock() + response.retryAfterMs(OBSERVE_RATE_LIMIT_DEFAULT_MS)
+                return null
+            }
+            if (!response.status.isSuccess() || response.status == HttpStatusCode.NoContent) return null
             val playback = response.body<SpotifyCurrentPlaybackResponse>()
             SpotifyObservedPlayback(
                 isPlaying = playback.isPlaying,
                 progressMs = playback.progressMs,
                 trackId = playback.item?.id,
             )
-        }.getOrNull()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     suspend fun pauseConnectPlayback() {
         val response = http.put("$API/me/player/pause") {
@@ -777,14 +820,20 @@ class SpotifyProvider(
     suspend fun updateConfig(next: AppConfig, clearSessionOnChange: Boolean = true) {
         val credentialsChanged = config.spotifyClientId != next.spotifyClientId ||
             config.spotifyRedirectUri != next.spotifyRedirectUri
+        if (credentialsChanged) {
+            // Tokens and rate limits belong to the old Client ID.
+            authGeneration++
+            observeCooldownUntilMs = 0
+        }
         if (credentialsChanged && clearSessionOnChange) logout()
         config = next
         restore()
     }
 
     private suspend fun accessToken(): String = mutex.withLock {
+        val generation = authGeneration
         val stored = tokens.read(ProviderId.SPOTIFY) ?: error("Spotify is not connected")
-        refreshIfNeeded(stored).accessToken
+        refreshIfNeeded(stored, generation).accessToken
     }
 
     /** Used by the desktop Web Playback host token endpoint. */
@@ -795,7 +844,8 @@ class SpotifyProvider(
         return scopes.isNotEmpty() && "streaming" !in scopes
     }
 
-    private suspend fun refreshIfNeeded(stored: AuthTokens): AuthTokens {
+    /** Caller must hold [mutex]; [generation] is the [authGeneration] seen when the transaction began. */
+    private suspend fun refreshIfNeeded(stored: AuthTokens, generation: Long): AuthTokens {
         if (!stored.isExpired(clock()) || stored.refreshToken.isNullOrBlank()) {
             return stored
         }
@@ -811,16 +861,24 @@ class SpotifyProvider(
         if (tokenResponse.status == HttpStatusCode.BadRequest) {
             val body = runCatching { tokenResponse.bodyAsText() }.getOrNull().orEmpty()
             if (body.contains("invalid_grant")) {
-                tokens.clear(ProviderId.SPOTIFY)
-                _state.value = ProviderState.AUTH_REQUIRED
+                if (generation == authGeneration) {
+                    tokens.clear(ProviderId.SPOTIFY)
+                    _state.value = ProviderState.AUTH_REQUIRED
+                }
                 error("Spotify needs to be reconnected. Open Settings and connect Spotify again.")
             }
         }
         val response = tokenResponse.successBody<SpotifyTokenResponse>("Spotify token refresh")
-        return persist(response, stored.refreshToken)
+        return persist(response, stored.refreshToken, generation)
     }
 
-    private suspend fun persist(response: SpotifyTokenResponse, previousRefresh: String? = null): AuthTokens {
+    /** Caller must hold [mutex]. Refuses to write tokens for a session that was logged out meanwhile. */
+    private suspend fun persist(
+        response: SpotifyTokenResponse,
+        previousRefresh: String? = null,
+        generation: Long,
+    ): AuthTokens {
+        check(generation == authGeneration) { "Spotify session changed; discarding refreshed tokens" }
         val stored = AuthTokens(
             accessToken = response.accessToken,
             refreshToken = response.refreshToken ?: previousRefresh,
@@ -839,7 +897,7 @@ class SpotifyProvider(
         }
     }
 
-    private suspend fun loadProfileStatus(): ProfileStatus {
+    private suspend fun loadProfileStatus(generation: Long? = null): ProfileStatus {
         val token = tokens.read(ProviderId.SPOTIFY)?.accessToken ?: return ProfileStatus.Failed
         val response = http.get("$API/me") { bearerAuth(token) }
         if (response.status.value == 429) {
@@ -854,6 +912,8 @@ class SpotifyProvider(
             return ProfileStatus.Failed
         }
         val me = response.body<SpotifyUser>()
+        // Don't resurrect the profile of a session that was logged out meanwhile.
+        if (generation != null && generation != authGeneration) return ProfileStatus.Failed
         // Spotify's current profile response no longer guarantees the legacy product field.
         // Player endpoints enforce Premium eligibility, so a valid user session may attempt Connect playback.
         userId = me.id.takeIf { it.isNotBlank() }
@@ -917,6 +977,13 @@ private suspend fun HttpResponse.errorMessage(operation: String): Nothing {
         error("$operation was rate limited by Spotify.$retryHint")
     }
     error("$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
+}
+
+/** Retry-After in ms (delta-seconds form); [defaultMs] when absent or not numeric. */
+private fun HttpResponse.retryAfterMs(defaultMs: Long): Long {
+    val seconds = headers[HttpHeaders.RetryAfter]?.trim()?.toLongOrNull()?.takeIf { it > 0 }
+        ?: return defaultMs
+    return seconds * 1_000
 }
 
 private fun spotifyRetryAfterHint(value: String): String {

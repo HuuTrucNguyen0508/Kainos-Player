@@ -10,7 +10,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.engine.sslConnector
 import io.ktor.server.netty.Netty
 import io.ktor.server.request.header
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
 import io.ktor.server.response.respondBytes
@@ -19,14 +19,18 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readRemaining
+import java.security.MessageDigest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.io.readByteArray
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class DesktopHomeLanSyncHub(
     private val pairing: HomeLanSyncPairing,
     private val onHearts: suspend (HeartsSyncDocument) -> HeartsSyncDocument,
+    private val onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
     private val vault: HomeLanVaultStore?,
     private val tls: HomeLanHubTlsMaterial,
     /** Null = full vault index; non-null = hearts-only basename allowlist. */
@@ -97,6 +101,17 @@ class DesktopHomeLanSyncHub(
                         ContentType.Application.Json,
                     )
                 }
+                post(HOME_LAN_SYNC_PATH_PLAYLISTS) {
+                    if (!authorized(call)) return@post
+                    touchActivity()
+                    val body = call.receiveText()
+                    val remote = json.decodeFromString<com.universalmusic.player.data.playlist.PlaylistsSyncDocument>(body)
+                    val localAfter = onPlaylists(remote)
+                    call.respondText(
+                        json.encodeToString(localAfter),
+                        ContentType.Application.Json,
+                    )
+                }
                 post(HOME_LAN_SYNC_PATH_VAULT_INDEX) {
                     if (!authorized(call)) return@post
                     touchActivity()
@@ -130,12 +145,24 @@ class DesktopHomeLanSyncHub(
                         call.respondText("Missing path", status = HttpStatusCode.BadRequest)
                         return@get
                     }
-                    val size = store.localSize(rel) ?: 0L
-                    val range = call.request.header(HttpHeaders.Range)
-                    val (start, end) = parseRange(range, size)
-                    val bytes = store.readRange(rel, start, end)
+                    val size = store.localSize(rel)
+                    if (size == null) {
+                        call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    val range = parseHubBlobRange(call.request.header(HttpHeaders.Range), size)
+                    if (range == null) {
+                        call.response.header(HttpHeaders.ContentRange, "bytes */$size")
+                        call.respondText("Range not satisfiable", status = HttpStatusCode.RequestedRangeNotSatisfiable)
+                        return@get
+                    }
+                    val bytes = store.readRange(rel, range.first, range.last)
+                    if (bytes.size.toLong() != range.last - range.first + 1) {
+                        call.respondText("Short read", status = HttpStatusCode.InternalServerError)
+                        return@get
+                    }
                     call.response.header(HttpHeaders.AcceptRanges, "bytes")
-                    call.response.header(HttpHeaders.ContentRange, "bytes $start-$end/$size")
+                    call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
                     val payload = encryptIfNeeded(bytes)
                     call.respondBytes(payload, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
                 }
@@ -148,18 +175,40 @@ class DesktopHomeLanSyncHub(
                         return@put
                     }
                     val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
-                    val offset = call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L
-                    val total = call.request.queryParameters["total"]?.toLongOrNull() ?: -1L
-                    if (rel.isBlank() || total < 0L) {
-                        call.respondText("Missing path/total", status = HttpStatusCode.BadRequest)
+                    val offset = call.request.queryParameters["offset"]?.toLongOrNull()
+                    val total = call.request.queryParameters["total"]?.toLongOrNull()
+                    if (rel.isBlank() || offset == null || total == null ||
+                        total !in 0L..VAULT_MAX_FILE_BYTES || offset !in 0L..total
+                    ) {
+                        call.respondText("Missing or invalid path/offset/total", status = HttpStatusCode.BadRequest)
                         return@put
                     }
-                    val raw = call.receive<ByteArray>()
-                    val chunk = decryptIfNeeded(raw)
-                    vaultMutex.withLock {
-                        store.writeRange(rel, offset, chunk, total)
+                    val declared = call.request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+                    if (declared != null && declared > MAX_BLOB_BODY_BYTES) {
+                        call.respondText("Chunk too large", status = HttpStatusCode.PayloadTooLarge)
+                        return@put
                     }
-                    call.respondText("ok")
+                    // Read at most one byte past the cap so an undeclared oversized body is rejected
+                    // without buffering it all.
+                    val raw = call.receiveChannel().readRemaining(MAX_BLOB_BODY_BYTES + 1).readByteArray()
+                    if (raw.size > MAX_BLOB_BODY_BYTES) {
+                        call.respondText("Chunk too large", status = HttpStatusCode.PayloadTooLarge)
+                        return@put
+                    }
+                    val chunk = runCatching { decryptIfNeeded(raw) }.getOrElse {
+                        call.respondText("Cannot decrypt chunk", status = HttpStatusCode.BadRequest)
+                        return@put
+                    }
+                    // Same staged path as client downloads: bytes only replace the file on the last chunk.
+                    val written = vaultMutex.withLock {
+                        runCatching { store.writeRange(rel, offset, chunk, total) }
+                    }
+                    written.onFailure { err ->
+                        val status = if (err is IllegalArgumentException) HttpStatusCode.Conflict else HttpStatusCode.InternalServerError
+                        call.respondText(err.message ?: "Write failed", status = status)
+                        return@put
+                    }
+                    call.respondText(if (written.getOrDefault(false)) "published" else "ok")
                 }
             }
         }
@@ -176,21 +225,20 @@ class DesktopHomeLanSyncHub(
     }
 
     private suspend fun authorized(call: ApplicationCall): Boolean {
-        val header = call.request.header(HttpHeaders.Authorization).orEmpty()
-        val expected = "Bearer ${pairing.sharedSecretHex}"
-        if (header != expected) {
-            call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
-            return false
-        }
-        val requiredPin = pairing.pairingPin?.takeIf { it.isNotBlank() }
-        if (requiredPin != null) {
-            val pin = call.request.header(HOME_LAN_SYNC_HEADER_PIN).orEmpty()
-            if (pin != requiredPin) {
+        when (
+            homeLanHubAuthorize(
+                pairing,
+                authorizationHeader = call.request.header(HttpHeaders.Authorization),
+                pinHeader = call.request.header(HOME_LAN_SYNC_HEADER_PIN),
+            )
+        ) {
+            HubAuthResult.OK -> return true
+            HubAuthResult.BAD_TOKEN ->
+                call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
+            HubAuthResult.BAD_PIN ->
                 call.respondText("Invalid pairing PIN", status = HttpStatusCode.Forbidden)
-                return false
-            }
         }
-        return true
+        return false
     }
 
     private suspend fun decodeVaultIndex(call: ApplicationCall): VaultIndexDocument {
@@ -226,16 +274,45 @@ class DesktopHomeLanSyncHub(
         val key = cryptoKey ?: return bytes
         return SyncPayloadCrypto.decrypt(bytes, key)
     }
+}
 
-    private fun parseRange(header: String?, size: Long): Pair<Long, Long> {
-        if (size <= 0L) return 0L to -1L
-        if (header.isNullOrBlank() || !header.startsWith("bytes=")) {
-            return 0L to (size - 1)
-        }
-        val spec = header.removePrefix("bytes=")
-        val parts = spec.split('-', limit = 2)
-        val start = parts.getOrNull(0)?.toLongOrNull() ?: 0L
-        val end = parts.getOrNull(1)?.toLongOrNull() ?: (size - 1)
-        return start.coerceAtLeast(0L) to end.coerceAtMost(size - 1)
-    }
+/** Max PUT body: one plaintext chunk plus AES-GCM nonce/tag and slack. */
+private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong() + 1024L
+
+internal enum class HubAuthResult { OK, BAD_TOKEN, BAD_PIN }
+
+/** Bearer token + optional pairing PIN check using constant-time comparisons. */
+internal fun homeLanHubAuthorize(
+    pairing: HomeLanSyncPairing,
+    authorizationHeader: String?,
+    pinHeader: String?,
+): HubAuthResult {
+    val expected = "Bearer ${pairing.sharedSecretHex}"
+    if (!constantTimeEquals(authorizationHeader.orEmpty(), expected)) return HubAuthResult.BAD_TOKEN
+    val requiredPin = pairing.pairingPin?.takeIf { it.isNotBlank() } ?: return HubAuthResult.OK
+    if (!constantTimeEquals(pinHeader.orEmpty(), requiredPin)) return HubAuthResult.BAD_PIN
+    return HubAuthResult.OK
+}
+
+private fun constantTimeEquals(a: String, b: String): Boolean =
+    MessageDigest.isEqual(a.encodeToByteArray(), b.encodeToByteArray())
+
+/**
+ * Parses a single `bytes=start-end` (or open-ended `bytes=start-`) request range and bounds it
+ * to one [VAULT_BLOB_CHUNK_BYTES] chunk. No header means the first chunk. Returns null when the
+ * range is malformed or unsatisfiable (caller answers 416).
+ */
+internal fun parseHubBlobRange(header: String?, size: Long): LongRange? {
+    if (size <= 0L) return null
+    val maxEnd = { start: Long -> minOf(size - 1, start + VAULT_BLOB_CHUNK_BYTES - 1) }
+    if (header.isNullOrBlank()) return 0L..maxEnd(0L)
+    val spec = header.trim()
+    if (!spec.startsWith("bytes=")) return null
+    val parts = spec.removePrefix("bytes=").split('-')
+    if (parts.size != 2) return null
+    val start = parts[0].trim().toLongOrNull() ?: return null
+    val endRaw = parts[1].trim()
+    val end = if (endRaw.isEmpty()) size - 1 else endRaw.toLongOrNull() ?: return null
+    if (start < 0L || start >= size || end < start) return null
+    return start..minOf(end, maxEnd(start))
 }

@@ -13,22 +13,39 @@ class AndroidHeartedAudioCacheDisk(
     private val indexFile = File(root, "index.json")
     private val audioDir = File(root, "audio")
 
+    private val startupFiles = audioDir.listFiles()?.filter { it.isFile }?.toList().orEmpty()
+    private var reconciled = false
+    private var indexReadable = true
+
     override suspend fun loadIndex(): HeartedAudioCacheIndex {
         if (!indexFile.exists()) return HeartedAudioCacheIndex()
         return runCatching {
             json.decodeFromString<HeartedAudioCacheIndex>(indexFile.readText())
-        }.getOrDefault(HeartedAudioCacheIndex())
+        }.getOrElse { indexReadable = false; HeartedAudioCacheIndex() }
     }
 
     override suspend fun saveIndex(index: HeartedAudioCacheIndex) {
         root.mkdirs()
         audioDir.mkdirs()
-        val tmp = File(root, "index.json.tmp")
-        tmp.writeText(json.encodeToString(index))
-        if (!tmp.renameTo(indexFile)) {
-            tmp.copyTo(indexFile, overwrite = true)
+        val tmp = File.createTempFile("index-", ".tmp", root)
+        try {
+            tmp.writeText(json.encodeToString(index))
+            try {
+                java.nio.file.Files.move(tmp.toPath(), indexFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(tmp.toPath(), indexFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
             tmp.delete()
         }
+    }
+
+    override suspend fun reconcile(referencedUris: Set<String>) {
+        if (reconciled || !indexReadable) return
+        val referenced = referencedUris.map(::normalizedAudioUri).toSet()
+        startupFiles.filter { normalizedAudioUri(it.absolutePath) !in referenced }.forEach { it.delete() }
+        reconciled = true
     }
 
     override suspend fun deleteFile(uri: String) {

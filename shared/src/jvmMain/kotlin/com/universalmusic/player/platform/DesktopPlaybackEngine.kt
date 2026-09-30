@@ -18,11 +18,16 @@ import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import java.nio.channels.SelectionKey
+import java.nio.channels.Selector
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.completeWith
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -78,6 +83,17 @@ class DesktopPlaybackEngine internal constructor(
     private var elapsedOffset = 0L
     private var lastHandle: PlaybackHandle? = null
     private var lastQuality: AudioQuality? = null
+    /**
+     * Bumped (under [lifecycleLock]) by every local mpv transport decision: play / stop / pause /
+     * resume / seek. Async IPC results captured under an older epoch are stale and must not publish.
+     */
+    private var mpvEpoch = 0L
+    /**
+     * Single-consumer FIFO for all mpv socket I/O. Jobs are enqueued while holding [lifecycleLock]
+     * so queue order matches the order of lock-protected transport decisions; the jobs themselves
+     * run on Dispatchers.IO and never hold the lock across socket I/O.
+     */
+    private val ipcJobs = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     @Volatile
     private var volumePercent: Int = 100
     private val shutdownHook = if (runtime === SystemDesktopPlaybackRuntime) {
@@ -103,6 +119,17 @@ class DesktopPlaybackEngine internal constructor(
                 }
             }
         }
+        scope.launch(Dispatchers.IO) {
+            for (job in ipcJobs) {
+                try {
+                    job()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    // A failed IPC job must not stop the FIFO consumer.
+                }
+            }
+        }
     }
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
@@ -123,6 +150,7 @@ class DesktopPlaybackEngine internal constructor(
             spotifyPauseAcknowledged = false
             clearPauseGuardLocked()
             noteLocalTransportLocked()
+            mpvEpoch++
             elapsedOffset = 0
             publishState(EngineState(status = EngineStatus.BUFFERING))
             requestToken
@@ -179,17 +207,26 @@ class DesktopPlaybackEngine internal constructor(
             elapsedOffset = _state.value.positionMs
             cancelTickerLocked()
             userPaused = true
+            mpvEpoch++
             val active = activeProcess
-            if (active != null && !runtime.sendIpc("""["set_property","pause",true]""", active.socket)) {
-                if (!stopProcessLocked()) {
-                    publishState(_state.value.copy(
-                        status = EngineStatus.FAILED,
-                        error = "Player could not be paused or stopped",
-                    ))
-                    return
+            // Publish PAUSED now so the caller (UI / MPRIS) never waits on mpv; the IPC runs on the
+            // FIFO worker and falls back to killing the process if mpv does not acknowledge.
+            publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
+            if (active != null) {
+                enqueueIpcLocked {
+                    if (sendIpcIfActive(active, """["set_property","pause",true]""")) return@enqueueIpcLocked
+                    synchronized(lifecycleLock) {
+                        // Only act if this process is still ours and the user still wants it paused.
+                        if (activeProcess !== active || !userPaused) return@synchronized
+                        if (!stopProcessLocked()) {
+                            publishState(_state.value.copy(
+                                status = EngineStatus.FAILED,
+                                error = "Player could not be paused or stopped",
+                            ))
+                        }
+                    }
                 }
             }
-            publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
         }
     }
 
@@ -212,30 +249,53 @@ class DesktopPlaybackEngine internal constructor(
             val current = _state.value
             if (current.status != EngineStatus.PAUSED) return
             userPaused = false
+            val epoch = ++mpvEpoch
             val active = activeProcess
-            if (active?.process?.isAlive == true &&
-                runtime.sendIpc("""["set_property","pause",false]""", active.socket)
-            ) {
+            if (active?.process?.isAlive == true) {
+                // Optimistically resume so a quick pause() after resume() is honoured; if mpv does
+                // not acknowledge, the worker falls back to the restart path below.
                 startedAt = System.currentTimeMillis()
                 publishState(current.copy(status = EngineStatus.PLAYING, error = null))
                 startTickerLocked()
+                enqueueIpcLocked {
+                    if (sendIpcIfActive(active, """["set_property","pause",false]""")) return@enqueueIpcLocked
+                    val fallback = synchronized(lifecycleLock) {
+                        if (mpvEpoch != epoch || activeProcess !== active) return@enqueueIpcLocked
+                        cancelTickerLocked()
+                        resumeRestartLocked(_state.value)
+                    } ?: return@enqueueIpcLocked
+                    launchRestart(fallback)
+                }
                 return
             }
-            if (!stopProcessLocked()) {
-                publishState(current.copy(
-                    status = EngineStatus.FAILED,
-                    error = "Player did not terminate before resume",
-                ))
-                return
-            }
-            val handle = lastHandle ?: return
-            invalidatePendingStartLocked()
-            publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
-            Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
+            resumeRestartLocked(current) ?: return
         }
+        launchRestart(restart)
+    }
+
+    private fun resumeRestartLocked(current: EngineState): Restart? {
+        if (!stopProcessLocked()) {
+            publishState(current.copy(
+                status = EngineStatus.FAILED,
+                error = "Player did not terminate before resume",
+            ))
+            return null
+        }
+        val handle = lastHandle ?: return null
+        invalidatePendingStartLocked()
+        publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
+        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
+    }
+
+    private fun launchRestart(restart: Restart) {
         scope.launch {
             when (val handle = restart.handle) {
-                is PlaybackHandle.Url -> startUrl(handle.url, restart.startSeconds, restart.token)
+                is PlaybackHandle.Url -> startUrl(
+                    url = handle.url,
+                    startSeconds = restart.startSeconds,
+                    token = restart.token,
+                    targetStatus = restart.targetStatus,
+                )
                 is PlaybackHandle.ProviderPlayback -> play(handle, restart.quality)
             }
         }
@@ -260,38 +320,46 @@ class DesktopPlaybackEngine internal constructor(
             publishState(current.copy(positionMs = elapsedOffset))
             val handle = lastHandle
             if (handle !is PlaybackHandle.Url) return
+            val epoch = ++mpvEpoch
             val active = activeProcess
             if (active?.process?.isAlive == true) {
                 val seconds = elapsedOffset / 1000.0
-                if (runtime.sendIpc("""["set_property","time-pos",$seconds]""", active.socket)) {
-                    if (current.status == EngineStatus.PLAYING) {
-                        startedAt = System.currentTimeMillis()
-                    }
-                    return
+                enqueueIpcLocked {
+                    val ok = sendIpcIfActive(active, """["set_property","time-pos",$seconds]""")
+                    val fallback = synchronized(lifecycleLock) {
+                        // A newer transport command (or track) owns the state now.
+                        if (mpvEpoch != epoch || lastHandle !== handle) return@enqueueIpcLocked
+                        if (ok) {
+                            if (_state.value.status == EngineStatus.PLAYING) {
+                                startedAt = System.currentTimeMillis()
+                            }
+                            return@enqueueIpcLocked
+                        }
+                        seekRestartLocked(handle, _state.value)
+                    } ?: return@enqueueIpcLocked
+                    launchRestart(fallback)
                 }
-            }
-            if (current.status != EngineStatus.PLAYING && current.status != EngineStatus.PAUSED) return
-            if (!stopProcessLocked()) {
-                publishState(current.copy(
-                    status = EngineStatus.FAILED,
-                    error = "Player did not terminate before seek",
-                ))
                 return
             }
-            invalidatePendingStartLocked()
-            val targetStatus = current.status
-            userPaused = targetStatus == EngineStatus.PAUSED
-            publishState(_state.value.copy(status = EngineStatus.BUFFERING))
-            Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
+            seekRestartLocked(handle, current) ?: return
         }
-        scope.launch {
-            startUrl(
-                url = (restart.handle as PlaybackHandle.Url).url,
-                startSeconds = restart.startSeconds,
-                token = restart.token,
-                targetStatus = restart.targetStatus,
-            )
+        launchRestart(restart)
+    }
+
+    private fun seekRestartLocked(handle: PlaybackHandle.Url, current: EngineState): Restart? {
+        if (current.status != EngineStatus.PLAYING && current.status != EngineStatus.PAUSED) return null
+        if (!stopProcessLocked()) {
+            publishState(current.copy(
+                status = EngineStatus.FAILED,
+                error = "Player did not terminate before seek",
+            ))
+            return null
         }
+        invalidatePendingStartLocked()
+        val targetStatus = current.status
+        userPaused = targetStatus == EngineStatus.PAUSED
+        publishState(_state.value.copy(status = EngineStatus.BUFFERING))
+        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
     }
 
     override fun stop() {
@@ -302,6 +370,7 @@ class DesktopPlaybackEngine internal constructor(
             spotifyPauseAcknowledged = false
             clearPauseGuardLocked()
             noteLocalTransportLocked()
+            mpvEpoch++
             cancelTickerLocked()
             cancelSpotifyReconcileLocked()
             if (!stopProcessLocked()) {
@@ -323,7 +392,8 @@ class DesktopPlaybackEngine internal constructor(
         val percent = (volume.coerceIn(0f, 1f) * 100).toInt()
         volumePercent = percent
         synchronized(lifecycleLock) {
-            activeProcess?.let { runtime.sendIpc("""["set_property","volume",$percent]""", it.socket) }
+            val active = activeProcess ?: return
+            enqueueIpcLocked { sendIpcIfActive(active, """["set_property","volume",$percent]""") }
         }
     }
 
@@ -362,15 +432,29 @@ class DesktopPlaybackEngine internal constructor(
             ActiveProcess(process, socket).also { activeProcess = it }
         }
         watchProcess(active, durationMs)
-        runtime.waitForIpc(active.socket)
+        // Once mpv is launched, finish publishing its state even if the caller is cancelled
+        // (matches the previous blocking behaviour); socket I/O never runs under the lock.
+        val pauseAcknowledged = withContext(NonCancellable + Dispatchers.IO) {
+            runtime.waitForIpc(active.socket)
+            val needsIpc = synchronized(lifecycleLock) {
+                if (token != requestToken || activeProcess !== active) return@withContext false
+                if (targetStatus == EngineStatus.PAUSED) userPaused = true
+                startSeconds > 0 || targetStatus == EngineStatus.PAUSED
+            }
+            if (!needsIpc) return@withContext true
+            awaitIpc {
+                if (startSeconds > 0) {
+                    sendIpcIfActive(active, """["set_property","time-pos",$startSeconds]""")
+                }
+                targetStatus != EngineStatus.PAUSED ||
+                    sendIpcIfActive(active, """["set_property","pause",true]""")
+            }
+        }
         synchronized(lifecycleLock) {
             if (token != requestToken || activeProcess !== active) return
-            if (startSeconds > 0) {
-                runtime.sendIpc("""["set_property","time-pos",$startSeconds]""", active.socket)
-            }
             if (targetStatus == EngineStatus.PAUSED) {
                 userPaused = true
-                if (!runtime.sendIpc("""["set_property","pause",true]""", active.socket)) {
+                if (!pauseAcknowledged) {
                     if (!stopProcessLocked()) {
                         publishState(EngineState(
                             status = EngineStatus.FAILED,
@@ -423,14 +507,26 @@ class DesktopPlaybackEngine internal constructor(
         val token = ++tickerToken
         ticker = scope.launch {
             while (true) {
+                val snapshot = synchronized(lifecycleLock) {
+                    if (token != tickerToken || _state.value.status != EngineStatus.PLAYING) {
+                        return@launch
+                    }
+                    TickerSnapshot(activeProcess, mpvEpoch)
+                }
+                // Socket reads happen on the IPC worker, outside the lock.
+                val sample = snapshot.active?.let { active -> awaitIpc { readTickerSample(active) } }
                 val ended = synchronized(lifecycleLock) {
                     if (token != tickerToken || _state.value.status != EngineStatus.PLAYING) {
                         return@launch
                     }
-                    val active = activeProcess
-                    if (active != null) {
-                        val eof = runtime.readProperty("eof-reached", active.socket)
-                        if (eof == "yes" || eof == "true") {
+                    val active = snapshot.active
+                    if (active != null && (activeProcess !== active || mpvEpoch != snapshot.epoch)) {
+                        // Stale sample: the process was replaced or a seek/pause/resume happened
+                        // while the read was in flight. Do not publish it.
+                        return@synchronized false
+                    }
+                    if (sample != null) {
+                        if (sample.eof) {
                             cancelTickerLocked()
                             publishState(_state.value.copy(
                                 status = EngineStatus.ENDED,
@@ -438,7 +534,7 @@ class DesktopPlaybackEngine internal constructor(
                             ))
                             return@synchronized true
                         }
-                        val timePos = runtime.readProperty("time-pos", active.socket)?.toDoubleOrNull()
+                        val timePos = sample.timePosSeconds
                         if (timePos != null) {
                             val position = (timePos * 1000.0).toLong().coerceAtLeast(0)
                             elapsedOffset = position
@@ -471,6 +567,40 @@ class DesktopPlaybackEngine internal constructor(
             }
         }
     }
+
+    private class TickerSnapshot(val active: ActiveProcess?, val epoch: Long)
+
+    private class TickerSample(val eof: Boolean, val timePosSeconds: Double?)
+
+    /** Runs on the IPC worker. Returns null when [active] is no longer the current process. */
+    private fun readTickerSample(active: ActiveProcess): TickerSample? {
+        if (!isActiveProcess(active)) return null
+        val eof = runtime.readProperty("eof-reached", active.socket)
+        if (eof == "yes" || eof == "true") return TickerSample(eof = true, timePosSeconds = null)
+        val timePos = runtime.readProperty("time-pos", active.socket)?.toDoubleOrNull()
+        return TickerSample(eof = false, timePosSeconds = timePos)
+    }
+
+    /** Must be called with [lifecycleLock] held so FIFO order matches transport decision order. */
+    private fun enqueueIpcLocked(job: suspend () -> Unit) {
+        ipcJobs.trySend(job)
+    }
+
+    /** Suspends (without holding the lock) until [block] has run in FIFO order on the IPC worker. */
+    private suspend fun <T> awaitIpc(block: () -> T): T {
+        val result = CompletableDeferred<T>()
+        synchronized(lifecycleLock) {
+            enqueueIpcLocked { result.completeWith(runCatching(block)) }
+        }
+        return result.await()
+    }
+
+    private fun isActiveProcess(active: ActiveProcess): Boolean =
+        synchronized(lifecycleLock) { activeProcess === active }
+
+    /** Socket I/O for [active]; skipped (false, like a failed IPC) once it is no longer current. */
+    private fun sendIpcIfActive(active: ActiveProcess, commandArrayJson: String): Boolean =
+        isActiveProcess(active) && runtime.sendIpc(commandArrayJson, active.socket)
 
     private fun cancelTickerLocked() {
         tickerToken++
@@ -730,55 +860,101 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         }
     }
 
-    override fun sendIpc(commandArrayJson: String, socket: Path): Boolean {
-        if (!Files.exists(socket)) return false
-        return runCatching {
-            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                channel.connect(UnixDomainSocketAddress.of(socket))
-                val payload = """{"command":$commandArrayJson}""" + "\n"
-                channel.write(ByteBuffer.wrap(payload.toByteArray(Charsets.UTF_8)))
-                // Drain one response line so the socket stays healthy for follow-up commands.
-                readIpcLine(channel)
-            }
-            true
-        }.getOrDefault(false)
+    override fun sendIpc(commandArrayJson: String, socket: Path): Boolean =
+        // Drain one response line so the socket stays healthy; a timeout counts as a failed IPC.
+        exchange(socket, """{"command":$commandArrayJson}""") !is IpcReply.Failed
+
+    override fun readProperty(name: String, socket: Path): String? =
+        when (val reply = exchange(socket, """{"command":["get_property","$name"]}""")) {
+            is IpcReply.Line -> parseMpvData(reply.text)
+            else -> null
+        }
+
+    private sealed interface IpcReply {
+        class Line(val text: String) : IpcReply
+        /** mpv closed the connection without a reply line (treated as sent, as before). */
+        object Closed : IpcReply
+        /** Missing socket, connect/write/read failure, or deadline exceeded. */
+        object Failed : IpcReply
     }
 
-    override fun readProperty(name: String, socket: Path): String? {
-        if (!Files.exists(socket)) return null
+    /**
+     * One request/response over a fresh non-blocking unix socket, bounded by
+     * [IPC_CONNECT_TIMEOUT_MS] for connect and [IPC_IO_TIMEOUT_MS] for write + read.
+     * SocketChannel has no SO_TIMEOUT, so readiness is awaited with a [Selector].
+     */
+    private fun exchange(socket: Path, requestJson: String): IpcReply {
+        if (!Files.exists(socket)) return IpcReply.Failed
         return runCatching {
             SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                channel.connect(UnixDomainSocketAddress.of(socket))
-                val payload = """{"command":["get_property","$name"]}""" + "\n"
-                channel.write(ByteBuffer.wrap(payload.toByteArray(Charsets.UTF_8)))
-                val line = readIpcLine(channel) ?: return null
-                parseMpvData(line)
+                Selector.open().use { selector ->
+                    channel.configureBlocking(false)
+                    val key = channel.register(selector, 0)
+                    if (!channel.connect(UnixDomainSocketAddress.of(socket))) {
+                        val connectDeadline = System.currentTimeMillis() + IPC_CONNECT_TIMEOUT_MS
+                        key.interestOps(SelectionKey.OP_CONNECT)
+                        while (!channel.finishConnect()) {
+                            if (!awaitReady(selector, connectDeadline)) return IpcReply.Failed
+                        }
+                    }
+                    val ioDeadline = System.currentTimeMillis() + IPC_IO_TIMEOUT_MS
+                    val payload = ByteBuffer.wrap((requestJson + "\n").toByteArray(Charsets.UTF_8))
+                    key.interestOps(SelectionKey.OP_WRITE)
+                    while (payload.hasRemaining()) {
+                        if (channel.write(payload) == 0 && !awaitReady(selector, ioDeadline)) {
+                            return IpcReply.Failed
+                        }
+                    }
+                    key.interestOps(SelectionKey.OP_READ)
+                    readIpcReply(channel, selector, ioDeadline)
+                }
             }
-        }.getOrNull()
+        }.getOrDefault(IpcReply.Failed)
     }
 
-    private fun readIpcLine(channel: SocketChannel): String? {
-        channel.configureBlocking(true)
+    /** Waits for the registered interest op until [deadline]; false once the deadline passed. */
+    private fun awaitReady(selector: Selector, deadline: Long): Boolean {
+        val remaining = deadline - System.currentTimeMillis()
+        if (remaining <= 0) return false
+        selector.select(remaining)
+        selector.selectedKeys().clear()
+        return true
+    }
+
+    private fun readIpcReply(channel: SocketChannel, selector: Selector, deadline: Long): IpcReply {
         val buffer = ByteBuffer.allocate(4096)
-        val builder = StringBuilder()
-        val deadline = System.currentTimeMillis() + 400
-        while (System.currentTimeMillis() < deadline) {
+        val line = java.io.ByteArrayOutputStream()
+        while (true) {
             val read = channel.read(buffer)
-            if (read < 0) break
+            if (read < 0) {
+                val partial = line.toString(Charsets.UTF_8)
+                return if (partial.isNotBlank()) IpcReply.Line(partial) else IpcReply.Closed
+            }
             if (read == 0) {
-                Thread.sleep(10)
+                if (!awaitReady(selector, deadline)) return IpcReply.Failed
                 continue
             }
             buffer.flip()
             while (buffer.hasRemaining()) {
-                val c = buffer.get().toInt().toChar()
-                if (c == '\n') return builder.toString()
-                builder.append(c)
+                val byte = buffer.get()
+                if (byte == '\n'.code.toByte()) {
+                    val text = line.toString(Charsets.UTF_8)
+                    line.reset()
+                    // mpv broadcasts events (pause, seek, ...) to every client; skip to our reply.
+                    if (!isMpvEventLine(text)) return IpcReply.Line(text)
+                } else {
+                    line.write(byte.toInt())
+                }
             }
             buffer.clear()
         }
-        return builder.toString().takeIf { it.isNotBlank() }
     }
+
+    private fun isMpvEventLine(line: String): Boolean =
+        line.contains("\"event\"") && !line.contains("\"error\"")
+
+    private const val IPC_CONNECT_TIMEOUT_MS = 1_000L
+    private const val IPC_IO_TIMEOUT_MS = 1_500L
 
     private fun parseMpvData(line: String): String? {
         // Minimal parse: "data": <json-value>

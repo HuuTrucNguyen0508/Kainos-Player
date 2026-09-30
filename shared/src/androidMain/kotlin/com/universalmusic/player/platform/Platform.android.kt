@@ -16,6 +16,10 @@ import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.AndroidUserLibraryStore
 import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.playlist.AndroidKainosPlaylistStore
+import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.AndroidSessionSnapshotStore
+import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.local.AndroidLocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanCache
@@ -76,6 +80,18 @@ fun initAndroidPlatform(context: Context) {
 
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
+actual fun isNetworkAvailable(): Boolean {
+    val context = runCatching { androidContext }.getOrNull() ?: return true
+    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+        as? android.net.ConnectivityManager
+        ?: return true
+    val network = cm.activeNetwork ?: return false
+    val caps = cm.getNetworkCapabilities(network) ?: return false
+    return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
+
+actual fun monotonicElapsedRealtimeMs(): Long = android.os.SystemClock.elapsedRealtime()
+
 actual fun sha256Bytes(bytes: ByteArray): ByteArray =
     MessageDigest.getInstance("SHA-256").digest(bytes)
 
@@ -100,6 +116,12 @@ actual fun createSettingsStore(): SettingsStore = PrefsSettingsStore(androidCont
 
 actual fun createUserLibraryStore(): UserLibraryStore =
     AndroidUserLibraryStore(androidContext)
+
+actual fun createKainosPlaylistStore(): KainosPlaylistStore =
+    AndroidKainosPlaylistStore(androidContext)
+
+actual fun createSessionSnapshotStore(): SessionSnapshotStore =
+    AndroidSessionSnapshotStore(androidContext)
 
 actual fun createMetadataArtworkCache(): MetadataArtworkCache {
     val disk = AndroidMetadataCacheDisk(androidContext)
@@ -319,8 +341,9 @@ actual fun releaseMusicFolderAccess(folder: String) {
 actual fun bindPlatformMediaControls(
     session: com.universalmusic.player.domain.playback.PlayerSession,
     scope: kotlinx.coroutines.CoroutineScope,
+    toggleFavorite: (com.universalmusic.player.domain.model.Track) -> Boolean,
 ) {
-    AndroidMediaControls.bind(session, scope)
+    AndroidMediaControls.bind(session, scope, toggleFavorite)
 }
 
 actual fun unbindPlatformMediaControls() {
@@ -330,6 +353,7 @@ actual fun unbindPlatformMediaControls() {
 actual fun createHomeLanSyncHub(
     pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
     onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
+    onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
     vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
     heartedVaultFileNames: () -> Set<String>?,
 ): com.universalmusic.player.data.sync.HomeLanSyncHub =

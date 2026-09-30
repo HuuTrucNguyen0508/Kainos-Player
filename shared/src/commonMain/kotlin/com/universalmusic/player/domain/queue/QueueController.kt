@@ -106,30 +106,52 @@ class QueueController(
         }
     }
 
-    fun remove(itemId: String) {
-        _queue.update { current ->
-            val index = current.items.indexOfFirst { it.id == itemId }
-            if (index < 0) return@update current
-            undoSnapshot = current
-            val items = current.items.toMutableList().also { it.removeAt(index) }
-            if (items.isEmpty()) return@update PlaybackQueue(shuffle = current.shuffle, repeat = current.repeat)
-            val newIndex = when {
-                index < current.currentIndex -> current.currentIndex - 1
-                index == current.currentIndex -> index.coerceAtMost(items.lastIndex)
-                else -> current.currentIndex
-            }
-            current.copy(
-                items = items,
-                currentIndex = newIndex,
-                shuffleOrder = preserveShuffleOrder(
-                    previous = current,
-                    newItems = items,
-                    newCurrentIndex = newIndex,
-                    playNextId = null,
-                    appendNewIds = emptyList(),
-                ),
-            )
+    /**
+     * Remove [itemId]. Removing the current item moves to its successor in playback order
+     * (shuffle-aware, wrapping only under Repeat All). Returns false when the current item
+     * was removed and nothing follows it, so the caller should stop instead of replaying
+     * whatever item the index lands on.
+     */
+    fun remove(itemId: String): Boolean {
+        val current = _queue.value
+        val index = current.items.indexOfFirst { it.id == itemId }
+        if (index < 0) return true
+        undoSnapshot = current
+        val items = current.items.toMutableList().also { it.removeAt(index) }
+        if (items.isEmpty()) {
+            _queue.value = PlaybackQueue(shuffle = current.shuffle, repeat = current.repeat)
+            return false
         }
+        var hasSuccessor = true
+        val newIndex = when {
+            index < current.currentIndex -> current.currentIndex - 1
+            index == current.currentIndex -> {
+                val order = current.playbackOrder()
+                val pos = order.indexOf(index)
+                val successor = order.getOrNull(pos + 1)
+                    ?: order.firstOrNull { it != index }.takeIf { current.repeat == RepeatMode.ALL }
+                if (successor == null) {
+                    hasSuccessor = false
+                    // Nothing after the removed item: rest on its predecessor, not a random neighbour.
+                    order.getOrNull(pos - 1) ?: 0
+                } else {
+                    successor
+                }.let { if (it > index) it - 1 else it }.coerceIn(0, items.lastIndex)
+            }
+            else -> current.currentIndex
+        }
+        _queue.value = current.copy(
+            items = items,
+            currentIndex = newIndex,
+            shuffleOrder = preserveShuffleOrder(
+                previous = current,
+                newItems = items,
+                newCurrentIndex = newIndex,
+                playNextId = null,
+                appendNewIds = emptyList(),
+            ),
+        )
+        return hasSuccessor
     }
 
     fun move(from: Int, to: Int) {
@@ -269,6 +291,32 @@ class QueueController(
             items[current.currentIndex] = existing.copy(track = track)
             current.copy(items = items)
         }
+    }
+
+    /**
+     * Replace the live queue from a persisted snapshot without regenerating entry IDs
+     * or reshuffling. Used for cold-start session restore (paused; no playback).
+     */
+    fun restore(snapshot: PlaybackQueue) {
+        undoSnapshot = null
+        if (snapshot.items.isEmpty()) {
+            _queue.value = PlaybackQueue(shuffle = snapshot.shuffle, repeat = snapshot.repeat)
+            return
+        }
+        val index = snapshot.currentIndex.coerceIn(0, snapshot.items.lastIndex)
+        val shuffleOrder = when {
+            !snapshot.shuffle -> emptyList()
+            snapshot.shuffleOrder.size == snapshot.items.size &&
+                snapshot.shuffleOrder.toSet() == snapshot.items.indices.toSet() -> snapshot.shuffleOrder
+            else -> freshShuffleOrder(true, snapshot.items.size, index)
+        }
+        _queue.value = PlaybackQueue(
+            items = snapshot.items,
+            currentIndex = index,
+            shuffle = snapshot.shuffle,
+            repeat = snapshot.repeat,
+            shuffleOrder = shuffleOrder,
+        )
     }
 
     private fun afterStorageMove(current: PlaybackQueue, from: Int, to: Int): PlaybackQueue {

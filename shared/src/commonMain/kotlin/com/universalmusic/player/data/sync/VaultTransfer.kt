@@ -85,45 +85,74 @@ suspend fun planVaultTransfers(
 
 /**
  * Copy one pending vault blob after the user confirms.
+ *
+ * Downloads are staged by [HomeLanVaultStore.writeRange] and only published once every byte
+ * arrived, so a failure leaves any existing local copy untouched. Every chunk must be exactly the
+ * requested size: an empty or short chunk (peer file changed, truncated read, bad response) fails
+ * the transfer instead of silently reporting success.
+ *
+ * [replaceExisting] is for conflict resolution: it skips the "same size already present" shortcut
+ * and restarts staging from zero instead of resuming a partial of possibly different content.
  */
 suspend fun executeVaultTransfer(
     store: HomeLanVaultStore,
     client: HomeLanSyncClient,
     transfer: PendingVaultTransfer,
+    replaceExisting: Boolean = false,
     onProgress: suspend (detail: String, transferred: Long, total: Long) -> Unit,
 ) {
-    val total = transfer.sizeBytes.coerceAtLeast(1L)
+    val size = transfer.sizeBytes
+    require(size in 0L..VAULT_MAX_FILE_BYTES) { "Invalid size $size for ${transfer.relPath}" }
+    val total = size.coerceAtLeast(1L)
     when (transfer.direction) {
         VaultCopyDirection.TO_LOCAL -> {
-            val existing = store.localSize(transfer.relPath) ?: 0L
-            var offset = when {
-                existing in 1 until transfer.sizeBytes -> existing
-                existing == transfer.sizeBytes && transfer.sizeBytes > 0L -> {
-                    onProgress("Skip ${transfer.relPath}", total, total)
-                    return
-                }
-                else -> 0L
+            if (!replaceExisting && size > 0L && store.localSize(transfer.relPath) == size) {
+                onProgress("Skip ${transfer.relPath}", total, total)
+                return
             }
-            while (offset < transfer.sizeBytes) {
-                val chunkLen = minOf(VAULT_BLOB_CHUNK_BYTES.toLong(), transfer.sizeBytes - offset).toInt()
+            if (size == 0L) {
+                store.writeRange(transfer.relPath, 0L, ByteArray(0), 0L)
+                onProgress("Downloading ${transfer.relPath}", total, total)
+                return
+            }
+            val staged = if (replaceExisting) 0L else store.stagedSize(transfer.relPath) ?: 0L
+            var offset = if (staged in 1 until size) staged else 0L
+            var published = false
+            while (offset < size) {
+                val chunkLen = minOf(VAULT_BLOB_CHUNK_BYTES.toLong(), size - offset).toInt()
                 val chunk = client.downloadBlob(transfer.relPath, offset, chunkLen).getOrThrow()
                 if (chunk.isEmpty()) error("Empty chunk for ${transfer.relPath} at $offset")
-                store.writeRange(transfer.relPath, offset, chunk, transfer.sizeBytes)
+                if (chunk.size != chunkLen) {
+                    error("Short chunk for ${transfer.relPath} at $offset (${chunk.size} of $chunkLen bytes)")
+                }
+                published = store.writeRange(transfer.relPath, offset, chunk, size)
                 offset += chunk.size
                 onProgress("Downloading ${transfer.relPath}", offset, total)
             }
+            check(published && store.localSize(transfer.relPath) == size) {
+                "Download of ${transfer.relPath} did not publish a complete file"
+            }
         }
         VaultCopyDirection.TO_REMOTE -> {
-            if (transfer.sizeBytes <= 0L) {
+            if (size == 0L) {
                 client.uploadBlob(transfer.relPath, 0L, 0L, ByteArray(0)).getOrThrow()
                 return
             }
+            val localSize = store.localSize(transfer.relPath)
+                ?: error("Local file missing for ${transfer.relPath}")
+            check(localSize == size) {
+                "Local ${transfer.relPath} changed size ($localSize, expected $size); sync again"
+            }
             var offset = 0L
-            while (offset < transfer.sizeBytes) {
-                val end = minOf(offset + VAULT_BLOB_CHUNK_BYTES - 1, transfer.sizeBytes - 1)
+            while (offset < size) {
+                val end = minOf(offset + VAULT_BLOB_CHUNK_BYTES - 1, size - 1)
+                val expected = (end - offset + 1).toInt()
                 val chunk = store.readRange(transfer.relPath, offset, end)
                 if (chunk.isEmpty()) error("Cannot read ${transfer.relPath} at $offset")
-                client.uploadBlob(transfer.relPath, offset, transfer.sizeBytes, chunk).getOrThrow()
+                if (chunk.size != expected) {
+                    error("Short read for ${transfer.relPath} at $offset (${chunk.size} of $expected bytes)")
+                }
+                client.uploadBlob(transfer.relPath, offset, size, chunk).getOrThrow()
                 offset += chunk.size
                 onProgress("Uploading ${transfer.relPath}", offset, total)
             }

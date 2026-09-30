@@ -60,6 +60,8 @@ class AndroidPlaybackEngine(
     /** Wall clock of the last Media3 `play()` we issued; focus loss right after it is retried once. */
     @Volatile private var media3PlayRequestedAt = 0L
     private var focusRetryGeneration = -1L
+    /** Bumped by explicit pause/stop so a pending focus retry cannot restart audio the user paused. */
+    @Volatile private var transportIntent = 0L
 
     /**
      * A focus request refused within [FOCUS_RETRY_WINDOW_MS] of our own play() is almost
@@ -76,11 +78,16 @@ class AndroidPlaybackEngine(
         }
         focusRetryGeneration = activePlayGeneration
         val generation = activePlayGeneration
+        val intent = transportIntent
         trace("focus refused ${sincePlay}ms after play -> retry once in ${FOCUS_RETRY_DELAY_MS}ms")
         scope.launch {
             delay(FOCUS_RETRY_DELAY_MS)
             launchMediaCommand { player ->
                 if (activeBackend != ActiveBackend.MEDIA3 || activePlayGeneration != generation) return@launchMediaCommand
+                if (transportIntent != intent) {
+                    trace("focus retry dropped: user paused/stopped since focus loss")
+                    return@launchMediaCommand
+                }
                 if (player.playWhenReady) return@launchMediaCommand
                 trace("focus retry -> play()")
                 player.play()
@@ -307,6 +314,7 @@ class AndroidPlaybackEngine(
 
     override fun pause() {
         trace("pause() status=${_state.value.status} pos=${_state.value.positionMs}")
+        transportIntent++
         if (activeBackend == ActiveBackend.SPOTIFY) {
             spotifyOffset = state.value.positionMs
             ticker?.cancel()
@@ -363,6 +371,7 @@ class AndroidPlaybackEngine(
     }
 
     override fun stop() {
+        transportIntent++
         val pauseSpotify = activeBackend == ActiveBackend.SPOTIFY
         trace("stop() status=${_state.value.status} pos=${_state.value.positionMs} (clearRetainedMedia queued on Main)")
         activeBackend = ActiveBackend.NONE

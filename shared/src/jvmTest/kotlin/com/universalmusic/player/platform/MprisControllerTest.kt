@@ -64,6 +64,8 @@ class MprisControllerTest {
         if (runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() != 0) {
             return@runBlocking
         }
+        // A running Kainos desktop app already owns the bus name; the test would query it instead.
+        if (mprisNameHasOwner()) return@runBlocking
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), scope)
@@ -112,6 +114,21 @@ private fun playerctl(vararg args: String): String {
     val out = process.inputStream.bufferedReader().readText()
     process.waitFor()
     return out
+}
+
+private fun mprisNameHasOwner(): Boolean {
+    val process = ProcessBuilder(
+        "dbus-send",
+        "--session",
+        "--print-reply",
+        "--dest=org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus.NameHasOwner",
+        "string:org.mpris.MediaPlayer2.kainosplayer",
+    ).redirectErrorStream(true).start()
+    val out = process.inputStream.bufferedReader().readText()
+    process.waitFor()
+    return out.contains("boolean true")
 }
 
 private fun dbusGetTitle(): String {

@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.x509.oid import ExtensionOID
+from cryptography.x509.verification import PolicyBuilder, Store, VerificationError
 
 logger = logging.getLogger("echo_gateway.alexa_verify")
 
@@ -66,6 +67,48 @@ def _download_cert_chain(url: str) -> bytes:
     context = ssl.create_default_context()
     with urlopen(url, context=context, timeout=5) as response:  # noqa: S310 - URL validated first
         return response.read()
+
+
+@lru_cache(maxsize=1)
+def _trusted_roots() -> tuple[x509.Certificate, ...]:
+    roots: list[x509.Certificate] = []
+    try:
+        for der in ssl.create_default_context().get_ca_certs(binary_form=True):
+            try:
+                roots.append(x509.load_der_x509_certificate(der))
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        logger.warning("system_ca_load_failed")
+    try:
+        import certifi
+
+        with open(certifi.where(), "rb") as handle:
+            roots.extend(_load_certs(handle.read()))
+    except Exception:  # noqa: BLE001
+        pass
+    return tuple(roots)
+
+
+def _verify_chain(certs: list[x509.Certificate]) -> None:
+    """Validate that certs[0] chains via certs[1:] to a trusted root, at the current time."""
+    roots = list(_trusted_roots())
+    if not roots:
+        raise AlexaVerificationError("cert_chain", "No trusted root certificates available")
+    now = datetime.now(timezone.utc)
+    for cert in certs:
+        if _cert_not_before(cert) > now or _cert_not_after(cert) < now:
+            raise AlexaVerificationError("cert_expired", "Certificate in Alexa chain is not currently valid")
+    try:
+        verifier = (
+            PolicyBuilder()
+            .store(Store(roots))
+            .time(now)
+            .build_server_verifier(x509.DNSName(ECHO_API_SAN))
+        )
+        verifier.verify(certs[0], certs[1:])
+    except (VerificationError, ValueError) as exc:
+        raise AlexaVerificationError("cert_chain", "Alexa certificate chain is not trusted") from exc
 
 
 def _load_certs(pem_data: bytes) -> list[x509.Certificate]:
@@ -124,6 +167,7 @@ def verify_alexa_signature(
         raise AlexaVerificationError("cert_expired", "Alexa signing certificate is not currently valid")
     if not _leaf_has_echo_san(signing_cert):
         raise AlexaVerificationError("cert_san", "Alexa signing certificate SAN mismatch")
+    _verify_chain(certs)
 
     try:
         signature = base64.b64decode(signature_256, validate=True)

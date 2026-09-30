@@ -42,6 +42,8 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
                 hostnameVerifier { _, _ -> true }
             }
         }
+        // Non-2xx hub replies (401/403/409/416/5xx) fail the call instead of being read as data.
+        expectSuccess = true
         install(HttpTimeout) {
             requestTimeoutMillis = 120_000
             connectTimeoutMillis = 15_000

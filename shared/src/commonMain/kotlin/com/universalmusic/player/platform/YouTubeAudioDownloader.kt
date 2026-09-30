@@ -19,11 +19,14 @@ interface YouTubeAudioDownloader {
     /**
      * Download best audio for [videoId] into [destinationDirectory] using [fileBaseName]
      * as the filename stem (extension chosen by the downloader).
+     *
+     * [onProgress] receives bytes copied and optional total size when known.
      */
     suspend fun downloadAudio(
         videoId: String,
         destinationDirectory: String,
         fileBaseName: String,
+        onProgress: ((bytesCopied: Long, totalBytes: Long?) -> Unit)? = null,
     ): DownloadedYouTubeAudio?
 }
 
@@ -33,5 +36,6 @@ object UnavailableYouTubeAudioDownloader : YouTubeAudioDownloader {
         videoId: String,
         destinationDirectory: String,
         fileBaseName: String,
+        onProgress: ((bytesCopied: Long, totalBytes: Long?) -> Unit)?,
     ): DownloadedYouTubeAudio? = null
 }

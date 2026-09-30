@@ -22,6 +22,10 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.http.content.OutgoingContent
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
@@ -639,12 +643,110 @@ class SpotifyProviderTest {
         assertTrue(provider.isAuthenticated())
     }
 
+    @Test
+    fun refreshInFlightDuringLogoutDoesNotPersistTokens() = runTest {
+        val store = TokenStoreFake(AuthTokens("stale", refreshToken = "refresh", expiresAtEpochMs = 0L))
+        val refreshStarted = CompletableDeferred<Unit>()
+        val releaseRefresh = CompletableDeferred<Unit>()
+        val provider = provider(store) { request ->
+            assertEquals("/api/token", request.url.encodedPath)
+            refreshStarted.complete(Unit)
+            releaseRefresh.await()
+            respondJson("""{"access_token":"fresh","refresh_token":"fresh-refresh","expires_in":3600}""")
+        }
+
+        val refresh = async { runCatching { provider.validAccessToken() } }
+        refreshStarted.await()
+        // UNDISPATCHED: logout bumps its generation before the refresh response lands.
+        val logout = launch(start = CoroutineStart.UNDISPATCHED) { provider.logout() }
+        releaseRefresh.complete(Unit)
+        logout.join()
+
+        assertTrue(refresh.await().isFailure)
+        assertEquals(null, store.value)
+        assertEquals(0, store.writes)
+        assertEquals(false, provider.isAuthenticated())
+    }
+
+    @Test
+    fun restoreAndAccessTokenShareOneRefresh() = runTest {
+        val store = TokenStoreFake(AuthTokens("stale", refreshToken = "refresh", expiresAtEpochMs = 0L))
+        var refreshes = 0
+        val provider = provider(store) { request ->
+            when (request.url.encodedPath) {
+                "/api/token" -> {
+                    refreshes++
+                    respondJson("""{"access_token":"fresh","expires_in":3600}""")
+                }
+                "/v1/me" -> respondJson("""{"id":"user"}""")
+                else -> error("Unexpected request ${request.url}")
+            }
+        }
+
+        val restore = launch { provider.restore() }
+        val token = provider.validAccessToken()
+        restore.join()
+
+        assertEquals("fresh", token)
+        assertEquals(1, refreshes)
+        assertEquals("refresh", store.value?.refreshToken)
+        assertTrue(provider.isAuthenticated())
+    }
+
+    @Test
+    fun observerRateLimitHonoursRetryAfterBeforePollingAgain() = runTest {
+        var now = 1_000L
+        var requests = 0
+        var limited = true
+        val provider = provider(TokenStoreFake(AuthTokens("access")), clock = { now }) { request ->
+            assertEquals("/v1/me/player", request.url.encodedPath)
+            requests++
+            if (limited) {
+                respond("", HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.RetryAfter, "10"))
+            } else {
+                respondJson("""{"is_playing":true,"progress_ms":42,"item":{"id":"song","name":"Song"}}""")
+            }
+        }
+
+        assertEquals(null, provider.observeConnectPlayback())
+        assertEquals(1, requests)
+        limited = false
+        now += 9_999
+        assertEquals(null, provider.observeConnectPlayback())
+        assertEquals(1, requests)
+
+        now += 1
+        val observed = provider.observeConnectPlayback()
+        assertEquals(2, requests)
+        assertEquals(true, observed?.isPlaying)
+        assertEquals("song", observed?.trackId)
+    }
+
+    @Test
+    fun observerRateLimitWithoutRetryAfterUsesDefaultCooldown() = runTest {
+        var now = 1_000L
+        var requests = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access")), clock = { now }) {
+            requests++
+            respond("", HttpStatusCode.TooManyRequests)
+        }
+
+        assertEquals(null, provider.observeConnectPlayback())
+        now += 29_000
+        assertEquals(null, provider.observeConnectPlayback())
+        assertEquals(1, requests)
+        now += 1_000
+        assertEquals(null, provider.observeConnectPlayback())
+        assertEquals(2, requests)
+    }
+
     private fun provider(
         store: TokenStoreFake,
         webPlayback: SpotifyWebPlaybackHost = UnavailableSpotifyWebPlaybackHost,
         requireExplicitPlaybackDevice: Boolean = false,
         selectedPlaybackDeviceId: () -> String? = { null },
         startConnectClient: suspend () -> Boolean = { false },
+        clock: () -> Long = { 1_000L },
         handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData,
     ): SpotifyProvider {
         val client = HttpClient(MockEngine(handler)) {
@@ -659,7 +761,7 @@ class SpotifyProviderTest {
                 spotifyClientId = "client-id",
                 spotifyRedirectUri = "http://127.0.0.1:43821/callback",
             ),
-            clock = { 1_000L },
+            clock = clock,
             webPlayback = webPlayback,
             requireExplicitPlaybackDevice = requireExplicitPlaybackDevice,
             selectedPlaybackDeviceId = selectedPlaybackDeviceId,
@@ -676,10 +778,12 @@ class SpotifyProviderTest {
 
 private class TokenStoreFake(initial: AuthTokens? = null) : TokenStore {
     var value: AuthTokens? = initial
+    var writes = 0
 
     override suspend fun read(provider: ProviderId): AuthTokens? = value
 
     override suspend fun write(provider: ProviderId, tokens: AuthTokens) {
+        writes++
         value = tokens
     }
 

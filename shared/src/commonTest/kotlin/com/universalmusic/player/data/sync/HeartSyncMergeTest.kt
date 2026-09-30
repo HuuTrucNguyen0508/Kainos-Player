@@ -4,6 +4,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.PersistedArtist
 import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.data.library.USER_LIBRARY_FORMAT_VERSION
 import com.universalmusic.player.data.library.UserLibrarySnapshot
 import com.universalmusic.player.data.library.migrated
 import com.universalmusic.player.domain.model.ArtistRef
@@ -124,7 +125,7 @@ class HeartSyncMergeTest {
             favoriteIds = listOf("yt:1", "spotify:2"),
             spotifyAccountId = "user-a",
         ).migrated(deviceId = "pc")
-        assertEquals(2, migrated.version)
+        assertEquals(USER_LIBRARY_FORMAT_VERSION, migrated.version)
         assertEquals(2, migrated.heartOps.size)
         assertTrue(migrated.heartOps.all { it.action == HeartAction.FAVORITE })
     }

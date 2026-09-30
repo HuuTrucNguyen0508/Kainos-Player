@@ -17,23 +17,40 @@ class FileHeartedAudioCacheDisk(
     private val indexPath: Path = root.resolve("index.json")
     private val audioDir: Path = root.resolve("audio")
 
+    private val startupFiles = if (Files.isDirectory(audioDir)) {
+        Files.list(audioDir).use { it.filter(Files::isRegularFile).toList() }
+    } else emptyList()
+    private var reconciled = false
+    private var indexReadable = true
+
     override suspend fun loadIndex(): HeartedAudioCacheIndex {
         if (!indexPath.exists()) return HeartedAudioCacheIndex()
         return runCatching {
             json.decodeFromString<HeartedAudioCacheIndex>(indexPath.readText())
-        }.getOrDefault(HeartedAudioCacheIndex())
+        }.getOrElse { indexReadable = false; HeartedAudioCacheIndex() }
     }
 
     override suspend fun saveIndex(index: HeartedAudioCacheIndex) {
         Files.createDirectories(root)
         Files.createDirectories(audioDir)
-        val tmp = indexPath.resolveSibling("${indexPath.fileName}.tmp")
-        tmp.writeText(json.encodeToString(index))
+        val tmp = Files.createTempFile(root, "index-", ".tmp")
         try {
-            Files.move(tmp, indexPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-            Files.move(tmp, indexPath, StandardCopyOption.REPLACE_EXISTING)
+            tmp.writeText(json.encodeToString(index))
+            try {
+                Files.move(tmp, indexPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(tmp, indexPath, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(tmp)
         }
+    }
+
+    override suspend fun reconcile(referencedUris: Set<String>) {
+        if (reconciled || !indexReadable) return
+        val referenced = referencedUris.map(::normalizedAudioUri).toSet()
+        startupFiles.filter { normalizedAudioUri(it.toString()) !in referenced }.forEach { Files.deleteIfExists(it) }
+        reconciled = true
     }
 
     override suspend fun deleteFile(uri: String) {

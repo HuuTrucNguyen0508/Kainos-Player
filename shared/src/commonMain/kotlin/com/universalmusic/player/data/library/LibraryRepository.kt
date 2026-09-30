@@ -53,12 +53,99 @@ class LibraryRepository(
     private val _recent = MutableStateFlow<List<Track>>(emptyList())
     val recentlyPlayed: StateFlow<List<Track>> = _recent.asStateFlow()
 
+    private val _homePins = MutableStateFlow<List<PersistedHomePin>>(emptyList())
+    val homePins: StateFlow<List<PersistedHomePin>> = _homePins.asStateFlow()
+
     private var spotifyAccountId: String? = null
     private var heartOps: List<HeartOp> = emptyList()
     private val persistMutex = Mutex()
     private var persistJob: Job? = null
 
     fun isFavorite(canonicalId: String): Boolean = canonicalId in _favorites.value
+
+    fun isPinned(kind: HomePinKind, targetId: String): Boolean =
+        _homePins.value.any { it.kind == kind && it.targetId == targetId }
+
+    fun pinOf(kind: HomePinKind, targetId: String): PersistedHomePin? =
+        _homePins.value.firstOrNull { it.kind == kind && it.targetId == targetId }
+
+    /**
+     * Add or refresh a Home pin. Does not delete or mutate the underlying playlist/album/folder.
+     * Duplicate [kind]+[targetId] updates metadata and keeps position.
+     */
+    fun pinHome(
+        kind: HomePinKind,
+        targetId: String,
+        title: String,
+        subtitle: String? = null,
+        artworkUrl: String? = null,
+        providerEntityId: String? = null,
+        provider: String? = null,
+    ): PersistedHomePin? {
+        val trimmedTarget = targetId.trim()
+        if (trimmedTarget.isEmpty()) return null
+        val existing = pinOf(kind, trimmedTarget)
+        val pin = PersistedHomePin(
+            id = existing?.id ?: newHomePinId(),
+            kind = kind,
+            targetId = trimmedTarget,
+            title = title.trim().ifBlank { existing?.title.orEmpty() }.ifBlank { trimmedTarget },
+            subtitle = subtitle ?: existing?.subtitle,
+            artworkUrl = artworkUrl ?: existing?.artworkUrl,
+            providerEntityId = providerEntityId ?: existing?.providerEntityId,
+            provider = provider ?: existing?.provider,
+        )
+        if (!pin.isValidShape()) return null
+        _homePins.update { current ->
+            if (existing != null) {
+                current.map { if (it.id == existing.id) pin else it }
+            } else {
+                current + pin
+            }.migratedHomePins()
+        }
+        schedulePersist()
+        return pin
+    }
+
+    /** Remove the pin only; the playlist/album/folder remains. */
+    fun unpinHome(pinId: String): Boolean {
+        val before = _homePins.value
+        val after = before.filterNot { it.id == pinId }
+        if (after.size == before.size) return false
+        _homePins.value = after
+        schedulePersist()
+        return true
+    }
+
+    fun unpinHome(kind: HomePinKind, targetId: String): Boolean {
+        val pin = pinOf(kind, targetId) ?: return false
+        return unpinHome(pin.id)
+    }
+
+    fun reorderHomePins(orderedPinIds: List<String>): Boolean {
+        val current = _homePins.value
+        if (current.isEmpty()) return false
+        val byId = current.associateBy { it.id }
+        val reordered = orderedPinIds.mapNotNull { byId[it] }
+        val missing = current.filter { it.id !in orderedPinIds }
+        if (reordered.size + missing.size != current.size) return false
+        _homePins.value = (reordered + missing).migratedHomePins()
+        schedulePersist()
+        return true
+    }
+
+    fun moveHomePin(pinId: String, delta: Int): Boolean {
+        val current = _homePins.value.toMutableList()
+        val index = current.indexOfFirst { it.id == pinId }
+        if (index < 0) return false
+        val target = (index + delta).coerceIn(0, current.lastIndex)
+        if (target == index) return false
+        val item = current.removeAt(index)
+        current.add(target, item)
+        _homePins.value = current
+        schedulePersist()
+        return true
+    }
 
     fun toggleFavorite(track: Track): Boolean {
         val nowFavorite = track.canonicalId !in _favorites.value
@@ -154,6 +241,7 @@ class LibraryRepository(
         _favorites.value = migrated.favoriteIds.toSet()
         _saved.value = migrated.remembered.map { it.toDomain() }
         _recent.value = migrated.recents.map { it.toDomain() }
+        _homePins.value = migrated.homePins.migratedHomePins()
     }
 
     /** Drop Spotify-scoped app data when the signed-in account changes or disconnects. */
@@ -171,6 +259,7 @@ class LibraryRepository(
         heartOps = heartOps.compacted(),
         remembered = _saved.value.map { it.toPersisted(clock()) },
         recents = _recent.value.map { it.toPersisted(clock()) },
+        homePins = _homePins.value.migratedHomePins(),
     )
 
     fun exportHeartsSyncDocument(): HeartsSyncDocument {

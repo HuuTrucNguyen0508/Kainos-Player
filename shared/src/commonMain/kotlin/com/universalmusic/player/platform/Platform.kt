@@ -4,11 +4,14 @@ import com.universalmusic.player.data.auth.TokenStore
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalTrackSource
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.playback.SpotifyObservedPlayback
@@ -16,6 +19,16 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 
 expect fun currentTimeMillis(): Long
+
+/** Best-effort network reachability for download queue / availability labels. */
+expect fun isNetworkAvailable(): Boolean
+
+/**
+ * Monotonic elapsed time in milliseconds while the process is alive.
+ * Prefer this over wall-clock for timers (sleep timer) so NTP/clock skew cannot fire early.
+ * Resets across process death; timers that rely on it intentionally cancel on reboot.
+ */
+expect fun monotonicElapsedRealtimeMs(): Long
 
 expect fun sha256Bytes(bytes: ByteArray): ByteArray
 
@@ -30,6 +43,10 @@ expect fun createTokenStore(): TokenStore
 expect fun createSettingsStore(): SettingsStore
 
 expect fun createUserLibraryStore(): UserLibraryStore
+
+expect fun createKainosPlaylistStore(): KainosPlaylistStore
+
+expect fun createSessionSnapshotStore(): SessionSnapshotStore
 
 expect fun createMetadataArtworkCache(): MetadataArtworkCache
 
@@ -93,13 +110,18 @@ expect suspend fun pickMusicFolder(): String?
 expect fun releaseMusicFolderAccess(folder: String)
 
 /** Wire platform media controls (Android MediaSession / Linux MPRIS) to [session]. */
-expect fun bindPlatformMediaControls(session: PlayerSession, scope: CoroutineScope)
+expect fun bindPlatformMediaControls(
+    session: PlayerSession,
+    scope: CoroutineScope,
+    toggleFavorite: (Track) -> Boolean,
+)
 
 expect fun unbindPlatformMediaControls()
 
 expect fun createHomeLanSyncHub(
     pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
     onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
+    onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
     vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
     /**
      * When non-null, hub vault index only advertises these basenames (hearted-only mode).

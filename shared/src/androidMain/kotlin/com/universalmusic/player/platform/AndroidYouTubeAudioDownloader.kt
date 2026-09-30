@@ -4,6 +4,12 @@ import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.QualityTier
 import java.io.File
 import java.net.URI
+import java.net.HttpURLConnection
+import com.universalmusic.player.data.cache.copyHeartedAudio
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -20,6 +26,7 @@ class AndroidYouTubeAudioDownloader(
         videoId: String,
         destinationDirectory: String,
         fileBaseName: String,
+        onProgress: ((bytesCopied: Long, totalBytes: Long?) -> Unit)?,
     ): DownloadedYouTubeAudio? = withContext(Dispatchers.IO) {
         val id = videoId.trim()
         if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) return@withContext null
@@ -29,31 +36,41 @@ class AndroidYouTubeAudioDownloader(
         val resolved = resolver.resolveAudioUrl(id) ?: return@withContext null
         val dir = File(destinationDirectory)
         if (!dir.mkdirs() && !dir.isDirectory) return@withContext null
-        dir.listFiles()?.filter { it.name.startsWith("$base.") }?.forEach { it.delete() }
+        if (dir.listFiles()?.any { it.name.startsWith("$base.") } == true) return@withContext null
 
         val ext = guessExtension(resolved.url, resolved.quality)
         val target = File(dir, "$base.$ext")
         val tmp = File(dir, "$base.$ext.part")
-        tmp.delete()
-        val ok = runCatching {
-            URI(resolved.url).toURL().openStream().use { input ->
-                tmp.outputStream().use { output -> input.copyTo(output) }
+        val connection = URI(resolved.url).toURL().openConnection().apply {
+            connectTimeout = 30_000
+            readTimeout = 30_000
+        }
+        var published = false
+        try {
+            val context = currentCoroutineContext()
+            runInterruptible(Dispatchers.IO) {
+                tmp.outputStream().use { output ->
+                    copyHeartedAudio(connection, output, { context.ensureActive() }, onProgress)
+                }
             }
-            true
-        }.getOrDefault(false)
-        if (!ok || !tmp.isFile || tmp.length() <= 0L) {
-            tmp.delete()
+            context.ensureActive()
+            if (!tmp.renameTo(target)) tmp.copyTo(target, overwrite = false)
+            published = true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
             return@withContext null
-        }
-        if (target.exists()) target.delete()
-        if (!tmp.renameTo(target)) {
-            tmp.copyTo(target, overwrite = true)
+        } finally {
+            (connection as? HttpURLConnection)?.disconnect()
             tmp.delete()
+            if (!published) target.delete()
         }
+        val size = target.length()
+        onProgress?.invoke(size, size)
         DownloadedYouTubeAudio(
             absolutePath = target.absolutePath,
             quality = resolved.quality ?: AudioQuality(tier = QualityTier.HIGH, codec = ext),
-            sizeBytes = target.length(),
+            sizeBytes = size,
         )
     }
 

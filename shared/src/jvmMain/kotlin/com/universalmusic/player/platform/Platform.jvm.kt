@@ -11,6 +11,10 @@ import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.FileUserLibraryStore
 import com.universalmusic.player.data.library.UserLibraryStore
+import com.universalmusic.player.data.playlist.FileKainosPlaylistStore
+import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.FileSessionSnapshotStore
+import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.local.JvmLocalTrackSource
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.JvmLocalLibraryScanCache
@@ -27,6 +31,8 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.Desktop
@@ -35,13 +41,15 @@ import java.net.URLEncoder
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Properties
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -49,6 +57,8 @@ private fun configDir(): Path {
     val home = System.getProperty("user.home")
     val dir = Path.of(home, ".universal-music-player")
     Files.createDirectories(dir)
+    // Holds the Spotify refresh token and the Home sync hub key; keep it owner-only.
+    restrictToOwner(dir, directory = true)
     return dir
 }
 
@@ -56,6 +66,10 @@ private fun configDir(): Path {
 internal fun homeLanConfigDir(): Path = configDir()
 
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()
+
+actual fun isNetworkAvailable(): Boolean = true
+
+actual fun monotonicElapsedRealtimeMs(): Long = System.nanoTime() / 1_000_000L
 
 actual fun sha256Bytes(bytes: ByteArray): ByteArray =
     MessageDigest.getInstance("SHA-256").digest(bytes)
@@ -81,6 +95,12 @@ actual fun createSettingsStore(): SettingsStore = FileSettingsStore(configDir() 
 
 actual fun createUserLibraryStore(): UserLibraryStore =
     FileUserLibraryStore(configDir() / "user-library.json")
+
+actual fun createKainosPlaylistStore(): KainosPlaylistStore =
+    FileKainosPlaylistStore(configDir() / "kainos-playlists.json")
+
+actual fun createSessionSnapshotStore(): SessionSnapshotStore =
+    FileSessionSnapshotStore(configDir() / "playback-session.json")
 
 actual fun createMetadataArtworkCache(): MetadataArtworkCache {
     val disk = FileMetadataCacheDisk(configDir() / "meta-cache")
@@ -190,6 +210,7 @@ private var mprisController: MprisController? = null
 actual fun bindPlatformMediaControls(
     session: com.universalmusic.player.domain.playback.PlayerSession,
     scope: kotlinx.coroutines.CoroutineScope,
+    @Suppress("UNUSED_PARAMETER") toggleFavorite: (com.universalmusic.player.domain.model.Track) -> Boolean,
 ) {
     mprisController?.stop()
     mprisController = MprisController(session, scope).also { it.start() }
@@ -203,6 +224,7 @@ actual fun unbindPlatformMediaControls() {
 actual fun createHomeLanSyncHub(
     pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
     onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
+    onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
     vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
     heartedVaultFileNames: () -> Set<String>?,
 ): com.universalmusic.player.data.sync.HomeLanSyncHub {
@@ -216,6 +238,7 @@ actual fun createHomeLanSyncHub(
     return com.universalmusic.player.data.sync.DesktopHomeLanSyncHub(
         pairing = pairing,
         onHearts = onHearts,
+        onPlaylists = onPlaylists,
         vault = vault,
         tls = tls,
         heartedVaultFileNames = heartedVaultFileNames,
@@ -372,37 +395,114 @@ private fun findExecutable(name: String): String? {
     }?.let { java.io.File(it, name).absolutePath }
 }
 
-private class FileTokenStore(private val path: Path) : TokenStore {
-    override suspend fun read(provider: ProviderId): AuthTokens? {
-        val all = readAll()
-        return all[provider.name]
+/**
+ * Spotify (and other provider) OAuth tokens. Writes are atomic temp+rename with owner-only
+ * permissions; read-modify-write is serialized so concurrent writes can't drop entries.
+ * A malformed file is quarantined and treated as signed out, so the user just reconnects.
+ */
+internal class FileTokenStore(private val path: Path) : TokenStore {
+    private val mutex = Mutex()
+
+    init {
+        restrictToOwner(path)
     }
 
-    override suspend fun write(provider: ProviderId, tokens: AuthTokens) {
+    override suspend fun read(provider: ProviderId): AuthTokens? = mutex.withLock {
+        readAll()[provider.name]
+    }
+
+    override suspend fun write(provider: ProviderId, tokens: AuthTokens) = mutex.withLock {
         val all = readAll().toMutableMap()
         all[provider.name] = tokens
-        path.writeText(json.encodeToString(all))
+        writeAtomicOwnerOnly(path, json.encodeToString(all))
     }
 
-    override suspend fun clear(provider: ProviderId) {
+    override suspend fun clear(provider: ProviderId) = mutex.withLock {
         val all = readAll().toMutableMap()
-        all.remove(provider.name)
-        path.writeText(json.encodeToString(all))
+        if (all.remove(provider.name) != null || path.exists()) {
+            writeAtomicOwnerOnly(path, json.encodeToString(all))
+        }
     }
 
     private fun readAll(): Map<String, AuthTokens> {
         if (!path.exists()) return emptyMap()
-        return json.decodeFromString(path.readText())
+        return readOrQuarantine(path) { json.decodeFromString<Map<String, AuthTokens>>(it) } ?: emptyMap()
     }
 }
 
-private class FileSettingsStore(private val path: Path) : SettingsStore {
-    override suspend fun read(): AppSettings {
-        if (!path.exists()) return AppSettings()
-        return json.decodeFromString(path.readText())
+/** App settings; a truncated/malformed file is quarantined and defaults are returned. */
+internal class FileSettingsStore(private val path: Path) : SettingsStore {
+    private val mutex = Mutex()
+
+    init {
+        restrictToOwner(path)
     }
 
-    override suspend fun write(settings: AppSettings) {
-        path.writeText(json.encodeToString(settings))
+    override suspend fun read(): AppSettings = mutex.withLock {
+        if (!path.exists()) return@withLock AppSettings()
+        readOrQuarantine(path) { json.decodeFromString<AppSettings>(it) } ?: AppSettings()
+    }
+
+    override suspend fun write(settings: AppSettings) = mutex.withLock {
+        writeAtomicOwnerOnly(path, json.encodeToString(settings))
+    }
+}
+
+/**
+ * Decodes [path]; on failure renames it to `<name>.corrupt-<epochMs>` (never overwriting the
+ * evidence) and returns null so the caller falls back to defaults.
+ */
+private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
+    val text = try {
+        path.readText()
+    } catch (e: java.io.IOException) {
+        // Unreadable (not malformed): leave the file alone.
+        System.err.println("WARN Kainos: could not read $path (${e.message}); using defaults")
+        return null
+    }
+    val failure = try {
+        return decode(text)
+    } catch (e: Exception) {
+        e
+    }
+    val quarantine = path.resolveSibling("${path.fileName}.corrupt-${System.currentTimeMillis()}")
+    val moved = runCatching { Files.move(path, quarantine) }.isSuccess
+    System.err.println(
+        "WARN Kainos: could not read $path (${failure::class.simpleName}: ${failure.message}); " +
+            if (moved) "moved it to ${quarantine.fileName} and using defaults" else "using defaults",
+    )
+    return null
+}
+
+/** Temp file in the same dir (created 0600 on POSIX), then atomic rename over [path]. */
+private fun writeAtomicOwnerOnly(path: Path, text: String) {
+    val dir = path.toAbsolutePath().parent
+    Files.createDirectories(dir)
+    val ownerOnly = runCatching {
+        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+    }.getOrNull()
+    val tmp = runCatching {
+        if (ownerOnly != null) Files.createTempFile(dir, "${path.fileName}.", ".tmp", ownerOnly) else null
+    }.getOrNull() ?: Files.createTempFile(dir, "${path.fileName}.", ".tmp")
+    try {
+        Files.writeString(tmp, text)
+        try {
+            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING)
+        }
+    } finally {
+        runCatching { Files.deleteIfExists(tmp) }
+    }
+}
+
+/** Best-effort chmod 0600 (file) / 0700 ([directory]); no-op on non-POSIX or missing paths. */
+private fun restrictToOwner(path: Path, directory: Boolean = false) {
+    if (!path.exists()) return
+    runCatching {
+        Files.setPosixFilePermissions(
+            path,
+            PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------"),
+        )
     }
 }

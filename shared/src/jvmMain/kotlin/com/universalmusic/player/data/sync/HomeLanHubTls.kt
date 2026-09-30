@@ -4,6 +4,8 @@ import com.universalmusic.player.platform.sha256Bytes
 import io.ktor.network.tls.certificates.buildKeyStore
 import io.ktor.network.tls.certificates.saveToFile
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.KeyStore
 import java.security.cert.X509Certificate
 
@@ -36,7 +38,13 @@ fun generateHomeLanHubTls(
             domains = hosts
         }
     }
+    // Pre-create owner-only so the private key is never briefly world-readable.
+    runCatching {
+        keyStoreFile.delete()
+        Files.createFile(keyStoreFile.toPath(), PosixFilePermissions.asFileAttribute(OWNER_ONLY))
+    }
     keyStore.saveToFile(keyStoreFile, keyStorePassword.concatToString())
+    restrictToOwner(keyStoreFile)
     val cert = keyStore.getCertificate(HUB_KEY_ALIAS) as X509Certificate
     return HomeLanHubTlsMaterial(
         certSha256Hex = certSha256Hex(cert.encoded),
@@ -60,6 +68,8 @@ fun loadHomeLanHubTls(
     require(keyStoreFile.isFile) {
         "Hub TLS keystore missing; re-run Start hub pairing on the PC"
     }
+    // Tighten keystores written by older builds with the default umask.
+    restrictToOwner(keyStoreFile)
     val keyStorePassword = keyStorePasswordFor(sharedSecretHex)
     val keyStore = KeyStore.getInstance("PKCS12").apply {
         keyStoreFile.inputStream().use { load(it, keyStorePassword) }
@@ -78,6 +88,13 @@ fun loadHomeLanHubTls(
         privateKeyPassword = keyStorePassword,
         keyStoreFile = keyStoreFile,
     )
+}
+
+private val OWNER_ONLY = PosixFilePermissions.fromString("rw-------")
+
+/** chmod 0600 on POSIX; a no-op (failure ignored) on filesystems without POSIX attributes. */
+private fun restrictToOwner(file: File) {
+    runCatching { Files.setPosixFilePermissions(file.toPath(), OWNER_ONLY) }
 }
 
 private fun keyStorePasswordFor(sharedSecretHex: String): CharArray {

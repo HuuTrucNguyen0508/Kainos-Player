@@ -15,7 +15,7 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import kotlinx.serialization.Serializable
 
-const val USER_LIBRARY_FORMAT_VERSION = 2
+const val USER_LIBRARY_FORMAT_VERSION = 3
 
 /**
  * Versioned on-disk user library. Stores provider identities and display metadata only —
@@ -35,6 +35,11 @@ data class UserLibrarySnapshot(
     val heartOps: List<HeartOp> = emptyList(),
     val remembered: List<PersistedTrack> = emptyList(),
     val recents: List<PersistedTrack> = emptyList(),
+    /**
+     * Explicit Home pins in display order (Phase 5). Removing a pin does not delete
+     * the underlying playlist, album, or folder. See [HomePinKind.canHomeSync].
+     */
+    val homePins: List<PersistedHomePin> = emptyList(),
 )
 
 @Serializable
@@ -201,6 +206,10 @@ fun UserLibrarySnapshot.scopedToSpotifyAccount(activeAccountId: String?): UserLi
         heartOps = heartOps.filterNot { isSpotifyCanonical(it.canonicalId) },
         remembered = remembered.filterNot { it.isSpotifyOnly() },
         recents = recents.filterNot { it.isSpotifyOnly() },
+        homePins = homePins.filterNot { pin ->
+            pin.kind == HomePinKind.PROVIDER_PLAYLIST &&
+                (pin.provider == ProviderId.SPOTIFY.name || pin.targetId.startsWith("spotify"))
+        },
     )
 }
 
@@ -232,5 +241,6 @@ fun UserLibrarySnapshot.migrated(deviceId: String = "local"): UserLibrarySnapsho
         }
         next = next.copy(favoriteIds = (fromOps + localOnly).toSortedSet().toList())
     }
+    next = next.copy(homePins = next.homePins.migratedHomePins())
     return next
 }

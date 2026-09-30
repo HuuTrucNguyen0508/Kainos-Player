@@ -12,7 +12,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
+import com.universalmusic.player.platform.AndroidPlaybackService
 import com.universalmusic.player.platform.MusicFolderPickerRelay
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
@@ -53,12 +55,19 @@ class MainActivity : ComponentActivity() {
             UniversalMusicApp(container)
         }
         requestLocalMediaPermission()
-        handleSpotifyCallback(intent)
+        handleLaunchIntent(intent)
     }
 
     override fun onResume() {
         super.onResume()
         ensureAppContainer().homeLanSync.onAppForeground()
+    }
+
+    override fun onStop() {
+        // The process may be killed while backgrounded; persist the session before that.
+        val container = ensureAppContainer()
+        container.scope.launch { container.flushListeningSession() }
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -72,7 +81,19 @@ class MainActivity : ComponentActivity() {
     // arrives here instead of onCreate.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handleLaunchIntent(intent)
+        setIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        handleOpenNowPlaying(intent)
         handleSpotifyCallback(intent)
+    }
+
+    private fun handleOpenNowPlaying(intent: Intent?) {
+        if (intent?.getBooleanExtra(AndroidPlaybackService.EXTRA_OPEN_NOW_PLAYING, false) != true) return
+        intent.removeExtra(AndroidPlaybackService.EXTRA_OPEN_NOW_PLAYING)
+        ensureAppContainer().requestUi(UiRequest.OPEN_NOW_PLAYING)
     }
 
     private fun handleSpotifyCallback(intent: Intent?) {

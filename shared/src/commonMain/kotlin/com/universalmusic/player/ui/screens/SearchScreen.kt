@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.reportsTextInputFocus
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,7 +26,6 @@ import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
@@ -86,12 +85,9 @@ fun SearchScreen(
     val settings by container.settings.collectAsState()
     val spotify by container.spotify.state.collectAsState()
     val youtube by container.youtube.state.collectAsState()
+    val downloads by container.heartedAudio.downloads.collectAsState()
     val providersConfigured = spotify != ProviderState.NOT_CONFIGURED ||
         youtube != ProviderState.NOT_CONFIGURED
-
-    DisposableEffect(Unit) {
-        onDispose { container.setTextInputFocused(false) }
-    }
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -144,7 +140,7 @@ fun SearchScreen(
                 .fillMaxWidth()
                 .padding(16.dp)
                 .focusRequester(focusRequester)
-                .onFocusChanged { container.setTextInputFocused(it.isFocused) },
+                .reportsTextInputFocus(),
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
             placeholder = { Text("Search Spotify and YouTube") },
@@ -228,6 +224,9 @@ fun SearchScreen(
                     }
                     TrackRow(
                         track,
+                        availability = remember(track, downloads) {
+                            container.trackAvailability(track)
+                        },
                         onClick = {
                             if (youtubeSource != null && track.sources.none { it.isPlayable }) {
                                 openYouTube()

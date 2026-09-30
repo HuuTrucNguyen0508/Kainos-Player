@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.reportsTextInputFocus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -15,9 +16,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -39,6 +44,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.data.settings.AppColorScheme
 import com.universalmusic.player.data.settings.ThemeMode
@@ -95,6 +102,10 @@ fun SettingsScreen(container: AppContainer) {
     val usingDefaultFolder = !settings.localMusicFoldersConfigured
     val localLibraryMessage by container.localLibraryMessage.collectAsState()
     val canPickFolders = supportsMusicFolderPicker()
+    val homePins by container.library.homePins.collectAsState()
+    val pinnedFolders = remember(homePins) {
+        homePins.filter { it.kind == HomePinKind.LOCAL_FOLDER }.map { it.targetId }.toSet()
+    }
 
     Column(
         Modifier
@@ -205,6 +216,7 @@ fun SettingsScreen(container: AppContainer) {
                 )
             }
             localFolders.forEach { folder ->
+                val folderPinned = folder in pinnedFolders
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -215,6 +227,34 @@ fun SettingsScreen(container: AppContainer) {
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f).padding(end = 8.dp),
                     )
+                    IconButton(
+                        onClick = {
+                            if (folderPinned) {
+                                container.library.unpinHome(HomePinKind.LOCAL_FOLDER, folder)
+                            } else {
+                                container.library.pinHome(
+                                    kind = HomePinKind.LOCAL_FOLDER,
+                                    targetId = folder,
+                                    title = folderPinDisplayName(folder),
+                                    subtitle = "Local folder",
+                                )
+                            }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = if (folderPinned) {
+                                "Unpin folder from Home"
+                            } else {
+                                "Pin folder to Home"
+                            },
+                            tint = if (folderPinned) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                     OutlinedButton(
                         onClick = { container.removeLocalMusicFolder(folder) },
                     ) {
@@ -263,7 +303,7 @@ fun SettingsScreen(container: AppContainer) {
             label = { Text("Spotify Client ID") },
             singleLine = true,
             enabled = ready && !providerBusy,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
         )
         Text("Register this Spotify redirect URI: ${container.config.spotifyRedirectUri}", style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(
@@ -273,7 +313,7 @@ fun SettingsScreen(container: AppContainer) {
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
             enabled = ready && !providerBusy,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
         )
         Text("Enable YouTube Data API v3 in your Google Cloud project. These values are saved on this device. Empty fields use secrets.properties or environment defaults.", style = MaterialTheme.typography.bodySmall)
         Button(enabled = ready && !providerBusy, onClick = {
@@ -426,7 +466,7 @@ fun SettingsScreen(container: AppContainer) {
             OutlinedTextField(
                 value = discoverPlaylistInput,
                 onValueChange = { discoverPlaylistInput = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
                 singleLine = true,
                 label = { Text("Discover Weekly playlist link") },
                 placeholder = { Text("Paste Spotify share URL or playlist id") },
@@ -475,6 +515,18 @@ fun SettingsScreen(container: AppContainer) {
 
         if (section == SettingsSection.Appearance) {
         Text("Appearance", style = MaterialTheme.typography.titleMedium)
+        SettingToggle(
+            "Compact desktop player",
+            settings.compactMode,
+        ) {
+            scope.launch { container.updateSettings { current -> current.copy(compactMode = it) } }
+        }
+        Text(
+            "On desktop, hide the Now Playing side pane and use a compact bar instead. " +
+                "Open Now Playing from the bar when you want the full pane. Phone layout is unchanged.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text("Light / dark", style = MaterialTheme.typography.labelLarge)
         ThemeMode.entries.forEach { mode ->
             Row(
@@ -542,8 +594,8 @@ fun SettingsScreen(container: AppContainer) {
 
         }
 
-        if (section == SettingsSection.Devices || section == SettingsSection.Advanced) {
-        Text(if (section == SettingsSection.Devices) "Devices and sync" else "Certificate and device fields", style = MaterialTheme.typography.titleMedium)
+        if (section == SettingsSection.Devices) {
+        Text("Devices and sync", style = MaterialTheme.typography.titleMedium)
         Text(
             "1. On the computer, start hub pairing and copy the pairing link. 2. On the phone, paste that link. 3. Choose Sync now. Spotify hearts stay on the Spotify account. YouTube and local-file hearts sync both ways. Missing audio waits for you to confirm a transfer.",
             style = MaterialTheme.typography.bodySmall,
@@ -554,13 +606,7 @@ fun SettingsScreen(container: AppContainer) {
         val clipboard = LocalClipboardManager.current
         var syncBusy by remember { mutableStateOf(false) }
         var syncNotice by remember { mutableStateOf<String?>(null) }
-        var clientHost by remember { mutableStateOf(syncPairing?.hubHost.orEmpty()) }
-        var clientSecret by remember { mutableStateOf("") }
-        var clientPeerId by remember { mutableStateOf(syncPairing?.peerDeviceId.orEmpty()) }
-        var clientPin by remember { mutableStateOf("") }
-        var clientCert by remember { mutableStateOf(syncPairing?.hubCertSha256Hex.orEmpty()) }
         var clientPairingUri by remember { mutableStateOf("") }
-        var tombstonePath by remember { mutableStateOf("") }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -684,7 +730,7 @@ fun SettingsScreen(container: AppContainer) {
                             onValueChange = {},
                             readOnly = true,
                             label = { Text("Pairing URI") },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
                             singleLine = false,
                         )
                         OutlinedButton(
@@ -709,7 +755,7 @@ fun SettingsScreen(container: AppContainer) {
                 value = clientPairingUri,
                 onValueChange = { clientPairingUri = it },
                 label = { Text("Paste pairing URI from PC") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
                 singleLine = false,
             )
             Button(
@@ -726,69 +772,6 @@ fun SettingsScreen(container: AppContainer) {
                 },
             ) {
                 Text("Pair from URI")
-            }
-            if (section == SettingsSection.Advanced) {
-            OutlinedTextField(
-                value = clientHost,
-                onValueChange = { clientHost = it },
-                label = { Text("PC LAN IP / hostname") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = clientSecret,
-                onValueChange = { clientSecret = it },
-                label = { Text("Shared secret from PC") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = clientPin,
-                onValueChange = { clientPin = it },
-                label = { Text("Pairing PIN from PC") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = clientCert,
-                onValueChange = { clientCert = it },
-                label = { Text("Hub cert pin (64 hex from URI cert=)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = clientPeerId,
-                onValueChange = { clientPeerId = it },
-                label = { Text("PC device id (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Button(
-                enabled = !syncBusy &&
-                    clientHost.isNotBlank() &&
-                    clientSecret.isNotBlank() &&
-                    clientCert.trim().length == 64,
-                onClick = {
-                    syncBusy = true
-                    scope.launch {
-                        runCatching {
-                            container.homeLanSync.completeClientPairing(
-                                hubHost = clientHost.trim(),
-                                hubPort = syncPairing?.hubPort
-                                    ?: com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT,
-                                sharedSecretHex = clientSecret.trim(),
-                                peerDeviceId = clientPeerId.trim(),
-                                pairingPin = clientPin.trim(),
-                                hubCertSha256Hex = clientCert.trim(),
-                            )
-                            syncNotice = "Paired with $clientHost"
-                        }.onFailure { syncNotice = it.message }
-                        syncBusy = false
-                    }
-                },
-            ) {
-                Text("Save phone pairing")
-            }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -811,9 +794,6 @@ fun SettingsScreen(container: AppContainer) {
                     syncBusy = true
                     scope.launch {
                         container.homeLanSync.unpair()
-                        clientSecret = ""
-                        clientPin = ""
-                        clientCert = ""
                         syncNotice = "Unpaired"
                         syncBusy = false
                     }
@@ -909,55 +889,6 @@ fun SettingsScreen(container: AppContainer) {
                 }
             }
         }
-        if (section == SettingsSection.Advanced) {
-        syncPairing?.sharedSecretHex?.let { secret ->
-            SelectionContainer {
-                Text(
-                    "Shared secret:\n$secret",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                "This device id: ${syncPairing?.deviceId}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            syncPairing?.hubCertSha256Hex?.let { pin ->
-                Text(
-                    "Certificate fingerprint: $pin",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        OutlinedTextField(
-            value = tombstonePath,
-            onValueChange = { tombstonePath = it },
-            label = { Text("File to remove (path inside the vault)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        OutlinedButton(
-            enabled = !syncBusy && tombstonePath.isNotBlank(),
-            onClick = {
-                syncBusy = true
-                scope.launch {
-                    syncNotice = container.homeLanSync.tombstoneVaultPath(tombstonePath.trim())
-                        .getOrElse { it.message ?: "Failed" }
-                    tombstonePath = ""
-                    syncBusy = false
-                }
-            },
-        ) {
-            Text("Remove file from shared vault")
-        }
-        Text(
-            "Removes the file from the vault on this device and asks the other device to delete its copy the next time you sync.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        }
         syncStatus.lastDetail?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -967,6 +898,10 @@ fun SettingsScreen(container: AppContainer) {
         syncNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        }
+
+        if (section == SettingsSection.Downloads) {
+            DownloadsSection(container)
         }
 
         if (section == SettingsSection.Advanced) {
@@ -1041,6 +976,139 @@ fun SettingsScreen(container: AppContainer) {
         traceNotice?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+
+        Text("Home sync diagnostics", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Pairing and everyday sync stay under Devices and sync. These fields are for repair and vault cleanup.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val syncPairing by container.homeLanSync.pairing.collectAsState()
+        var syncBusy by remember { mutableStateOf(false) }
+        var syncNotice by remember { mutableStateOf<String?>(null) }
+        var tombstonePath by remember { mutableStateOf("") }
+        syncPairing?.sharedSecretHex?.let { secret ->
+            SelectionContainer {
+                Text(
+                    "Shared secret:\n$secret",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                "This device id: ${syncPairing?.deviceId}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            syncPairing?.hubCertSha256Hex?.let { pin ->
+                Text(
+                    "Certificate fingerprint: $pin",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } ?: Text(
+            "No home sync pairing on this device.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (platformLabel() != "Linux") {
+            var clientHost by remember { mutableStateOf(syncPairing?.hubHost.orEmpty()) }
+            var clientSecret by remember { mutableStateOf("") }
+            var clientPeerId by remember { mutableStateOf(syncPairing?.peerDeviceId.orEmpty()) }
+            var clientPin by remember { mutableStateOf("") }
+            var clientCert by remember { mutableStateOf(syncPairing?.hubCertSha256Hex.orEmpty()) }
+            OutlinedTextField(
+                value = clientHost,
+                onValueChange = { clientHost = it },
+                label = { Text("PC LAN IP / hostname") },
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientSecret,
+                onValueChange = { clientSecret = it },
+                label = { Text("Shared secret from PC") },
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientPin,
+                onValueChange = { clientPin = it },
+                label = { Text("Pairing PIN from PC") },
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientCert,
+                onValueChange = { clientCert = it },
+                label = { Text("Hub cert pin (64 hex from URI cert=)") },
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = clientPeerId,
+                onValueChange = { clientPeerId = it },
+                label = { Text("PC device id (optional)") },
+                modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+                singleLine = true,
+            )
+            Button(
+                enabled = !syncBusy &&
+                    clientHost.isNotBlank() &&
+                    clientSecret.isNotBlank() &&
+                    clientCert.trim().length == 64,
+                onClick = {
+                    syncBusy = true
+                    scope.launch {
+                        runCatching {
+                            container.homeLanSync.completeClientPairing(
+                                hubHost = clientHost.trim(),
+                                hubPort = syncPairing?.hubPort
+                                    ?: com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT,
+                                sharedSecretHex = clientSecret.trim(),
+                                peerDeviceId = clientPeerId.trim(),
+                                pairingPin = clientPin.trim(),
+                                hubCertSha256Hex = clientCert.trim(),
+                            )
+                            syncNotice = "Paired with $clientHost"
+                        }.onFailure { syncNotice = it.message }
+                        syncBusy = false
+                    }
+                },
+            ) {
+                Text("Save phone pairing (manual)")
+            }
+        }
+        OutlinedTextField(
+            value = tombstonePath,
+            onValueChange = { tombstonePath = it },
+            label = { Text("File to remove (path inside the vault)") },
+            modifier = Modifier.fillMaxWidth().reportsTextInputFocus(),
+            singleLine = true,
+        )
+        OutlinedButton(
+            enabled = !syncBusy && tombstonePath.isNotBlank(),
+            onClick = {
+                syncBusy = true
+                scope.launch {
+                    syncNotice = container.homeLanSync.tombstoneVaultPath(tombstonePath.trim())
+                        .getOrElse { it.message ?: "Failed" }
+                    tombstonePath = ""
+                    syncBusy = false
+                }
+            },
+        ) {
+            Text("Remove file from shared vault")
+        }
+        Text(
+            "Removes the file from the vault on this device and asks the other device to delete its copy the next time you sync.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        syncNotice?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         }
     }
 }
@@ -1113,6 +1181,7 @@ private enum class SettingsSection(val label: String) {
     Appearance("Appearance"),
     Sources("Music sources"),
     Devices("Devices and sync"),
+    Downloads("Downloads"),
     Advanced("Advanced"),
 }
 

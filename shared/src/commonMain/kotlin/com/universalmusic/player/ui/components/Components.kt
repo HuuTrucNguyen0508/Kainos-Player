@@ -23,6 +23,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,6 +41,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.universalmusic.player.data.cache.TrackAvailability
+import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.data.library.requiresNetworkToPlay
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artwork
@@ -174,9 +177,20 @@ fun TrackRow(
     modifier: Modifier = Modifier,
     trailing: @Composable (() -> Unit)? = null,
     compact: Boolean = false,
+    availability: TrackAvailabilityInfo? = null,
 ) {
     val artSize = if (compact) 48.dp else 56.dp
     val gap = if (compact) 12.dp else 16.dp
+    val statusLabel = availability?.let { info ->
+        when (info.status) {
+            TrackAvailability.AVAILABLE_LOCALLY -> null
+            TrackAvailability.CACHED -> info.label
+            TrackAvailability.DOWNLOADING -> info.label
+            TrackAvailability.WAITING_FOR_NETWORK -> info.label
+            TrackAvailability.UNAVAILABLE -> info.label
+            TrackAvailability.FAILED -> info.label
+        }
+    } ?: if (track.requiresNetworkToPlay()) "Needs connection" else null
     Surface(
         modifier = modifier.fillMaxWidth(),
         onClick = onClick,
@@ -194,10 +208,17 @@ fun TrackRow(
                 Text(
                     buildString {
                         append(track.artistLine)
-                        if (track.requiresNetworkToPlay()) append(" · Needs connection")
+                        if (statusLabel != null) {
+                            append(" · ")
+                            append(statusLabel)
+                        }
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = when (availability?.status) {
+                        TrackAvailability.FAILED, TrackAvailability.UNAVAILABLE ->
+                            MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -207,6 +228,19 @@ fun TrackRow(
                         available = track.playableSources().map { it.provider },
                         modifier = Modifier.padding(top = 4.dp),
                     )
+                }
+                if (availability?.status == TrackAvailability.DOWNLOADING) {
+                    val progress = availability.progress
+                    if (progress != null) {
+                        LinearProgressIndicator(
+                            progress = { progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
+                        )
+                    }
                 }
             }
             trailing?.invoke()
@@ -219,6 +253,7 @@ fun AlbumRow(
     album: Album,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -248,6 +283,7 @@ fun AlbumRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            trailing?.invoke()
         }
     }
 }
@@ -263,36 +299,58 @@ fun MiniPlayerBar(
     onToggle: () -> Unit,
     onNext: () -> Unit,
     canSkipNext: Boolean = true,
+    progress: Float = 0f,
+    buffering: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 2.dp,
-        shadowElevation = 1.dp,
+        shadowElevation = 2.dp,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
     ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ArtworkImage(artwork, title, Modifier.size(48.dp), title)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    listOfNotNull(artist, providerLabel).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Column(Modifier.fillMaxWidth()) {
+            when {
+                buffering -> LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                )
+                progress > 0f -> LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                 )
             }
-            IconButton(onClick = onToggle) {
-                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause" else "Play")
-            }
-            IconButton(onClick = onNext, enabled = canSkipNext) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next")
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ArtworkImage(artwork, title, Modifier.size(48.dp), title)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        listOfNotNull(artist, providerLabel).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = onToggle) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                    )
+                }
+                IconButton(onClick = onNext, enabled = canSkipNext) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Next")
+                }
             }
         }
     }

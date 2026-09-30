@@ -29,6 +29,9 @@ class KainosForwardingPlayer(
     @Volatile private var canSkipPrevious = false
     @Volatile private var canSeek = true
     @Volatile private var lastMediaId: String? = null
+    private var artworkMediaId: String? = null
+    private var artworkUri: Uri? = null
+    private var artworkData: ByteArray? = null
 
     /** Commands here arrive from MediaSession controllers (system UI, Bluetooth, our MediaController). */
     private fun trace(message: String) =
@@ -116,8 +119,16 @@ class KainosForwardingPlayer(
         this.canSkipNext = canSkipNext
         this.canSkipPrevious = canSkipPrevious
 
+        if (artworkMediaId != mediaId || this.artworkUri != artworkUri) {
+            artworkMediaId = mediaId
+            this.artworkUri = artworkUri
+            artworkData = null
+        }
         // Always pin artwork from session so a missing-art track cannot keep the previous cover.
-        val meta = metadata.buildUpon().setArtworkUri(artworkUri).build()
+        val meta = metadata.buildUpon()
+            .setArtworkUri(artworkUri)
+            .setArtworkData(artworkData, artworkData?.let { MediaMetadata.PICTURE_TYPE_FRONT_COVER })
+            .build()
 
         if (spotifyActive) {
             val placeholder = AndroidPlaybackService.silenceUri()
@@ -185,6 +196,33 @@ class KainosForwardingPlayer(
         )
     }
 
+    /** Apply decoded artwork only if the same media item is still current. */
+    fun updateArtwork(mediaId: String, artworkUri: Uri?, artworkData: ByteArray?) {
+        val current = exo.currentMediaItem ?: return
+        if (current.mediaId != mediaId) return
+        val currentData = current.mediaMetadata.artworkData
+        val dataMatches = when {
+            currentData == null -> artworkData == null
+            artworkData == null -> false
+            else -> currentData.contentEquals(artworkData)
+        }
+        if (current.mediaMetadata.artworkUri == artworkUri && dataMatches) return
+
+        artworkMediaId = mediaId
+        this.artworkUri = artworkUri
+        this.artworkData = artworkData
+        val metadata = current.mediaMetadata.buildUpon()
+            .setArtworkUri(artworkUri)
+            .setArtworkData(artworkData, artworkData?.let { MediaMetadata.PICTURE_TYPE_FRONT_COVER })
+            .build()
+        val updated = current.buildUpon().setMediaMetadata(metadata).build()
+        val index = exo.currentMediaItemIndex.takeIf { it >= 0 } ?: return
+        exo.replaceMediaItem(index, updated)
+        if (spotifyActive) {
+            listeners.forEach { it.onMediaMetadataChanged(metadata) }
+        }
+    }
+
     /** Position ticker only: no MediaItem swap. */
     fun updateOverlayPosition(positionMs: Long, durationMs: Long?) {
         overlayPositionMs = positionMs.coerceAtLeast(0L)
@@ -223,6 +261,9 @@ class KainosForwardingPlayer(
         overlayPositionMs = 0L
         overlayDurationMs = C.TIME_UNSET
         lastMediaId = null
+        artworkMediaId = null
+        artworkUri = null
+        artworkData = null
         canSkipNext = false
         canSkipPrevious = false
         canSeek = false

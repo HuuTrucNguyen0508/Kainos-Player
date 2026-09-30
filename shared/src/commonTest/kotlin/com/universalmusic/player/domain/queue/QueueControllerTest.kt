@@ -406,4 +406,53 @@ class QueueControllerTest {
         assertTrue(queue.undo())
         assertEquals(listOf("A", "B"), queue.queue.value.items.map { it.track.title })
     }
+
+    @Test
+    fun removingCurrentUnderShuffleMovesToShuffleSuccessor() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow((1..6).map { track("T$it", "X", provider = ProviderId.SPOTIFY) }, startIndex = 0)
+        queue.setShuffle(true)
+        val before = queue.queue.value
+        val order = before.playbackOrder()
+        val expectedNextId = before.items[order[1]].id
+
+        assertTrue(queue.remove(before.current!!.id))
+
+        assertEquals(expectedNextId, queue.queue.value.current?.id)
+    }
+
+    @Test
+    fun removingFinalCurrentWithoutRepeatReportsNoSuccessor() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+            ),
+            startIndex = 1,
+        )
+
+        assertFalse(queue.remove(queue.queue.value.current!!.id))
+        assertEquals("A", queue.queue.value.current?.track?.title)
+    }
+
+    @Test
+    fun removingFinalCurrentUnderRepeatAllWrapsToStart() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNow(
+            listOf(
+                track("A", "X", provider = ProviderId.SPOTIFY),
+                track("B", "X", provider = ProviderId.SPOTIFY),
+                track("C", "X", provider = ProviderId.SPOTIFY),
+            ),
+            startIndex = 2,
+        )
+        queue.setRepeat(RepeatMode.ALL)
+
+        assertTrue(queue.remove(queue.queue.value.current!!.id))
+        assertEquals("A", queue.queue.value.current?.track?.title)
+    }
 }
