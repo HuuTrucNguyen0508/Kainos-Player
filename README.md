@@ -144,18 +144,3 @@ Default: **Automatic — Best available**.
 5. If start fails, fall back to the next source. Now Playing can retry or try another source.
 
 You can force Spotify or YouTube Music in Settings. Nyquist, theoretical dynamic range, and the selection reason sit under **Audio details**.
-
-## Tests
-
-```bash
-./gradlew :shared:jvmTest
-```
-
-Coverage includes track matching (ISRC, featuring, remix/live/remaster separation), source ranking, isolated provider search failures, and queue behavior.
-
-## What this build does not do
-
-- No stream ripping, DRM bypass, or unofficial downloads
-- No custom DSP / equalizer engine (the OS audio stack is left alone)
-- No fake authentication or fake successful playback
-- No hardcoded API keys
