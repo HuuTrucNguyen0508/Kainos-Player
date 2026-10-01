@@ -1,146 +1,235 @@
 # Kainos Player
 
-A Material 3 music player for **Android** and **Linux** with one search, one library, one queue, and one player across local files, Spotify, and YouTube Music.
+A Material 3 music player for **Android** and **Linux**, built with Kotlin Multiplatform and Compose Multiplatform. Local files, Spotify, and YouTube share a library, queue, and player.
 
-Search once. Matching recordings are grouped. Playable sources are ranked by quality tier, then bitrate, then provider preference. The queue stores unified tracks, so the provider can change without rebuilding the queue.
+Search Spotify and YouTube together, organize music into Kainos playlists, pin favorites to Home, and play through the app or system media controls. Local playback works without provider credentials.
 
-## Known limitations
+This README describes the current source on `main`. [Release builds](https://github.com/HuuTrucNguyen0508/Kainos-Player/releases/latest) may be older; check the release notes for the features included in each build.
 
-- Spotify’s Web API does not report source quality. The player shows **Unknown** for Spotify tracks. A typical Connect decode is 16-bit / 44.1 kHz output, not proof the source is lossless.
-- In-app Spotify decode uses unofficial librespot (Linux) and librespot-java (Android). It needs Spotify Premium and can break if Spotify changes the protocol. Web Playback / the Spotify desktop app is only a fallback.
-- YouTube playback resolves audio with yt-dlp (desktop) or NewPipe Extractor (Android). There is no YouTube Music account library.
-- Search is Spotify and YouTube only. Local files stay in Library.
-- Home sync is on the local network. It mirrors YouTube and local-file hearts. It does not copy Spotify DRM audio.
-- The sample catalog is a small demo source. It is not a connected streaming session, and Search does not include it.
+## Features
 
-Details and credential requirements are in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+| Area | What you can do |
+| --- | --- |
+| Home | Play favorites, resume a listening session, revisit recent tracks, and reorder pins for playlists, local albums, and music folders. Discover Weekly appears when available. |
+| Search | Search Spotify and YouTube tracks and playlists together. Matching recordings are grouped, with source selection and fallback handled by the player. Local files have their own Library search. |
+| Library | Browse songs, albums, artists, and playlists; use case-insensitive fuzzy search, sorting, **Local files only**, and **Favorites only** filters. |
+| Kainos playlists | Create, rename, reorder, and delete app-owned playlists; add the current queue, remove entries, or save a queue as a new playlist. |
+| Queue | Use shuffle and repeat, drag or use arrows to reorder, remove entries, and undo removal or clearing. |
+| Now Playing | Seek, adjust volume, heart tracks, inspect source and audio quality, retry failed playback or try another source, and correct a Spotify track's YouTube cache match. |
+| Downloads | See offline availability, download progress, storage use, failures, and cache removals; retry, remove, or pin cached audio. |
+| Listening session | Restore the queue, shuffle/repeat state, and position **paused** after restarting. Press Play to resume. |
+| Sleep timer | Choose a 5–60 minute preset or pause at the end of the current track from Now Playing. |
+| Appearance | Follow the system theme or select light/dark mode, with ten color schemes and a compact desktop player option. |
+| Home sync | Pair phone and desktop to sync YouTube/local hearts, Kainos playlist metadata, and confirmed local-audio vault transfers over the home network. |
 
-This is a Kotlin Multiplatform project: shared domain, data, and Compose UI, with platform playback behind interfaces.
+App hearts are separate from **Spotify Liked Songs**. In Library, the filter chips and sort order define the playback queue; typing a search narrows the displayed matches without restricting that queue to the text results. **Play all** / **Play favorites** uses the chip-filtered queue.
 
-## Architecture
+Pin playlists and albums with their star buttons in Library; pin folders in Settings. Use **Home → Pinned → Edit** to reorder or unpin. Unpinning leaves the underlying music or playlist intact.
 
-```
-UI (Compose Multiplatform)
-        │
-        ▼
-Domain   Track, Queue, MusicProvider, TrackMatcher, SourceResolver
-        │
-        ▼
-Data     LocalMusicProvider · SpotifyProvider · YouTubeMusicProvider
-        │
-        ▼
-Platform Android Media3 · Linux desktop player · Spotify Connect
-```
+## Platform support
 
-UI code never calls a provider HTTP API. Adding Tidal, Qobuz, Bandcamp, or local files means implementing `MusicProvider`, not rewriting the app.
+| Capability | Linux | Android |
+| --- | --- | --- |
+| Local library | Picked folders; `~/Music` by default; optional ffprobe metadata | Persisted SAF folder access; optional MediaStore index |
+| Local / HTTP playback | Headless mpv with IPC controls | Media3 / ExoPlayer foreground service |
+| Spotify search and library | Spotify Web API + Client ID | Spotify Web API + Client ID |
+| Spotify playback | App-managed librespot Connect receiver | In-process librespot-java receiver |
+| YouTube search | YouTube Data API v3 key | YouTube Data API v3 key |
+| YouTube audio and cache | yt-dlp → mpv | NewPipe Extractor → ExoPlayer |
+| System controls | MPRIS, media keys, playerctl | Notification, lock screen, Bluetooth |
+| Home sync | HTTPS hub on port `43822`; optional login autostart | Foreground sync client; foreground service for vault transfers |
 
-## Run on Linux
+Spotify playback requires **Premium** and uses unofficial, experimental librespot integrations. YouTube Music account-library sync is not implemented. macOS, Windows, and iOS are not documented supported targets.
 
-JDK 17+ is required.
+## Build and run
+
+Use **JDK 17** (the version used by CI). Android builds also require an Android SDK; the project currently targets/compiles against API 36 and supports **Android 8.0 / API 26 or newer**. Gradle is provided by the wrapper.
 
 ```bash
+git clone https://github.com/HuuTrucNguyen0508/Kainos-Player.git
+cd Kainos-Player
+```
+
+### Linux
+
+Install `mpv` for local and HTTP playback. FFmpeg's `ffprobe` improves local metadata and audio-quality reporting; yt-dlp is needed for YouTube playback and caching. For example, on Arch Linux:
+
+```bash
+sudo pacman -S mpv ffmpeg
+./scripts/install-yt-dlp.sh
 ./gradlew :desktopApp:run
 ```
 
-Install a menu launcher (uses `~/Pictures/4.png` as the app icon, copied into `desktopApp/icons/`):
+For Spotify playback, install Rust/Cargo and ALSA development libraries, then build the pinned librespot receiver:
+
+```bash
+./scripts/install-librespot.sh
+```
+
+Install a menu launcher with the repository's included icons:
 
 ```bash
 ./scripts/install-desktop-launcher.sh
-kainos-player
+JAVA_HOME=/path/to/jdk-17 kainos-player
 ```
 
-That installs `~/.local/bin/kainos-player` and a desktop entry. The installed launcher starts the packaged jars directly. Rebuild with `scripts/kainos-player-dev` or `kainos-player --rebuild` (or `KAINOS_REBUILD=1`). Build and app output are saved in `logs/desktop-run-latest.log`. Desktop also shows the last library snapshot immediately and re-reads only files whose size or modification time changed.
+The installer creates `~/.local/bin/kainos-player` and a desktop entry. Ensure that directory is on `PATH` and keep the checkout where it was installed: the launcher references its scripts. It defaults to `~/.jdks/temurin-17` unless `JAVA_HOME` is set.
 
-Keyboard shortcuts:
-
-| Key | Action |
-| --- | --- |
-| Space | Play / pause |
-| Ctrl+← / Ctrl+→ | Previous / next |
-| Ctrl+F / Ctrl+K | Open Search |
-| Ctrl+Q | Toggle the queue panel |
-
-Install `mpv` for in-app local-file and HTTP playback on Linux (headless, no extra window). Pause/seek use mpv’s IPC. For YouTube audio on desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh` or your package manager). For Spotify on Linux, run `scripts/install-librespot.sh` to build the headless receiver. This requires Rust/Cargo and ALSA development libraries. Kainos starts the receiver for playback; Spotify Premium is required.
+The launcher builds a distributable when one is missing, then starts the packaged jars directly. After changing source, rebuild with:
 
 ```bash
-sudo pacman -S mpv
+kainos-player --rebuild
+# Or, always rebuild for development:
+./scripts/kainos-player-dev
 ```
 
-The local library scans `~/Music` by default whenever the app starts and when you choose **Refresh** in Settings or Library. On Linux you can add or remove folders in **Settings → Local library → Add folder**. Choices are saved in `~/.universal-music-player/settings.json`.
+`KAINOS_REBUILD=1` also requests a rebuild. Launcher build/run output is saved in `logs/desktop-run-*.log`, with `logs/desktop-run-latest.log` pointing to the latest run. For a Linux release archive, extract it and run its `./kainos-player` script as described in that release's notes.
 
-You can still add extra folders for a single launch with `KAINOS_MUSIC_DIRS` (colon-separated). Those are merged with the folders configured in Settings:
+Desktop layout adapts to window width: narrow windows use one content pane and a mini player; standard windows have a collapsible, resizable Now Playing pane; wide windows can show Queue alongside the main content and Now Playing. **Settings → Appearance → Compact desktop player** starts with the mini bar.
+
+### Android
+
+Open the project in Android Studio and configure the SDK, or copy `local.properties.example` to `local.properties` and set `sdk.dir`. Then:
+
+```bash
+./gradlew :androidApp:assembleDebug
+adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+```
+
+Choose music folders in **Settings → Music sources → Add folder**. Android keeps SAF access grants across restarts. MediaStore is an optional device-wide source; selecting the first explicit folder turns it off, and you can re-enable it in Music sources. Allow music/audio access when using MediaStore.
+
+Playback uses a foreground media service. System pause, seek, skip, and Bluetooth controls drive the shared in-app session. Tapping the music notification opens Now Playing. Back dismisses Now Playing/Queue first, then follows main-tab history; playback continues while navigating.
+
+## Local library
+
+Add, remove, refresh, and pin folders in **Settings → Music sources** on both platforms. Linux scans `~/Music` until you configure folders. An explicitly empty folder list stays empty.
+
+On Linux, `KAINOS_MUSIC_DIRS` adds colon-separated folders to the configured roots for that launch:
 
 ```bash
 KAINOS_MUSIC_DIRS="$HOME/Downloads/Music:/mnt/media/audio" ./gradlew :desktopApp:run
 ```
 
-## Run on Android
-
-Open the project in Android Studio, or:
-
-```bash
-./gradlew :androidApp:assembleDebug
-```
-
-Install `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Local and HTTP audio use a Media3 foreground playback service with system media controls. Spotify on Android uses in-process librespot-java (Premium, personal use), with Connect device selection when that mode is enabled. YouTube search uses the Data API; playback resolves an audio URL with NewPipe Extractor into ExoPlayer.
-
-On first launch, allow music and audio access. The app reads the Android MediaStore index and refreshes the local library after permission is granted; it does not copy audio into the app.
-
-With an emulator or Android device connected, run the playback and library checks:
-
-```bash
-JAVA_HOME="$HOME/.jdks/temurin-17" ./gradlew :androidApp:connectedDebugAndroidTest :androidApp:lintDebug
-```
-
-The instrumented tests cover MediaStore scanning, local playback controls and completion, recovery from missing audio, background service/system pause, and switching from Spotify to local audio with a simulated Spotify controller. They do not sign in to Spotify or test physical Bluetooth hardware.
+Both platforms load a saved library snapshot immediately and rescan in the background. Desktop skips probing files whose path, size, and modification time are unchanged. Artwork uses embedded covers, sidecar `cover.*` / `folder.*`, and Android MediaStore artwork where available; Android extracts embedded covers lazily and caches them.
 
 ## Connect providers
 
-Enter your Spotify Client ID and YouTube Data API key in **Settings → Provider setup**, then choose **Save provider settings**. Changes apply without restarting. Values persist in the device settings file. Empty fields fall back to `secrets.properties` or environment variables.
+Open **Settings → Music sources → Provider setup**, enter a Spotify Client ID and/or YouTube Data API key, and choose **Save provider settings**. Changes apply without restarting and persist on that device.
 
-For file-based setup, copy `secrets.properties.example` to `secrets.properties` (gitignored) or export the same environment variables.
+For desktop file-based setup, copy `secrets.properties.example` to `secrets.properties` and fill in the values, or export `SPOTIFY_CLIENT_ID` and `YOUTUBE_DATA_API_KEY`. Desktop reads `secrets.properties` from its working directory and `~/.universal-music-player/secrets.properties`; the latter works with both the launcher and Gradle run task. Enter credentials in-app on Android: the root `secrets.properties` file is **not bundled into the APK**. Keep real credentials out of Git.
 
 ### Spotify
 
-1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard).
-2. Add redirect URI `http://127.0.0.1:43821/callback` for Linux and Android. The app starts a loopback callback listener before opening the browser, following Spotify’s [redirect URI requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
-3. Save the client ID in Settings, or set `SPOTIFY_CLIENT_ID`.
-4. In Settings → Providers, connect Spotify and finish the browser login.
+1. Create an app at the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
+2. Register `http://127.0.0.1:43821/callback` as the redirect URI for Kainos on Linux and Android.
+3. Save the Client ID in **Settings → Music sources**.
+4. Choose **Connect** for Spotify and complete browser login. Kainos uses PKCE; no client secret is required.
+5. Use **Set up in-app Spotify playback** when the receiver needs its separate sign-in. Where device selection is shown, select the **Kainos Player** receiver or another Spotify Connect device.
 
-No client secret is needed. Login uses PKCE and validates the OAuth state and redirect. After connecting, Library loads your liked songs and playlists. Use **Refresh Spotify library** to reload them. Playlist links open Spotify.
+Library loads Spotify Liked Songs and playlists; **Refresh Spotify library** reloads them. Spotify playlists can play in-app and be pinned to Home. If Discover Weekly cannot be found through the Web API, paste its share URL or ID into **Discover Weekly playlist link** in Music sources. Fetching it also depends on the librespot integration; desktop needs the optional `kainos-discover-weekly` helper, which `install-librespot.sh` does not install.
 
-On Linux, Kainos runs [librespot](https://github.com/librespot-org/librespot) as a background Spotify Connect receiver. Its first use requires a separate browser sign-in; later launches reuse private cached credentials. No Spotify player window is needed during playback. Librespot is unofficial and requires Premium. Use `KAINOS_LIBRESPOT` to override the executable; the launcher detects the repository installation automatically. Play, pause, resume, and seek still use Spotify’s Web API, so API rate limits can block these controls and library loading even when the receiver is running. Developer apps must also meet Spotify’s [current development-mode requirements](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide).
+On Linux, Kainos starts librespot in the background; Android decodes with librespot-java on-device. Receiver credentials are reused after sign-in. The receiver applies Spotify Loud normalization with +3 dB pregain. `KAINOS_LIBRESPOT` overrides the Linux executable. Spotify's desktop client / Web Playback are fallback paths.
 
-### YouTube Music
+Spotify development-mode restrictions and Web API rate limits can block search, library loading, and transport controls even if the receiver is running. Follow Spotify's [current development-mode guidance](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide). Librespot access can break when Spotify changes its protocol.
 
-Enable **YouTube Data API v3** in your Google Cloud project, create an API key, and save it in Settings or set `YOUTUBE_DATA_API_KEY`. Search returns videos and playlists, with durations fetched from video metadata.
+### YouTube
 
-On Linux desktop, install `yt-dlp` (`scripts/install-yt-dlp.sh`) so Search can play audio in-app through mpv. **Open YouTube** still opens the browser. Android resolves audio with NewPipe Extractor into the in-app ExoPlayer service. Account library sync is not implemented.
+Enable **YouTube Data API v3** in a Google Cloud project, create an API key, and save it in Music sources. Search uses the official API for videos, playlists, and duration metadata; playback resolves audio with yt-dlp on desktop or NewPipe Extractor on Android.
 
-The adapter uses the official [search](https://developers.google.com/youtube/v3/docs/search/list) and [video metadata](https://developers.google.com/youtube/v3/docs/videos/list) endpoints. Quota and credential errors appear in search. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+The desktop yt-dlp executable can be selected with `KAINOS_YT_DLP`; the app also checks local installations and `PATH`. **Open YouTube** opens the browser. API quota/credential failures appear in Search, and extractor changes can interrupt playback. There is no connected YouTube Music account library.
 
-## Capability matrix
+**Settings → Playback → Autoplay similar tracks after Search** is off by default. When enabled, a Search-started queue can append one continuation batch, after manually queued tracks. Spotify continuation depends on access to `/recommendations`; if unavailable, it is skipped rather than replaced with a Liked Songs shuffle.
 
-| | Linux | Android |
-| --- | --- | --- |
-| Local files | Folder scan, ffprobe, headless mpv | SAF folders, optional MediaStore, ExoPlayer |
-| Spotify search and library | Web API + Client ID | Web API + Client ID |
-| Spotify playback | librespot Connect receiver (Premium, experimental/unofficial) | librespot-java on device (Premium, experimental/unofficial) |
-| YouTube search | Data API key | Data API key |
-| YouTube audio | yt-dlp → mpv | NewPipe Extractor → ExoPlayer |
-| System media keys | MPRIS / playerctl | Notification, lock screen, Bluetooth |
-| Home sync | HTTPS hub on port 43822 | Phone starts sync while the app is open |
+## Offline audio and Downloads
 
-Spotify Client ID, YouTube Data API key, and Spotify Premium are required for those providers. Local playback does not need them.
+Hearting a YouTube track queues its audio for caching. Spotify hearts can cache a matched YouTube recording, with direct YouTube hearts taking priority. Local files play from their folders. **Spotify DRM audio is never downloaded**, and a YouTube match is not guaranteed to be the same recording.
 
-## Quality selection
+Library, Search, and Now Playing show availability separately from hearts: local, cached, downloading, waiting for network, unavailable, or failed. Spotify matches are labeled **Cached · YouTube match**; Now Playing also shows the actual playback source.
 
-Default: **Automatic — Best available**.
+Use **Settings → Downloads** to inspect progress, retry failures, remove downloads, or pin entries against automatic eviction. The audio-cache budget is currently 2 GiB; pinned and currently playing entries are protected from budget eviction. **Now Playing → Change YouTube match** lets you choose or clear a replacement while retaining the original Spotify track identity and heart.
 
-1. Drop sources that are not playable.
-2. Rank verified quality tier. Unverified source quality (Spotify, today) ranks below every known tier and is labeled **Unknown**.
-3. Break tier ties with bitrate. A missing bitrate does not outrank a lower number in the same tier, and it does not pull a lower tier above a higher one.
-4. On a tie, prefer the user’s preferred provider, then a local file.
-5. If start fails, fall back to the next source. Now Playing can retry or try another source.
+Clear metadata/artwork or hearted audio separately in **Settings → Advanced**. A heart is not proof that audio is available offline; wait for its cached status before relying on it.
 
-You can force Spotify or YouTube Music in Settings. Nyquist, theoretical dynamic range, and the selection reason sit under **Audio details**.
+## Home sync
+
+Home sync uses a desktop HTTPS hub on port `43822`, with a certificate pin carried in a `kainos-homesync:2` pairing URI.
+
+1. Put the desktop and phone on a reachable home network. In **Settings → Devices and sync**, enable home sync on both.
+2. On desktop, choose **Start hub pairing** and copy the pairing URI.
+3. On Android, paste it into **Paste pairing URI from PC**, then choose **Pair from URI**.
+4. Choose a writable **Vault folder** on each device if you want local-audio transfers, and allow the desktop hub port through your LAN firewall.
+5. Choose **Sync now** on the phone. Review missing-file transfers with **Transfer** / **Skip**, and conflicts with **Keep local** / **Keep remote**.
+
+| Data | Current sync behavior |
+| --- | --- |
+| YouTube and local-file hearts | Merge both ways; local identities rematch by filename when files are present. |
+| Kainos playlists | Sync playlist metadata and entries; local entries use portable filename identities. Audio requires a separate vault transfer. |
+| Local vault audio | Missing files wait for transfer confirmation. **Vault: hearted tracks only** is enabled by default; disable it to include the full vault. |
+| Spotify app hearts | Remain scoped to the Spotify account; excluded from this LAN heart exchange. |
+| YouTube cached audio | Cache blobs are not copied by Home sync; each device needs its own cached copy or network access. |
+| Home pins | Persist on each device; pin synchronization is not yet shipped. |
+
+The phone checks for sync when the app returns to the foreground; it does not run sync after the app is killed. Desktop can enable **Start hub at login** or run `kainos-player --hub-only` without opening the player window. Pairing requires copy/paste; in-app QR pairing is not implemented. Keep port `43822` private to the home network.
+
+## Playback and quality
+
+**Automatic — Best available** ranks playable sources by known quality tier, then bitrate, then provider preference, with local audio preferred on a remaining tie. Unknown quality ranks below known tiers. A failed source can fall back to another attached source; Now Playing offers retry/source controls.
+
+**Settings → Playback** also offers Prefer lossless, Prefer highest bitrate, Prefer Spotify, and Prefer YouTube Music. Highest-bitrate mode ranks bitrate first; provider preferences break quality ties rather than guaranteeing a provider. Now Playing offers **Try another source** after an error when a fallback is available.
+
+Spotify's source format is not reported by its Web API, and tracks mapped from that API are labeled **Unknown**. The Discover Weekly librespot adapters currently assign a **Lossless** badge using fixed 16-bit / 44.1 kHz metadata; this is an unresolved labeling limitation, not verified source quality. Typical 16-bit / 44.1 kHz Connect output does not establish lossless source quality. **Audio details** shows available format information, the selection reason, Nyquist frequency, and theoretical PCM dynamic range; this is not a measured loudness/dynamic-range analysis.
+
+Gapless playback, crossfade, lyrics, and a general volume-normalization control are not implemented. The fixed Spotify receiver normalization described above is separate. Play next / Add to queue exists in the domain layer but is not exposed by the current Search/Library UI.
+
+The sleep timer is set from Now Playing's bedtime button. End-of-track mode is canceled if you skip that track; timers are not restored after the process exits.
+
+### Desktop controls
+
+| Input | Action |
+| --- | --- |
+| Space | Play / pause when no text input is focused |
+| Ctrl+← / Ctrl+→ | Previous / next when no text input is focused |
+| Ctrl+F / Ctrl+K | Open Search when no text input is focused |
+| Ctrl+Q | Toggle Queue when no text input is focused |
+| Printable key with no text input focused | Open Library search with that character |
+| Enter in Library song search | Play the top match within the chip-filtered queue |
+| Escape | Clear focused Library search, or dismiss overlays / navigate back |
+| Mouse wheel over volume | Adjust playback volume |
+
+## Optional Echo / Alexa gateway
+
+[`tools/echo-gateway`](tools/echo-gateway/README.md) is a separate experimental service for shuffled local-folder playback on an Echo. It uses FFmpeg to transcode audio to AAC, a token-protected stream, Tailscale Funnel HTTPS, and an Alexa custom-skill endpoint. A private **fr-FR / Amazon.fr** skill package is included.
+
+It has its own queue and does not control Kainos's player session, Spotify, or YouTube. Setup and device-validation status are in the gateway docs. Expose only the gateway if using Funnel, never the Home sync hub.
+
+## Development and diagnostics
+
+| Module / directory | Responsibility |
+| --- | --- |
+| `shared/src/commonMain` | Domain models, matching/source selection, queue/session, providers, persistence, sync, and Compose UI |
+| `shared/src/jvmMain` | Desktop mpv/librespot/yt-dlp integrations, file stores, folder scans, MPRIS, and HTTPS sync hub |
+| `shared/src/androidMain` | Media3 service, librespot/NewPipe integrations, SAF/MediaStore scans, Android stores, and sync transfers |
+| `desktopApp` / `androidApp` | Platform entry points and packaging |
+| `scripts` / `tools` | Launch/install helpers, Spotify helper source, and standalone Echo gateway |
+
+`PlayerSession` owns transport and queue state across the app and system controls. Providers implement `MusicProvider`; matching and source resolution use shared domain models. Storage uses versioned JSON files and platform settings, without Room/SQLite.
+
+Desktop data lives under `~/.universal-music-player/`, including `settings.json`, `user-library.json`, `kainos-playlists.json`, `playback-session.json`, `local-library-cache.json`, `meta-cache/`, and `audio-cache/`. Android uses private app files and SharedPreferences. Persisted playback sessions and playlists store identities and metadata, not resolved streaming URLs.
+
+Run the checks used by CI:
+
+```bash
+./gradlew :shared:jvmTest :desktopApp:compileKotlinJvm :androidApp:assembleDebug :androidApp:lintDebug
+```
+
+With a connected Android device/emulator:
+
+```bash
+./gradlew :androidApp:connectedDebugAndroidTest
+```
+
+Instrumented tests cover local scanning/playback, controls, completion, missing-file recovery, background service behavior, and simulated Spotify-to-local transitions. They do not authenticate with Spotify or test physical Bluetooth hardware.
+
+Find playback traces in desktop launcher logs or **Settings → Advanced → Playback log**. Android can share the log from that screen; traces also appear under the `KainosTrace` logcat tag.
+
+Further references: [provider limitations](docs/LIMITATIONS.md), [implementation status](docs/CURRENT_STATE.md), [player roadmap](docs/plans/player-experience-roadmap.md), and [Home sync design](docs/plans/home-lan-library-sync.md). Some historical status/plan notes describe earlier behavior; verify them against the source when making changes.
