@@ -31,6 +31,7 @@ class KainosPlaylistPersistenceTest {
     fun roundTripsPlaylistWithoutStreamUrls() = runTest {
         val store = InMemoryKainosPlaylistStore()
         val repo = KainosPlaylistRepository(scope = this, store = store, clock = { 1_000L }, deviceIdProvider = { "pc" })
+        repo.load()
 
         val yt = youtubeTrack(streamUrl = "https://googlevideo.example/expire=1")
         val local = localTrack()
@@ -56,6 +57,7 @@ class KainosPlaylistPersistenceTest {
     fun saveQueuePreservesOrderAndProviderIds() = runTest {
         val store = InMemoryKainosPlaylistStore()
         val repo = KainosPlaylistRepository(scope = this, store = store, clock = { 5_000L }, deviceIdProvider = { "phone" })
+        repo.load()
 
         val queue = listOf(
             spotifyTrack("spotify:z"),
@@ -94,6 +96,7 @@ class KainosPlaylistPersistenceTest {
     fun deleteEmitsTombstoneAndMergeHonorsIt() = runTest {
         val store = InMemoryKainosPlaylistStore()
         val repo = KainosPlaylistRepository(scope = this, store = store, clock = { 10L }, deviceIdProvider = { "phone" })
+        repo.load()
         val created = repo.create("Temp", listOf(youtubeTrack()))
         advanceUntilIdle()
         assertTrue(repo.delete(created.id))

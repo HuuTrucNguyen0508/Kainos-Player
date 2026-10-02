@@ -310,7 +310,9 @@ fun MiniPlayerBar(
         shadowElevation = 2.dp,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
     ) {
-        Column(Modifier.fillMaxWidth()) {
+        // Same album light as Now Playing, as a quiet wash under the cover.
+        val light by rememberAlbumLight(artwork?.url)
+        Column(Modifier.fillMaxWidth().albumLightStrip(light, MaterialTheme.colorScheme.isDark)) {
             when {
                 buffering -> LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(2.dp),

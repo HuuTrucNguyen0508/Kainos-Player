@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,7 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.PlayArrow
@@ -39,7 +36,6 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,12 +68,6 @@ import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.theme.providerColor
 import kotlinx.coroutines.launch
 
-private sealed class HomeHero {
-    data class TrackHero(val track: Track, val queue: List<Track>, val playingNow: Boolean) : HomeHero()
-    data class Discover(val playlist: Playlist) : HomeHero()
-    data class Library(val tracks: List<Track>) : HomeHero()
-}
-
 private data class ResolvedHomePin(
     val pin: PersistedHomePin,
     val status: PinStatus,
@@ -94,7 +84,11 @@ private enum class PinStatus {
     ERROR,
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+private sealed class SessionFocus {
+    data class Restored(val track: Track, val isPlaying: Boolean) : SessionFocus()
+    data class LastPlayed(val track: Track, val queue: List<Track>) : SessionFocus()
+}
+
 @Composable
 fun HomeScreen(
     container: AppContainer,
@@ -102,6 +96,7 @@ fun HomeScreen(
     onOpenNowPlaying: () -> Unit,
     onOpenSettings: (() -> Unit)? = null,
     onOpenSearch: (() -> Unit)? = null,
+    playerPaneVisible: Boolean = false,
 ) {
     val recent by container.library.recentlyPlayed.collectAsState()
     val homePins by container.library.homePins.collectAsState()
@@ -114,9 +109,7 @@ fun HomeScreen(
     val kainosPlaylists by container.kainosPlaylists.playlists.collectAsState()
     val spotifyPlaylists by container.spotifyPlaylists.collectAsState()
     val now by container.player.nowPlaying.collectAsState()
-    val queue by container.player.queue.queue.collectAsState()
     val settings by container.settings.collectAsState()
-    val spotifyLoading by container.spotifyLibraryLoading.collectAsState()
     val scope = rememberCoroutineScope()
     var discoverBusy by remember { mutableStateOf(false) }
     var discoverError by remember { mutableStateOf<String?>(null) }
@@ -125,38 +118,37 @@ fun HomeScreen(
     var editingPins by remember { mutableStateOf(false) }
     var actionMessage by remember { mutableStateOf<String?>(null) }
 
-    val hero: HomeHero? = remember(recent, localTracks, discoverWeekly, now.track?.canonicalId) {
+    val sessionFocus: SessionFocus? = remember(now.track, now.isPlaying, recent) {
+        val sessionTrack = now.track
         when {
-            recent.isNotEmpty() -> {
-                val track = recent.first()
-                HomeHero.TrackHero(
-                    track = track,
-                    queue = recent,
-                    playingNow = now.track?.canonicalId == track.canonicalId,
-                )
-            }
-            discoverWeekly != null -> HomeHero.Discover(discoverWeekly!!)
-            localTracks.isNotEmpty() -> HomeHero.Library(localTracks)
+            sessionTrack != null -> SessionFocus.Restored(sessionTrack, now.isPlaying)
+            recent.isNotEmpty() -> SessionFocus.LastPlayed(recent.first(), recent)
             else -> null
         }
     }
-    val continueListening = remember(recent, hero) {
-        when (hero) {
-            is HomeHero.TrackHero -> recent.drop(1).take(8)
-            else -> recent.take(8)
+    val continueListening = remember(recent, sessionFocus, playerPaneVisible) {
+        val excludeId = when {
+            playerPaneVisible -> null
+            sessionFocus is SessionFocus.Restored -> sessionFocus.track.canonicalId
+            sessionFocus is SessionFocus.LastPlayed -> sessionFocus.track.canonicalId
+            else -> null
         }
+        recent
+            .asSequence()
+            .filter { excludeId == null || it.canonicalId != excludeId }
+            .take(8)
+            .toList()
+    }
+    val loadedDiscover = discoverWeekly?.takeIf { playlist ->
+        playlist.tracks.isNotEmpty() || (playlist.trackCount ?: 0) > 0
     }
     val empty = recent.isEmpty() &&
         localTracks.isEmpty() &&
-        discoverWeekly == null &&
+        loadedDiscover == null &&
         homePins.isEmpty() &&
         favorites.isEmpty() &&
         now.track == null
-    val spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED
-    val showDiscoverSlot = discoverWeekly != null ||
-        (spotifyConnected && hero !is HomeHero.Discover)
     val favoriteCount = favorites.size
-    val canResume = now.track != null || queue.items.isNotEmpty()
     val configuredFolders = remember(settings.localMusicFolders, settings.localMusicFoldersConfigured) {
         if (settings.localMusicFoldersConfigured) {
             settings.localMusicFolders
@@ -275,54 +267,70 @@ fun HomeScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    fun playFavorites() {
+        actionMessage = null
+        if (container.playFavorites()) {
+            onOpenNowPlaying()
+        } else {
+            actionMessage = if (favoriteCount == 0) {
+                "Heart tracks in Library to build favorites."
+            } else {
+                "Favorites need a connection or local file to play."
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val useTwoColumn = playerPaneVisible && maxWidth >= 780.dp
+        val contentMaxWidth = when {
+            useTwoColumn -> 1080.dp
+            playerPaneVisible -> 640.dp
+            maxWidth >= 900.dp -> 640.dp
+            else -> 720.dp
+        }
+
         Column(
             Modifier
-                .widthIn(max = 720.dp)
+                .widthIn(max = contentMaxWidth)
                 .fillMaxWidth()
-                .align(Alignment.TopStart)
+                .align(if (playerPaneVisible || maxWidth >= 900.dp) Alignment.TopCenter else Alignment.TopStart)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 8.dp),
         ) {
             if (!empty) {
-                ProviderLegend(
+                ProviderAttentionLine(
                     localState = localState,
                     spotifyState = spotifyState,
                     youtubeState = youtubeState,
                     onOpenSettings = onOpenSettings,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
                 )
-                Spacer(Modifier.height(8.dp))
             }
 
-            HomeQuickActions(
-                favoriteCount = favoriteCount,
-                canResume = canResume,
-                resumeLabel = when {
-                    now.isPlaying -> "Playing"
-                    else -> "Resume"
-                },
-                onPlayFavorites = {
-                    actionMessage = null
-                    if (container.playFavorites()) {
+            if (!playerPaneVisible && sessionFocus != null) {
+                Spacer(Modifier.height(12.dp))
+                SessionCard(
+                    focus = sessionFocus,
+                    onOpenNowPlaying = onOpenNowPlaying,
+                    onResume = {
+                        actionMessage = null
+                        container.resumeListening()
                         onOpenNowPlaying()
-                    } else {
-                        actionMessage = if (favoriteCount == 0) {
-                            "Heart tracks in Library to build favorites."
-                        } else {
-                            "Favorites need a connection or local file to play."
-                        }
-                    }
-                },
-                onResume = {
-                    actionMessage = null
-                    if (!canResume) {
-                        actionMessage = "Nothing to resume yet. Play something first."
-                        return@HomeQuickActions
-                    }
-                    container.resumeListening()
-                    onOpenNowPlaying()
-                },
+                    },
+                    onPlayLast = { track, queue ->
+                        actionMessage = null
+                        val index = queue.indexOfFirst { it.canonicalId == track.canonicalId }.coerceAtLeast(0)
+                        onPlayTracks(queue, index)
+                        onOpenNowPlaying()
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+
+            Spacer(Modifier.height(if (playerPaneVisible) 16.dp else 12.dp))
+            PlayFavoritesAction(
+                favoriteCount = favoriteCount,
+                onPlayFavorites = ::playFavorites,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             actionMessage?.let {
@@ -334,141 +342,107 @@ fun HomeScreen(
                 )
             }
 
-            when (val current = hero) {
-                is HomeHero.TrackHero -> {
-                    Spacer(Modifier.height(16.dp))
-                    HeroTrackBlock(
-                        hero = current,
-                        onPlay = {
-                            onPlayTracks(current.queue, 0)
-                            onOpenNowPlaying()
-                        },
-                        onOpenNowPlaying = onOpenNowPlaying,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-                is HomeHero.Discover -> {
-                    Spacer(Modifier.height(16.dp))
-                    DiscoverBlock(
-                        playlist = current.playlist,
-                        hero = true,
-                        busy = discoverBusy,
-                        onClick = { playDiscover(current.playlist) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-                is HomeHero.Library -> {
-                    Spacer(Modifier.height(16.dp))
-                    HeroLibraryBlock(
-                        trackCount = current.tracks.size,
-                        onPlay = {
-                            onPlayTracks(current.tracks, 0)
-                            onOpenNowPlaying()
-                        },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-                null -> Unit
-            }
-
-            if (showDiscoverSlot && hero !is HomeHero.Discover) {
-                Spacer(Modifier.height(20.dp))
-                if (discoverWeekly != null) {
-                    DiscoverBlock(
-                        playlist = discoverWeekly!!,
-                        hero = false,
-                        busy = discoverBusy,
-                        onClick = { playDiscover(discoverWeekly!!) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                } else {
-                    DiscoverWeeklyPlaceholder(
-                        loading = spotifyLoading,
-                        onRefresh = {
-                            scope.launch { container.refreshSpotifyLibrary() }
-                        },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
-            }
-
-            discoverError?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "Pinned",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (homePins.isNotEmpty()) {
-                    TextButton(onClick = { editingPins = !editingPins }) {
-                        Text(if (editingPins) "Done" else "Edit")
-                    }
-                }
-            }
-            when {
-                resolvedPins.isEmpty() -> {
-                    Text(
-                        "Pin playlists, albums, or folders from Library or Settings. Recents stay under Continue listening.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    )
-                }
-                else -> {
-                    resolvedPins.forEachIndexed { index, resolved ->
-                        PinRow(
-                            resolved = resolved,
-                            editing = editingPins,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < resolvedPins.lastIndex,
-                            onPlay = { playPin(resolved) },
-                            onMoveUp = { container.library.moveHomePin(resolved.pin.id, -1) },
-                            onMoveDown = { container.library.moveHomePin(resolved.pin.id, 1) },
-                            onRemove = {
-                                container.library.unpinHome(resolved.pin.id)
+            if (useTwoColumn) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        PinnedSection(
+                            resolvedPins = resolvedPins,
+                            homePinsEmpty = homePins.isEmpty(),
+                            editingPins = editingPins,
+                            onToggleEditing = { editingPins = !editingPins },
+                            onPlayPin = ::playPin,
+                            onMoveUp = { id -> container.library.moveHomePin(id, -1) },
+                            onMoveDown = { id -> container.library.moveHomePin(id, 1) },
+                            onRemove = { id ->
+                                container.library.unpinHome(id)
                                 if (homePins.size <= 1) editingPins = false
                             },
                         )
+                        pinError?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                        loadedDiscover?.let { playlist ->
+                            Spacer(Modifier.height(20.dp))
+                            DiscoverBlock(
+                                playlist = playlist,
+                                busy = discoverBusy,
+                                onClick = { playDiscover(playlist) },
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                        }
+                        discoverError?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        ContinueListeningSection(
+                            tracks = continueListening,
+                            onPlayTracks = onPlayTracks,
+                        )
                     }
                 }
-            }
-            pinError?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            } else {
+                Spacer(Modifier.height(8.dp))
+                PinnedSection(
+                    resolvedPins = resolvedPins,
+                    homePinsEmpty = homePins.isEmpty(),
+                    editingPins = editingPins,
+                    onToggleEditing = { editingPins = !editingPins },
+                    onPlayPin = ::playPin,
+                    onMoveUp = { id -> container.library.moveHomePin(id, -1) },
+                    onMoveDown = { id -> container.library.moveHomePin(id, 1) },
+                    onRemove = { id ->
+                        container.library.unpinHome(id)
+                        if (homePins.size <= 1) editingPins = false
+                    },
                 )
-            }
-
-            if (continueListening.isNotEmpty()) {
-                Text(
-                    "Continue listening",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 4.dp),
-                )
-                continueListening.forEachIndexed { index, track ->
-                    LedgerRow(
-                        track = track,
-                        onClick = { onPlayTracks(continueListening, index) },
+                pinError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                     )
                 }
+
+                loadedDiscover?.let { playlist ->
+                    Spacer(Modifier.height(20.dp))
+                    DiscoverBlock(
+                        playlist = playlist,
+                        busy = discoverBusy,
+                        onClick = { playDiscover(playlist) },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                discoverError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    )
+                }
+
+                ContinueListeningSection(
+                    tracks = continueListening,
+                    onPlayTracks = onPlayTracks,
+                )
             }
 
             if (empty) {
@@ -482,6 +456,81 @@ fun HomeScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PinnedSection(
+    resolvedPins: List<ResolvedHomePin>,
+    homePinsEmpty: Boolean,
+    editingPins: Boolean,
+    onToggleEditing: () -> Unit,
+    onPlayPin: (ResolvedHomePin) -> Unit,
+    onMoveUp: (String) -> Unit,
+    onMoveDown: (String) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Pinned",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!homePinsEmpty) {
+            TextButton(onClick = onToggleEditing) {
+                Text(if (editingPins) "Done" else "Edit")
+            }
+        }
+    }
+    when {
+        resolvedPins.isEmpty() -> {
+            Text(
+                "Pin playlists, albums or folders from Library",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+        }
+        else -> {
+            resolvedPins.forEachIndexed { index, resolved ->
+                PinRow(
+                    resolved = resolved,
+                    editing = editingPins,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < resolvedPins.lastIndex,
+                    onPlay = { onPlayPin(resolved) },
+                    onMoveUp = { onMoveUp(resolved.pin.id) },
+                    onMoveDown = { onMoveDown(resolved.pin.id) },
+                    onRemove = { onRemove(resolved.pin.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueListeningSection(
+    tracks: List<Track>,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+) {
+    if (tracks.isEmpty()) return
+    Text(
+        "Continue listening",
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 4.dp),
+    )
+    tracks.forEachIndexed { index, track ->
+        LedgerRow(
+            track = track,
+            onClick = { onPlayTracks(tracks, index) },
+        )
     }
 }
 
@@ -574,39 +623,115 @@ private fun resolveHomePin(
 }
 
 @Composable
-private fun HomeQuickActions(
+private fun PlayFavoritesAction(
     favoriteCount: Int,
-    canResume: Boolean,
-    resumeLabel: String,
     onPlayFavorites: () -> Unit,
-    onResume: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    TextButton(
+        onClick = onPlayFavorites,
+        enabled = favoriteCount > 0,
+        modifier = modifier,
     ) {
-        OutlinedButton(
-            onClick = onPlayFavorites,
-            modifier = Modifier.weight(1f),
-            enabled = favoriteCount > 0,
-        ) {
-            Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (favoriteCount > 0) "Play favorites" else "No favorites",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            if (favoriteCount > 0) "Play favorites" else "No favorites yet",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SessionCard(
+    focus: SessionFocus,
+    onOpenNowPlaying: () -> Unit,
+    onResume: () -> Unit,
+    onPlayLast: (Track, List<Track>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val track = when (focus) {
+        is SessionFocus.Restored -> focus.track
+        is SessionFocus.LastPlayed -> focus.track
+    }
+    val playable = track.playableSources().firstOrNull()
+    val sourceLabel = playable?.provider?.let { shortProviderName(it) } ?: "Needs connection"
+    val eyebrow = when (focus) {
+        is SessionFocus.Restored -> if (focus.isPlaying) "Playing" else "Resume"
+        is SessionFocus.LastPlayed -> "Last played"
+    }
+    val onCardClick: () -> Unit = when (focus) {
+        is SessionFocus.Restored -> onOpenNowPlaying
+        is SessionFocus.LastPlayed -> {
+            { onPlayLast(focus.track, focus.queue) }
         }
-        OutlinedButton(
-            onClick = onResume,
-            modifier = Modifier.weight(1f),
-            enabled = canResume,
+    }
+    val onPlayClick: () -> Unit = when (focus) {
+        is SessionFocus.Restored -> {
+            {
+                if (focus.isPlaying) {
+                    onOpenNowPlaying()
+                } else {
+                    onResume()
+                }
+            }
+        }
+        is SessionFocus.LastPlayed -> {
+            { onPlayLast(focus.track, focus.queue) }
+        }
+    }
+
+    BoxWithConstraints(modifier) {
+        val artSize = if (maxWidth >= 600.dp) 88.dp else 72.dp
+        Surface(
+            onClick = onCardClick,
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(resumeLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ArtworkImage(
+                    track.artwork,
+                    track.title,
+                    Modifier.size(artSize),
+                    track.title,
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        track.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        track.artistLine,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "$eyebrow · $sourceLabel",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                FilledIconButton(onClick = onPlayClick, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = when (focus) {
+                            is SessionFocus.Restored -> if (focus.isPlaying) "Open now playing" else "Resume"
+                            is SessionFocus.LastPlayed -> "Play"
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -701,233 +826,65 @@ private fun PinRow(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ProviderLegend(
+private fun ProviderAttentionLine(
     localState: ProviderState,
     spotifyState: ProviderState,
     youtubeState: ProviderState,
     onOpenSettings: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    FlowRow(
-        modifier = modifier.then(
-            if (onOpenSettings != null) Modifier.clickable(onClick = onOpenSettings) else Modifier,
-        ),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        LegendItem(ProviderId.LOCAL, localState)
-        LegendItem(ProviderId.SPOTIFY, spotifyState)
-        LegendItem(ProviderId.YOUTUBE_MUSIC, youtubeState)
-    }
-}
+    val attention = remember(localState, spotifyState, youtubeState) {
+        listOf(
+            ProviderId.SPOTIFY to spotifyState,
+            ProviderId.YOUTUBE_MUSIC to youtubeState,
+            ProviderId.LOCAL to localState,
+        ).firstOrNull { (_, state) ->
+            state != ProviderState.AVAILABLE && state != ProviderState.LOADING
+        }
+    } ?: return
 
-@Composable
-private fun LegendItem(provider: ProviderId, state: ProviderState) {
+    val (provider, state) = attention
     val shortName = when (provider) {
-        ProviderId.LOCAL -> "Local"
+        ProviderId.LOCAL -> "Local library"
         ProviderId.SPOTIFY -> "Spotify"
         ProviderId.YOUTUBE_MUSIC -> "YouTube"
         ProviderId.SAMPLE -> provider.displayName
     }
-    val stateWord = legendStateWord(state)
-    Row(
-        Modifier.heightIn(min = 32.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LegendDot(provider, state)
-        Spacer(Modifier.width(6.dp))
-        Text(
-            buildString {
-                append(shortName)
-                if (stateWord != null) {
-                    append(" · ")
-                    append(stateWord)
-                }
-            },
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun LegendDot(provider: ProviderId, state: ProviderState) {
-    when (state) {
-        ProviderState.AVAILABLE -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(providerColor(provider.displayName)),
-        )
-        ProviderState.LOADING -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary),
-        )
-        ProviderState.RATE_LIMITED -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.error),
-        )
-        else -> Box(
-            Modifier
-                .size(8.dp)
-                .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
-        )
-    }
-}
-
-@Composable
-private fun HeroTrackBlock(
-    hero: HomeHero.TrackHero,
-    onPlay: () -> Unit,
-    onOpenNowPlaying: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val track = hero.track
-    val playable = track.playableSources().firstOrNull()
-    val meta = buildString {
-        if (playable != null) {
-            append(shortProviderName(playable.provider))
-        } else {
-            append("Needs connection")
-        }
-        track.durationMs?.takeIf { it > 0 }?.let {
-            if (isNotEmpty()) append(" · ")
-            append(formatTime(it))
+    val message = when (state) {
+        ProviderState.AUTH_REQUIRED -> "$shortName needs sign-in · Open Settings"
+        ProviderState.NOT_CONFIGURED -> "$shortName not set up · Open Settings"
+        ProviderState.UNAVAILABLE -> "$shortName is offline · Open Settings"
+        ProviderState.RATE_LIMITED -> "$shortName is limited · Try again soon"
+        else -> {
+            val word = legendStateWord(state) ?: return
+            "$shortName · $word · Open Settings"
         }
     }
-    BoxWithConstraints(modifier) {
-        val artSize = if (maxWidth >= 600.dp) 120.dp else 96.dp
-        Surface(
-            onClick = if (hero.playingNow) onOpenNowPlaying else onPlay,
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-            Row(
-                Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ArtworkImage(
-                    track.artwork,
-                    track.title,
-                    Modifier.size(artSize),
-                    track.title,
-                )
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (hero.playingNow) "Playing now" else "Last played",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        track.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        track.artistLine,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        meta,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                if (hero.playingNow) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowRight,
-                        contentDescription = "Open now playing",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    FilledIconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "Play")
-                    }
-                }
-            }
-        }
-    }
-}
 
-@Composable
-private fun HeroLibraryBlock(
-    trackCount: Int,
-    onPlay: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        onClick = onPlay,
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = modifier,
-    ) {
-        Row(
-            Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
+    Text(
+        message,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.then(
+            if (onOpenSettings != null) {
                 Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.LibraryMusic,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(40.dp),
-                )
-            }
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Your library",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "$trackCount local tracks",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-                Text(
-                    "Play all from the start",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            FilledIconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Play library")
-            }
-        }
-    }
+                    .clickable(onClick = onOpenSettings)
+                    .semantics { contentDescription = message }
+            } else {
+                Modifier
+            },
+        ),
+    )
 }
 
 @Composable
 private fun DiscoverBlock(
     playlist: Playlist,
-    hero: Boolean,
     busy: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val artSize = if (hero) 96.dp else 72.dp
     Row(
         modifier
             .fillMaxWidth()
@@ -939,7 +896,7 @@ private fun DiscoverBlock(
         ArtworkImage(
             playlist.artwork,
             playlist.title,
-            Modifier.size(artSize),
+            Modifier.size(72.dp),
             playlist.title,
         )
         Column(Modifier.weight(1f)) {
@@ -965,71 +922,9 @@ private fun DiscoverBlock(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (hero) {
-                playlist.description?.takeIf { it.isNotBlank() }?.let { description ->
-                    Text(
-                        description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
         }
         if (busy) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-        }
-    }
-}
-
-@Composable
-private fun DiscoverWeeklyPlaceholder(
-    loading: Boolean,
-    onRefresh: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .clickable(enabled = !loading, onClick = onRefresh)
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (loading) {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    Icons.Default.LibraryMusic,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-        }
-        Column(Modifier.weight(1f)) {
-            Text(
-                "New this week",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text("Discover Weekly", style = MaterialTheme.typography.titleMedium)
-            Text(
-                if (loading) {
-                    "Looking in your Spotify library…"
-                } else {
-                    "Add Discover Weekly to your Spotify library, or paste the share link in Settings, then refresh"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -1176,6 +1071,35 @@ private fun EmptyDoor(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun LegendDot(provider: ProviderId, state: ProviderState) {
+    when (state) {
+        ProviderState.AVAILABLE -> Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(providerColor(provider.displayName)),
+        )
+        ProviderState.LOADING -> Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        ProviderState.RATE_LIMITED -> Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.error),
+        )
+        else -> Box(
+            Modifier
+                .size(8.dp)
+                .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
+        )
     }
 }
 

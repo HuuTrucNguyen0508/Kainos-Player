@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.library
 
+import kotlinx.coroutines.CompletableDeferred
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.putPreservingOnFailure
 import com.universalmusic.player.data.cache.withoutHeartedAudioCache
@@ -221,17 +222,34 @@ class LibraryRepository(
     }
 
     /**
+     * Completes once [load] has read the store. Until then nothing is written, so a sync merge
+     * or tap that races app startup cannot save a half-empty library over the real file.
+     */
+    private val loaded = CompletableDeferred<Unit>()
+
+    suspend fun awaitLoaded() = loaded.await()
+
+    init {
+        // Nothing on disk to protect (tests, previews): treat as loaded.
+        if (store == null) loaded.complete(Unit)
+    }
+
+    /**
      * Load disk snapshot, scope Spotify entries to [activeSpotifyAccountId], hydrate artwork from cache.
      */
     suspend fun load(activeSpotifyAccountId: String?) {
-        val rawStore = store ?: return
-        val raw = rawStore.read().migrated(deviceIdProvider())
-        val scoped = raw.scopedToSpotifyAccount(activeSpotifyAccountId)
-        if (scoped != raw) {
-            rawStore.write(scoped)
+        try {
+            val rawStore = store ?: return
+            val raw = rawStore.read().migrated(deviceIdProvider())
+            val scoped = raw.scopedToSpotifyAccount(activeSpotifyAccountId)
+            if (scoped != raw) {
+                rawStore.write(scoped)
+            }
+            applySnapshot(scoped)
+            metadataCache?.evictExpired(clock())
+        } finally {
+            loaded.complete(Unit)
         }
-        applySnapshot(scoped)
-        metadataCache?.evictExpired(clock())
     }
 
     fun applySnapshot(snapshot: UserLibrarySnapshot) {
@@ -459,6 +477,7 @@ class LibraryRepository(
     private fun schedulePersist() {
         val store = store ?: return
         val scope = scope ?: return
+        if (!loaded.isCompleted) return
         persistJob?.cancel()
         persistJob = scope.launch {
             delay(PERSIST_DEBOUNCE_MS)

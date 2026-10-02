@@ -1,5 +1,19 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import com.universalmusic.player.ui.components.isDark
+import com.universalmusic.player.ui.components.albumLight
+import com.universalmusic.player.ui.components.rememberAlbumLight
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -160,14 +174,22 @@ fun NowPlayingScreen(
                 )
         )
     val scheme = MaterialTheme.colorScheme
-    val washSeed = track?.artwork?.url ?: track?.canonicalId ?: track?.title
-    val washColor = remember(washSeed, providerLabel, scheme.primary, scheme.surface) {
-        artworkWashColor(
-            seed = washSeed,
-            providerName = providerLabel,
-            surface = scheme.surface,
-            primary = scheme.primary,
-        )
+    // Signature: the cover's own color glows behind the artwork (scheme accent when there is none).
+    val albumLight by rememberAlbumLight(track?.artwork?.url)
+    // The glow is centred on wherever the cover actually sits (phone, desktop pane, scrolled details).
+    var screenBounds by remember { mutableStateOf<Rect?>(null) }
+    var artBounds by remember { mutableStateOf<Rect?>(null) }
+    val lightCenter = run {
+        val screen = screenBounds
+        val art = artBounds
+        if (screen == null || art == null || screen.width <= 0f || screen.height <= 0f) {
+            Offset(0.5f, 0.32f)
+        } else {
+            Offset(
+                (art.center.x - screen.left) / screen.width,
+                (art.center.y - screen.top) / screen.height,
+            )
+        }
     }
     val horizontalPad = if (compact) 16.dp else 20.dp
     val detailLines = buildList {
@@ -181,15 +203,8 @@ fun NowPlayingScreen(
         Modifier
             .fillMaxSize()
             .background(scheme.background)
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to washColor.copy(alpha = if (scheme.background.luminance() < 0.5f) 0.28f else 0.18f),
-                        0.42f to washColor.copy(alpha = if (scheme.background.luminance() < 0.5f) 0.10f else 0.08f),
-                        1f to Color.Transparent,
-                    ),
-                ),
-            )
+            .onGloballyPositioned { screenBounds = it.boundsInRoot() }
+            .albumLight(albumLight, darkScheme = scheme.isDark, centerX = lightCenter.x, centerY = lightCenter.y)
             .navigationBarsPadding(),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -200,7 +215,7 @@ fun NowPlayingScreen(
             val pinControls = !shortScreen
             val verticalPad = if (compact) 12.dp else 16.dp
             val artMax = when {
-                compact -> 280.dp
+                compact -> 340.dp
                 shortScreen -> 220.dp
                 else -> 360.dp
             }
@@ -249,6 +264,7 @@ fun NowPlayingScreen(
                             artMax = artMax,
                             expand = pinControls,
                             compact = compact,
+                            onPositioned = { artBounds = it },
                         )
                     }
 
@@ -282,17 +298,33 @@ fun NowPlayingScreen(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     }
-                    Slider(
+                    if (knownDurationMs == null) {
+                        // No length yet (e.g. a restored Android folder track before it plays): a bar
+                        // pinned at 0 beside a running position reads as broken, so draw a quiet rail.
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(40.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .background(scheme.surfaceVariant, CircleShape),
+                            )
+                        }
+                    } else Slider(
                         value = scrubPosition ?: progress,
                         onValueChange = { scrubPosition = it },
                         onValueChangeFinished = {
                             val position = scrubPosition
-                            if (position != null && knownDurationMs != null) {
+                            if (position != null) {
                                 container.player.seekTo((position * knownDurationMs).toLong())
                             }
                             scrubPosition = null
                         },
-                        enabled = now.resolved != null && knownDurationMs != null && !now.buffering,
+                        enabled = now.resolved != null && !now.buffering,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -304,7 +336,7 @@ fun NowPlayingScreen(
                             color = scheme.onSurfaceVariant,
                         )
                         Text(
-                            knownDurationMs?.let(::formatTime) ?: "--:--",
+                            knownDurationMs?.let(::formatTime) ?: "Length shown once playing",
                             style = MaterialTheme.typography.labelMedium,
                             color = scheme.onSurfaceVariant,
                         )
@@ -367,66 +399,76 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        IconButton(
-                            enabled = track != null,
-                            onClick = {
-                                track?.let {
-                                    val favorite = container.library.toggleFavorite(it)
-                                    container.player.setFavorite(favorite)
-                                }
-                            },
-                        ) {
-                            Icon(
-                                if (now.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = if (now.favorite) {
-                                    "Remove from favorites"
-                                } else {
-                                    "Add to favorites"
+                        ActionTooltip(if (now.favorite) "Remove from favorites" else "Add to favorites") {
+                            IconButton(
+                                enabled = track != null,
+                                onClick = {
+                                    track?.let {
+                                        val favorite = container.library.toggleFavorite(it)
+                                        container.player.setFavorite(favorite)
+                                    }
                                 },
-                                tint = if (now.favorite) scheme.primary else scheme.onSurfaceVariant,
-                            )
+                            ) {
+                                Icon(
+                                    if (now.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    contentDescription = if (now.favorite) {
+                                        "Remove from favorites"
+                                    } else {
+                                        "Add to favorites"
+                                    },
+                                    tint = if (now.favorite) scheme.primary else scheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                        IconButton(onClick = { container.player.cycleRepeat() }) {
-                            val repeatOn = queue.repeat != RepeatMode.OFF
-                            Icon(
-                                if (queue.repeat == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                                contentDescription = "Repeat ${queue.repeat.name.lowercase()}. Change repeat mode",
-                                tint = if (repeatOn) scheme.primary else scheme.onSurfaceVariant,
-                            )
+                        ActionTooltip("Repeat: ${queue.repeat.name.lowercase()}") {
+                            IconButton(onClick = { container.player.cycleRepeat() }) {
+                                val repeatOn = queue.repeat != RepeatMode.OFF
+                                Icon(
+                                    if (queue.repeat == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                                    contentDescription = "Repeat ${queue.repeat.name.lowercase()}. Change repeat mode",
+                                    tint = if (repeatOn) scheme.primary else scheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                        IconToggleButton(
-                            checked = queue.shuffle,
-                            onCheckedChange = { container.player.toggleShuffle() },
-                            colors = IconButtonDefaults.iconToggleButtonColors(
-                                checkedContainerColor = scheme.secondaryContainer,
-                                checkedContentColor = scheme.onSecondaryContainer,
-                                contentColor = scheme.onSurfaceVariant,
-                            ),
-                        ) {
-                            Icon(
-                                Icons.Default.Shuffle,
-                                contentDescription = if (queue.shuffle) "Turn shuffle off" else "Turn shuffle on",
-                            )
+                        ActionTooltip(if (queue.shuffle) "Shuffle on" else "Shuffle off") {
+                            IconToggleButton(
+                                checked = queue.shuffle,
+                                onCheckedChange = { container.player.toggleShuffle() },
+                                colors = IconButtonDefaults.iconToggleButtonColors(
+                                    checkedContainerColor = scheme.secondaryContainer,
+                                    checkedContentColor = scheme.onSecondaryContainer,
+                                    contentColor = scheme.onSurfaceVariant,
+                                ),
+                            ) {
+                                Icon(
+                                    Icons.Default.Shuffle,
+                                    contentDescription = if (queue.shuffle) "Turn shuffle off" else "Turn shuffle on",
+                                )
+                            }
                         }
-                        IconButton(onClick = onOpenQueue) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.QueueMusic,
-                                contentDescription = "Open queue",
-                            )
+                        ActionTooltip("Queue") {
+                            IconButton(onClick = onOpenQueue) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.QueueMusic,
+                                    contentDescription = "Open queue",
+                                )
+                            }
                         }
-                        IconButton(
-                            onClick = { showSleepTimerDialog = true },
-                            enabled = track != null || sleepTimer.active,
-                        ) {
-                            Icon(
-                                Icons.Default.Bedtime,
-                                contentDescription = if (sleepTimer.active) {
-                                    "Sleep timer active. Adjust or cancel"
-                                } else {
-                                    "Set sleep timer"
-                                },
-                                tint = if (sleepTimer.active) scheme.primary else scheme.onSurfaceVariant,
-                            )
+                        ActionTooltip(if (sleepTimer.active) "Sleep timer (on)" else "Sleep timer") {
+                            IconButton(
+                                onClick = { showSleepTimerDialog = true },
+                                enabled = track != null || sleepTimer.active,
+                            ) {
+                                Icon(
+                                    Icons.Default.Bedtime,
+                                    contentDescription = if (sleepTimer.active) {
+                                        "Sleep timer active. Adjust or cancel"
+                                    } else {
+                                        "Set sleep timer"
+                                    },
+                                    tint = if (sleepTimer.active) scheme.primary else scheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
 
@@ -505,8 +547,10 @@ fun NowPlayingScreen(
                     }
 
                     ProviderQualityRow(
-                        providerName = providerLabel,
-                        qualityLabel = qualityLabel,
+                        // Before a restored track resolves, name its own source instead of nothing.
+                        providerName = providerLabel ?: track?.sources?.firstOrNull()?.provider?.displayName,
+                        qualityLabel = qualityLabel
+                            ?: if (track != null && now.resolved == null) "quality checked on play" else null,
                         syncWarning = now.syncWarning,
                         hasDetails = detailLines.isNotEmpty(),
                         detailsExpanded = showAudioDetails,
@@ -908,6 +952,7 @@ private fun ColumnScope.NowPlayingArtwork(
     artMax: Dp,
     expand: Boolean,
     compact: Boolean,
+    onPositioned: (Rect) -> Unit,
 ) {
     if (expand) {
         // Takes whatever height the controls leave, so they never fall below the first screen.
@@ -916,13 +961,16 @@ private fun ColumnScope.NowPlayingArtwork(
                 .fillMaxWidth()
                 .weight(1f, fill = true)
                 .heightIn(min = 120.dp),
-            contentAlignment = Alignment.Center,
+            // Spare height goes above the cover (album light fills it) so the title hugs the art.
+            contentAlignment = Alignment.BottomCenter,
         ) {
             val widthShare = if (compact) maxWidth else maxWidth * 0.92f
             NowPlayingArtworkFrame(
                 title = title,
                 artwork = artwork,
-                modifier = Modifier.size(minOf(widthShare, maxHeight, artMax)),
+                modifier = Modifier
+                    .size(minOf(widthShare, maxHeight, artMax))
+                    .onGloballyPositioned { onPositioned(it.boundsInRoot()) },
             )
         }
     } else {
@@ -933,7 +981,8 @@ private fun ColumnScope.NowPlayingArtwork(
                 .align(Alignment.CenterHorizontally)
                 .widthIn(max = artMax)
                 .fillMaxWidth()
-                .aspectRatio(1f),
+                .aspectRatio(1f)
+                .onGloballyPositioned { onPositioned(it.boundsInRoot()) },
         )
     }
 }
@@ -978,11 +1027,12 @@ private fun ProviderQualityRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val spine = listOfNotNull(providerName, qualityLabel).joinToString(" · ").ifBlank { "Kainos" }
-            Text(
+            val spine = listOfNotNull(providerName, qualityLabel).joinToString(" · ")
+            if (spine.isNotEmpty()) Text(
                 spine,
                 style = MaterialTheme.typography.labelLarge,
-                color = providerName?.let(::providerColor) ?: scheme.primary,
+                // Scheme accent, not the provider brand color: mint/red labels were unreadable on light schemes.
+                color = scheme.primary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -1004,42 +1054,22 @@ private fun ProviderQualityRow(
     }
 }
 
-/**
- * Soft wash tint from artwork/track identity, blended toward the active scheme surface
- * so Appearance light/dark schemes stay in charge.
- */
-private fun artworkWashColor(
-    seed: String?,
-    providerName: String?,
-    surface: Color,
-    primary: Color,
-): Color {
-    val accent = when {
-        providerName != null -> providerColor(providerName)
-        seed != null -> {
-            val hash = seed.hashCode()
-            Color(
-                red = (90 + ((hash ushr 16) and 0x5F)) / 255f,
-                green = (80 + ((hash ushr 8) and 0x6F)) / 255f,
-                blue = (70 + (hash and 0x5F)) / 255f,
-            )
-        }
-        else -> primary
-    }
-    return Color(
-        red = accent.red * 0.35f + surface.red * 0.65f,
-        green = accent.green * 0.35f + surface.green * 0.65f,
-        blue = accent.blue * 0.35f + surface.blue * 0.65f,
-        alpha = 1f,
-    )
-}
-
-private fun Color.luminance(): Float =
-    0.2126f * red + 0.7152f * green + 0.0722f * blue
-
 internal fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)
     val minutes = total / 60
     val seconds = total % 60
     return "$minutes:${seconds.toString().padStart(2, '0')}"
+}
+
+/** Hover (desktop) / long-press (touch) label for icon-only actions, so each icon says what it does. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionTooltip(label: String, content: @Composable () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState(),
+    ) {
+        content()
+    }
 }

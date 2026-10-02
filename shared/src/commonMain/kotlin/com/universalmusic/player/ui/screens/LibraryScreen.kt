@@ -550,8 +550,13 @@ fun LibraryScreen(
                                     scope.launch { container.updateSettings { it.copy(librarySongSort = sort) } }
                                 },
                                 currentSort = settings.librarySongSort,
-                                playLabel = if (favoritesOnly) "Play favorites" else "Play all",
-                                onPlay = { onPlayTracks(songs, 0) },
+                                // Search only filters what is shown; chips define the queue, same as row taps and Enter.
+                                playLabel = when {
+                                    needle.isNotEmpty() -> "Play all ${queueSongs.size}"
+                                    favoritesOnly -> "Play favorites"
+                                    else -> "Play all"
+                                },
+                                onPlay = { onPlayTracks(queueSongs, 0) },
                                 showActions = true,
                             )
                         }

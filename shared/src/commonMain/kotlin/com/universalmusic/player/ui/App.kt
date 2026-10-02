@@ -344,6 +344,8 @@ private fun AppScaffold(
                                         onOpenNowPlaying = { openNowPlaying() },
                                         onOpenSettings = { navigateToTab(AppDestination.Settings) },
                                         onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                        // The side pane already shows the session, so Home skips its session card.
+                                        playerPaneVisible = showSideNowPlaying,
                                     )
                                     AppDestination.Search -> SearchScreen(
                                         container,

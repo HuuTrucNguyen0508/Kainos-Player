@@ -88,8 +88,8 @@ class SessionPersistenceController(
     }
 
     private suspend fun persistNow() = writeMutex.withLock {
-        val queue = player.queue.queue.value
         val now = player.nowPlaying.value
+        val queue = player.queue.queue.value.withLearnedDuration(now)
         val snapshot = queue.toSessionSnapshot(positionMs = now.positionMs, nowMs = clock())
         runCatching { store.write(snapshot) }
         lastPersistedPositionMs = now.positionMs
@@ -111,4 +111,18 @@ class SessionPersistenceController(
             append(';')
         }
     }
+}
+
+/**
+ * Android folder (SAF) scans have no track length; once the engine reports one, keep it on the
+ * current item so a cold-start restore can show the real duration instead of "--:--".
+ */
+internal fun PlaybackQueue.withLearnedDuration(now: NowPlayingState): PlaybackQueue {
+    val item = current ?: return this
+    val learned = now.durationMs?.takeIf { it > 0 } ?: return this
+    if (item.track.durationMs != null || now.queueItemId != item.id) return this
+    val index = items.indexOf(item)
+    val updated = items.toMutableList()
+    updated[index] = item.copy(track = item.track.copy(durationMs = learned))
+    return copy(items = updated)
 }

@@ -196,6 +196,10 @@ class HomeLanSyncService(
     }
 
     override suspend fun syncNow(): Result<String> {
+        // Never merge into a library that has not finished loading: the merge would be saved
+        // over the real file (this wiped Android play history when sync beat startup).
+        library.awaitLoaded()
+        playlists.awaitLoaded()
         // Hub must be up before the PC acts as its own client (avoids Connection refused).
         if (shouldRunHub()) {
             startHubIfNeeded()

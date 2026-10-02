@@ -18,6 +18,7 @@ class HomePinPersistenceTest {
     fun pinOrderSurvivesRestartAndUnpinDoesNotDeleteTarget() = runTest {
         val store = PinTestLibraryStore()
         val library = LibraryRepository(scope = this, store = store, clock = { 1_000L })
+        library.load(activeSpotifyAccountId = null)
 
         val playlistId = newKainosPlaylistId()
         assertTrue(playlistId.startsWith(KAINOS_PLAYLIST_ID_PREFIX))

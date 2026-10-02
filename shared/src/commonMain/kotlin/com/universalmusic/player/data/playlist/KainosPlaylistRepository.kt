@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.playlist
 
+import kotlinx.coroutines.CompletableDeferred
 import com.universalmusic.player.data.library.toDomain
 import com.universalmusic.player.data.sync.isLocalFileHeartCanonicalId
 import com.universalmusic.player.data.sync.normalizedLocalFileHeartBasename
@@ -33,11 +34,28 @@ class KainosPlaylistRepository(
     private val persistMutex = Mutex()
     private var persistJob: Job? = null
 
+    /**
+     * Completes once [load] has read the store. Until then nothing is written, so a sync merge
+     * or tap that races app startup cannot save a half-empty playlist set over the real file.
+     */
+    private val loaded = CompletableDeferred<Unit>()
+
+    suspend fun awaitLoaded() = loaded.await()
+
+    init {
+        // Nothing on disk to protect (tests, previews): treat as loaded.
+        if (store == null) loaded.complete(Unit)
+    }
+
     suspend fun load() {
-        val rawStore = store ?: return
-        val snapshot = rawStore.read().migrated()
-        applySnapshot(snapshot)
-        rawStore.write(toSnapshot())
+        try {
+            val rawStore = store ?: return
+            val snapshot = rawStore.read().migrated()
+            applySnapshot(snapshot)
+            rawStore.write(toSnapshot())
+        } finally {
+            loaded.complete(Unit)
+        }
     }
 
     fun applySnapshot(snapshot: KainosPlaylistsSnapshot) {
@@ -239,6 +257,7 @@ class KainosPlaylistRepository(
     private fun schedulePersist() {
         val store = store ?: return
         val scope = scope ?: return
+        if (!loaded.isCompleted) return
         persistJob?.cancel()
         persistJob = scope.launch {
             delay(PERSIST_DEBOUNCE_MS)

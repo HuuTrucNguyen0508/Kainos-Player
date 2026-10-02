@@ -23,6 +23,7 @@ class UserLibraryPersistenceTest {
     fun roundTripsFavoritesRememberedAndRecentsWithoutStreamUrls() = runTest {
         val store = InMemoryUserLibraryStore()
         val library = LibraryRepository(scope = this, store = store, clock = { 1_000L })
+        library.load(activeSpotifyAccountId = null)
 
         val youtube = youtubeTrack(streamUrl = "https://googlevideo.example/expire=1")
         library.toggleFavorite(youtube)

@@ -193,11 +193,14 @@ class AppContainer {
             createHomeLanSyncHub(
                 pairing,
                 { remote ->
+                    // An inbound phone sync can arrive before this device's library has loaded.
+                    library.awaitLoaded()
                     onHearts(remote)
                     rematchLocalHeartsByFileName()
                     library.exportHeartsSyncDocument()
                 },
                 { remote ->
+                    kainosPlaylists.awaitLoaded()
                     onPlaylists(remote)
                     rematchPlaylistLocalsByFileName()
                     kainosPlaylists.exportSyncDocument()
