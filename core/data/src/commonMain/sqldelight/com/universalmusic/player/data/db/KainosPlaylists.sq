@@ -1,0 +1,75 @@
+-- App-owned Kainos playlists and their Home-sync tombstones (was kainos-playlists.json).
+
+CREATE TABLE playlist (
+    id TEXT NOT NULL PRIMARY KEY,
+    position INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    device_id TEXT NOT NULL
+);
+
+CREATE TABLE playlist_entry (
+    playlist_id TEXT NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    entry_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    track_json TEXT NOT NULL,
+    PRIMARY KEY (playlist_id, position)
+);
+
+CREATE INDEX playlist_entry_canonical ON playlist_entry(canonical_id);
+
+CREATE TABLE playlist_tombstone (
+    playlist_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    deleted_at_ms INTEGER NOT NULL
+);
+
+selectPlaylists:
+SELECT * FROM playlist ORDER BY position;
+
+selectEntries:
+SELECT * FROM playlist_entry ORDER BY playlist_id, position;
+
+selectTombstones:
+SELECT * FROM playlist_tombstone ORDER BY playlist_id;
+
+insertPlaylist:
+INSERT INTO playlist (id, position, title, created_at_ms, updated_at_ms, revision, device_id)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+updatePlaylist:
+UPDATE playlist SET position = ?, title = ?, created_at_ms = ?, updated_at_ms = ?,
+    revision = ?, device_id = ? WHERE id = ?;
+
+insertEntry:
+INSERT INTO playlist_entry (playlist_id, position, entry_id, canonical_id, track_json)
+VALUES (?, ?, ?, ?, ?);
+
+insertTombstone:
+INSERT OR REPLACE INTO playlist_tombstone (playlist_id, revision, device_id, deleted_at_ms)
+VALUES (?, ?, ?, ?);
+
+clearEntries:
+DELETE FROM playlist_entry;
+
+clearPlaylists:
+DELETE FROM playlist;
+
+clearTombstones:
+DELETE FROM playlist_tombstone;
+
+deletePlaylist:
+DELETE FROM playlist WHERE id = ?;
+
+deletePlaylistEntries:
+DELETE FROM playlist_entry WHERE playlist_id = ?;
+
+deleteEntryAt:
+DELETE FROM playlist_entry WHERE playlist_id = ? AND position = ?;
+
+deleteTombstone:
+DELETE FROM playlist_tombstone WHERE playlist_id = ?;

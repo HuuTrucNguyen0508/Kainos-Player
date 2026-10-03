@@ -15,6 +15,7 @@ import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.local.cacheKey
+import com.universalmusic.player.data.local.createLocalContentKeyReader
 import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
 import com.universalmusic.player.data.local.isLocationInFolder
 import kotlinx.coroutines.CoroutineDispatcher
@@ -131,11 +132,13 @@ class AppContainer {
         metadataCache = metadataCache,
         onFavoriteChanged = { track, nowFavorite -> favoriteAudioHook?.invoke(track, nowFavorite) },
         deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
+        localTrackCatalog = { local.libraryTracks.value },
     )
     val kainosPlaylists = KainosPlaylistRepository(
         scope = scope,
         store = kainosPlaylistStore,
         deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
+        localTrackCatalog = { local.libraryTracks.value },
     )
     val matcher = TrackMatcher()
     private val sampleUnavailable = MutableStateFlow(ProviderState.UNAVAILABLE)
@@ -144,6 +147,7 @@ class AppContainer {
         cache = createLocalLibraryScanCache(),
         configKey = { localLibraryScanConfig().cacheKey() },
         embeddedArtwork = createLocalEmbeddedArtworkExtractor(),
+        contentKeyReader = createLocalContentKeyReader(),
     )
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
@@ -628,6 +632,8 @@ class AppContainer {
                 if (failure is CancellationException) throw failure
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"
             }
+        runCatching { local.enrichContentKeys() }
+            .onFailure { if (it is CancellationException) throw it }
         runCatching { local.enrichEmbeddedArtwork() }
             .onFailure { if (it is CancellationException) throw it }
     }
@@ -648,27 +654,7 @@ class AppContainer {
             tracks.singleOrNull()?.let { name to it }
         }.toMap()
 
-        var rematched = library.rematchPortableLocalFileHearts(unique)
-
-        val favoriteIds = library.favoriteIds.value.toList()
-        val savedById = library.savedTracks.value.associateBy { it.canonicalId }
-        val presentIds = localTracks.mapTo(HashSet()) { it.canonicalId }
-        for (id in favoriteIds) {
-            if (!id.startsWith("local:")) continue
-            if (id in presentIds) continue
-            val saved = savedById[id] ?: continue
-            val location = (saved.sourceFor(ProviderId.LOCAL)?.handle as? PlaybackHandle.Url)?.url
-            val name = location?.let { basenameFromLocalLocation(it) } ?: continue
-            val match = unique[name] ?: continue
-            if (library.isFavorite(id)) {
-                library.toggleFavorite(saved)
-            }
-            if (!library.isFavorite(match.canonicalId)) {
-                library.toggleFavorite(match)
-            }
-            rematched += 1
-        }
-        return rematched
+        return library.rematchPortableLocalFileHearts(unique, localTracks)
     }
 
     private suspend fun rematchPlaylistLocalsByFileName(): Int {
@@ -682,7 +668,7 @@ class AppContainer {
         val unique = byName.mapNotNull { (name, tracks) ->
             tracks.singleOrNull()?.let { name to it }
         }.toMap()
-        return kainosPlaylists.rematchPortableLocalFileEntries(unique)
+        return kainosPlaylists.rematchPortableLocalFileEntries(unique, localTracks)
     }
 
     fun playKainosPlaylist(playlistId: String): Boolean {

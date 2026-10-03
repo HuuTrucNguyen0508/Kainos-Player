@@ -1,0 +1,255 @@
+package com.universalmusic.player.data.library
+
+import com.universalmusic.player.data.sync.HeartOp
+import com.universalmusic.player.data.sync.isPortableLocalHeartCanonicalId
+import com.universalmusic.player.data.sync.compacted
+import com.universalmusic.player.data.sync.favoriteIdsFromOps
+import com.universalmusic.player.domain.model.AlbumRef
+import com.universalmusic.player.domain.model.ArtistRef
+import com.universalmusic.player.domain.model.Artwork
+import com.universalmusic.player.domain.model.AudioQuality
+import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackSource
+import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.QualityConfidence
+import com.universalmusic.player.domain.model.QualityTier
+import com.universalmusic.player.domain.model.Track
+import kotlinx.serialization.Serializable
+
+const val USER_LIBRARY_FORMAT_VERSION = 3
+
+/**
+ * Versioned on-disk user library. Stores provider identities and display metadata only —
+ * never resolved streaming audio URLs.
+ */
+@Serializable
+data class UserLibrarySnapshot(
+    val version: Int = USER_LIBRARY_FORMAT_VERSION,
+    /** Spotify account that owns Spotify-scoped entries; null when disconnected. */
+    val spotifyAccountId: String? = null,
+    /** App favorites (canonicalIds). Distinct from Spotify Liked Songs. */
+    val favoriteIds: List<String> = emptyList(),
+    /**
+     * Durable heart/unheart ops for LAN sync. Compacted to one winning op per id.
+     * Absent in format v1; synthesized on migrate from [favoriteIds].
+     */
+    val heartOps: List<HeartOp> = emptyList(),
+    val remembered: List<PersistedTrack> = emptyList(),
+    val recents: List<PersistedTrack> = emptyList(),
+    /**
+     * Explicit Home pins in display order (Phase 5). Removing a pin does not delete
+     * the underlying playlist, album, or folder. See [HomePinKind.canHomeSync].
+     */
+    val homePins: List<PersistedHomePin> = emptyList(),
+)
+
+@Serializable
+data class PersistedTrack(
+    val canonicalId: String,
+    val title: String,
+    val artists: List<PersistedArtist> = emptyList(),
+    val albumCanonicalId: String? = null,
+    val albumTitle: String? = null,
+    val durationMs: Long? = null,
+    /** Remote or local file URI for artwork (metadata only). */
+    val artworkUrl: String? = null,
+    val explicit: Boolean = false,
+    val isrc: String? = null,
+    val sources: List<PersistedSource> = emptyList(),
+    val cachedAtMs: Long = 0,
+    val localContentKey: String? = null,
+)
+
+@Serializable
+data class PersistedArtist(
+    val canonicalId: String,
+    val name: String,
+)
+
+@Serializable
+data class PersistedSource(
+    val provider: String,
+    val providerTrackId: String,
+    /**
+     * Stable local path/content URI for [ProviderId.LOCAL] only.
+     * Never a temporary YouTube/Spotify stream URL.
+     */
+    val localLocation: String? = null,
+    val qualityTier: String? = null,
+    val qualityCodec: String? = null,
+    val qualityBitrateKbps: Int? = null,
+    val qualitySampleRateHz: Int? = null,
+    val qualityBitDepth: Int? = null,
+    val qualityConfidence: String? = null,
+)
+
+interface UserLibraryStore {
+    suspend fun read(): UserLibrarySnapshot
+    suspend fun write(snapshot: UserLibrarySnapshot)
+}
+
+fun Track.toPersisted(nowMs: Long): PersistedTrack = PersistedTrack(
+    canonicalId = canonicalId,
+    title = title,
+    artists = artists.map { PersistedArtist(it.canonicalId, it.name) },
+    albumCanonicalId = album?.canonicalId,
+    albumTitle = album?.title,
+    durationMs = durationMs,
+    artworkUrl = artwork?.url,
+    explicit = explicit,
+    isrc = isrc,
+    sources = sources.map { it.toPersisted() },
+    cachedAtMs = nowMs,
+    localContentKey = localContentKey,
+)
+
+fun PersistedTrack.toDomain(): Track = Track(
+    canonicalId = canonicalId,
+    title = title,
+    artists = artists.map { ArtistRef(canonicalId = it.canonicalId, name = it.name) },
+    album = albumTitle?.let { title ->
+        AlbumRef(
+            canonicalId = albumCanonicalId ?: "album:$title",
+            title = title,
+            artwork = artworkUrl?.let(::Artwork),
+        )
+    },
+    durationMs = durationMs,
+    artwork = artworkUrl?.let(::Artwork),
+    explicit = explicit,
+    isrc = isrc,
+    sources = sources.mapNotNull { it.toDomain(durationMs, canonicalId) },
+    localContentKey = localContentKey,
+)
+
+private fun PlaybackSource.toPersisted(): PersistedSource {
+    val localLocation = when (provider) {
+        ProviderId.LOCAL -> streamUrl
+            ?: (handle as? PlaybackHandle.Url)?.url
+        else -> null
+    }
+    return PersistedSource(
+        provider = provider.name,
+        providerTrackId = providerTrackId,
+        localLocation = localLocation,
+        qualityTier = quality?.tier?.name,
+        qualityCodec = quality?.codec,
+        qualityBitrateKbps = quality?.bitrateKbps,
+        qualitySampleRateHz = quality?.sampleRateHz,
+        qualityBitDepth = quality?.bitDepth,
+        qualityConfidence = quality?.confidence?.name,
+    )
+}
+
+private fun PersistedSource.toDomain(durationMs: Long?, canonicalId: String): PlaybackSource? {
+    val provider = runCatching { ProviderId.valueOf(provider) }.getOrNull() ?: return null
+    val quality = qualityTier?.let { tierName ->
+        val tier = runCatching { QualityTier.valueOf(tierName) }.getOrNull() ?: return@let null
+        val confidence = qualityConfidence
+            ?.let { runCatching { QualityConfidence.valueOf(it) }.getOrNull() }
+            ?: if (provider == ProviderId.SPOTIFY) QualityConfidence.UNKNOWN else QualityConfidence.VERIFIED
+        AudioQuality(
+            tier = tier,
+            codec = qualityCodec,
+            bitrateKbps = qualityBitrateKbps,
+            sampleRateHz = qualitySampleRateHz,
+            bitDepth = qualityBitDepth,
+            confidence = confidence,
+        )
+    }
+    return when (provider) {
+        ProviderId.LOCAL -> {
+            val location = localLocation?.takeIf { it.isNotBlank() }
+            if (location == null) {
+                if (!isPortableLocalHeartCanonicalId(canonicalId)) return null
+                return PlaybackSource(provider, providerTrackId, isPlayable = false, quality = quality,
+                    handle = PlaybackHandle.ProviderPlayback(provider, providerTrackId, durationMs))
+            }
+            PlaybackSource(
+                provider = provider,
+                providerTrackId = providerTrackId,
+                streamUrl = location,
+                quality = quality,
+                isPlayable = true,
+                handle = PlaybackHandle.Url(location),
+            )
+        }
+        ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC, ProviderId.SAMPLE -> PlaybackSource(
+            provider = provider,
+            providerTrackId = providerTrackId,
+            streamUrl = null,
+            quality = quality,
+            isPlayable = true,
+            handle = PlaybackHandle.ProviderPlayback(
+                provider = provider,
+                trackId = providerTrackId,
+                durationMs = durationMs,
+            ),
+        )
+    }
+}
+
+/** True when this track can play without network (local file identity present). */
+fun Track.isLocallyPlayable(): Boolean =
+    sources.any { it.provider == ProviderId.LOCAL && it.handle is PlaybackHandle.Url }
+
+fun Track.requiresNetworkToPlay(): Boolean = !isLocallyPlayable()
+
+fun UserLibrarySnapshot.scopedToSpotifyAccount(activeAccountId: String?): UserLibrarySnapshot {
+    if (spotifyAccountId == null && activeAccountId == null) return this
+    if (spotifyAccountId == activeAccountId) return copy(spotifyAccountId = activeAccountId)
+    // Account switch or disconnect: drop Spotify-scoped app data; keep local/YouTube/sample.
+    fun isSpotifyCanonical(id: String) = id.startsWith("spotify:")
+    fun PersistedTrack.isSpotifyOnly(): Boolean {
+        if (isSpotifyCanonical(canonicalId)) return true
+        val providers = sources.map { it.provider }.toSet()
+        return ProviderId.SPOTIFY.name in providers &&
+            ProviderId.LOCAL.name !in providers &&
+            ProviderId.YOUTUBE_MUSIC.name !in providers
+    }
+
+    return UserLibrarySnapshot(
+        version = version.coerceAtLeast(USER_LIBRARY_FORMAT_VERSION),
+        spotifyAccountId = activeAccountId,
+        favoriteIds = favoriteIds.filterNot(::isSpotifyCanonical),
+        heartOps = heartOps.filterNot { isSpotifyCanonical(it.canonicalId) },
+        remembered = remembered.filterNot { it.isSpotifyOnly() },
+        recents = recents.filterNot { it.isSpotifyOnly() },
+        homePins = homePins.filterNot { pin ->
+            pin.kind == HomePinKind.PROVIDER_PLAYLIST &&
+                (pin.provider == ProviderId.SPOTIFY.name || pin.targetId.startsWith("spotify"))
+        },
+    )
+}
+
+fun UserLibrarySnapshot.migrated(deviceId: String = "local"): UserLibrarySnapshot {
+    var next = this
+    if (next.version < 2 || (next.heartOps.isEmpty() && next.favoriteIds.isNotEmpty())) {
+        val synthesized = next.favoriteIds.map { id ->
+            HeartOp(
+                canonicalId = id,
+                action = com.universalmusic.player.data.sync.HeartAction.FAVORITE,
+                revision = 1L,
+                deviceId = deviceId,
+                spotifyAccountId = if (id.startsWith("spotify:")) next.spotifyAccountId else null,
+            )
+        }
+        next = next.copy(
+            version = USER_LIBRARY_FORMAT_VERSION,
+            heartOps = synthesized.compacted(),
+        )
+    }
+    if (next.version < USER_LIBRARY_FORMAT_VERSION) {
+        next = next.copy(version = USER_LIBRARY_FORMAT_VERSION)
+    }
+    // Keep favoriteIds aligned with compacted ops when ops exist.
+    if (next.heartOps.isNotEmpty()) {
+        val fromOps = next.heartOps.favoriteIdsFromOps()
+        val localOnly = next.favoriteIds.filterNot {
+            it.startsWith("spotify:") || it.startsWith("yt:")
+        }
+        next = next.copy(favoriteIds = (fromOps + localOnly).toSortedSet().toList())
+    }
+    next = next.copy(homePins = next.homePins.migratedHomePins())
+    return next
+}

@@ -1,0 +1,34 @@
+-- Listening-session restore (was playback-session.json). Queue identity and display
+-- metadata only, never resolved stream URLs.
+
+CREATE TABLE session_state (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    current_index INTEGER NOT NULL,
+    shuffle INTEGER AS kotlin.Boolean NOT NULL,
+    repeat_mode TEXT NOT NULL,
+    shuffle_order TEXT NOT NULL,
+    position_ms INTEGER NOT NULL
+);
+
+CREATE TABLE session_queue_item (
+    position INTEGER NOT NULL PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    canonical_id TEXT NOT NULL,
+    track_json TEXT NOT NULL
+);
+
+selectState:
+SELECT * FROM session_state WHERE id = 0;
+
+upsertState:
+INSERT OR REPLACE INTO session_state (id, current_index, shuffle, repeat_mode, shuffle_order, position_ms)
+VALUES (0, ?, ?, ?, ?, ?);
+
+selectItems:
+SELECT * FROM session_queue_item ORDER BY position;
+
+insertItem:
+INSERT INTO session_queue_item (position, item_id, canonical_id, track_json) VALUES (?, ?, ?, ?);
+
+clearItems:
+DELETE FROM session_queue_item;

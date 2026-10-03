@@ -206,20 +206,25 @@ It has its own queue and does not control Kainos's player session, Spotify, or Y
 
 | Module / directory | Responsibility |
 | --- | --- |
-| `shared/src/commonMain` | Domain models, matching/source selection, queue/session, providers, persistence, sync, and Compose UI |
-| `shared/src/jvmMain` | Desktop mpv/librespot/yt-dlp integrations, file stores, folder scans, MPRIS, and HTTPS sync hub |
-| `shared/src/androidMain` | Media3 service, librespot/NewPipe integrations, SAF/MediaStore scans, Android stores, and sync transfers |
-| `desktopApp` / `androidApp` | Platform entry points and packaging |
-| `scripts` / `tools` | Launch/install helpers, Spotify helper source, and standalone Echo gateway |
+| `core:model` | Domain models, persisted DTOs, provider/playback contracts and portable sync identity |
+| `core:data` | SQLDelight database/imports, repositories, stores and caches |
+| `core:playback` | Queue/session, timers, Android Media3 and desktop mpv/MPRIS |
+| `provider:local`, `provider:spotify`, `provider:youtube` | Scanners/folder pickers, provider APIs, librespot, NewPipe and yt-dlp |
+| `sync` | HTTPS LAN hub/client, pinned certificates, vault I/O and transfers |
+| `shared` | Compose UI, screen presenters, navigation and AppContainer |
+| `desktopApp` / `androidApp` | Platform entry points and packaging; project dependency is shared |
+| `build-logic` / `test-fixtures` | KMP convention plugin and shared test helpers |
+| `scripts` / `tools` | Launch/install helpers, Spotify helper source and standalone Echo gateway |
 
-`PlayerSession` owns transport and queue state across the app and system controls. Providers implement `MusicProvider`; matching and source resolution use shared domain models. Storage uses versioned JSON files and platform settings, without Room/SQLite.
+`PlayerSession` owns transport and queue state across the app and system controls. Providers implement `MusicProvider`; matching and source resolution use common domain contracts. Kotlin packages stay unchanged across module boundaries. See [module ownership](docs/ARCHITECTURE.md).
 
-Desktop data lives under `~/.universal-music-player/`, including `settings.json`, `user-library.json`, `kainos-playlists.json`, `playback-session.json`, `local-library-cache.json`, `meta-cache/`, and `audio-cache/`. Android uses private app files and SharedPreferences. Persisted playback sessions and playlists store identities and metadata, not resolved streaming URLs.
+SQLDelight stores the library, playlists, listening session and local scan in `kainos.db`. Desktop data lives under `~/.universal-music-player/`; Android uses its private database directory. Legacy JSON snapshots import once and remain as `*.json.migrated`. Settings, tokens, `meta-cache/` and `audio-cache/` stay as files/SharedPreferences. Persisted playback sessions and playlists store identities and metadata, without resolved streaming URLs.
 
-Run the checks used by CI:
+Run the checks used by CI (`jvmTest` covers every module):
 
 ```bash
-./gradlew :shared:jvmTest :desktopApp:compileKotlinJvm :androidApp:assembleDebug :androidApp:lintDebug
+export JAVA_HOME="$HOME/.jdks/temurin-17"
+./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:lintDebug
 ```
 
 With a connected Android device/emulator:

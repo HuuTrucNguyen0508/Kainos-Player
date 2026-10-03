@@ -1,0 +1,112 @@
+-- App favorites, heart ops, remembered/recent tracks and Home pins (was user-library.json).
+-- List tables keep display order in `position`; track metadata is a serialized PersistedTrack
+-- (identity + display fields only, never stream URLs).
+
+CREATE TABLE library_meta (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    spotify_account_id TEXT
+);
+
+CREATE TABLE favorite (
+    position INTEGER NOT NULL PRIMARY KEY,
+    canonical_id TEXT NOT NULL UNIQUE
+);
+
+-- Compacted: one winning op per canonical id.
+CREATE TABLE heart_op (
+    canonical_id TEXT NOT NULL PRIMARY KEY,
+    action TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    spotify_account_id TEXT,
+    local_identity_json TEXT
+);
+
+CREATE TABLE remembered_track (
+    position INTEGER NOT NULL PRIMARY KEY,
+    canonical_id TEXT NOT NULL,
+    track_json TEXT NOT NULL
+);
+
+CREATE INDEX remembered_track_canonical ON remembered_track(canonical_id);
+
+CREATE TABLE recent_track (
+    position INTEGER NOT NULL PRIMARY KEY,
+    canonical_id TEXT NOT NULL,
+    track_json TEXT NOT NULL
+);
+
+CREATE TABLE home_pin (
+    position INTEGER NOT NULL PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    pin_json TEXT NOT NULL
+);
+
+selectMeta:
+SELECT spotify_account_id FROM library_meta WHERE id = 0;
+
+upsertMeta:
+INSERT OR REPLACE INTO library_meta (id, spotify_account_id) VALUES (0, ?);
+
+selectFavorites:
+SELECT canonical_id FROM favorite ORDER BY position;
+
+insertFavorite:
+INSERT INTO favorite (position, canonical_id) VALUES (?, ?);
+
+clearFavorites:
+DELETE FROM favorite;
+
+deleteFavoriteAt:
+DELETE FROM favorite WHERE position = ?;
+
+selectHeartOps:
+SELECT * FROM heart_op ORDER BY canonical_id;
+
+insertHeartOp:
+INSERT OR REPLACE INTO heart_op (canonical_id, action, revision, device_id, spotify_account_id, local_identity_json)
+VALUES (?, ?, ?, ?, ?, ?);
+
+clearHeartOps:
+DELETE FROM heart_op;
+
+deleteHeartOp:
+DELETE FROM heart_op WHERE canonical_id = ?;
+
+selectRemembered:
+SELECT track_json FROM remembered_track ORDER BY position;
+
+insertRemembered:
+INSERT INTO remembered_track (position, canonical_id, track_json) VALUES (?, ?, ?);
+
+clearRemembered:
+DELETE FROM remembered_track;
+
+deleteRememberedAt:
+DELETE FROM remembered_track WHERE position = ?;
+
+selectRecents:
+SELECT track_json FROM recent_track ORDER BY position;
+
+insertRecent:
+INSERT INTO recent_track (position, canonical_id, track_json) VALUES (?, ?, ?);
+
+clearRecents:
+DELETE FROM recent_track;
+
+deleteRecentAt:
+DELETE FROM recent_track WHERE position = ?;
+
+selectHomePins:
+SELECT pin_json FROM home_pin ORDER BY position;
+
+insertHomePin:
+INSERT INTO home_pin (position, id, kind, target_id, pin_json) VALUES (?, ?, ?, ?, ?);
+
+clearHomePins:
+DELETE FROM home_pin;
+
+deleteHomePinAt:
+DELETE FROM home_pin WHERE position = ?;

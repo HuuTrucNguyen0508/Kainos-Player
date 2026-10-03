@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -53,7 +54,7 @@ import com.universalmusic.player.ui.screens.LibraryScreen
 import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
-import com.universalmusic.player.ui.screens.SearchUiState
+import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
 
@@ -94,7 +95,8 @@ private fun AppScaffold(
         runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
     }
     val tabStateHolder = rememberSaveableStateHolder()
-    val searchUi = remember { SearchUiState() }
+    val searchScope = rememberCoroutineScope()
+    val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
     val now by container.player.nowPlaying.collectAsState()
     val queue by container.player.queue.queue.collectAsState()
     val canSkipNext = run {
@@ -348,11 +350,10 @@ private fun AppScaffold(
                                         playerPaneVisible = showSideNowPlaying,
                                     )
                                     AppDestination.Search -> SearchScreen(
-                                        container,
+                                        presenter = searchPresenter,
                                         onPlayTrackInList = { tracks, index, query ->
                                             playSearchTracks(tracks, index, query)
                                         },
-                                        state = searchUi,
                                         requestFocus = true,
                                     )
                                     AppDestination.Library -> LibraryScreen(container, ::playTracks)

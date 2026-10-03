@@ -1,0 +1,48 @@
+-- Last successful local library scan (was local-library-cache.json), so cold start can show
+-- tracks immediately. A row in local_scan marks which folder config the tracks belong to;
+-- a config with no local_scan row is a cache miss, while a row with no tracks is an empty scan.
+
+CREATE TABLE local_scan (
+    config_key TEXT NOT NULL PRIMARY KEY,
+    written_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE local_track (
+    position INTEGER NOT NULL PRIMARY KEY,
+    id TEXT NOT NULL,
+    location TEXT NOT NULL,
+    content_length INTEGER,
+    file_modified_ms INTEGER,
+    -- Size + hash of the file tail; filled in by the content-key pass, null until then.
+    content_key TEXT,
+    track_json TEXT NOT NULL
+);
+
+CREATE INDEX local_track_location ON local_track(location);
+CREATE INDEX local_track_content_key ON local_track(content_key);
+
+hasScan:
+SELECT count(*) > 0 FROM local_scan WHERE config_key = ?;
+
+selectTracks:
+SELECT * FROM local_track ORDER BY position;
+
+insertScan:
+INSERT INTO local_scan (config_key, written_at_ms) VALUES (?, ?);
+
+insertTrack:
+INSERT INTO local_track (position, id, location, content_length, file_modified_ms, content_key, track_json)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+clearScans:
+DELETE FROM local_scan;
+
+clearTracks:
+DELETE FROM local_track;
+
+
+deleteTrackAt:
+DELETE FROM local_track WHERE position = ?;
+
+selectTracksByContentKey:
+SELECT * FROM local_track WHERE content_key = ? ORDER BY position;

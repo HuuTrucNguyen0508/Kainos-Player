@@ -22,10 +22,10 @@ jobs:
           # v3 still defaults to the removed "tools" package. Gradle installs the SDK packages it needs.
           packages: platform-tools
 
-      - name: Shared tests, desktop compile, Android debug build and lint
+      - name: All JVM tests, database migrations, desktop packaging, Android build and lint
         run: |
           chmod +x gradlew
-          ./gradlew :shared:jvmTest :desktopApp:compileKotlinJvm :androidApp:assembleDebug :androidApp:lintDebug --stacktrace
+          ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:lintDebug --stacktrace
 
       - name: Secret scan
         run: |

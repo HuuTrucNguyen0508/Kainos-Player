@@ -25,7 +25,16 @@ kotlin {
     }
 
     sourceSets {
+        commonTest { kotlin.srcDir(rootProject.file("test-fixtures/kotlin")) }
         commonMain.dependencies {
+            api(project(":core:model"))
+            api(project(":core:data"))
+            api(project(":core:playback"))
+            api(project(":provider:local"))
+            api(project(":provider:spotify"))
+            api(project(":provider:youtube"))
+            api(project(":sync"))
+
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
@@ -39,46 +48,20 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
 
-            implementation(libs.ktor.client.core)
-            implementation(libs.ktor.client.content.negotiation)
-            implementation(libs.ktor.client.auth)
-            implementation(libs.ktor.client.logging)
-            implementation(libs.ktor.serialization.kotlinx.json)
 
             implementation(libs.coil.compose)
             implementation(libs.coil.network.ktor)
-            implementation(libs.koin.core)
-            implementation(libs.koin.compose)
-            implementation(libs.koin.compose.viewmodel)
 
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
-            implementation(libs.ktor.client.mock)
             implementation(libs.kotlinx.coroutines.test)
         }
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
-            implementation(libs.androidx.documentfile)
-            implementation(libs.ktor.client.okhttp)
-            implementation(libs.androidx.media3.exoplayer)
-            implementation(libs.androidx.media3.session)
-            implementation(libs.androidx.media3.ui)
-            implementation(libs.newpipe.extractor)
-            implementation(libs.librespot.android.sink)
-            implementation(libs.librespot.android.decoder)
-        }
-        jvmMain.dependencies {
-            implementation(libs.ktor.client.cio)
-            implementation(libs.ktor.server.core)
-            implementation(libs.ktor.server.cio)
-            implementation(libs.ktor.server.netty)
-            implementation(libs.ktor.network.tls.certificates)
-            implementation(libs.dbus.java.core)
-            implementation(libs.dbus.java.transport.native.unixsocket)
         }
     }
 }

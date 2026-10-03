@@ -1,0 +1,11 @@
+-- One row per completed one-time step (e.g. "legacy-json-import"), so restarts never repeat it.
+CREATE TABLE storage_step (
+    name TEXT NOT NULL PRIMARY KEY,
+    completed_at_ms INTEGER NOT NULL
+);
+
+isDone:
+SELECT count(*) > 0 FROM storage_step WHERE name = ?;
+
+markDone:
+INSERT OR REPLACE INTO storage_step (name, completed_at_ms) VALUES (?, ?);

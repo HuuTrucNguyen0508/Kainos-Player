@@ -101,7 +101,7 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 
 ## Local hearts (post Phase 3)
 
-- Wire id: `localfile:<basename>` (lowercase). Device `local:` ids stay on-device.
+- Wire id: `localkey:lc1:<hash>` when known; `localfile:<basename>` (lowercase) remains the fallback. Device `local:` ids stay on-device.
 - Home-LAN heart ops: YouTube + localfile only (not Spotify — same account already covers Spotify).
 - When the basename is missing on a peer, Sync now lists pending transfers; confirm copies the blob, then rematch hearts.
 
@@ -148,3 +148,15 @@ Home-Wi‑Fi, phone-initiated, PC-listening sync.
 Hearts: heart-ops + merge.  
 Files: vault union + tombstones + chunked blob copy.  
 Wire: HTTPS with hub leaf pin from pairing; AES-GCM still on vault bodies. QR camera still deferred.
+
+## Storage and identity redesign progress, 2026-10-02
+
+SQLDelight stores now replace the legacy library, playlist, session and local scan JSON snapshots, retaining migrated originals. Local keys use `lc1:` plus SHA-256 of an eight-byte big-endian file size and the final 64 KiB. Desktop computes them during changed scans; Android computes them after scanning and logs batch timing. Known keys detect same-size vault conflicts, while older peers keep size fallback. Local unheart operations now propagate after rematch and restart.
+
+The hub serves `/kainos-sync/v2/{hearts,playlists,vault/index}` alongside v1. Hearts and playlists export `localkey:` when keys are known, using current scan metadata even when a heart/playlist predates the key pass. Rematching uses keys first and unique basename only when no known key contradicts the match. Unambiguous v1/v2 heart aliases collapse; unheart operations retain identity through restart. Version 2 of the database stores nullable heart-operation identity JSON. Indexed database lookup supports portable-key provider resolution; bulk rematch uses the hydrated catalog's key index.
+
+Clients try v2 first and retry v1 only on 404. The pinned client's normal error validation is disabled for these versioned POST requests so 404 can reach the fallback decision; explicit status checks still reject auth/server failures. v1 bodies/responses restore basename IDs and clear keys. Ambiguous heart basenames with distinct known keys are omitted from v1 rather than merged. The pairing URI and health/blob routes are unchanged. Keep v1 for one release after this cutover, then remove it.
+
+396 tests pass across the extracted modules. Live loopback HTTPS tests cover new hub/v2 clients, old-client v1 routes, new pinned-client fallback to a v1-only hub, encrypted vault indexes and blob transfer. These fixtures use temporary certificates/data and do not use the user's pairing. Actual old/new APK and desktop interoperability, Android SAF cost and manual playback/UI checks remain with the user. Do not downgrade the user's installed app merely to run a compatibility test; use an isolated old-build profile/device.
+
+See [module ownership](../ARCHITECTURE.md) and the root `HANDOVER.md` for build commands, installed APK and current verification.
