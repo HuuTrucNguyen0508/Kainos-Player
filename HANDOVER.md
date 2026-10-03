@@ -4,9 +4,9 @@ Updated 2026-10-03T01:12:17+00:00. Read this first; `handover.md` retains earlie
 
 ## Goal and constraints
 
-Continue the approved Kainos Player storage, local identity/sync and module redesign. Its implementation is complete; manual device checks remain with the user. Use the current model, plain presenters, JDK 17 and pnpm for any JS work. The user authorized committing and pushing this integration branch on 2026-10-03. Publishing a release still requires an explicit request. Android testing is manual; wireless ADB updates are authorized with `install -r` to preserve data. Lyrics remain deferred.
+Continue the approved Kainos Player storage, local identity/sync and module redesign. Its implementation is complete; manual device checks remain with the user. Use the current model, plain presenters, JDK 17 and pnpm for any JS work. The user authorized committing, pushing and merging the redesign into main on 2026-10-03. Publishing a release still requires an explicit request. Android testing is manual; wireless ADB updates are authorized with `install -r` to preserve data. Lyrics remain deferred.
 
-Root: `/home/theadenkingof/Documents/Code/Kainos-Player`. Branch: `refactor/storage-presenter-integration`; The redesign commit is based on `c8ca79e`; use `git log -1` for the current revision and `git status -sb` for push state. This publication includes all redesigned and moved module sources. Original branches and `main` are unchanged. Approved plan: `/home/theadenkingof/.cursor/plans/Storage identity modules redesign-961d0bc9.plan.md`.
+Root: `/home/theadenkingof/Documents/Code/Kainos-Player`. Branch: `main`; The redesign commit is `2aef455`, based on `c8ca79e`; use `git log -1` for the current revision and `git status -sb` for push state. The integration branch was fast-forward merged into main. Original refactor branches retain their history. Approved plan: `/home/theadenkingof/.cursor/plans/Storage identity modules redesign-961d0bc9.plan.md`.
 
 ## Completed files
 
@@ -46,7 +46,7 @@ Pre-module WIP: `/tmp/kainos-before-module-split-6h0iaysi/` (`tracked.patch`, `u
 1. Recheck authoritative quotas before further work. Pause at 98% used/2% remaining in either limit. Current-model switching or agents do not evade shared quotas.
 2. Ask for/inspect user feedback on the installed app; fix any reproduced issue. Inspect shared playback logs in `~` when supplied.
 3. Manual compatibility checks should use isolated old-build data/device, not a downgrade of the user's schema-v2 installation. Check new phone ↔ old desktop and old phone ↔ new desktop, renamed keyed tracks, heart/unheart and missing vault files.
-4. Review the published integration branch. Merge to main or publish a release only when requested.
+4. Continue from main and inspect user feedback. Publish a release only when requested.
 
 Useful commands:
 

@@ -10,7 +10,7 @@ The Gradle split is complete: `core:{model,data,playback}`, `provider:{local,spo
 
 All 396 JVM tests, schema migration verification, desktop packaging, Android assembly and Android lint pass. Log: `logs/module-split-final-verification-2026-10-03.log`. APK `release/kainos-player-debug-modular-2026-10-03.apk` installed successfully on the Poco. The packaged desktop app imported real JSON snapshots into database version 2; collection counts match all preserved originals, SQLite checks pass, and its 512-entry session restored paused. Logs: `logs/desktop-real-data-migration-2026-10-03.log` and `logs/desktop-run-20261003-030811.log`.
 
-Live loopback HTTPS compatibility tests pass for keyed v2, downgraded v1, 404 fallback with the pinned client, encrypted vault indexes and blob downloads. Manual old/new phone-desktop sync, full playback/UI checks and Android key-pass cost measurement remain with the user. The user authorized commit and push of `refactor/storage-presenter-integration` on 2026-10-03. No release was requested. The earlier quota pause was lifted by fresh telemetry on 2026-10-03; both limits were below threshold.
+Live loopback HTTPS compatibility tests pass for keyed v2, downgraded v1, 404 fallback with the pinned client, encrypted vault indexes and blob downloads. Manual old/new phone-desktop sync, full playback/UI checks and Android key-pass cost measurement remain with the user. The redesign commit `2aef455` was merged from `refactor/storage-presenter-integration` into `main` on 2026-10-03 at the user's request. No release was requested. The earlier quota pause was lifted by fresh telemetry on 2026-10-03; both limits were below threshold.
 
 ## Working now
 

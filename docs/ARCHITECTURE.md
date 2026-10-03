@@ -1,6 +1,6 @@
 # Kainos Player modules
 
-The storage, identity and module redesign is implemented on `refactor/storage-presenter-integration`. Kotlin packages remain `com.universalmusic.player.*`; directory ownership changed on 2026-10-03.
+The storage, identity and module redesign is implemented on `main`, merged from `refactor/storage-presenter-integration`. Kotlin packages remain `com.universalmusic.player.*`; directory ownership changed on 2026-10-03.
 
 | Module | Owns | Project dependencies |
 | --- | --- | --- |
