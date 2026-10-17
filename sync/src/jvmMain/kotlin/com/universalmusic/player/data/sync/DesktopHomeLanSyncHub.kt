@@ -274,9 +274,20 @@ class DesktopHomeLanSyncHub(
             is HubCaller.Paired -> caller.peer.fingerprint
         }
 
-    private suspend inline fun <reified T> ApplicationCall.receivePairing(): T? =
-        runCatching { json.decodeFromString<T>(receiveText()) }.getOrNull()
+    private suspend inline fun <reified T> ApplicationCall.receivePairing(): T? {
+        val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+        if (declared != null && declared > MAX_PAIRING_BODY_BYTES) {
+            respondText("Pairing request too large", status = HttpStatusCode.PayloadTooLarge)
+            return null
+        }
+        val body = receiveChannel().readRemaining(MAX_PAIRING_BODY_BYTES + 1).readByteArray()
+        if (body.size > MAX_PAIRING_BODY_BYTES) {
+            respondText("Pairing request too large", status = HttpStatusCode.PayloadTooLarge)
+            return null
+        }
+        return runCatching { json.decodeFromString<T>(body.decodeToString()) }.getOrNull()
             ?: null.also { respondText("Malformed pairing request", status = HttpStatusCode.BadRequest) }
+    }
 
     private suspend inline fun <reified T> ApplicationCall.respondPairing(reply: PairingReply<T>) = when (reply) {
         is PairingReply.Ok -> respondText(json.encodeToString(reply.value), ContentType.Application.Json)
@@ -284,6 +295,9 @@ class DesktopHomeLanSyncHub(
             respondText(reply.reason, status = HttpStatusCode.fromValue(reply.refusal.httpStatus))
     }
 }
+
+// 4 KiB covers the bounded identifiers, name and nonce even with JSON unicode escapes.
+private const val MAX_PAIRING_BODY_BYTES = 4_096L
 
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
 

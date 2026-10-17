@@ -111,7 +111,9 @@ class PairingHost(
                 return@locked refused(PairingRefusal.RATE_LIMITED, "Too many pairing attempts; wait a minute")
             }
             val commit = request.commitHex.hexBytes(32)
-            if (commit == null || request.deviceId.isBlank()) {
+            if (commit == null || request.deviceId.isBlank() || request.deviceId.length > 128 ||
+                request.displayName.length > 64
+            ) {
                 return@locked refused(PairingRefusal.MALFORMED, "Malformed pairing start")
             }
             recentStarts.addLast(now)
@@ -119,7 +121,7 @@ class PairingHost(
                 id = random(16).toHex(),
                 client = client,
                 deviceId = request.deviceId,
-                name = request.displayName.ifBlank { "Unnamed device" }.take(64),
+                name = request.displayName.ifBlank { "Unnamed device" },
                 commit = commit,
                 hubNonce = random(PAIRING_NONCE_BYTES),
                 startedAtMs = now,
@@ -225,7 +227,7 @@ class PairingHost(
     }
 
     private fun owned(client: CertFingerprint, attemptId: String): Attempt? =
-        latestAttempt?.takeIf { it.id == attemptId && it.client == client }
+        latestAttempt?.takeIf { attemptId.hexBytes(16) != null && it.id == attemptId && it.client == client }
 
     private fun end(attempt: Attempt, reason: String) {
         attempt.phase = Phase.Ended(reason)
