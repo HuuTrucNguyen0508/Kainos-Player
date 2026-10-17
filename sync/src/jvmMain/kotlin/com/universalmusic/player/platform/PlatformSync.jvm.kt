@@ -5,6 +5,7 @@ import com.universalmusic.player.data.sync.HubProcessMode
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.delay
 
 private val hubUserService by lazy { HubUserService.current() }
 
@@ -78,6 +79,19 @@ actual fun homeLanHubAutostartEnabled(): Boolean = hubUserService.isEnabled()
 
 data class HubSystemctlResult(val status: Int, val output: String = "")
 
+internal enum class HubStopOutcome { STOPPED, STILL_RUNNING }
+
+private data class HubUnitState(val activeState: String, val jobId: UInt) {
+    val stopOutcome: HubStopOutcome?
+        get() = when {
+            jobId != 0u -> null
+            activeState == "inactive" || activeState == "failed" -> HubStopOutcome.STOPPED
+            activeState == "active" -> HubStopOutcome.STILL_RUNNING
+            activeState in setOf("activating", "deactivating", "reloading", "refreshing", "maintenance") -> null
+            else -> error("Unknown hub unit activity: $activeState")
+        }
+}
+
 class HubUserService(
     private val isolation: DesktopIsolation,
     private val configHome: Path,
@@ -110,6 +124,22 @@ class HubUserService(
         check(command(listOf("systemctl", "--user", "stop", unitName)).status == 0) { "Could not stop $unitName" }
     }
 
+    internal suspend fun reconcileStop(): HubStopOutcome {
+        while (true) {
+            val result = command(listOf("systemctl", "--user", "show", "--all", "--property=ActiveState", "--property=Job", unitName))
+            check(result.status == 0) { "Could not inspect $unitName" }
+            val properties = result.output.lineSequence().filter { '=' in it }
+                .associate { it.substringBefore('=') to it.substringAfter('=') }
+            val job = checkNotNull(properties["Job"]) { "Missing Job for $unitName" }
+            val unit = HubUnitState(
+                activeState = checkNotNull(properties["ActiveState"]) { "Missing ActiveState for $unitName" },
+                jobId = if (job.isEmpty()) 0u else checkNotNull(job.toUIntOrNull()) { "Invalid Job for $unitName" },
+            )
+            unit.stopOutcome?.let { return it }
+            delay(50)
+        }
+    }
+
     fun start() {
         check(command(listOf("systemctl", "--user", "start", "--no-block", unitName)).status == 0) {
             "Could not start $unitName"
@@ -139,6 +169,7 @@ class HubUserService(
             |Environment=${unitValue("KAINOS_HUB_PORT=${isolation.hubPort}")}
             |Environment=${unitValue("KAINOS_HUB_UNIT=$unitName")}
             |${isolation.instance?.let { "Environment=${unitValue("KAINOS_INSTANCE=$it")}" }.orEmpty()}
+            |SuccessExitStatus=143
             |Restart=on-failure
             |RestartSec=5
             |

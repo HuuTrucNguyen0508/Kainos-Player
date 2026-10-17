@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.platform.DesktopIsolation
 import com.universalmusic.player.platform.HubUserService
+import com.universalmusic.player.platform.HubStopOutcome
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -27,6 +28,7 @@ class HubOwnership(
         data object ServiceStopRequested : State
         data class Owned(val lock: HubOwnerLock) : State
         data object Unavailable : State
+        data class RecoveringService(val reconcileStop: Boolean) : State
         data class Closing(val previous: State) : State
         data object Closed : State
     }
@@ -64,17 +66,27 @@ class HubOwnership(
                 if (current == State.Closed) return@withContext
                 if (current is State.Closing) current.previous else current.also { state = State.Closing(it) }
             }
-            if (current is State.Owned) {
-                stopHub()
-                current.lock.close()
+            val recovery = when (current) {
+                is State.Owned -> {
+                    stopHub()
+                    current.lock.close()
+                    State.RecoveringService(reconcileStop = false)
+                }
+                State.ServiceStopRequested -> State.RecoveringService(reconcileStop = true)
+                is State.RecoveringService -> current
+                else -> null
+            }
+            mutex.withLock { state = recovery ?: State.Closed }
+            if (recovery != null && mode != HubProcessMode.SUPERVISED_HUB_ONLY) {
+                val restart = if (recovery.reconcileStop) {
+                    service.reconcileStop() == HubStopOutcome.STOPPED &&
+                        service.isEnabled()
+                } else {
+                    serviceEnabledForOwnership()
+                }
+                if (restart && shouldRestartServiceAfterAcquisitionFailure()) service.start()
             }
             mutex.withLock { state = State.Closed }
-            if (mode == HubProcessMode.SUPERVISED_HUB_ONLY ||
-                current !is State.Owned && current != State.ServiceStopRequested
-            ) return@withLock
-            if (!serviceEnabledForOwnership()) return@withLock
-            if (current == State.ServiceStopRequested && !shouldRestartServiceAfterAcquisitionFailure()) return@withLock
-            service.start()
         }
     }
 
