@@ -13,6 +13,7 @@ import kotlin.streams.asSequence
 class FileHeartedAudioCacheDisk(
     root: Path,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+    private val dataDirOverridden: Boolean = false,
 ) : HeartedAudioCacheDisk {
     private val root = root.toAbsolutePath().normalize()
     private val indexPath: Path = this.root.resolve("index.json")
@@ -63,7 +64,12 @@ class FileHeartedAudioCacheDisk(
     }
 
     override suspend fun deleteFile(uri: String) {
-        pathFromUri(uri)?.let(::deleteCacheFile)
+        val path = pathFromUri(uri)
+        if (path == null) {
+            System.err.println("Hearted audio cache skipped delete '$uri': invalid file path or URI")
+            return
+        }
+        deleteCacheFile(path)
     }
 
     override suspend fun clearAll() {
@@ -101,11 +107,17 @@ class FileHeartedAudioCacheDisk(
 
     private fun deleteCacheFile(path: Path) {
         val normalized = path.toAbsolutePath().normalize()
-        if (!isCachePath(normalized)) return
-        val insideRoot = runCatching {
-            normalized.toFile().canonicalFile.toPath().startsWith(root.toFile().canonicalFile.toPath())
-        }.getOrDefault(false)
-        if (insideRoot) runCatching { Files.deleteIfExists(normalized) }
+        runCatching {
+            require(isCachePath(normalized)) { "path is outside cache root '$root'" }
+            if (dataDirOverridden) {
+                require(normalized.toFile().canonicalFile.toPath().startsWith(root.toFile().canonicalFile.toPath())) {
+                    "resolved path escapes isolated cache root '$root'"
+                }
+            }
+            Files.deleteIfExists(normalized)
+        }.onFailure { error ->
+            System.err.println("Hearted audio cache skipped delete '$normalized': ${error.message}")
+        }
     }
 
     private fun pathFromUri(uri: String): Path? = runCatching {

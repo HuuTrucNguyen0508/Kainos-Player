@@ -100,7 +100,10 @@ actual fun createMetadataArtworkCache(): MetadataArtworkCache {
 }
 
 actual fun createHeartedAudioCache(): HeartedAudioCache =
-    DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(configDir() / "audio-cache"))
+    DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(
+        configDir() / "audio-cache",
+        dataDirOverridden = DesktopIsolation.current.dataDirOverridden,
+    ))
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
     URI(url).toURL().openStream().use { input ->

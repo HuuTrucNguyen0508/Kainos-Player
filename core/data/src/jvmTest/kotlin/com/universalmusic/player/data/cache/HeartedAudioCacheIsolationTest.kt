@@ -16,14 +16,14 @@ class HeartedAudioCacheIsolationTest {
         val root = createTempDirectory("hearted-isolation")
         try {
             val originalRoot = root.resolve("original")
-            val original = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(originalRoot))
+            val original = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(originalRoot, dataDirOverridden = false))
             val file = originalRoot.resolve("audio/song with spaces.m4a")
             Files.createDirectories(file.parent)
             Files.write(file, byteArrayOf(1, 2, 3))
             original.put(HeartedAudioCacheEntry("yt:song", "song", file.toUri().toString(), sizeBytes = 3, downloadedAtMs = 1))
             val copyRoot = root.resolve("copy")
             originalRoot.toFile().copyRecursively(copyRoot.toFile())
-            val copy = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(copyRoot))
+            val copy = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(copyRoot, dataDirOverridden = true))
             val copiedFile = copyRoot.resolve("audio/song with spaces.m4a")
             assertEquals(copiedFile.toUri().toString(), assertNotNull(copy.get("yt:song")).localUri)
             assertTrue(Files.exists(copiedFile), "Reconciliation must preserve the copied audio")
@@ -40,7 +40,7 @@ class HeartedAudioCacheIsolationTest {
         val root = createTempDirectory("hearted-missing-copy")
         try {
             val originalRoot = root.resolve("original")
-            val disk = FileHeartedAudioCacheDisk(originalRoot)
+            val disk = FileHeartedAudioCacheDisk(originalRoot, dataDirOverridden = false)
             val file = originalRoot.resolve("audio/song.m4a")
             Files.createDirectories(file.parent)
             Files.write(file, byteArrayOf(1))
@@ -49,7 +49,7 @@ class HeartedAudioCacheIsolationTest {
             val copyRoot = root.resolve("copy")
             Files.createDirectories(copyRoot)
             Files.copy(originalRoot.resolve("index.json"), copyRoot.resolve("index.json"))
-            val copy = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(copyRoot))
+            val copy = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(copyRoot, dataDirOverridden = true))
             assertNull(copy.get("yt:song"))
             copy.remove("yt:song")
             assertTrue(Files.exists(file))
@@ -57,7 +57,57 @@ class HeartedAudioCacheIsolationTest {
     }
 
     @Test
-    fun cacheKeepsSymlinkedAudioEntriesWithoutDeletingTheirTargets() = runBlocking {
+    fun defaultCacheRemovesAudioThroughSymlinkedDirectory() = runBlocking {
+        val root = createTempDirectory("hearted-default-symlink")
+        try {
+            val outside = root.resolve("other-disk/song.m4a")
+            Files.createDirectories(outside.parent)
+            Files.write(outside, byteArrayOf(1))
+            val cacheRoot = root.resolve("home/.universal-music-player/audio-cache")
+            Files.createDirectories(cacheRoot)
+            Files.createSymbolicLink(cacheRoot.resolve("audio"), outside.parent)
+            val linkedFile = cacheRoot.resolve("audio/song.m4a")
+            val disk = FileHeartedAudioCacheDisk(cacheRoot, dataDirOverridden = false)
+            disk.saveIndex(HeartedAudioCacheIndex(entries = mapOf("yt:song" to
+                HeartedAudioCacheEntry("yt:song", "song", linkedFile.toUri().toString(), sizeBytes = 1, downloadedAtMs = 1))))
+            val cache = DefaultHeartedAudioCache(disk)
+            assertNotNull(cache.get("yt:song"))
+            cache.remove("yt:song")
+            assertFalse(Files.exists(outside), "Unheart must free default-mode symlinked audio")
+            assertEquals(0L, cache.stats().bytesUsed)
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test
+    fun defaultSymlinkedAudioSupportsReconciliationEvictionAndClear() = runBlocking {
+        val root = createTempDirectory("hearted-default-symlink-lifecycle")
+        try {
+            val outside = root.resolve("other-disk")
+            Files.createDirectories(outside)
+            val cacheRoot = root.resolve("home/.universal-music-player/audio-cache")
+            Files.createDirectories(cacheRoot)
+            Files.createSymbolicLink(cacheRoot.resolve("audio"), outside)
+            Files.write(outside.resolve("orphan.m4a"), byteArrayOf(1))
+            val disk = FileHeartedAudioCacheDisk(cacheRoot, dataDirOverridden = false)
+            val cache = DefaultHeartedAudioCache(disk, maxBytes = 1)
+            assertEquals(0L, cache.stats().bytesUsed, "Reconciliation must free symlinked orphans")
+            for (id in 1..3) {
+                val file = cacheRoot.resolve("audio/song$id.m4a")
+                Files.write(file, byteArrayOf(1))
+                cache.put(HeartedAudioCacheEntry("yt:$id", "$id", file.toUri().toString(), sizeBytes = 1, downloadedAtMs = id.toLong()))
+                assertEquals(1L, cache.stats().bytesUsed)
+                assertNotNull(cache.get("yt:$id"))
+            }
+            assertFalse(Files.exists(outside.resolve("song1.m4a")))
+            assertFalse(Files.exists(outside.resolve("song2.m4a")))
+            cache.clear()
+            assertEquals(0L, cache.stats().bytesUsed)
+            assertFalse(Files.exists(outside.resolve("song3.m4a")))
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test
+    fun isolatedCacheKeepsSymlinkedAudioEntriesWithoutDeletingTheirTargets() = runBlocking {
         val root = createTempDirectory("hearted-symlink")
         try {
             val outside = root.resolve("outside/song.m4a")
@@ -67,7 +117,7 @@ class HeartedAudioCacheIsolationTest {
             Files.createDirectories(cacheRoot)
             Files.createSymbolicLink(cacheRoot.resolve("audio"), outside.parent)
             val linkedFile = cacheRoot.resolve("audio/song.m4a")
-            val disk = FileHeartedAudioCacheDisk(cacheRoot)
+            val disk = FileHeartedAudioCacheDisk(cacheRoot, dataDirOverridden = true)
             disk.saveIndex(HeartedAudioCacheIndex(entries = mapOf("yt:song" to
                 HeartedAudioCacheEntry("yt:song", "song", linkedFile.toUri().toString(), sizeBytes = 1, downloadedAtMs = 1))))
             val cache = DefaultHeartedAudioCache(disk)
@@ -86,7 +136,7 @@ class HeartedAudioCacheIsolationTest {
             Files.createDirectories(outside.parent)
             Files.createDirectories(cacheRoot)
             Files.write(outside, byteArrayOf(1))
-            val disk = FileHeartedAudioCacheDisk(cacheRoot)
+            val disk = FileHeartedAudioCacheDisk(cacheRoot, dataDirOverridden = false)
             disk.deleteFile(outside.toUri().toString())
             disk.deleteFile(cacheRoot.resolve("../cache-other/song.m4a").toString())
             assertTrue(Files.exists(outside))
