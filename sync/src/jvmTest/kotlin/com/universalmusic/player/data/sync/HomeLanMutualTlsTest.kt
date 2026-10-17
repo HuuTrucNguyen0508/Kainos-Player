@@ -15,6 +15,7 @@ import io.ktor.http.contentType
 import io.ktor.client.plugins.expectSuccess
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.IOException
 import java.net.ServerSocket
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
@@ -197,5 +198,23 @@ class HomeLanMutualTlsTest {
         val renewed = identity.reset()
         assertEquals(false, renewed == pc.fingerprint)
         assertEquals(renewed, JvmDeviceIdentity(directory.resolve("pc")).fingerprint())
+        theDeviceKeyAndItsPasswordAreOwnerOnly()
     }
+
+    @Test
+    fun resetFailsWhenTheReadableIdentityFilesCannotBeDeleted() {
+        val identityDirectory = directory.resolve("pc").toPath()
+        val identity = JvmDeviceIdentity(identityDirectory.toFile())
+        val original = identity.fingerprint()
+        val originalMode = Files.getPosixFilePermissions(identityDirectory)
+        try {
+            Files.setPosixFilePermissions(identityDirectory, PosixFilePermissions.fromString("r-x------"))
+            assertFailsWith<IOException> { identity.reset() }
+            assertEquals(original, identity.fingerprint())
+            assertEquals(original, JvmDeviceIdentity(identityDirectory.toFile()).fingerprint())
+        } finally {
+            Files.setPosixFilePermissions(identityDirectory, originalMode)
+        }
+    }
+
 }

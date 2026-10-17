@@ -4,16 +4,20 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.platform.HomeLanHubConfig
+import com.universalmusic.player.platform.JvmDeviceIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeLanPairingServiceTest {
@@ -104,6 +108,40 @@ class HomeLanPairingServiceTest {
             assertTrue(service.status.value.hubListening)
             service.stopHub()
         } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun failedIdentityResetPreservesTrustAndNeverReportsSuccess() = runTest {
+        val directory = Files.createTempDirectory("kainos-reset-failure-service").toFile()
+        val identityDirectory = directory.resolve("identity").toPath()
+        val identity = JvmDeviceIdentity(identityDirectory.toFile())
+        val originalFingerprint = identity.fingerprint()
+        val originalMode = Files.getPosixFilePermissions(identityDirectory)
+        val phone = PairedPeer("phone", "Phone", phonePin, pairedAtMs = 123L)
+        val hub = PairedPeer("hub", "Hub", hubPin, pairedAtMs = 123L)
+        var settings = AppSettings(homeLanSyncDeviceId = "pc", homeLanSyncPeers = listOf(phone), homeLanSyncHub = hub)
+        try {
+            val service = HomeLanSyncService(backgroundScope, { settings }, { settings = it(settings) },
+                LibraryRepository(), KainosPlaylistRepository(), hubFactory = { error("Hub disabled") },
+                clientFactory = { error("No sync client needed") }, pairingClientFactory = noPairingClient(),
+                identity = identity,
+                vaultStore = JvmHomeLanVaultStore({ directory.toString() }, directory.resolve("vault-state.json").toPath()),
+                refreshLocalLibrary = {}, isDesktop = true)
+            service.hydrateFromSettings(settings)
+            val originalSettings = settings
+            val originalTrust = service.trust.value
+            val originalDetail = service.status.value.lastDetail
+            Files.setPosixFilePermissions(identityDirectory, PosixFilePermissions.fromString("r-x------"))
+            assertFailsWith<IOException> { service.resetIdentity() }
+            assertEquals(originalSettings, settings)
+            assertEquals(originalTrust, service.trust.value)
+            assertEquals(originalDetail, service.status.value.lastDetail)
+            assertEquals(originalFingerprint, identity.fingerprint())
+            assertEquals(originalFingerprint, JvmDeviceIdentity(identityDirectory.toFile()).fingerprint())
+        } finally {
+            Files.setPosixFilePermissions(identityDirectory, originalMode)
             directory.deleteRecursively()
         }
     }
