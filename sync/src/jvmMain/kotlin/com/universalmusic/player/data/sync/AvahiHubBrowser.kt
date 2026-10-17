@@ -11,7 +11,6 @@ import org.freedesktop.dbus.types.UInt32
 
 internal actual fun platformHubBrowser(): HubBrowser = AvahiHubBrowser()
 
-/** Browses `_kainos-sync._tcp` over IPv4 through avahi-daemon's D-Bus API. */
 internal class AvahiHubBrowser : HubBrowser {
     override fun browse(): Flow<DiscoveredHub> = callbackFlow {
         val connection = avahiSystemBus()

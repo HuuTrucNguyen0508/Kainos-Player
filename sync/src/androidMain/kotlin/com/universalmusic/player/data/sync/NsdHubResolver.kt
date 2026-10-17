@@ -26,7 +26,6 @@ internal actual fun platformHubBrowser(): HubBrowser = NsdHubResolver(androidCon
 private val resolveLock = Mutex()
 private const val RESOLVE_GUARD_MS = 10_000L
 
-/** Browses `_kainos-sync._tcp` with NsdManager and resolves the services it finds one at a time. */
 internal class NsdHubResolver(private val context: Context) : HubBrowser {
     private val nsd = context.getSystemService(NsdManager::class.java)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -65,8 +64,8 @@ internal class NsdHubResolver(private val context: Context) : HubBrowser {
     }
 
     /**
-     * The lock is released when Android answers, not when this caller stops waiting, so a
-     * cancelled browse cannot start the next resolve while the old one is still running.
+     * Android cannot cancel a resolve before API 34, so the lock is released when Android answers
+     * or after [RESOLVE_GUARD_MS], never when a cancelled caller stops waiting.
      */
     @Suppress("DEPRECATION")
     private suspend fun resolve(info: NsdServiceInfo): NsdServiceInfo? {

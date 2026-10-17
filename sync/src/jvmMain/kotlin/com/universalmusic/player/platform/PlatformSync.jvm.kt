@@ -36,7 +36,6 @@ actual fun createHomeLanSyncHub(
     return AdvertisedHub(hub, advertiser)
 }
 
-/** The mDNS record lives exactly as long as the hub listens. */
 private class AdvertisedHub(
     private val hub: com.universalmusic.player.data.sync.HomeLanSyncHub,
     private val advertiser: com.universalmusic.player.data.sync.AvahiHubAdvertiser,

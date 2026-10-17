@@ -100,11 +100,7 @@ internal interface AvahiServiceBrowser : DBusInterface {
 
 internal fun avahiSystemBus(): DBusConnection = DBusConnectionBuilder.forSystemBus().withShared(false).build()
 
-/**
- * Publishes the hub as `_kainos-sync._tcp` over IPv4 on the interface [currentLanAddress] picks.
- * Every 30 seconds it publishes again if that interface or address changed, or if Avahi dropped
- * the entry group. Avahi frees the group itself when this process's D-Bus connection drops.
- */
+/** Avahi frees an entry group when the D-Bus connection that created it closes, so a dead process leaves no record. */
 class AvahiHubAdvertiser(
     private val port: Int,
     private val certSha256Hex: String,

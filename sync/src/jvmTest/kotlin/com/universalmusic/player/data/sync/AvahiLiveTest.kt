@@ -12,7 +12,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 
-/** Talks to the real avahi-daemon. Runs only with -Dkainos.avahi=true. */
 class AvahiLiveTest {
     @Test
     fun advertisedHubIsBrowsableOnTheLanAddressAndGoneAfterStop() = runBlocking {

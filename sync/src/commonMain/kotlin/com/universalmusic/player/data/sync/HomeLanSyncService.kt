@@ -230,7 +230,9 @@ class HomeLanSyncService(
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync start")
             runCatching {
                 ensureDeviceId()
-                openHubClient(pairing).getOrThrow().use { client ->
+                val (connection, resolved) = openHubClient(pairing).getOrThrow()
+                connection.use { client ->
+                    rememberHubAddress(resolved)
                     withVaultSyncForeground("Home library sync") {
                         val remoteHearts = client.syncHearts().getOrThrow()
                         library.mergeAndPersistSyncState(remoteHearts)
@@ -532,7 +534,11 @@ class HomeLanSyncService(
                     }
                     return@runCatching
                 }
-                if (openHubClient(pairing).onSuccess { it.close() }.isSuccess) {
+                val reachable = openHubClient(pairing).onSuccess { (client, resolved) ->
+                    client.close()
+                    rememberHubAddress(resolved)
+                }.isSuccess
+                if (reachable) {
                     syncNow()
                 }
             }.onFailure { err ->
@@ -543,11 +549,9 @@ class HomeLanSyncService(
         }
     }
 
-    /**
-     * A client for the hub that answered the pinned probe, still holding the probe's connection.
-     * A hub found by mDNS at a new address is stored, so the next sync tries that address first.
-     */
-    private suspend fun openHubClient(pairing: HomeLanSyncPairing): Result<HomeLanSyncClient> {
+    private suspend fun openHubClient(
+        pairing: HomeLanSyncPairing,
+    ): Result<Pair<HomeLanSyncClient, ResolveResult.Resolved>> {
         val pin = pairing.hubCertSha256Hex
             ?: return Result.failure(IllegalStateException("Hub certificate pin required"))
         val stored = pairing.hubHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, pairing.hubPort) }
@@ -573,16 +577,18 @@ class HomeLanSyncService(
         return when (result) {
             is ResolveResult.HubNotFound -> Result.failure(IllegalStateException(result.reason))
             is ResolveResult.Resolved -> {
-                val endpoint = result.endpoint
-                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "hub $endpoint via ${result.via} in ${clock() - startedAt} ms")
-                if (result.via == ResolvedVia.MDNS) {
-                    PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
-                    updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
-                    _pairing.update { it?.at(endpoint) }
-                }
-                Result.success(clients.getValue(endpoint))
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "hub ${result.endpoint} via ${result.via} in ${clock() - startedAt} ms")
+                Result.success(clients.getValue(result.endpoint) to result)
             }
         }
+    }
+
+    private suspend fun rememberHubAddress(resolved: ResolveResult.Resolved) {
+        if (resolved.via != ResolvedVia.MDNS) return
+        val endpoint = resolved.endpoint
+        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
+        updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
+        _pairing.update { it?.at(endpoint) }
     }
 
     private fun startIdleWatch() {

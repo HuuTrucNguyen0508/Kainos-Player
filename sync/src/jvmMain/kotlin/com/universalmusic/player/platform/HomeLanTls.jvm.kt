@@ -11,9 +11,12 @@ import io.ktor.serialization.kotlinx.json.json
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 import kotlinx.serialization.json.Json
+
+private val pinIsTheOnlyTrustCheck = HostnameVerifier { _, _ -> true }
 
 actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
     val expected = certPinHex.trim().lowercase()
@@ -36,12 +39,11 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
     val sslContext = SSLContext.getInstance("TLS").apply {
         init(null, arrayOf(pinTrustManager), SecureRandom())
     }
-    // The pin is the whole trust decision; a hostname check would reject any address outside the SANs.
     return HttpClient(OkHttp) {
         engine {
             config {
                 sslSocketFactory(sslContext.socketFactory, pinTrustManager)
-                hostnameVerifier { _, _ -> true }
+                hostnameVerifier(pinIsTheOnlyTrustCheck)
             }
         }
         // Non-2xx hub replies (401/403/409/416/5xx) fail the call instead of being read as data.

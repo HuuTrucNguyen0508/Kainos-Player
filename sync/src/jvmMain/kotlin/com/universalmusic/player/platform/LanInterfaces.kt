@@ -13,19 +13,13 @@ data class LanInterface(
     val ipv4: List<String>,
 )
 
-/** The one interface and address the hub advertises and puts in the pairing URI. */
 data class LanAddress(val interfaceName: String, val interfaceIndex: Int, val ipv4: String)
 
-/** Docker, VM, VPN and container bridges are not reachable from the phone on home Wi-Fi. */
 private val VIRTUAL_INTERFACE_PREFIXES = listOf(
     "docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "podman", "cni", "flannel",
     "lxcbr", "lxdbr", "tailscale", "tun", "tap", "wg", "zt",
 )
 
-/**
- * Picks the interface that is up, not loopback, not virtual, and has a private IPv4 address.
- * The default-route interface wins; otherwise 192.168/16, then 10/8, then 172.16/12.
- */
 fun selectLanAddress(interfaces: List<LanInterface>, defaultRouteInterface: String?): LanAddress? {
     val eligible = interfaces
         .filter { it.isUp && !it.isLoopback && VIRTUAL_INTERFACE_PREFIXES.none(it.name::startsWith) }
@@ -54,7 +48,7 @@ private fun systemInterfaces(): List<LanInterface> =
         )
     }
 
-/** Interface the kernel would use for the default route; a UDP connect sends no packets. */
+/** A UDP connect only picks a route; it sends no packets. */
 private fun defaultRouteInterface(): String? = runCatching {
     DatagramSocket().use { socket ->
         socket.connect(InetAddress.getByName("1.1.1.1"), 53)

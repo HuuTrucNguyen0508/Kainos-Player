@@ -7,14 +7,12 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 
 data class HubEndpoint(val host: String, val port: Int) {
-    /** `host:port`, with an IPv6 literal in brackets as URLs need it. */
     val authority: String
         get() = if (':' in host && !host.startsWith("[")) "[$host]:$port" else "$host:$port"
 
     override fun toString(): String = authority
 }
 
-/** One mDNS answer. [fp] is only a claim; the hub is trusted after a pinned TLS probe answers. */
 data class DiscoveredHub(val fp: String, val id: String?, val host: String, val port: Int) {
     val endpoint: HubEndpoint get() = HubEndpoint(host, port)
 }
@@ -26,17 +24,13 @@ sealed interface ResolveResult {
     data class HubNotFound(val reason: String) : ResolveResult
 }
 
-/** Emits `_kainos-sync._tcp` services as they resolve, until the collector stops. */
+/** Emits [HOME_LAN_MDNS_SERVICE_TYPE] services as they resolve, until the collector stops. */
 fun interface HubBrowser {
     fun browse(): Flow<DiscoveredHub>
 }
 
 internal expect fun platformHubBrowser(): HubBrowser
 
-/**
- * Finds the paired hub: the stored address first, then mDNS. Only a pinned TLS probe that answers
- * makes an endpoint usable, whatever its TXT `fp` says.
- */
 class HubEndpointResolver(
     private val browser: HubBrowser,
     private val probe: suspend (HubEndpoint) -> Result<Unit>,
@@ -47,7 +41,7 @@ class HubEndpointResolver(
     suspend fun resolve(stored: HubEndpoint?, pinnedFp: String): ResolveResult {
         val failures = mutableListOf<String>()
         if (stored != null) {
-            val failure = probeWithin(stored) ?: return ResolveResult.Resolved(stored, ResolvedVia.STORED)
+            val failure = probeFailure(stored) ?: return ResolveResult.Resolved(stored, ResolvedVia.STORED)
             failures += "stored $stored: $failure"
         }
         log("discovery browse for $HOME_LAN_MDNS_SERVICE_TYPE")
@@ -59,7 +53,7 @@ class HubEndpointResolver(
                 .filter { it.fp.equals(pinnedFp, ignoreCase = true) && tried.add(it.endpoint) }
                 .firstOrNull { hub ->
                     advertised++
-                    val failure = probeWithin(hub.endpoint)
+                    val failure = probeFailure(hub.endpoint)
                     if (failure != null) failures += "mDNS ${hub.endpoint}: $failure"
                     failure == null
                 }
@@ -73,8 +67,7 @@ class HubEndpointResolver(
         return ResolveResult.HubNotFound((failures + discovery).joinToString("; ", prefix = "Hub not found: "))
     }
 
-    /** Null when [endpoint] answered within the probe budget, else why it did not. */
-    private suspend fun probeWithin(endpoint: HubEndpoint): String? {
+    private suspend fun probeFailure(endpoint: HubEndpoint): String? {
         val result = withTimeoutOrNull(probeTimeoutMs) { probe(endpoint) }
             ?: return "timed out after ${probeTimeoutMs / 1000} s".also { log("probe $endpoint $it") }
         val error = result.exceptionOrNull() ?: return null
