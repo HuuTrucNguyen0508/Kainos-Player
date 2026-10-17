@@ -43,9 +43,11 @@ expect suspend fun <T> withVaultSyncForeground(
     block: suspend () -> T,
 ): T
 
-/** Install or remove a desktop login autostart entry for hub mode. No-op on Android. */
+/** Configure desktop hub login startup. Throws when configuration fails. No-op on Android. */
 
 expect fun setHomeLanHubAutostart(enabled: Boolean)
+
+expect fun homeLanHubAutostartEnabled(): Boolean
 
 /** Rematch local-file hearts whose paths went missing after vault sync. Returns count. */
 

@@ -25,6 +25,7 @@ data class HomeLanSyncStatus(
     val role: HomeLanSyncRole = HomeLanSyncRole.AUTO,
     val lastSyncAtMs: Long? = null,
     val lastError: String? = null,
+    val hubAutostartError: String? = null,
     val lastDetail: String? = null,
     val hubListening: Boolean = false,
     val vaultProgress: String? = null,

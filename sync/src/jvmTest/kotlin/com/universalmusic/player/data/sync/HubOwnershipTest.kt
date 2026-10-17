@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.platform.DesktopIsolation
 import com.universalmusic.player.platform.HubUserService
+import com.universalmusic.player.platform.HubSystemctlResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -88,7 +89,7 @@ class HubOwnershipTest {
     @Test
     fun hubOnlyDoesNotCallSystemctlAndCannotRestartAfterClose() = runBlocking {
         fixture("3") { f ->
-            val owner = f.owner(HubProcessMode.HUB_ONLY)
+            val owner = f.owner(HubProcessMode.SUPERVISED_HUB_ONLY)
             assertTrue(owner.acquire())
             owner.startHub { f.events += "listen" }
             owner.close { f.events += "stop hub" }
@@ -160,6 +161,7 @@ class HubOwnershipTest {
                 "systemctl --user is-enabled kainos-hub.service",
                 "systemctl --user stop kainos-hub.service",
             ), f.events)
+            owner.close {}
         }
     }
 
@@ -253,7 +255,7 @@ class HubOwnershipTest {
         fun service(target: DesktopIsolation) = HubUserService(target, config, { "/tmp/Kainos Player" }, ::command)
         fun owner(mode: HubProcessMode) = HubOwnership(isolation, service, mode)
 
-        fun command(arguments: List<String>): Int {
+        fun command(arguments: List<String>): HubSystemctlResult {
             events += arguments.joinToString(" ")
             if (arguments.contains("start")) {
                 assertNotNull(HubOwnerLock.acquire(isolation.dataDir, 0), "Release lock before systemctl start").close()
@@ -261,7 +263,9 @@ class HubOwnershipTest {
             val process = ProcessBuilder(listOf(fakeSystemctl.toString()) + arguments.drop(1)).start()
             assertTrue(process.waitFor(2, TimeUnit.SECONDS))
             assertEquals(0, process.exitValue())
-            return if (arguments.contains("is-enabled") && !enabled) 1 else 0
+            return if (arguments.contains("is-enabled")) {
+                HubSystemctlResult(if (enabled) 0 else 1, if (enabled) "enabled" else "disabled")
+            } else HubSystemctlResult(0)
         }
     }
 }

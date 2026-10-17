@@ -9,6 +9,7 @@ import com.universalmusic.player.platform.HUB_PIN_MISMATCH
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
+import com.universalmusic.player.platform.homeLanHubAutostartEnabled
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.platform.platformLabel
@@ -72,6 +73,7 @@ class HomeLanSyncService(
     private val deviceName: () -> String = ::homeLanDeviceName,
     private val pairingPollMs: Long = 1_000,
     private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
+    private val hubAutostartEnabled: () -> Boolean = ::homeLanHubAutostartEnabled,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -93,6 +95,7 @@ class HomeLanSyncService(
     private val mutex = Mutex()
     private val identityResetMutex = Mutex()
     private val pairingAttemptGeneration = MutableStateFlow(0L)
+    private val autostartMutex = Mutex()
     private var pairingExpiryJob: Job? = null
 
     private val resolutionLock = Any()
@@ -132,9 +135,32 @@ class HomeLanSyncService(
         }
     }
 
-    suspend fun setHubAutostartEnabled(enabled: Boolean) {
-        updateSettings { it.copy(homeLanSyncHubAutostart = enabled) }
-        configureHubAutostart(enabled)
+    suspend fun setHubAutostartEnabled(enabled: Boolean): Result<Unit> = autostartMutex.withLock {
+        val configured = try {
+            configureHubAutostart(enabled)
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+        val observed = try {
+            Result.success(hubAutostartEnabled())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+        val failure = configured.exceptionOrNull() ?: observed.exceptionOrNull()
+            ?: if (observed.getOrNull() != enabled) IllegalStateException("Start at login did not change. Try again.") else null
+        val message = failure?.let { "Could not update hub login startup: ${it.message ?: it.toString()}" }
+        observed.getOrNull()?.let { actual ->
+            if (settings().homeLanSyncHubAutostart != actual) {
+                updateSettings { it.copy(homeLanSyncHubAutostart = actual) }
+            }
+        }
+        _status.update { it.copy(hubAutostartError = message) }
+        failure?.let { Result.failure(it) } ?: Result.success(Unit)
     }
 
     override suspend fun enable(enabled: Boolean) {

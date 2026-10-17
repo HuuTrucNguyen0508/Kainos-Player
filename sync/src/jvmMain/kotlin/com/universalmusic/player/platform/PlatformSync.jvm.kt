@@ -10,7 +10,8 @@ private val hubUserService by lazy { HubUserService.current() }
 
 private var processHubOwnership: HubOwnership? = null
 
-fun desktopHubOwnership(mode: HubProcessMode): HubOwnership {
+fun desktopHubOwnership(hubOnly: Boolean): HubOwnership {
+    val mode = hubUserService.processMode(hubOnly, System.getenv("KAINOS_HUB_UNIT"))
     check(processHubOwnership == null)
     return HubOwnership(DesktopIsolation.current, hubUserService, mode).also { processHubOwnership = it }
 }
@@ -71,35 +72,53 @@ actual suspend fun <T> withVaultSyncForeground(
     block: suspend () -> T,
 ): T = block()
 
-actual fun setHomeLanHubAutostart(enabled: Boolean) {
-    runCatching { hubUserService.configure(enabled) }
-        .onFailure { System.err.println("Kainos hub autostart: ${it.message}") }
-}
+actual fun setHomeLanHubAutostart(enabled: Boolean) = hubUserService.configure(enabled)
+
+actual fun homeLanHubAutostartEnabled(): Boolean = hubUserService.isEnabled()
+
+data class HubSystemctlResult(val status: Int, val output: String = "")
 
 class HubUserService(
     private val isolation: DesktopIsolation,
     private val configHome: Path,
     private val launcher: () -> String?,
-    private val command: (List<String>) -> Int = ::runHubSystemctl,
+    private val command: (List<String>) -> HubSystemctlResult = ::runHubSystemctl,
 ) {
     val unitName: String = isolation.instance?.let { "kainos-hub-$it.service" } ?: "kainos-hub.service"
     private val unitFile = configHome.resolve("systemd/user").resolve(unitName)
 
-    fun isEnabled(): Boolean = command(listOf("systemctl", "--user", "is-enabled", unitName)) == 0
+    fun processMode(hubOnly: Boolean, supervisedUnit: String?): HubProcessMode = when {
+        !hubOnly -> HubProcessMode.GUI
+        supervisedUnit == unitName -> HubProcessMode.SUPERVISED_HUB_ONLY
+        else -> HubProcessMode.HUB_ONLY
+    }
+
+    fun isEnabled(): Boolean {
+        val result = command(listOf("systemctl", "--user", "is-enabled", unitName))
+        return when (result.output.trim()) {
+            "enabled", "enabled-runtime" -> {
+                check(result.status == 0) { "Could not check $unitName (status ${result.status})" }
+                true
+            }
+            "disabled", "masked", "masked-runtime", "static", "indirect", "linked", "linked-runtime",
+            "alias", "generated", "transient", "not-found" -> false
+            else -> error("Could not check $unitName (status ${result.status})")
+        }
+    }
 
     fun stop() {
-        check(command(listOf("systemctl", "--user", "stop", unitName)) == 0) { "Could not stop $unitName" }
+        check(command(listOf("systemctl", "--user", "stop", unitName)).status == 0) { "Could not stop $unitName" }
     }
 
     fun start() {
-        check(command(listOf("systemctl", "--user", "start", "--no-block", unitName)) == 0) {
+        check(command(listOf("systemctl", "--user", "start", "--no-block", unitName)).status == 0) {
             "Could not start $unitName"
         }
     }
 
     fun configure(enabled: Boolean) {
         if (!enabled) {
-            check(command(listOf("systemctl", "--user", "disable", "--now", unitName)) == 0) {
+            check(command(listOf("systemctl", "--user", "disable", "--now", unitName)).status == 0) {
                 "Could not disable $unitName"
             }
             Files.deleteIfExists(unitFile)
@@ -118,6 +137,7 @@ class HubUserService(
             |ExecStart=${unitValue(executable, escapeDollar = true)} --hub-only
             |Environment=${unitValue("KAINOS_DATA_DIR=${isolation.dataDir}")}
             |Environment=${unitValue("KAINOS_HUB_PORT=${isolation.hubPort}")}
+            |Environment=${unitValue("KAINOS_HUB_UNIT=$unitName")}
             |${isolation.instance?.let { "Environment=${unitValue("KAINOS_INSTANCE=$it")}" }.orEmpty()}
             |Restart=on-failure
             |RestartSec=5
@@ -131,12 +151,12 @@ class HubUserService(
             Files.writeString(unitFile, body)
             reload()
         }
-        check(command(listOf("systemctl", "--user", "enable", unitName)) == 0) { "Could not enable $unitName" }
+        check(command(listOf("systemctl", "--user", "enable", unitName)).status == 0) { "Could not enable $unitName" }
         removeLegacyAutostart()
     }
 
     private fun reload() {
-        check(command(listOf("systemctl", "--user", "daemon-reload")) == 0) { "Could not reload user units" }
+        check(command(listOf("systemctl", "--user", "daemon-reload")).status == 0) { "Could not reload user units" }
     }
 
     private fun removeLegacyAutostart() {
@@ -163,18 +183,15 @@ private fun unitValue(value: String, escapeDollar: Boolean = false): String {
     return "\"${if (escapeDollar) escaped.replace("$", "$$") else escaped}\""
 }
 
-private fun runHubSystemctl(arguments: List<String>): Int = try {
+private fun runHubSystemctl(arguments: List<String>): HubSystemctlResult {
     val process = ProcessBuilder(arguments)
-        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
         .redirectError(ProcessBuilder.Redirect.DISCARD)
         .start()
-    if (process.waitFor(5, TimeUnit.SECONDS)) process.exitValue() else {
+    if (!process.waitFor(5, TimeUnit.SECONDS)) {
         process.destroyForcibly()
         error("systemctl timed out")
     }
-} catch (error: java.io.IOException) {
-    System.err.println("Kainos hub systemctl: ${error.message}")
-    -1
+    return HubSystemctlResult(process.exitValue(), process.inputStream.bufferedReader().use { it.readText() })
 }
 
 actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {

@@ -71,7 +71,6 @@ import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.platformDeviceIdentity
 import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
-import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.createHttpClient
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -382,7 +381,7 @@ class AppContainer {
             _settings.value = loaded
             homeLanSync.hydrateFromSettings(loaded)
             if (loaded.homeLanSyncHubAutostart) {
-                setHomeLanHubAutostart(true)
+                homeLanSync.setHubAutostartEnabled(true)
             }
             player.updatePreferences(loaded.toPlaybackPreferences())
             player.setVolume(loaded.playbackVolume)

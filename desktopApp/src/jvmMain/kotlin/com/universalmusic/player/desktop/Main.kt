@@ -18,6 +18,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.sync.HUB_OWNED_BY_ANOTHER_INSTANCE
+import com.universalmusic.player.data.sync.HubOwnership
 import com.universalmusic.player.data.sync.HubProcessMode
 import com.universalmusic.player.platform.desktopHubOwnership
 import com.universalmusic.player.app.UiRequest
@@ -41,13 +42,8 @@ fun main(args: Array<String>) {
         exitProcess(2)
     }
     println("Kainos data dir ${isolation.dataDir}, hub port ${isolation.hubPort}, MPRIS ${mprisBusName(isolation.instance)}")
-    val mode = if (args.any { it == "--hub-only" }) HubProcessMode.HUB_ONLY else HubProcessMode.GUI
-    val ownership = desktopHubOwnership(mode)
-    val acquired = runBlocking { ownership.acquire() }
-    if (!acquired) {
-        System.err.println(HUB_OWNED_BY_ANOTHER_INSTANCE)
-        if (mode == HubProcessMode.HUB_ONLY) exitProcess(75)
-    }
+    val ownership = desktopHubOwnership(hubOnly = args.any { it == "--hub-only" })
+    val mode = ownership.mode
     val container = AtomicReference<AppContainer?>()
     val closeMonitor = Any()
     fun closeHub() = synchronized(closeMonitor) {
@@ -56,15 +52,18 @@ fun main(args: Array<String>) {
     val shutdown = Thread({ closeHub() }, "kainos-hub-shutdown")
     Runtime.getRuntime().addShutdownHook(shutdown)
     val exitCode = try {
-        if (mode == HubProcessMode.HUB_ONLY) {
-            runHubOnly(ensureAppContainer().also(container::set))
+        val acquired = runBlocking { ownership.acquire() }
+        if (!acquired) System.err.println(HUB_OWNED_BY_ANOTHER_INSTANCE)
+        if (!acquired && mode != HubProcessMode.GUI) {
+            75
+        } else if (mode != HubProcessMode.GUI) {
+            runHubOnly(ensureAppContainer().also(container::set), ownership)
         } else {
             runGui(container::set)
             0
         }
     } finally {
-        closeHub()
-        Runtime.getRuntime().removeShutdownHook(shutdown)
+        try { closeHub() } finally { Runtime.getRuntime().removeShutdownHook(shutdown) }
     }
     if (exitCode != 0) exitProcess(exitCode)
 }
@@ -143,10 +142,14 @@ private fun KeyEvent.typedText(): String? {
 
 private const val CHAR_UNDEFINED = 0xFFFF
 
-private fun runHubOnly(container: AppContainer): Int = runBlocking {
+private fun runHubOnly(
+    container: AppContainer,
+    ownership: HubOwnership,
+): Int = runBlocking {
     while (!container.ready.value) {
         delay(50)
     }
+    if (ownership.handoffUnmanagedHub { container.homeLanSync.stopHub() }) return@runBlocking 0
     val settings = container.settings.value
     if (!settings.homeLanSyncEnabled) {
         System.err.println("kainos-player --hub-only: home sync disabled; exiting")

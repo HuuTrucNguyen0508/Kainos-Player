@@ -251,7 +251,7 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     syncStatus.lastDetail?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    syncStatus.lastError?.let {
+    listOfNotNull(syncStatus.hubAutostartError, syncStatus.lastError).distinct().forEach {
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
     syncNotice?.let {

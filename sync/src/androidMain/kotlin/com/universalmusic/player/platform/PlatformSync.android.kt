@@ -25,4 +25,6 @@ actual suspend fun <T> withVaultSyncForeground(
 
 actual fun setHomeLanHubAutostart(enabled: Boolean) = Unit
 
+actual fun homeLanHubAutostartEnabled(): Boolean = false
+
 actual suspend fun rematchLocalHeartsAfterVaultSync(): Int = 0
