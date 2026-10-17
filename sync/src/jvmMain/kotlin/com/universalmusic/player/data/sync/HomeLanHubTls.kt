@@ -4,6 +4,7 @@ import com.universalmusic.player.platform.sha256Bytes
 import io.ktor.network.tls.certificates.buildKeyStore
 import io.ktor.network.tls.certificates.saveToFile
 import java.io.File
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.KeyStore
@@ -32,10 +33,13 @@ fun generateHomeLanHubTls(
         .map { it.trim() }
         .filter { it.isNotBlank() }
         .distinct()
+    // Clients verify an IP connect host against IP SANs only, never DNS SANs.
+    val (ipHosts, dnsHosts) = hosts.partition(::isIpLiteral)
     val keyStore = buildKeyStore {
         certificate(HUB_KEY_ALIAS) {
             password = privateKeyPassword.concatToString()
-            domains = hosts
+            domains = dnsHosts
+            ipAddresses = ipHosts.map { InetAddress.getByName(it) }
         }
     }
     // Pre-create owner-only so the private key is never briefly world-readable.
@@ -96,6 +100,9 @@ private val OWNER_ONLY = PosixFilePermissions.fromString("rw-------")
 private fun restrictToOwner(file: File) {
     runCatching { Files.setPosixFilePermissions(file.toPath(), OWNER_ONLY) }
 }
+
+private fun isIpLiteral(host: String): Boolean =
+    ':' in host || host.matches(Regex("""^\d{1,3}(\.\d{1,3}){3}$"""))
 
 private fun keyStorePasswordFor(sharedSecretHex: String): CharArray {
     val material = ("kainos-home-lan-keystore|" + sharedSecretHex.trim().lowercase()).encodeToByteArray()
