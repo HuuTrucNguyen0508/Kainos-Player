@@ -487,10 +487,7 @@ class PlayerSession(
         trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
         pausePending = true
         _nowPlaying.update { it.copy(isPlaying = false) }
-        when (engineStatus) {
-            EngineStatus.PLAYING, EngineStatus.BUFFERING -> engine.pause()
-            else -> Unit
-        }
+        engine.pause()
         record(change, playing = false)
     }
 
