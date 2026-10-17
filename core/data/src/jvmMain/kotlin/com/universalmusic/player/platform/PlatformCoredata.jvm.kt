@@ -47,15 +47,14 @@ import kotlin.io.path.readText
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
 private fun configDir(): Path {
-    val home = System.getProperty("user.home")
-    val dir = Path.of(home, ".universal-music-player")
+    val dir = DesktopIsolation.current.dataDir
     Files.createDirectories(dir)
     // Holds the Spotify refresh token and the Home sync hub key; keep it owner-only.
     restrictToOwner(dir, directory = true)
     return dir
 }
 
-/** Shared with HomeLanTls.jvm.kt for hub PKCS12 under ~/.universal-music-player/. */
+/** Shared with HomeLanTls.jvm.kt for the hub PKCS12 in the data directory. */
 
 fun homeLanConfigDir(): Path = configDir()
 

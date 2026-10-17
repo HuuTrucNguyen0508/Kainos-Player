@@ -20,8 +20,8 @@ internal data class LibrespotPaths(
     val credentialsFile: Path get() = systemCache.resolve("credentials.json")
 
     companion object {
-        fun defaults(userHome: Path = Path.of(System.getProperty("user.home", "."))): LibrespotPaths {
-            val appDir = userHome.resolve(".universal-music-player")
+        fun defaults(): LibrespotPaths {
+            val appDir = DesktopIsolation.current.dataDir
             return LibrespotPaths(
                 systemCache = appDir.resolve("librespot/system"),
                 audioCache = appDir.resolve("librespot/audio"),

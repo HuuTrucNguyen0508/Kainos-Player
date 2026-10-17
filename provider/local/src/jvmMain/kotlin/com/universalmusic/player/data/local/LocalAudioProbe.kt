@@ -3,10 +3,10 @@ package com.universalmusic.player.data.local
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.refineQualityTier
+import com.universalmusic.player.platform.DesktopIsolation
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -229,8 +229,7 @@ private fun runFfprobe(path: Path): String? {
 }
 
 private fun artCacheDir(): Path {
-    val home = System.getProperty("user.home", ".")
-    val dir = Paths.get(home, ".universal-music-player", "art-cache")
+    val dir = DesktopIsolation.current.dataDir.resolve("art-cache")
     Files.createDirectories(dir)
     return dir
 }

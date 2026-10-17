@@ -30,6 +30,12 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class MprisControllerTest {
     @Test
+    fun instanceSuffixesTheBusName() {
+        assertEquals("org.mpris.MediaPlayer2.kainosplayer", mprisBusName(null))
+        assertEquals("org.mpris.MediaPlayer2.kainosplayer.instance2", mprisBusName("2"))
+    }
+
+    @Test
     fun bindStartsWithoutThrowingWhenSessionBusMissing() = runTest {
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)

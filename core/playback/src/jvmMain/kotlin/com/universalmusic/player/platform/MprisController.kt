@@ -19,6 +19,10 @@ import org.freedesktop.dbus.interfaces.Properties
 import org.freedesktop.dbus.messages.DBusSignal
 import org.freedesktop.dbus.types.Variant
 
+/** `KAINOS_INSTANCE=2` exports `org.mpris.MediaPlayer2.kainosplayer.instance2` (`playerctl -p kainosplayer.instance2`). */
+fun mprisBusName(instance: String?): String =
+    "org.mpris.MediaPlayer2.kainosplayer" + instance?.let { ".instance$it" }.orEmpty()
+
 /**
  * Headless MPRIS media player export for Linux (`playerctl`, desktop shells).
  * Inbound transport calls [PlayerSession]; outbound mirrors nowPlaying + queue.
@@ -26,6 +30,7 @@ import org.freedesktop.dbus.types.Variant
 class MprisController(
     private val session: PlayerSession,
     private val scope: CoroutineScope,
+    private val busName: String = mprisBusName(DesktopIsolation.current.instance),
 ) {
     private val connection = AtomicReference<DBusConnection?>(null)
     private val syncJob = AtomicReference<Job?>(null)
@@ -46,7 +51,7 @@ class MprisController(
                 .withShared(false)
                 .build()
             connection.set(conn)
-            conn.requestBusName(BUS_NAME)
+            conn.requestBusName(busName)
             conn.exportObject(OBJECT_PATH, facade)
             syncJob.getAndSet(
                 scope.launch {
@@ -71,7 +76,7 @@ class MprisController(
         syncJob.getAndSet(null)?.cancel()
         connection.getAndSet(null)?.let { conn ->
             runCatching { conn.unExportObject(OBJECT_PATH) }
-            runCatching { conn.releaseBusName(BUS_NAME) }
+            runCatching { conn.releaseBusName(busName) }
             runCatching { conn.close() }
         }
     }
@@ -91,7 +96,6 @@ class MprisController(
     }
 
     companion object {
-        const val BUS_NAME = "org.mpris.MediaPlayer2.kainosplayer"
         const val OBJECT_PATH = "/org/mpris/MediaPlayer2"
         const val IFACE_ROOT = "org.mpris.MediaPlayer2"
         const val IFACE_PLAYER = "org.mpris.MediaPlayer2.Player"

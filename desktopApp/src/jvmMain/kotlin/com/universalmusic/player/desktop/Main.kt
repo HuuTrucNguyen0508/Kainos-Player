@@ -18,14 +18,24 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
+import com.universalmusic.player.platform.DesktopIsolation
+import com.universalmusic.player.platform.mprisBusName
 import com.universalmusic.player.platform.unbindPlatformMediaControls
 import com.universalmusic.player.ui.UniversalMusicApp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
+    val isolation = try {
+        DesktopIsolation.current
+    } catch (e: IllegalArgumentException) {
+        System.err.println("kainos-player: ${e.message}")
+        exitProcess(2)
+    }
+    println("Kainos data dir ${isolation.dataDir}, hub port ${isolation.hubPort}, MPRIS ${mprisBusName(isolation.instance)}")
     if (args.any { it == "--hub-only" }) {
         runHubOnly()
         return
