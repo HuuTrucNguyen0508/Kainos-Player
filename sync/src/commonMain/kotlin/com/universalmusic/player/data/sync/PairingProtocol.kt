@@ -19,6 +19,8 @@ const val HOME_LAN_SYNC_PATH_PAIR_STATUS = "/kainos-sync/v3/pair/status"
 const val PAIRING_NONCE_BYTES = 32
 const val PAIRING_ATTEMPT_TTL_MS = 2L * 60L * 1000L
 const val PAIRING_STARTS_PER_MINUTE = 5
+private const val PAIRING_OUTCOME_TTL_MS = PAIRING_ATTEMPT_TTL_MS + 60_000L
+private const val MAX_PAIRING_OUTCOMES = PAIRING_STARTS_PER_MINUTE * 3 + 1
 
 @Serializable
 data class PairStartRequest(val deviceId: String, val displayName: String, val commitHex: String)
@@ -81,8 +83,6 @@ class PairingHost(
     private sealed interface Phase {
         data object AwaitingReveal : Phase
         data class Revealed(val code: PairingCode, val pcConfirmed: Boolean, val phoneConfirmed: Boolean) : Phase
-        data class Paired(val peer: PairedPeer) : Phase
-        data class Ended(val reason: String) : Phase
     }
 
     private class Attempt(
@@ -96,15 +96,19 @@ class PairingHost(
         var phase: Phase,
     )
 
+    private data class AttemptKey(val id: String, val client: CertFingerprint)
+    private data class TerminalOutcome(val status: PairStatusResponse, val finishedAtMs: Long)
+
     private val mutex = Mutex()
-    private var latestAttempt: Attempt? = null
+    private var activeAttempt: Attempt? = null
+    private val outcomes = linkedMapOf<AttemptKey, TerminalOutcome>()
     private val recentStarts = ArrayDeque<Long>()
     private val _incoming = MutableStateFlow<PairingAttempt?>(null)
     val incoming: StateFlow<PairingAttempt?> = _incoming.asStateFlow()
 
     suspend fun start(client: CertFingerprint, request: PairStartRequest): PairingReply<PairStartResponse> =
         locked {
-            if (latestAttempt?.isPending() == true) return@locked refused(PairingRefusal.BUSY, "Another pairing is in progress")
+            if (activeAttempt != null) return@locked refused(PairingRefusal.BUSY, "Another pairing is in progress")
             val now = clock()
             while (recentStarts.firstOrNull()?.let { now - it >= 60_000L } == true) recentStarts.removeFirst()
             if (recentStarts.size >= PAIRING_STARTS_PER_MINUTE) {
@@ -127,22 +131,21 @@ class PairingHost(
                 startedAtMs = now,
                 phase = Phase.AwaitingReveal,
             )
-            latestAttempt = attempt
+            activeAttempt = attempt
             publish()
             PairingReply.Ok(PairStartResponse(attempt.id, attempt.hubNonce.toHex()))
         }
 
     suspend fun reveal(client: CertFingerprint, request: PairRevealRequest): PairingReply<Unit> = locked {
-        val attempt = owned(client, request.attemptId) ?: return@locked foreign()
+        val attempt = owned(client, request.attemptId) ?: return@locked finishedOrForeign(client, request.attemptId)
         when (attempt.phase) {
-            is Phase.Ended, is Phase.Paired -> return@locked ended(attempt)
             is Phase.Revealed -> return@locked refused(PairingRefusal.MALFORMED, "Nonce already revealed")
             Phase.AwaitingReveal -> Unit
         }
         val nonce = request.nonceHex.hexBytes(PAIRING_NONCE_BYTES)
         if (nonce == null || !constantTimeEquals(pairingCommit(nonce), attempt.commit)) {
             end(attempt, "The phone's pairing check did not match")
-            return@locked ended(attempt)
+            return@locked finishedOrForeign(client, request.attemptId)
         }
         attempt.phase = Phase.Revealed(
             pairingCode(hubFingerprint(), attempt.client, attempt.hubNonce, nonce),
@@ -154,39 +157,32 @@ class PairingHost(
     }
 
     suspend fun confirmFromPhone(client: CertFingerprint, attemptId: String): PairingReply<Unit> = locked {
-        val attempt = owned(client, attemptId) ?: return@locked foreign()
+        val attempt = owned(client, attemptId) ?: return@locked finishedOrForeign(client, attemptId)
         confirm(attempt) { it.copy(phoneConfirmed = true) }
     }
 
     /** The PC's Confirm button; it names the attempt it showed, so a newer attempt is never confirmed by it. */
     suspend fun confirmFromPc(attemptId: String): PairingReply<Unit> = locked {
-        val attempt = latestAttempt?.takeIf { it.id == attemptId } ?: return@locked foreign()
+        val attempt = activeAttempt?.takeIf { it.id == attemptId } ?: return@locked finishedOrForeign(attemptId)
         confirm(attempt) { it.copy(pcConfirmed = true) }
     }
 
     suspend fun rejectFromPc(attemptId: String): PairingReply<Unit> = locked {
-        val attempt = latestAttempt?.takeIf { it.id == attemptId } ?: return@locked foreign()
-        if (!attempt.isPending()) return@locked ended(attempt)
+        val attempt = activeAttempt?.takeIf { it.id == attemptId } ?: return@locked finishedOrForeign(attemptId)
         end(attempt, "The PC rejected the pairing")
         PairingReply.Ok(Unit)
     }
 
     suspend fun cancel(client: CertFingerprint, attemptId: String): PairingReply<Unit> = locked {
-        val attempt = owned(client, attemptId) ?: return@locked foreign()
-        if (!attempt.isPending()) return@locked ended(attempt)
+        val attempt = owned(client, attemptId) ?: return@locked finishedOrForeign(client, attemptId)
         end(attempt, "The phone cancelled the pairing")
         PairingReply.Ok(Unit)
     }
 
     suspend fun status(client: CertFingerprint, attemptId: String): PairingReply<PairStatusResponse> = locked {
-        val attempt = owned(client, attemptId) ?: return@locked foreign()
-        PairingReply.Ok(
-            when (val phase = attempt.phase) {
-                is Phase.Paired -> PairStatusResponse(PairState.PAIRED, hubDeviceId = hubDeviceId())
-                is Phase.Ended -> PairStatusResponse(PairState.ENDED, reason = phase.reason)
-                else -> PairStatusResponse(PairState.PENDING)
-            },
-        )
+        if (owned(client, attemptId) != null) return@locked PairingReply.Ok(PairStatusResponse(PairState.PENDING))
+        val outcome = outcomes[AttemptKey(attemptId, client)] ?: return@locked foreign()
+        PairingReply.Ok(outcome.status)
     }
 
     /** Ends a pending attempt that ran out of time; the hub calls this on a timer. */
@@ -194,12 +190,14 @@ class PairingHost(
 
     /** Ends any pending attempt, for example when this PC's identity is reset. */
     suspend fun abandon(reason: String) = locked {
-        latestAttempt?.takeIf { it.isPending() }?.let { end(it, reason) }
+        activeAttempt?.let { end(it, reason) }
         Unit
     }
 
     private suspend fun <T> locked(block: suspend () -> T): T = mutex.withLock {
-        latestAttempt?.takeIf { it.isPending() && clock() - it.startedAtMs >= PAIRING_ATTEMPT_TTL_MS }
+        val now = clock()
+        outcomes.entries.removeAll { now - it.value.finishedAtMs >= PAIRING_OUTCOME_TTL_MS }
+        activeAttempt?.takeIf { now - it.startedAtMs >= PAIRING_ATTEMPT_TTL_MS }
             ?.let { end(it, "The pairing timed out") }
         block()
     }
@@ -207,7 +205,7 @@ class PairingHost(
     private suspend fun confirm(attempt: Attempt, mark: (Phase.Revealed) -> Phase.Revealed): PairingReply<Unit> {
         val phase = attempt.phase
         if (phase !is Phase.Revealed) {
-            return if (attempt.isPending()) refused(PairingRefusal.MALFORMED, "Nothing to confirm yet") else ended(attempt)
+            return refused(PairingRefusal.MALFORMED, "Nothing to confirm yet")
         }
         val next = mark(phase)
         if (next.pcConfirmed && next.phoneConfirmed) {
@@ -218,7 +216,7 @@ class PairingHost(
                 pairedAtMs = clock(),
             )
             onPaired(peer)
-            attempt.phase = Phase.Paired(peer)
+            finish(attempt, PairStatusResponse(PairState.PAIRED, hubDeviceId = hubDeviceId()))
         } else {
             attempt.phase = next
         }
@@ -227,15 +225,21 @@ class PairingHost(
     }
 
     private fun owned(client: CertFingerprint, attemptId: String): Attempt? =
-        latestAttempt?.takeIf { attemptId.hexBytes(16) != null && it.id == attemptId && it.client == client }
+        activeAttempt?.takeIf { attemptId.hexBytes(16) != null && it.id == attemptId && it.client == client }
 
     private fun end(attempt: Attempt, reason: String) {
-        attempt.phase = Phase.Ended(reason)
+        finish(attempt, PairStatusResponse(PairState.ENDED, reason = reason))
         publish()
     }
 
+    private fun finish(attempt: Attempt, status: PairStatusResponse) {
+        outcomes[AttemptKey(attempt.id, attempt.client)] = TerminalOutcome(status, clock())
+        while (outcomes.size > MAX_PAIRING_OUTCOMES) outcomes.remove(outcomes.keys.first())
+        activeAttempt = null
+    }
+
     private fun publish() {
-        val attempt = latestAttempt?.takeIf { it.isPending() }
+        val attempt = activeAttempt
         _incoming.value = attempt?.let {
             val revealed = it.phase as? Phase.Revealed
             PairingAttempt(
@@ -250,12 +254,16 @@ class PairingHost(
         }
     }
 
-    private fun Attempt.isPending() = phase is Phase.AwaitingReveal || phase is Phase.Revealed
-
     private fun foreign() = refused(PairingRefusal.FOREIGN, "Not this device's pairing attempt")
 
-    private fun ended(attempt: Attempt): PairingReply.Refused =
-        refused(PairingRefusal.ENDED, (attempt.phase as? Phase.Ended)?.reason ?: "The pairing already finished")
+    private fun finishedOrForeign(client: CertFingerprint, attemptId: String): PairingReply.Refused =
+        outcomes[AttemptKey(attemptId, client)]?.let(::ended) ?: foreign()
+
+    private fun finishedOrForeign(attemptId: String): PairingReply.Refused =
+        outcomes.entries.firstOrNull { it.key.id == attemptId }?.value?.let(::ended) ?: foreign()
+
+    private fun ended(outcome: TerminalOutcome): PairingReply.Refused =
+        refused(PairingRefusal.ENDED, outcome.status.reason ?: "The pairing already finished")
 
     private fun refused(refusal: PairingRefusal, reason: String) = PairingReply.Refused(refusal, reason)
 }

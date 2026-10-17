@@ -147,22 +147,31 @@ class PairingProtocolTest {
     }
 
     @Test
-    fun terminalRetentionStaysBoundedAtTheStartRateLimit() = runTest {
+    fun terminalRetentionCoversTheMaximumStartRateAndAnEarlierPendingAttempt() = runTest {
         val host = freshHost()
-        val attempts = mutableListOf<String>()
-        repeat(4) {
+        val attempts = mutableListOf(host.start(phoneFp, startRequest()).value().attemptId)
+        now += 119_999
+        host.cancel(phoneFp, attempts.single()).value()
+        repeat(3) {
             repeat(5) {
                 val started = host.start(phoneFp, startRequest()).value()
                 attempts += started.attemptId
                 host.cancel(phoneFp, started.attemptId).value()
             }
             assertEquals(PairingRefusal.RATE_LIMITED, assertIs<PairingReply.Refused>(host.start(phoneFp, startRequest())).refusal)
-            now += 60_000
+            if (it < 2) now += 60_000
         }
-        assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(phoneFp, attempts.first())).refusal)
-        for (id in attempts.takeLast(10)) {
-            assertEquals(PairState.ENDED, host.status(phoneFp, id).value().state)
+        assertEquals(16, attempts.size)
+        for (id in attempts) assertEquals(PairState.ENDED, host.status(phoneFp, id).value().state)
+        now += 60_000
+        repeat(5) {
+            val started = host.start(phoneFp, startRequest()).value()
+            host.cancel(phoneFp, started.attemptId).value()
         }
+        for (id in attempts.take(6)) {
+            assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(phoneFp, id)).refusal)
+        }
+        for (id in attempts.takeLast(10)) assertEquals(PairState.ENDED, host.status(phoneFp, id).value().state)
     }
 
     private fun freshHost(): PairingHost {
