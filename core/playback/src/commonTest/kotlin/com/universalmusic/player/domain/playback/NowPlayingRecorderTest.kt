@@ -696,6 +696,108 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun effectivePauseCancelsAnUnacknowledgedResume() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.session.pauseTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PAUSED, rig.engine.actualTransportStatus)
+        rig.engine.deferTransport = true
+        val beforePlay = rig.session.localRevision
+
+        rig.session.playTransport()
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(EngineStatus.PAUSED, rig.engine.state.value.status)
+        rig.session.pauseTransport()
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(SessionRevision(beforePlay.value + 2), rig.session.localRevision)
+        settle(rig)
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PAUSED, rig.engine.actualTransportStatus, "accepted Pause must cancel the queued Resume")
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        val restored = rig(rig.store)
+        restored.session.initializePersistence()
+        assertFalse(restored.session.nowPlaying.value.isPlaying)
+        assertEquals(rig.session.queueState.value.current?.id, restored.session.queueState.value.current?.id)
+        assertFalse(assertIs<LocalListeningExport.Available>(rig.store.readLocalExport()).publication.state.isPlaying)
+
+        val pausedRevision = rig.session.localRevision
+        val pausedPublication = rig.store.latest
+        rig.session.pauseTransport()
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(pausedRevision, rig.session.localRevision)
+        assertEquals(pausedPublication, rig.store.latest)
+
+        rig.session.playTransport()
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PLAYING, rig.engine.actualTransportStatus)
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+        assertTrue(rig.store.latest.state.isPlaying)
+        rig.session.pauseTransport()
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PAUSED, rig.engine.actualTransportStatus)
+        assertFalse(rig.store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun durationSleepTimerCancelsAnUnacknowledgedResume() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.session.pauseTransport()
+        settle(rig)
+        rig.engine.deferTransport = true
+        rig.session.playTransport()
+        settle(rig)
+        val activeAt = rig.store.latest.lastActiveAtMs
+        val timer = SleepTimerController(rig.session, backgroundScope) { testScheduler.currentTime }
+        timer.startDuration(1_000)
+        runCurrent()
+
+        advanceTimeBy(1_000)
+        settle(rig)
+        assertFalse(timer.state.value.active)
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PAUSED, rig.engine.actualTransportStatus, "duration timer must cancel the queued Resume")
+        val restored = rig(rig.store)
+        restored.session.initializePersistence()
+        assertFalse(restored.session.nowPlaying.value.isPlaying)
+        assertEquals(rig.session.queueState.value.current?.id, restored.session.queueState.value.current?.id)
+        assertFalse(assertIs<LocalListeningExport.Available>(rig.store.readLocalExport()).publication.state.isPlaying)
+        assertEquals(activeAt, rig.store.latest.lastActiveAtMs, "timer pause remains automatic")
+    }
+
+    @Test
+    fun playAfterAnUnacknowledgedResumeAndPauseFinishesPlaying() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.session.pauseTransport()
+        settle(rig)
+        rig.engine.deferTransport = true
+
+        rig.session.playTransport()
+        rig.session.pauseTransport()
+        rig.session.playTransport()
+        rig.engine.drainTransport()
+        settle(rig)
+        assertEquals(EngineStatus.PLAYING, rig.engine.actualTransportStatus)
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(rig.session.queueState.value.current?.id, rig.store.readRestore().snapshot.items.single().id)
+        assertTrue(assertIs<LocalListeningExport.Available>(rig.store.readLocalExport()).publication.state.isPlaying)
+    }
+
+    @Test
     fun flushDuringADelayedInitializationDoesNotClaimPendingCapturesAreCommitted() = runTest {
         val store = FakeListeningStore().apply { readGate = CompletableDeferred() }
         val rig = rig(store)
@@ -772,21 +874,35 @@ private fun snapshot(vararg tracks: Track, currentIndex: Int = 0, positionMs: Lo
 internal class ScriptedEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     var acknowledgeTransport = true
+    var deferTransport = false
+    var actualTransportStatus = EngineStatus.IDLE
+        private set
+    private val transportCommands = ArrayDeque<EngineStatus>()
     val seeks = mutableListOf<Long>()
     var playCalls = 0
         private set
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         playCalls++
+        actualTransportStatus = EngineStatus.PLAYING
         state.value = EngineState(EngineStatus.PLAYING, durationMs = 200_000, playGeneration = playGeneration)
     }
 
-    override fun pause() {
-        if (acknowledgeTransport) state.update { it.copy(status = EngineStatus.PAUSED) }
+    override fun pause() = submitTransport(EngineStatus.PAUSED)
+
+    override fun resume() = submitTransport(EngineStatus.PLAYING)
+
+    private fun submitTransport(status: EngineStatus) {
+        if (deferTransport) transportCommands.addLast(status) else applyTransport(status)
     }
 
-    override fun resume() {
-        if (acknowledgeTransport) state.update { it.copy(status = EngineStatus.PLAYING) }
+    private fun applyTransport(status: EngineStatus) {
+        actualTransportStatus = status
+        if (acknowledgeTransport) state.update { it.copy(status = status) }
+    }
+
+    fun drainTransport() {
+        while (transportCommands.isNotEmpty()) applyTransport(transportCommands.removeFirst())
     }
 
     override fun seekTo(positionMs: Long) {
@@ -794,7 +910,10 @@ internal class ScriptedEngine : PlaybackEngine {
         if (acknowledgeTransport) state.update { it.copy(positionMs = positionMs) }
     }
 
-    override fun stop() = state.update { it.copy(status = EngineStatus.IDLE) }
+    override fun stop() {
+        actualTransportStatus = EngineStatus.IDLE
+        state.update { it.copy(status = EngineStatus.IDLE) }
+    }
 
     override fun setVolume(volume: Float) = Unit
 
