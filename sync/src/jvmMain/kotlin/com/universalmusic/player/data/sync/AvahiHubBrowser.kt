@@ -11,9 +11,11 @@ import org.freedesktop.dbus.types.UInt32
 
 internal actual fun platformHubBrowser(): HubBrowser = AvahiHubBrowser()
 
-internal class AvahiHubBrowser : HubBrowser {
+internal class AvahiHubBrowser(
+    private val connectionFactory: () -> org.freedesktop.dbus.connections.impl.DBusConnection = ::avahiSystemBus,
+) : HubBrowser {
     override fun browse(): Flow<DiscoveredHub> = callbackFlow {
-        val connection = avahiSystemBus()
+        val connection = connectionFactory()
         val server = connection.getRemoteObject(AVAHI_BUS, "/", AvahiServer::class.java)
         val items = Channel<AvahiServiceBrowser.ItemNew>(Channel.UNLIMITED)
         // Registered before ServiceBrowserNew, because Avahi announces cached services at once.

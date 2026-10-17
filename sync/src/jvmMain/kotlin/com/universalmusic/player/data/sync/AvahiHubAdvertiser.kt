@@ -101,12 +101,19 @@ internal interface AvahiServiceBrowser : DBusInterface {
 internal fun avahiSystemBus(): DBusConnection = DBusConnectionBuilder.forSystemBus().withShared(false).build()
 
 /** Avahi frees an entry group when the D-Bus connection that created it closes, so a dead process leaves no record. */
-class AvahiHubAdvertiser(
+class AvahiHubAdvertiser internal constructor(
     private val port: Int,
     private val certSha256Hex: String,
     private val deviceId: String,
     private val instanceLabel: String?,
+    private val connectionFactory: () -> DBusConnection,
+    private val lanAddresses: () -> Set<LanAddress>,
+    private val checkIntervalMs: Long,
 ) {
+    constructor(port: Int, certSha256Hex: String, deviceId: String, instanceLabel: String?) :
+        this(port, certSha256Hex, deviceId, instanceLabel, ::avahiSystemBus,
+            { setOfNotNull(currentLanAddress()) }, CHECK_INTERVAL_MS)
+
     private var job: Job? = null
     private var connection: DBusConnection? = null
     private var group: AvahiEntryGroup? = null
@@ -119,7 +126,7 @@ class AvahiHubAdvertiser(
         job = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             while (isActive) {
                 reconcile()
-                delay(CHECK_INTERVAL_MS)
+                delay(checkIntervalMs)
             }
         }
     }
@@ -131,7 +138,7 @@ class AvahiHubAdvertiser(
     }
 
     private fun reconcile() {
-        val target = currentLanAddress()
+        val target = lanAddresses().firstOrNull()
         val server = runCatching { server() }.getOrElse {
             if (!reportedUnavailable) PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "Avahi unavailable, not advertising")
             reportedUnavailable = true
@@ -153,7 +160,7 @@ class AvahiHubAdvertiser(
     }
 
     private fun server(): AvahiServer {
-        val conn = connection ?: avahiSystemBus().also { connection = it }
+        val conn = connection ?: connectionFactory().also { connection = it }
         val server = conn.getRemoteObject(AVAHI_BUS, "/", AvahiServer::class.java)
         val hostName = server.GetHostName()
         if (serviceName == null) serviceName = defaultServiceName(hostName)

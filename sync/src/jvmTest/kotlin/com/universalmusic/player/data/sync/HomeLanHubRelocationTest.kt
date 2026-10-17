@@ -3,6 +3,9 @@ package com.universalmusic.player.data.sync
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.flow
@@ -12,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HomeLanHubRelocationTest {
     private val cert = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     private var settings = AppSettings(
@@ -28,7 +32,10 @@ class HomeLanHubRelocationTest {
     private val clientHosts = mutableListOf<String?>()
     private val openClients = mutableListOf<FakeVaultClient>()
 
-    private fun service(scope: CoroutineScope, liveHost: String, vararg advertised: DiscoveredHub) =
+    private fun service(
+        scope: CoroutineScope, liveHost: String, vararg advertised: DiscoveredHub,
+        discoveryGate: CompletableDeferred<Unit>? = null,
+    ) =
         HomeLanSyncService(
             scope = scope,
             settings = { settings },
@@ -53,6 +60,7 @@ class HomeLanHubRelocationTest {
             isDesktop = false,
             hubBrowser = {
                 flow {
+                    discoveryGate?.await()
                     advertised.forEach { emit(it) }
                     awaitCancellation()
                 }
@@ -88,4 +96,39 @@ class HomeLanHubRelocationTest {
         assertEquals(listOf<String?>("192.168.1.10"), clientHosts)
         assertTrue(openClients.all { it.closed }, "every client session must be closed")
     }
+    @Test
+    fun foregroundDiscoveryCannotOverwriteAReplacementPairing() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        service.onAppForeground()
+        runCurrent()
+        service.completeClientPairing("192.168.2.20", 43999, "ccdd", "pc-b", "123456", "b".repeat(64))
+        val replacement = settings.homeLanSyncPairing
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(replacement, settings.homeLanSyncPairing, "persisted replacement pairing must be untouched")
+        assertEquals(replacement, service.pairing.value, "visible replacement pairing must be untouched")
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun syncDiscoveryCannotOverwriteAReplacementPairing() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        val sync = launch { service.syncNow() }
+        runCurrent()
+        // Settings hydration can replace pairing while syncNow holds its transport mutex.
+        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
+            hubHost = "192.168.2.20", hubPort = 43999, hubCertSha256Hex = "b".repeat(64)))
+        service.hydrateFromSettings(settings)
+        val replacement = settings.homeLanSyncPairing
+        gate.complete(Unit)
+        sync.join()
+        assertEquals(replacement, settings.homeLanSyncPairing)
+        assertEquals(replacement, service.pairing.value)
+        assertTrue(openClients.all { it.closed })
+    }
+
 }
