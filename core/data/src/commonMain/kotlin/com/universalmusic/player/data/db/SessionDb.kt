@@ -24,7 +24,7 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
 
 internal fun KainosDatabase.readSessionOrigin(): PublicationOrigin =
     listeningSessionQueries.selectState().executeAsOneOrNull()?.publication_origin
-        ?.let { stored -> PublicationOrigin.entries.firstOrNull { it.name == stored } }
+        ?.let(PublicationOrigin::valueOf)
         ?: PublicationOrigin.LOCAL
 
 /**

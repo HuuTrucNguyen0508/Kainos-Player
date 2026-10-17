@@ -495,9 +495,8 @@ class PlayerSession(
             else -> Unit
         }
         // A repeated user pause still records the user's intent; an automatic one only a real stop.
-        if (if (change.user) queue.queue.value.items.isNotEmpty() else publishedPlaying) {
-            record(change, playing = false)
-        }
+        val records = if (change.user) queue.queue.value.items.isNotEmpty() else publishedPlaying
+        if (records) record(change, playing = false)
     }
 
     /** Idempotent play/resume; no-op when already playing or buffering. */

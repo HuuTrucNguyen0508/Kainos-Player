@@ -42,11 +42,9 @@ value class QueueHash private constructor(val hex: String) {
 enum class ProjectionFailure { UNSUPPORTED_TRACK, INVALID_ID, DUPLICATE_ITEM_ID }
 
 /** A track another device can resolve: provider ids or a portable local identity, never a location. */
-class PortableListeningTrack private constructor(val track: PersistedTrack) {
+@ConsistentCopyVisibility
+data class PortableListeningTrack private constructor(val track: PersistedTrack) {
     val identity: String get() = track.canonicalId
-
-    override fun equals(other: Any?): Boolean = other is PortableListeningTrack && other.track == track
-    override fun hashCode(): Int = track.hashCode()
 
     companion object {
         fun project(track: PersistedTrack): PortableListeningTrack? = track.forPlaylistSync()?.let(::parse)
@@ -64,7 +62,8 @@ sealed interface QueueProjection {
     data class Unsupported(val itemId: String, val reason: ProjectionFailure) : QueueProjection
 }
 
-class PortableListeningQueue private constructor(
+@ConsistentCopyVisibility
+data class PortableListeningQueue private constructor(
     val entries: List<PortableListeningEntry>,
     val hash: QueueHash,
 ) {
@@ -72,10 +71,6 @@ class PortableListeningQueue private constructor(
         ListSerializer(PersistedQueueItem.serializer()),
         entries.map { PersistedQueueItem(it.itemId, it.track.track) },
     )
-
-    override fun equals(other: Any?): Boolean =
-        other is PortableListeningQueue && other.hash == hash && other.entries == entries
-    override fun hashCode(): Int = hash.hashCode()
 
     companion object {
         /** Projects the whole queue or nothing: an unsupported entry is reported, never dropped. */
@@ -116,21 +111,14 @@ class PortableListeningQueue private constructor(
 }
 
 /** One device's listening state: the current queue entry belongs to [queue]. */
-class ListeningState private constructor(
+@ConsistentCopyVisibility
+data class ListeningState private constructor(
     val current: PortableListeningEntry?,
     val positionMs: Long,
     val positionAtMs: Long,
     val isPlaying: Boolean,
     val queue: PortableListeningQueue,
 ) {
-    override fun equals(other: Any?): Boolean = other is ListeningState &&
-        other.current == current && other.positionMs == positionMs && other.positionAtMs == positionAtMs &&
-        other.isPlaying == isPlaying && other.queue == queue
-    override fun hashCode(): Int = queue.hash.hashCode() * 31 + (current?.itemId?.hashCode() ?: 0)
-    override fun toString(): String =
-        "ListeningState(current=${current?.itemId}/${current?.track?.identity}, positionMs=$positionMs, " +
-            "positionAtMs=$positionAtMs, isPlaying=$isPlaying, queueHash=${queue.hash.hex})"
-
     companion object {
         fun create(
             queue: PortableListeningQueue,

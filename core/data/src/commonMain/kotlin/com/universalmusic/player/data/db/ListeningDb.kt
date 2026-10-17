@@ -1,6 +1,5 @@
 package com.universalmusic.player.data.db
 
-import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningRestore
 import com.universalmusic.player.data.session.ListeningState
@@ -102,9 +101,8 @@ internal fun KainosDatabase.readLocalExport(): LocalListeningExport? {
     val queries = nowPlayingQueries
     val export = queries.selectExport().executeAsOneOrNull() ?: return null
     val revision = PublicationRevision(export.revision)
-    export.unavailable_reason?.let { stored ->
-        val reason = ProjectionFailure.entries.firstOrNull { it.name == stored } ?: ProjectionFailure.UNSUPPORTED_TRACK
-        return LocalListeningExport.Unavailable(revision, export.last_active_at_ms, reason)
+    export.unavailable_reason?.let { reason ->
+        return LocalListeningExport.Unavailable(revision, export.last_active_at_ms, ProjectionFailure.valueOf(reason))
     }
     val row = queries.selectLocal().executeAsOne()
     check(row.revision == export.revision) { "Local listening row ${row.revision} is not export ${export.revision}" }
@@ -112,10 +110,5 @@ internal fun KainosDatabase.readLocalExport(): LocalListeningExport? {
     check(stored.queue_hash == row.queue_hash) { "Local listening queue does not match its row" }
     val queue = PortableListeningQueue.decode(stored.queue_json, QueueHash.parse(row.queue_hash))
     val state = ListeningState.create(queue, row.queue_item_id, row.position_ms, row.position_at_ms, row.is_playing)
-    row.track_json?.let { json ->
-        check(storageJson.decodeFromString<PersistedTrack>(json).canonicalId == state.current?.track?.identity) {
-            "Local listening track does not match its queue entry"
-        }
-    }
     return LocalListeningExport.Available(LocalListeningPublication(revision, row.last_active_at_ms, state))
 }
