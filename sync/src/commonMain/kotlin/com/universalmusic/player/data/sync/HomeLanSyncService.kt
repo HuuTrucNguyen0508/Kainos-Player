@@ -20,6 +20,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -130,13 +133,19 @@ class HomeLanSyncService(
     }
 
     override suspend fun enable(enabled: Boolean) {
+        val caller = currentCoroutineContext()
+        caller.ensureActive()
         invalidateResolution()
-        mutex.withLock {
-            updateSettings { it.copy(homeLanSyncEnabled = enabled) }
-            _status.update { it.copy(enabled = enabled) }
-            if (!enabled) stopHubLocked()
+        withContext(scope.coroutineContext.job) {
+            mutex.withLock {
+                caller.ensureActive()
+                updateSettings { it.copy(homeLanSyncEnabled = enabled) }
+                _status.update { it.copy(enabled = enabled) }
+                if (!enabled) stopHubLocked()
+            }
+            if (enabled) startHubIfNeeded()
         }
-        if (enabled) startHubIfNeeded()
+        caller.ensureActive()
     }
 
     override fun discoverHubs(): Flow<DiscoveredHub> {

@@ -293,7 +293,7 @@ class AppContainer {
         scope = scope,
     )
 
-    private val settingsUpdater = AppSettingsUpdater(settingsStore, _settings, { applyProviderSettings(it) }) {
+    private val settingsUpdater = AppSettingsUpdater(scope, settingsStore, _settings, { applyProviderSettings(it) }) {
         player.updatePreferences(it.toPlaybackPreferences())
     }
 

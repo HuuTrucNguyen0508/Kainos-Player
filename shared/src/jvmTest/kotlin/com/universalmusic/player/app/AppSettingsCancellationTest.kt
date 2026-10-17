@@ -208,7 +208,7 @@ class AppSettingsCancellationTest {
             homeLanSyncRole = HomeLanSyncRole.HUB, homeLanSyncDeviceId = "pc"))
         var playbackSettings = state.value.toPlaybackPreferences()
         var applyProvider: suspend (AppSettings) -> Unit = {}
-        val updater = AppSettingsUpdater(store, state, { applyProvider(it) }, { playbackSettings = it.toPlaybackPreferences() })
+        val updater = AppSettingsUpdater(scope, store, state, { applyProvider(it) }, { playbackSettings = it.toPlaybackPreferences() })
         var identityResets = 0
         val hub = object : HomeLanSyncHub {
             override var isListening = false
