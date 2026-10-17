@@ -163,6 +163,10 @@ class NowPlayingRecorderTest {
         session.moveInQueue(0, 3)
         assertEquals(SessionRevision(start.value + 11), session.localRevision)
         assertEquals(session.queueState.value.current?.id, session.nowPlaying.value.queueItemId)
+        session.pauseTransport()
+        session.seekTo(77_000)
+        assertEquals(SessionRevision(start.value + 13), session.localRevision)
+        assertEquals(77_000, session.nowPlaying.value.positionMs)
         assertEquals(0, rig.store.attempts)
 
         val flushed = async { session.flushPersistence() }
@@ -176,6 +180,7 @@ class NowPlayingRecorderTest {
         assertEquals(final.currentIndex, rig.store.commits.last().snapshot.currentIndex)
         assertEquals(final.current?.id, rig.store.latest.state.current?.itemId)
         assertEquals(final.items.map { it.track.canonicalId }, rig.store.latest.state.queue.entries.map { it.track.identity })
+        assertEquals(77_000, rig.store.latest.state.positionMs)
     }
 
     @Test

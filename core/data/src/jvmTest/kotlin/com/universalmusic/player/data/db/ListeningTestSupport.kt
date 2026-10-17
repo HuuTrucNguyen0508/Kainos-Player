@@ -17,6 +17,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
+import java.util.Collections
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Private-only commits through the runtime store, the way a session checkpoint writes. */
@@ -32,6 +33,7 @@ internal class PrivateSnapshotWriter(storage: KainosStorage, private val writerI
 
 internal class TracingDriver(private val inner: SqlDriver) : SqlDriver by inner {
     val statements = mutableListOf<String>()
+    val threads: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
     private var changesAtStart = 0L
     var rowsChanged = 0L
         private set
@@ -56,6 +58,7 @@ internal class TracingDriver(private val inner: SqlDriver) : SqlDriver by inner 
         val result = inner.execute(identifier, sql, parameters, binders)
         rowsChanged = inner.totalChanges() - changesAtStart
         statements += sql.substringBefore('(').trim()
+        threads += Thread.currentThread().name.substringBefore(" @")
         return result
     }
 }

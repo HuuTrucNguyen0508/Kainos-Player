@@ -65,7 +65,8 @@ class SessionWritePerfTest {
 
             val withRecorder = mutableListOf<Long>()
             val withoutRecorder = mutableListOf<Long>()
-            store.reset()
+            store.nanos.clear()
+            driver.threads.clear()
             repeat(200) { index ->
                 driver.reset()
                 withoutRecorder += nanos { plain.playQueueIndex(index) }
@@ -77,15 +78,15 @@ class SessionWritePerfTest {
                 assertTrue("INSERT OR REPLACE INTO local_listening" in driver.statements)
             }
             assertEquals(199, PrivateSnapshotWriter(storage).read().currentIndex)
-            val sessionThread = Thread.currentThread().name
-            assertTrue(store.threads.none { it == sessionThread }, "SQL ran on the session thread: ${store.threads}")
+            val sessionThread = Thread.currentThread().name.substringBefore(" @")
+            assertTrue(sessionThread !in driver.threads, "SQL ran on the session thread $sessionThread: ${driver.threads}")
 
             val projection = mutableListOf<Long>()
             repeat(50) {
                 val items = queue.persistedItems(0)
                 projection += nanos { check(PortableListeningQueue.project(items) is QueueProjection.Complete) }
             }
-            println("TRACE HS5 commit threads=${store.threads.toSortedSet()} statements=${driver.statements.joinToString("; ")}")
+            println("TRACE HS5 session=$sessionThread sql=${driver.threads.toSortedSet()} statements=${driver.statements.joinToString("; ")}")
             println(
                 "PERF HS5 sessionThread withRecorderMedianUs=${micros(withRecorder.median())} " +
                     "withoutRecorderMedianUs=${micros(withoutRecorder.median())} " +
@@ -142,18 +143,11 @@ class SessionWritePerfTest {
 
 private class TimedStore(private val inner: ListeningStore) : ListeningStore by inner {
     val nanos: MutableList<Long> = Collections.synchronizedList(mutableListOf())
-    val threads: MutableList<String> = Collections.synchronizedList(mutableListOf())
-
-    fun reset() {
-        nanos.clear()
-        threads.clear()
-    }
 
     override suspend fun commit(commit: ListeningCommit) {
         val start = System.nanoTime()
         inner.commit(commit)
         nanos += System.nanoTime() - start
-        threads += Thread.currentThread().name.substringBefore(" @")
     }
 }
 
