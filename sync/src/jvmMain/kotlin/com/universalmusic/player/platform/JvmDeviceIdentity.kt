@@ -40,9 +40,9 @@ class JvmDeviceIdentity(private val directory: File) : DeviceIdentity {
 
     @Synchronized
     override fun reset(): CertFingerprint {
+        Files.deleteIfExists(keyStoreFile.toPath())
+        Files.deleteIfExists(passwordFile.toPath())
         loaded = null
-        keyStoreFile.delete()
-        passwordFile.delete()
         return material().fingerprint
     }
 
