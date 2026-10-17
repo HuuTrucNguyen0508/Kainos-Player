@@ -5,7 +5,7 @@ import io.ktor.client.HttpClient
 
 /**
  * HTTPS client that only trusts a hub leaf certificate whose SHA-256 (DER) matches [certPinHex].
- * Hostname checks rely on SAN entries baked into the hub cert (LAN IP at pairing time).
+ * There is no hostname check, so any address that reaches the pinned hub works.
  */
 expect fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient
 

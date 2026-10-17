@@ -47,7 +47,7 @@ class HttpHomeLanSyncClient(
         require(!pairing.hubCertSha256Hex.isNullOrBlank()) {
             "Hub certificate pin required; re-pair from a kainos-homesync:2 URI"
         }
-        return "https://$host:${pairing.hubPort}"
+        return "https://${HubEndpoint(host, pairing.hubPort).authority}"
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.authHeaders() {

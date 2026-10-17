@@ -4,12 +4,14 @@ import com.universalmusic.player.data.sync.HomeLanSyncPairing
 import com.universalmusic.player.data.sync.certSha256Hex
 import com.universalmusic.player.data.sync.generateHomeLanHubTls
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 import kotlinx.serialization.json.Json
 
@@ -31,10 +33,15 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
 
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
-    return HttpClient(CIO) {
+    val sslContext = SSLContext.getInstance("TLS").apply {
+        init(null, arrayOf(pinTrustManager), SecureRandom())
+    }
+    // The pin is the whole trust decision; a hostname check would reject any address outside the SANs.
+    return HttpClient(OkHttp) {
         engine {
-            https {
-                trustManager = pinTrustManager
+            config {
+                sslSocketFactory(sslContext.socketFactory, pinTrustManager)
+                hostnameVerifier { _, _ -> true }
             }
         }
         // Non-2xx hub replies (401/403/409/416/5xx) fail the call instead of being read as data.

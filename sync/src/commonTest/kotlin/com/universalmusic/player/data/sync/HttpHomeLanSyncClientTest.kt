@@ -64,6 +64,16 @@ class HttpHomeLanSyncClientTest {
         }
     }
 
+    @Test
+    fun ipv6HubAddressIsBracketedInTheUrl() = runTest {
+        val urls = mutableListOf<String>()
+        client(pairing.copy(hubHost = "fe80::1c2:3")) { request ->
+            urls += request.url.toString()
+            respond("{\"deviceId\":\"pc\"}", HttpStatusCode.OK)
+        }.use { it.probeHub().getOrThrow() }
+        assertEquals(listOf("https://[fe80::1c2:3]:43822$HOME_LAN_SYNC_PATH_HEALTH"), urls)
+    }
+
     private val pairing = HomeLanSyncPairing(
         deviceId = "phone",
         sharedSecretHex = "aabbccddeeff00112233445566778899",

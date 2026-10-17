@@ -29,6 +29,7 @@ import kotlinx.serialization.json.Json
 import java.net.ServerSocket
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -149,6 +150,48 @@ class HomeLanProtocolCompatibilityTest {
                 assertFalse(seen.any { "localkey:" in it || contentKey in it })
             } finally { legacy.stop(0, 1_000) }
         } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun pinnedClientSyncsThroughAnAddressOutsideTheCertificateSans() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-non-san-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pairing, tls) = pairing(directory)
+            val pcLibrary = LibraryRepository(deviceIdProvider = { "pc" })
+            pcLibrary.toggleFavorite(track)
+            hub = DesktopHomeLanSyncHub(pairing,
+                { pcLibrary.mergeAndPersistSyncState(it); pcLibrary.exportHeartsSyncDocument() },
+                { it }, vault = null, tls = tls, bindHost = "0.0.0.0")
+            hub.start()
+            val phone = pairing.copy(deviceId = "phone", hubHost = "127.0.0.2")
+            HttpHomeLanSyncClient(phone, LibraryRepository(), KainosPlaylistRepository(),
+                createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { client ->
+                assertEquals("pc", client.probeHub().getOrThrow().deviceId)
+                assertEquals("localkey:$contentKey", client.syncHearts().getOrThrow().ops.single().canonicalId)
+            }
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun hubWithAnotherCertificateFailsWithThePinMismatchMessage() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-pin-mismatch-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pairing, tls) = pairing(directory)
+            hub = DesktopHomeLanSyncHub(pairing, { it }, { it }, vault = null, tls = tls, bindHost = "127.0.0.1")
+            hub.start()
+            val otherPin = generateHomeLanHubTls(directory.resolve("other"), pairing.sharedSecretHex).certSha256Hex
+            val result = HttpHomeLanSyncClient(pairing, LibraryRepository(), KainosPlaylistRepository(),
+                createPinnedHomeLanHttpClient(otherPin)).use { it.probeHub() }
+            assertContains(result.exceptionOrNull()?.message.orEmpty(), "Hub certificate pin mismatch")
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
     }
 
     private fun pairing(directory: java.io.File): Pair<HomeLanSyncPairing, HomeLanHubTlsMaterial> {

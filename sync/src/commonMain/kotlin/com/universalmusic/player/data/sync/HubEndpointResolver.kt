@@ -6,7 +6,11 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 
 data class HubEndpoint(val host: String, val port: Int) {
-    override fun toString(): String = if (':' in host) "[$host]:$port" else "$host:$port"
+    /** `host:port`, with an IPv6 literal in brackets as URLs need it. */
+    val authority: String
+        get() = if (':' in host && !host.startsWith("[")) "[$host]:$port" else "$host:$port"
+
+    override fun toString(): String = authority
 }
 
 /** One mDNS answer. [fp] is only a claim; the hub is trusted after a pinned TLS probe answers. */
