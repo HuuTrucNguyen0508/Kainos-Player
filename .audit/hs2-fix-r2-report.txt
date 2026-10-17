@@ -14,7 +14,7 @@ Source git status --porcelain before the report: ''. Clean.
 Ordered source commits:
 52729ec4e10f91482215600024990c34751e6eac test(sync): reproduce endpoint commit invalidation races
 2a404c5aecd4e6930c9d0455495f5b2f95b30bae fix(sync): reconcile committed discovery endpoints from settings
-This report is committed in a following audit-only commit. The handoff HEAD is the commit introducing this report, resolved exactly by:
+This report is committed in following audit-only commits. The handoff HEAD is the latest audit-only commit touching this report, resolved exactly by:
 git log -1 --format=%H -- .audit/hs2-fix-r2-report.txt
 The final reply supplies that literal handoff SHA. No source changes occur in the report commit.
 
@@ -30,7 +30,8 @@ The fixture now holds a settings mutex across transform, separate persistedSetti
 
 Red source was untouched at 451f48b. The first two new tests failed before production changes; the expanded failing-test commit contains four boundary regressions and all ten earlier cases. Exact expanded output:
 14 tests completed, 4 failed
-BUILD FAILED in 3s
+BUILD FAILED in 1s
+15 actionable tasks: 6 executed, 9 up-to-date.
 Receipts: .audit/hs2-r2-red.log and .audit/hs2-r2-red-xml/.
 The disable/re-enable case failed with:
 java.lang.AssertionError: retry must use the committed endpoint: java.lang.IllegalStateException: Pairing changed during hub discovery
