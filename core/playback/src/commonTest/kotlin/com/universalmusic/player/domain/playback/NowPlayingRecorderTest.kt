@@ -588,6 +588,53 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun coldResumeKeepsTheSavedPositionUntilItsSeekIsSubmitted() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.engine.playReturnGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        val bufferingPosition = rig.session.nowPlaying.value.positionMs
+        checkNotNull(rig.engine.bufferingGate).complete(Unit)
+        runCurrent()
+        val playingPosition = rig.session.nowPlaying.value.positionMs
+        val publishedPosition = rig.store.latest.state.positionMs
+        checkNotNull(rig.engine.playReturnGate).complete(Unit)
+        runCurrent()
+        assertEquals(12_000, rig.engine.seeks.last())
+        rig.engine.report(positionMs = 12_250)
+        runCurrent()
+        assertEquals(12_250, rig.session.nowPlaying.value.positionMs, "running samples replace the submitted resume target")
+        rig.engine.report(positionMs = 11_500)
+        runCurrent()
+        assertEquals(11_500, rig.session.nowPlaying.value.positionMs, "the startup target does not clamp later samples")
+        assertEquals(listOf(12_000L, 12_000L, 12_000L), listOf(bufferingPosition, playingPosition, publishedPosition))
+    }
+
+    @Test
+    fun aNewSelectionDiscardsTheUnsubmittedResumePositionAndItsOldSamples() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        val oldSample = rig.engine.state.value.copy(status = EngineStatus.PLAYING, positionMs = 12_000)
+        rig.engine.bufferingGate = null
+        rig.session.play(yt("b"))
+        settle(rig)
+        val selected = rig.session.queueState.value.current?.id
+        assertEquals("yt:b", rig.session.nowPlaying.value.track?.canonicalId)
+        assertEquals(0, rig.session.nowPlaying.value.positionMs)
+        rig.engine.state.value = oldSample
+        settle(rig)
+        assertEquals(selected, rig.session.nowPlaying.value.queueItemId)
+        assertEquals(0, rig.store.restore.snapshot.positionMs)
+        assertEquals(0, rig.store.latest.state.positionMs)
+        assertTrue(rig.engine.seeks.isEmpty(), "the superseded resume must not seek the new track")
+    }
+
+    @Test
     fun immediatePauseThenSeekSurvivesDelayedSamplesAndRestoresTheResumePosition() = runTest {
         val rig = rig()
         rig.session.initializePersistence()
