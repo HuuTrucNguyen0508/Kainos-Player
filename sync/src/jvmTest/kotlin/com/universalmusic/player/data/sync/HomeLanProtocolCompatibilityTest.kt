@@ -7,9 +7,9 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
-import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
-import io.ktor.client.request.bearerAuth
-import io.ktor.client.request.header
+import com.universalmusic.player.platform.HomeLanHubConfig
+import com.universalmusic.player.platform.JvmDeviceIdentity
+import com.universalmusic.player.platform.pinnedHomeLanHttpClient
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -51,7 +51,7 @@ class HomeLanProtocolCompatibilityTest {
         val directory = Files.createTempDirectory("kainos-protocol-").toFile()
         var hub: DesktopHomeLanSyncHub? = null
         try {
-            val (pairing, tls) = pairing(directory)
+            val (pc, phone, port) = devices(directory)
             val library = LibraryRepository(deviceIdProvider = { "pc" })
             library.toggleFavorite(track)
             val playlists = KainosPlaylistRepository(deviceIdProvider = { "pc" })
@@ -60,13 +60,13 @@ class HomeLanProtocolCompatibilityTest {
             val vaultRoot = directory.resolve("vault").apply { mkdirs() }
             vaultRoot.resolve("song.flac").writeBytes(audio)
             val vault = JvmHomeLanVaultStore({ vaultRoot.absolutePath }, directory.resolve("vault-state.json").toPath())
-            hub = DesktopHomeLanSyncHub(pairing,
+            hub = hub(pc, phone, port,
                 { library.mergeAndPersistSyncState(it); library.exportHeartsSyncDocument() },
                 { playlists.mergeAndPersistSyncState(it); playlists.exportSyncDocument() },
-                vault, tls, bindHost = "127.0.0.1")
+                vault, bindHost = "127.0.0.1")
             hub.start()
-            HttpHomeLanSyncClient(pairing.copy(deviceId = "phone"), LibraryRepository(),
-                KainosPlaylistRepository(), createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { client ->
+            HttpHomeLanSyncClient(hubPeer(pc, port), LibraryRepository(),
+                KainosPlaylistRepository(), client(pc, phone)).use { client ->
                 assertEquals("localkey:$contentKey", client.syncHearts().getOrThrow().ops.single().canonicalId)
                 assertEquals("localkey:$contentKey", client.syncPlaylists().getOrThrow()
                     .playlists.single().entries.single().track.canonicalId)
@@ -74,9 +74,8 @@ class HomeLanProtocolCompatibilityTest {
                     .entries.single().contentKey)
                 assertContentEquals(audio, client.downloadBlob("song.flac", 0, audio.size).getOrThrow())
             }
-            createPinnedHomeLanHttpClient(tls.certSha256Hex).use { http ->
-                suspend fun legacyPost(path: String, body: String) = http.post("https://127.0.0.1:${pairing.hubPort}$path") {
-                    bearerAuth(pairing.sharedSecretHex)
+            client(pc, phone).use { http ->
+                suspend fun legacyPost(path: String, body: String) = http.post("https://127.0.0.1:$port$path") {
                     setBody(body)
                 }.bodyAsText()
                 val hearts = json.decodeFromString<HeartsSyncDocument>(legacyPost(HOME_LAN_SYNC_PATH_HEARTS,
@@ -86,15 +85,8 @@ class HomeLanProtocolCompatibilityTest {
                 val oldPlaylists = json.decodeFromString<PlaylistsSyncDocument>(legacyPost(HOME_LAN_SYNC_PATH_PLAYLISTS,
                     json.encodeToString(PlaylistsSyncDocument("old"))))
                 assertEquals("localfile:song.flac", oldPlaylists.playlists.single().entries.single().track.canonicalId)
-                val key = SyncPayloadCrypto.keyFromSharedSecret(pairing.sharedSecretHex)
-                val indexBody = json.encodeToString(VaultIndexDocument("old"))
-                val encrypted = http.post("https://127.0.0.1:${pairing.hubPort}$HOME_LAN_SYNC_PATH_VAULT_INDEX") {
-                    bearerAuth(pairing.sharedSecretHex)
-                    header(HOME_LAN_SYNC_HEADER_ENC, HOME_LAN_SYNC_ENC_AES_GCM)
-                    setBody(SyncPayloadCrypto.encryptToBase64(indexBody.encodeToByteArray(), key))
-                }.bodyAsText()
-                val oldIndex = json.decodeFromString<VaultIndexDocument>(
-                    SyncPayloadCrypto.decryptFromBase64(encrypted, key).decodeToString())
+                val oldIndex = json.decodeFromString<VaultIndexDocument>(legacyPost(HOME_LAN_SYNC_PATH_VAULT_INDEX,
+                    json.encodeToString(VaultIndexDocument("old"))))
                 assertNull(oldIndex.entries.single().contentKey)
             }
         } finally {
@@ -107,25 +99,22 @@ class HomeLanProtocolCompatibilityTest {
     fun newPinnedClientRetriesLegacyOnlyHubAndSendsBasenameIdentities() = runBlocking {
         val directory = Files.createTempDirectory("kainos-legacy-protocol-").toFile()
         try {
-            val (pairing, tls) = pairing(directory)
+            val (pc, phone, hubPort) = devices(directory)
             val seen = mutableListOf<String>()
-            val key = SyncPayloadCrypto.keyFromSharedSecret(pairing.sharedSecretHex)
             val legacy = embeddedServer(Netty, environment = applicationEnvironment {}, configure = {
-                sslConnector(tls.keyStore, tls.keyAlias, { tls.keyStorePassword }, { tls.privateKeyPassword }) {
-                    host = "127.0.0.1"; port = pairing.hubPort
+                sslConnector(pc.keyStore, JvmDeviceIdentity.KEY_ALIAS, { pc.password() }, { pc.password() }) {
+                    host = "127.0.0.1"; port = hubPort
                 }
             }) {
                 routing {
                     for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_PLAYLISTS, HOME_LAN_SYNC_PATH_VAULT_INDEX)) {
                         post(path) {
                             val body = call.receiveText()
-                            val plain = if (path == HOME_LAN_SYNC_PATH_VAULT_INDEX)
-                                SyncPayloadCrypto.decryptFromBase64(body, key).decodeToString() else body
-                            seen += plain
+                            seen += body
                             val reply = when (path) {
                                 HOME_LAN_SYNC_PATH_HEARTS -> json.encodeToString(HeartsSyncDocument("old", null))
                                 HOME_LAN_SYNC_PATH_PLAYLISTS -> json.encodeToString(PlaylistsSyncDocument("old"))
-                                else -> SyncPayloadCrypto.encryptToBase64(plain.encodeToByteArray(), key)
+                                else -> body
                             }
                             call.respondText(reply, ContentType.Application.Json, HttpStatusCode.OK)
                         }
@@ -137,8 +126,7 @@ class HomeLanProtocolCompatibilityTest {
                 library.toggleFavorite(track)
                 val playlists = KainosPlaylistRepository()
                 playlists.create("Local", listOf(track))
-                HttpHomeLanSyncClient(pairing, library, playlists,
-                    createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { client ->
+                HttpHomeLanSyncClient(hubPeer(pc, hubPort), library, playlists, client(pc, phone)).use { client ->
                     client.syncHearts().getOrThrow()
                     client.syncPlaylists().getOrThrow()
                     client.fetchRemoteVaultIndex(VaultIndexDocument("phone",
@@ -159,16 +147,15 @@ class HomeLanProtocolCompatibilityTest {
         val directory = Files.createTempDirectory("kainos-non-san-").toFile()
         var hub: DesktopHomeLanSyncHub? = null
         try {
-            val (pairing, tls) = pairing(directory)
+            val (pc, phone, port) = devices(directory)
             val pcLibrary = LibraryRepository(deviceIdProvider = { "pc" })
             pcLibrary.toggleFavorite(track)
-            hub = DesktopHomeLanSyncHub(pairing,
+            hub = hub(pc, phone, port,
                 { pcLibrary.mergeAndPersistSyncState(it); pcLibrary.exportHeartsSyncDocument() },
-                { it }, vault = null, tls = tls, bindHost = "0.0.0.0")
+                { it }, vault = null, bindHost = "0.0.0.0")
             hub.start()
-            val phone = pairing.copy(deviceId = "phone", hubHost = "127.0.0.2")
-            HttpHomeLanSyncClient(phone, LibraryRepository(), KainosPlaylistRepository(),
-                createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { client ->
+            HttpHomeLanSyncClient(hubPeer(pc, port).copy(lastKnownHost = "127.0.0.2"), LibraryRepository(),
+                KainosPlaylistRepository(), client(pc, phone)).use { client ->
                 assertEquals("pc", client.probeHub().getOrThrow().deviceId)
                 assertEquals("localkey:$contentKey", client.syncHearts().getOrThrow().ops.single().canonicalId)
             }
@@ -183,12 +170,12 @@ class HomeLanProtocolCompatibilityTest {
         val directory = Files.createTempDirectory("kainos-pin-mismatch-").toFile()
         var hub: DesktopHomeLanSyncHub? = null
         try {
-            val (pairing, tls) = pairing(directory)
-            hub = DesktopHomeLanSyncHub(pairing, { it }, { it }, vault = null, tls = tls, bindHost = "127.0.0.1")
+            val (pc, phone, port) = devices(directory)
+            hub = hub(pc, phone, port, { it }, { it }, vault = null, bindHost = "127.0.0.1")
             hub.start()
-            val otherPin = generateHomeLanHubTls(directory.resolve("other"), pairing.sharedSecretHex).certSha256Hex
-            val result = HttpHomeLanSyncClient(pairing, LibraryRepository(), KainosPlaylistRepository(),
-                createPinnedHomeLanHttpClient(otherPin)).use { it.probeHub() }
+            val other = JvmDeviceIdentity(directory.resolve("other")).material()
+            val result = HttpHomeLanSyncClient(hubPeer(pc, port), LibraryRepository(), KainosPlaylistRepository(),
+                client(other, phone)).use { it.probeHub() }
             assertContains(result.exceptionOrNull()?.message.orEmpty(), "Hub certificate pin mismatch")
         } finally {
             hub?.stop()
@@ -201,18 +188,17 @@ class HomeLanProtocolCompatibilityTest {
         val directory = Files.createTempDirectory("kainos-silent-hub-").toFile()
         ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { silent ->
             try {
-                val (pairing, tls) = pairing(directory)
+                val (pc, phone) = devices(directory)
                 val accepted = Thread { runCatching { silent.accept() } }.apply { isDaemon = true; start() }
                 val resolver = HubEndpointResolver(
                     browser = { kotlinx.coroutines.flow.emptyFlow() },
                     probe = { endpoint ->
-                        HttpHomeLanSyncClient(pairing.copy(hubHost = endpoint.host, hubPort = endpoint.port),
-                            LibraryRepository(), KainosPlaylistRepository(),
-                            createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { it.probeHub() }.map { }
+                        HttpHomeLanSyncClient(hubPeer(pc, endpoint.port).copy(lastKnownHost = endpoint.host),
+                            LibraryRepository(), KainosPlaylistRepository(), client(pc, phone)).use { it.probeHub() }.map { }
                     },
                 )
                 val startedAt = System.nanoTime()
-                val result = resolver.resolve(HubEndpoint("127.0.0.1", silent.localPort), tls.certSha256Hex)
+                val result = resolver.resolve(HubEndpoint("127.0.0.1", silent.localPort), pc.fingerprint.hex)
                 val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
                 assertIs<ResolveResult.HubNotFound>(result)
                 assertTrue(elapsedMs in 3_000..3_900, "probe took $elapsedMs ms")
@@ -223,11 +209,40 @@ class HomeLanProtocolCompatibilityTest {
         }
     }
 
-    private fun pairing(directory: java.io.File): Pair<HomeLanSyncPairing, HomeLanHubTlsMaterial> {
-        val secret = "aabbccddeeff00112233445566778899"
-        val tls = generateHomeLanHubTls(directory, secret)
-        val port = ServerSocket(0).use { it.localPort }
-        return HomeLanSyncPairing(deviceId = "pc", sharedSecretHex = secret, hubHost = "127.0.0.1",
-            hubPort = port, hubCertSha256Hex = tls.certSha256Hex, encryptPayloads = true) to tls
-    }
+    private data class Devices(val pc: JvmDeviceIdentity.Material, val phone: JvmDeviceIdentity.Material, val port: Int)
+
+    private fun devices(directory: java.io.File) = Devices(
+        JvmDeviceIdentity(directory.resolve("pc")).material(),
+        JvmDeviceIdentity(directory.resolve("phone")).material(),
+        ServerSocket(0).use { it.localPort },
+    )
+
+    private fun hubPeer(pc: JvmDeviceIdentity.Material, port: Int) =
+        PairedPeer("pc", "Kainos on pc", pc.fingerprint, "127.0.0.1", port, pairedAtMs = 1L)
+
+    private fun client(hub: JvmDeviceIdentity.Material, phone: JvmDeviceIdentity.Material) =
+        pinnedHomeLanHttpClient(hub.fingerprint, phone.keyManagers())
+
+    private fun hub(
+        pc: JvmDeviceIdentity.Material,
+        phone: JvmDeviceIdentity.Material,
+        port: Int,
+        onHearts: suspend (HeartsSyncDocument) -> HeartsSyncDocument,
+        onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
+        vault: HomeLanVaultStore?,
+        bindHost: String,
+    ) = DesktopHomeLanSyncHub(
+        HomeLanHubConfig(
+            deviceId = "pc",
+            port = port,
+            peers = { listOf(PairedPeer("phone", "Phone", phone.fingerprint, pairedAtMs = 1L)) },
+            pairing = PairingHost({ pc.fingerprint }, { "pc" }, onPaired = {}),
+            onHearts = onHearts,
+            onPlaylists = onPlaylists,
+            vault = vault,
+            heartedVaultFileNames = { null },
+        ),
+        pc,
+        bindHost = bindHost,
+    )
 }

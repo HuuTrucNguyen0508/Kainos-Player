@@ -44,7 +44,7 @@ internal class AvahiHubBrowser(
                 }
                 val txt = parseTxt(service.txt)
                 val fp = txt[HOME_LAN_MDNS_TXT_FP] ?: continue
-                emit(DiscoveredHub(fp, txt[HOME_LAN_MDNS_TXT_ID], service.address, service.port.toInt()))
+                emit(DiscoveredHub(fp, txt[HOME_LAN_MDNS_TXT_ID], service.address, service.port.toInt(), item.serviceName))
             }
         } finally {
             items.close()

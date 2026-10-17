@@ -1,110 +1,63 @@
 package com.universalmusic.player.data.sync
 
-import com.universalmusic.player.platform.sha256Bytes
-import io.ktor.network.tls.certificates.buildKeyStore
-import io.ktor.network.tls.certificates.saveToFile
-import java.io.File
-import java.net.InetAddress
-import java.nio.file.Files
-import java.nio.file.attribute.PosixFilePermissions
-import java.security.KeyStore
+import com.universalmusic.player.platform.JvmDeviceIdentity
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.netty.NettyApplicationCall
+import io.ktor.server.routing.RoutingCall
+import io.netty.handler.ssl.ClientAuth
+import io.netty.handler.ssl.SslContext
+import io.netty.handler.ssl.SslContextBuilder
+import io.netty.handler.ssl.SslHandler
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
-
-private const val HUB_KEY_ALIAS = "kainos-home-lan"
-private const val HUB_KEYSTORE_FILE = "home-lan-hub.p12"
-
-/**
- * Creates a fresh self-signed hub certificate, writes PKCS12 under [configDir],
- * and returns material including the SHA-256 pin for pairing.
- *
- * [extraHosts] are added as SAN entries (e.g. detected LAN IP) so clients can
- * verify the certificate against the connect host without a separate SNI override.
- */
-fun generateHomeLanHubTls(
-    configDir: File,
-    sharedSecretHex: String,
-    extraHosts: List<String> = emptyList(),
-): HomeLanHubTlsMaterial {
-    configDir.mkdirs()
-    val keyStoreFile = File(configDir, HUB_KEYSTORE_FILE)
-    val keyStorePassword = keyStorePasswordFor(sharedSecretHex)
-    val privateKeyPassword = keyStorePassword
-    val hosts = (listOf("localhost", "127.0.0.1", "kainos-home-lan") + extraHosts)
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .distinct()
-    // Clients verify an IP connect host against IP SANs only, never DNS SANs.
-    val (ipHosts, dnsHosts) = hosts.partition(::isIpLiteral)
-    val keyStore = buildKeyStore {
-        certificate(HUB_KEY_ALIAS) {
-            password = privateKeyPassword.concatToString()
-            domains = dnsHosts
-            ipAddresses = ipHosts.map { InetAddress.getByName(it) }
-        }
-    }
-    // Pre-create owner-only so the private key is never briefly world-readable.
-    runCatching {
-        keyStoreFile.delete()
-        Files.createFile(keyStoreFile.toPath(), PosixFilePermissions.asFileAttribute(OWNER_ONLY))
-    }
-    keyStore.saveToFile(keyStoreFile, keyStorePassword.concatToString())
-    restrictToOwner(keyStoreFile)
-    val cert = keyStore.getCertificate(HUB_KEY_ALIAS) as X509Certificate
-    return HomeLanHubTlsMaterial(
-        certSha256Hex = certSha256Hex(cert.encoded),
-        keyStore = keyStore,
-        keyStorePassword = keyStorePassword,
-        keyAlias = HUB_KEY_ALIAS,
-        privateKeyPassword = privateKeyPassword,
-        keyStoreFile = keyStoreFile,
-    )
-}
+import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.X509TrustManager
 
 /**
- * Loads the hub PKCS12 and verifies the leaf pin matches [expectedCertSha256Hex].
+ * Server TLS for the hub. Any client certificate completes the handshake, and a client without one
+ * does too, because trust is decided per request from the fingerprint, not by PKIX.
  */
-fun loadHomeLanHubTls(
-    configDir: File,
-    sharedSecretHex: String,
-    expectedCertSha256Hex: String,
-): HomeLanHubTlsMaterial {
-    val keyStoreFile = File(configDir, HUB_KEYSTORE_FILE)
-    require(keyStoreFile.isFile) {
-        "Hub TLS keystore missing; re-run Start hub pairing on the PC"
-    }
-    // Tighten keystores written by older builds with the default umask.
-    restrictToOwner(keyStoreFile)
-    val keyStorePassword = keyStorePasswordFor(sharedSecretHex)
-    val keyStore = KeyStore.getInstance("PKCS12").apply {
-        keyStoreFile.inputStream().use { load(it, keyStorePassword) }
-    }
-    val cert = keyStore.getCertificate(HUB_KEY_ALIAS) as? X509Certificate
-        ?: error("Hub TLS certificate missing from keystore; re-pair")
-    val pin = certSha256Hex(cert.encoded)
-    require(pin.equals(expectedCertSha256Hex.trim(), ignoreCase = true)) {
-        "Hub TLS certificate pin mismatch; re-run Start hub pairing and re-pair the phone"
-    }
-    return HomeLanHubTlsMaterial(
-        certSha256Hex = pin,
-        keyStore = keyStore,
-        keyStorePassword = keyStorePassword,
-        keyAlias = HUB_KEY_ALIAS,
-        privateKeyPassword = keyStorePassword,
-        keyStoreFile = keyStoreFile,
-    )
+internal fun hubServerSslContext(identity: JvmDeviceIdentity.Material): SslContext {
+    val keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+        .apply { init(identity.keyStore, identity.password()) }
+    return SslContextBuilder.forServer(keyManagers)
+        .trustManager(acceptAnyClientCertificate)
+        .clientAuth(ClientAuth.OPTIONAL)
+        .build()
 }
 
-private val OWNER_ONLY = PosixFilePermissions.fromString("rw-------")
-
-/** chmod 0600 on POSIX; a no-op (failure ignored) on filesystems without POSIX attributes. */
-private fun restrictToOwner(file: File) {
-    runCatching { Files.setPosixFilePermissions(file.toPath(), OWNER_ONLY) }
+private val acceptAnyClientCertificate = object : X509TrustManager {
+    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
+    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) =
+        throw CertificateException("The hub never verifies servers")
+    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
 }
 
-private fun isIpLiteral(host: String): Boolean =
-    ':' in host || host.matches(Regex("""^\d{1,3}(\.\d{1,3}){3}$"""))
+/** Fingerprint of the leaf certificate this call's client presented, or null when it sent none. */
+internal fun ApplicationCall.clientFingerprint(): CertFingerprint? {
+    val engineCall = (this as RoutingCall).pipelineCall.engineCall as NettyApplicationCall
+    val channel = engineCall.context.channel()
+    val ssl = channel.pipeline().get(SslHandler::class.java)
+        ?: channel.parent()?.pipeline()?.get(SslHandler::class.java)
+        ?: return null
+    val leaf = runCatching { ssl.engine().session.peerCertificates.firstOrNull() }.getOrNull() ?: return null
+    return CertFingerprint.ofCertificate(leaf.encoded)
+}
 
-private fun keyStorePasswordFor(sharedSecretHex: String): CharArray {
-    val material = ("kainos-home-lan-keystore|" + sharedSecretHex.trim().lowercase()).encodeToByteArray()
-    return sha256Bytes(material).toHex().toCharArray()
+internal sealed interface HubCaller {
+    data object Anonymous : HubCaller
+    data class Unpaired(val fingerprint: CertFingerprint) : HubCaller
+    data class Paired(val peer: PairedPeer) : HubCaller
+}
+
+/** The hub's only trust decision. This PC's own fingerprint is paired, so the PC can sync with itself. */
+internal fun identifyHubCaller(
+    fingerprint: CertFingerprint?,
+    self: PairedPeer,
+    peers: List<PairedPeer>,
+): HubCaller = when {
+    fingerprint == null -> HubCaller.Anonymous
+    fingerprint == self.fingerprint -> HubCaller.Paired(self)
+    else -> peers.firstOrNull { it.fingerprint == fingerprint }?.let(HubCaller::Paired)
+        ?: HubCaller.Unpaired(fingerprint)
 }

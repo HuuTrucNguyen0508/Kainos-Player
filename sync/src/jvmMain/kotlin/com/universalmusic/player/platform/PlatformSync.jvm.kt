@@ -5,32 +5,13 @@ import java.awt.Desktop
 import java.nio.file.Files
 import java.nio.file.Path
 
-actual fun createHomeLanSyncHub(
-    pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
-    onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
-    onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
-    vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
-    heartedVaultFileNames: () -> Set<String>?,
-): com.universalmusic.player.data.sync.HomeLanSyncHub {
-    val pin = pairing.hubCertSha256Hex
-        ?: error("Hub certificate pin missing; re-run Start hub pairing")
-    val tls = com.universalmusic.player.data.sync.loadHomeLanHubTls(
-        configDir = homeLanConfigDir().toFile(),
-        sharedSecretHex = pairing.sharedSecretHex,
-        expectedCertSha256Hex = pin,
-    )
-    val hub = com.universalmusic.player.data.sync.DesktopHomeLanSyncHub(
-        pairing = pairing,
-        onHearts = onHearts,
-        onPlaylists = onPlaylists,
-        vault = vault,
-        tls = tls,
-        heartedVaultFileNames = heartedVaultFileNames,
-    )
+actual fun createHomeLanSyncHub(config: HomeLanHubConfig): com.universalmusic.player.data.sync.HomeLanSyncHub {
+    val identity = jvmPlatformDeviceIdentity()
+    val hub = com.universalmusic.player.data.sync.DesktopHomeLanSyncHub(config, identity.material())
     val advertiser = com.universalmusic.player.data.sync.AvahiHubAdvertiser(
-        port = pairing.hubPort,
-        certSha256Hex = pin,
-        deviceId = pairing.deviceId,
+        port = config.port,
+        certSha256Hex = identity.fingerprint().hex,
+        deviceId = config.deviceId,
         instanceLabel = DesktopIsolation.current.instance,
     )
     return AdvertisedHub(hub, advertiser)
@@ -61,7 +42,10 @@ actual fun createHomeLanVaultStore(
 
 actual fun homeLanHubPort(): Int = DesktopIsolation.current.hubPort
 
-actual fun detectLanHostAddress(): String? = currentLanAddress()?.ipv4
+actual fun homeLanDeviceName(): String =
+    runCatching { java.io.File("/etc/hostname").readText().trim() }.getOrNull()?.takeIf { it.isNotBlank() }
+        ?: runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() }
+        ?: "Linux PC"
 
 actual suspend fun <T> withVaultSyncForeground(
     label: String,

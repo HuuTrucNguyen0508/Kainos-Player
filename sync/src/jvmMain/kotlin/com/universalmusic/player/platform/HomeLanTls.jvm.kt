@@ -1,8 +1,6 @@
 package com.universalmusic.player.platform
 
-import com.universalmusic.player.data.sync.HomeLanSyncPairing
-import com.universalmusic.player.data.sync.certSha256Hex
-import com.universalmusic.player.data.sync.generateHomeLanHubTls
+import com.universalmusic.player.data.sync.CertFingerprint
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -12,32 +10,27 @@ import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.KeyManager
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 import kotlinx.serialization.json.Json
 
 private val pinIsTheOnlyTrustCheck = HostnameVerifier { _, _ -> true }
 
-actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
-    val expected = certPinHex.trim().lowercase()
-    require(expected.matches(Regex("[0-9a-f]{64}"))) { "Invalid hub certificate pin" }
-    val pinTrustManager = object : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) =
-            throw CertificateException("Client certs not supported")
+private val jvmDeviceIdentity by lazy { JvmDeviceIdentity(homeLanConfigDir().resolve("home-lan").toFile()) }
 
-        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-            val leaf = chain.firstOrNull()
-                ?: throw CertificateException("Empty certificate chain")
-            val pin = certSha256Hex(leaf.encoded)
-            if (!pin.equals(expected, ignoreCase = true)) {
-                throw CertificateException("Hub certificate pin mismatch")
-            }
-        }
+actual fun platformDeviceIdentity(): DeviceIdentity = jvmDeviceIdentity
 
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-    }
+fun jvmPlatformDeviceIdentity(): JvmDeviceIdentity = jvmDeviceIdentity
+
+actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient =
+    pinnedHomeLanHttpClient(pin, jvmDeviceIdentity.material().keyManagers())
+
+/** [keyManagers] null sends no client certificate, which only tests want. */
+fun pinnedHomeLanHttpClient(pin: CertFingerprint, keyManagers: Array<KeyManager>?): HttpClient {
+    val pinTrustManager = hubPinTrustManager(pin)
     val sslContext = SSLContext.getInstance("TLS").apply {
-        init(null, arrayOf(pinTrustManager), SecureRandom())
+        init(keyManagers, arrayOf(pinTrustManager), SecureRandom())
     }
     return HttpClient(OkHttp) {
         engine {
@@ -59,11 +52,14 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
     }
 }
 
-actual fun generateHomeLanHubCertPin(pairing: HomeLanSyncPairing): String? {
-    val material = generateHomeLanHubTls(
-        configDir = homeLanConfigDir().toFile(),
-        sharedSecretHex = pairing.sharedSecretHex,
-        extraHosts = listOfNotNull(pairing.hubHost),
-    )
-    return material.certSha256Hex
+internal fun hubPinTrustManager(pin: CertFingerprint) = object : X509TrustManager {
+    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) =
+        throw CertificateException("Client certs not supported")
+
+    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+        val leaf = chain.firstOrNull() ?: throw CertificateException("Empty certificate chain")
+        if (CertFingerprint.ofCertificate(leaf.encoded) != pin) throw CertificateException(HUB_PIN_MISMATCH)
+    }
+
+    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
 }

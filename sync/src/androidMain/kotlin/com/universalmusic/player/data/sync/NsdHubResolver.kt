@@ -54,7 +54,7 @@ internal class NsdHubResolver(private val context: Context) : HubBrowser {
                 val host = service.addresses().let { all ->
                     all.firstOrNull { it is Inet4Address } ?: all.firstOrNull { !it.isLinkLocalAddress }
                 }?.hostAddress ?: continue
-                send(DiscoveredHub(fp, txt[HOME_LAN_MDNS_TXT_ID]?.decodeToString(), host, service.port))
+                send(DiscoveredHub(fp, txt[HOME_LAN_MDNS_TXT_ID]?.decodeToString(), host, service.port, service.serviceName))
             }
         }
         awaitClose {

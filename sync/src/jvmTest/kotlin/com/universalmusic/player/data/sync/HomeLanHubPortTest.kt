@@ -9,12 +9,13 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class HomeLanHubPortTest {
-    private val storedPairing = HomeLanSyncPairing(
+    private val storedHub = PairedPeer(
         deviceId = "pc",
-        sharedSecretHex = "aabb",
-        hubHost = "192.168.1.10",
-        hubPort = 43822,
-        hubCertSha256Hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        displayName = "Kainos on pc",
+        fingerprint = CertFingerprint.parse("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")!!,
+        lastKnownHost = "192.168.1.10",
+        lastKnownPort = 43822,
+        pairedAtMs = 1L,
     )
 
     private class ListeningHub : HomeLanSyncHub {
@@ -29,7 +30,8 @@ class HomeLanHubPortTest {
         val settings = AppSettings(
             homeLanSyncEnabled = true,
             homeLanSyncRole = role,
-            homeLanSyncPairing = storedPairing,
+            homeLanSyncDeviceId = "pc",
+            homeLanSyncHub = storedHub,
         )
         return HomeLanSyncService(
             scope = scope,
@@ -37,8 +39,10 @@ class HomeLanHubPortTest {
             updateSettings = {},
             library = LibraryRepository(),
             playlists = KainosPlaylistRepository(),
-            hubFactory = { pairing, _, _, _, _ -> hubPorts += pairing.hubPort; ListeningHub() },
+            hubFactory = { config -> hubPorts += config.port; ListeningHub() },
             clientFactory = { error("no client in this test") },
+            pairingClientFactory = noPairingClient(),
+            identity = FixedDeviceIdentity("aa".repeat(32)),
             vaultStore = tempVaultStore().second,
             refreshLocalLibrary = {},
             isDesktop = true,
@@ -54,12 +58,7 @@ class HomeLanHubPortTest {
         service.startHubIfNeeded()
 
         assertEquals(listOf(44005), hubPorts)
-        assertEquals(44005, service.pairing.value?.hubPort)
         assertEquals("Hub listening on 44005", service.status.value.lastDetail)
-        assertEquals(
-            "kainos-homesync:2?host=192.168.1.10&port=44005",
-            service.pairingUri()?.substringBefore("&secret="),
-        )
     }
 
     @Test
@@ -70,6 +69,6 @@ class HomeLanHubPortTest {
         service.startHubIfNeeded()
 
         assertEquals(emptyList(), hubPorts)
-        assertEquals(43822, service.pairing.value?.hubPort)
+        assertEquals(43822, service.trust.value.hub?.lastKnownPort)
     }
 }

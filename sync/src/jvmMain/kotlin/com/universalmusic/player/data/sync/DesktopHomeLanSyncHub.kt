@@ -1,6 +1,9 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.playlist.forV1Sync
+import com.universalmusic.player.platform.HomeLanHubConfig
+import com.universalmusic.player.platform.JvmDeviceIdentity
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -21,7 +24,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
-import java.security.MessageDigest
+import io.netty.handler.ssl.SslHandler
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.readByteArray
@@ -29,13 +32,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class DesktopHomeLanSyncHub(
-    private val pairing: HomeLanSyncPairing,
-    private val onHearts: suspend (HeartsSyncDocument) -> HeartsSyncDocument,
-    private val onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
-    private val vault: HomeLanVaultStore?,
-    private val tls: HomeLanHubTlsMaterial,
-    /** Null = full vault index; non-null = hearts-only basename allowlist. */
-    private val heartedVaultFileNames: () -> Set<String>? = { null },
+    private val config: HomeLanHubConfig,
+    private val identity: JvmDeviceIdentity.Material,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
     private val bindHost: String = "0.0.0.0",
 ) : HomeLanSyncHub {
@@ -45,8 +43,8 @@ class DesktopHomeLanSyncHub(
     @Volatile
     private var lastActivityMs: Long = System.currentTimeMillis()
     private val vaultMutex = Mutex()
-    private val cryptoKey: ByteArray? =
-        if (pairing.encryptPayloads) SyncPayloadCrypto.keyFromSharedSecret(pairing.sharedSecretHex) else null
+    private val self = PairedPeer(config.deviceId, "This PC", identity.fingerprint, pairedAtMs = 0L)
+    private val vault get() = config.vault
 
     override val isListening: Boolean get() = listening
 
@@ -58,46 +56,79 @@ class DesktopHomeLanSyncHub(
 
     override suspend fun start() {
         if (listening) return
+        val serverSsl = hubServerSslContext(identity)
         // Netty (not CIO): Ktor CIO server engine does not support HTTPS/sslConnector.
         val engine = embeddedServer(
             Netty,
             environment = applicationEnvironment {},
             configure = {
+                // With HTTP/2, ALPN builds the pipeline after the handshake, so the swap below would
+                // run too late and every client would arrive without a certificate.
+                enableHttp2 = false
                 sslConnector(
-                    keyStore = tls.keyStore,
-                    keyAlias = tls.keyAlias,
-                    keyStorePassword = { tls.keyStorePassword },
-                    privateKeyPassword = { tls.privateKeyPassword },
+                    keyStore = identity.keyStore,
+                    keyAlias = JvmDeviceIdentity.KEY_ALIAS,
+                    keyStorePassword = { identity.password() },
+                    privateKeyPassword = { identity.password() },
                 ) {
-                    port = pairing.hubPort
+                    port = config.port
                     host = bindHost
-                    keyStorePath = tls.keyStoreFile
+                }
+                // Ktor's own handler only offers PKIX client auth, which rejects self-signed devices.
+                channelPipelineConfig = {
+                    val ktorSsl = get("ssl") as? SslHandler
+                    if (ktorSsl != null && !ktorSsl.handshakeFuture().isDone) {
+                        replace("ssl", "ssl", serverSsl.newHandler(channel().alloc()))
+                    }
                 }
             },
         ) {
             routing {
                 get(HOME_LAN_SYNC_PATH_HEALTH) {
-                    if (!authorized(call)) return@get
+                    call.pairedPeer() ?: return@get
                     touchActivity()
                     call.respondText(
                         json.encodeToString(
                             HomeLanHealthResponse(
-                                deviceId = pairing.deviceId,
+                                deviceId = config.deviceId,
                                 vaultConfigured = vault?.isConfigured() == true,
-                                encryptPayloads = pairing.encryptPayloads,
-                                tls = true,
                             ),
                         ),
                         ContentType.Application.Json,
                     )
                 }
+                post(HOME_LAN_SYNC_PATH_PAIR_START) {
+                    val client = call.pairingClient() ?: return@post
+                    val request = call.receivePairing<PairStartRequest>() ?: return@post
+                    call.respondPairing(config.pairing.start(client, request))
+                }
+                post(HOME_LAN_SYNC_PATH_PAIR_REVEAL) {
+                    val client = call.pairingClient() ?: return@post
+                    val request = call.receivePairing<PairRevealRequest>() ?: return@post
+                    call.respondPairing(config.pairing.reveal(client, request))
+                }
+                post(HOME_LAN_SYNC_PATH_PAIR_CONFIRM) {
+                    val client = call.pairingClient() ?: return@post
+                    val request = call.receivePairing<PairAttemptRequest>() ?: return@post
+                    call.respondPairing(config.pairing.confirmFromPhone(client, request.attemptId))
+                }
+                post(HOME_LAN_SYNC_PATH_PAIR_CANCEL) {
+                    val client = call.pairingClient() ?: return@post
+                    val request = call.receivePairing<PairAttemptRequest>() ?: return@post
+                    call.respondPairing(config.pairing.cancel(client, request.attemptId))
+                }
+                get(HOME_LAN_SYNC_PATH_PAIR_STATUS) {
+                    val client = call.pairingClient() ?: return@get
+                    val attemptId = call.request.queryParameters["attemptId"].orEmpty()
+                    call.respondPairing(config.pairing.status(client, attemptId))
+                }
                 for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_V2_HEARTS)) {
                     post(path) {
-                        if (!authorized(call)) return@post
+                        call.pairedPeer() ?: return@post
                         touchActivity()
                         val body = call.receiveText()
                         val remote = json.decodeFromString<HeartsSyncDocument>(body)
-                        val localAfter = onHearts(remote)
+                        val localAfter = config.onHearts(remote)
                         call.respondText(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_HEARTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,
@@ -106,11 +137,11 @@ class DesktopHomeLanSyncHub(
                 }
                 for (path in listOf(HOME_LAN_SYNC_PATH_PLAYLISTS, HOME_LAN_SYNC_PATH_V2_PLAYLISTS)) {
                     post(path) {
-                        if (!authorized(call)) return@post
+                        call.pairedPeer() ?: return@post
                         touchActivity()
                         val body = call.receiveText()
-                        val remote = json.decodeFromString<com.universalmusic.player.data.playlist.PlaylistsSyncDocument>(body)
-                        val localAfter = onPlaylists(remote)
+                        val remote = json.decodeFromString<PlaylistsSyncDocument>(body)
+                        val localAfter = config.onPlaylists(remote)
                         call.respondText(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_PLAYLISTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,
@@ -119,28 +150,31 @@ class DesktopHomeLanSyncHub(
                 }
                 for (path in listOf(HOME_LAN_SYNC_PATH_VAULT_INDEX, HOME_LAN_SYNC_PATH_V2_VAULT_INDEX)) {
                     post(path) {
-                        if (!authorized(call)) return@post
+                        call.pairedPeer() ?: return@post
                         touchActivity()
                         val store = vault
                         if (store == null || !store.isConfigured()) {
                             call.respondText("Vault not configured", status = HttpStatusCode.BadRequest)
                             return@post
                         }
-                        val remote = decodeVaultIndex(call)
+                        val remote = json.decodeFromString<VaultIndexDocument>(call.receiveText())
                         vaultMutex.withLock {
                             val mergedTombs = mergeTombstones(store.loadTombstones(), remote.tombstones)
                             store.saveTombstones(mergedTombs)
-                            val local = store.buildIndex(pairing.deviceId).let { index ->
-                                val allow = heartedVaultFileNames()
+                            val local = store.buildIndex(config.deviceId).let { index ->
+                                val allow = config.heartedVaultFileNames()
                                 if (allow == null) index
                                 else index.filterEntriesByBasenames(allow)
                             }
-                            respondVaultIndex(call, if (path == HOME_LAN_SYNC_PATH_VAULT_INDEX) local.forV1Sync() else local)
+                            call.respondText(
+                                json.encodeToString(if (path == HOME_LAN_SYNC_PATH_VAULT_INDEX) local.forV1Sync() else local),
+                                ContentType.Application.Json,
+                            )
                         }
                     }
                 }
                 get(HOME_LAN_SYNC_PATH_VAULT_BLOB) {
-                    if (!authorized(call)) return@get
+                    call.pairedPeer() ?: return@get
                     touchActivity()
                     val store = vault
                     if (store == null || !store.isConfigured()) {
@@ -170,11 +204,10 @@ class DesktopHomeLanSyncHub(
                     }
                     call.response.header(HttpHeaders.AcceptRanges, "bytes")
                     call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
-                    val payload = encryptIfNeeded(bytes)
-                    call.respondBytes(payload, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
+                    call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
                 }
                 put(HOME_LAN_SYNC_PATH_VAULT_BLOB) {
-                    if (!authorized(call)) return@put
+                    call.pairedPeer() ?: return@put
                     touchActivity()
                     val store = vault
                     if (store == null || !store.isConfigured()) {
@@ -197,13 +230,9 @@ class DesktopHomeLanSyncHub(
                     }
                     // Read at most one byte past the cap so an undeclared oversized body is rejected
                     // without buffering it all.
-                    val raw = call.receiveChannel().readRemaining(MAX_BLOB_BODY_BYTES + 1).readByteArray()
-                    if (raw.size > MAX_BLOB_BODY_BYTES) {
+                    val chunk = call.receiveChannel().readRemaining(MAX_BLOB_BODY_BYTES + 1).readByteArray()
+                    if (chunk.size > MAX_BLOB_BODY_BYTES) {
                         call.respondText("Chunk too large", status = HttpStatusCode.PayloadTooLarge)
-                        return@put
-                    }
-                    val chunk = runCatching { decryptIfNeeded(raw) }.getOrElse {
-                        call.respondText("Cannot decrypt chunk", status = HttpStatusCode.BadRequest)
                         return@put
                     }
                     // Same staged path as client downloads: bytes only replace the file on the last chunk.
@@ -231,78 +260,35 @@ class DesktopHomeLanSyncHub(
         server = null
     }
 
-    private suspend fun authorized(call: ApplicationCall): Boolean {
-        when (
-            homeLanHubAuthorize(
-                pairing,
-                authorizationHeader = call.request.header(HttpHeaders.Authorization),
-                pinHeader = call.request.header(HOME_LAN_SYNC_HEADER_PIN),
-            )
-        ) {
-            HubAuthResult.OK -> return true
-            HubAuthResult.BAD_TOKEN ->
-                call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
-            HubAuthResult.BAD_PIN ->
-                call.respondText("Invalid pairing PIN", status = HttpStatusCode.Forbidden)
+    private fun caller(call: ApplicationCall): HubCaller =
+        identifyHubCaller(call.clientFingerprint(), self, config.peers())
+
+    /** Sync routes: only a paired fingerprint passes. Device ids come from here, never a body. */
+    private suspend fun ApplicationCall.pairedPeer(): PairedPeer? =
+        (caller(this) as? HubCaller.Paired)?.peer
+            ?: null.also { respondText("Unauthorized", status = HttpStatusCode.Unauthorized) }
+
+    /** Pairing routes: any client certificate passes; trust comes from the confirmed code. */
+    private suspend fun ApplicationCall.pairingClient(): CertFingerprint? =
+        when (val caller = caller(this)) {
+            HubCaller.Anonymous -> null.also { respondText("Unauthorized", status = HttpStatusCode.Unauthorized) }
+            is HubCaller.Unpaired -> caller.fingerprint
+            is HubCaller.Paired -> caller.peer.fingerprint
         }
-        return false
-    }
 
-    private suspend fun decodeVaultIndex(call: ApplicationCall): VaultIndexDocument {
-        val enc = call.request.header(HOME_LAN_SYNC_HEADER_ENC)
-        val body = call.receiveText()
-        val plain = if (enc == HOME_LAN_SYNC_ENC_AES_GCM && cryptoKey != null) {
-            SyncPayloadCrypto.decryptFromBase64(body, cryptoKey).decodeToString()
-        } else {
-            body
-        }
-        return json.decodeFromString(plain)
-    }
+    private suspend inline fun <reified T> ApplicationCall.receivePairing(): T? =
+        runCatching { json.decodeFromString<T>(receiveText()) }.getOrNull()
+            ?: null.also { respondText("Malformed pairing request", status = HttpStatusCode.BadRequest) }
 
-    private suspend fun respondVaultIndex(call: ApplicationCall, doc: VaultIndexDocument) {
-        val encoded = json.encodeToString(doc)
-        if (cryptoKey != null) {
-            call.response.header(HOME_LAN_SYNC_HEADER_ENC, HOME_LAN_SYNC_ENC_AES_GCM)
-            call.respondText(
-                SyncPayloadCrypto.encryptToBase64(encoded.encodeToByteArray(), cryptoKey),
-                ContentType.Text.Plain,
-            )
-        } else {
-            call.respondText(encoded, ContentType.Application.Json)
-        }
-    }
-
-    private fun encryptIfNeeded(bytes: ByteArray): ByteArray {
-        val key = cryptoKey ?: return bytes
-        return SyncPayloadCrypto.encrypt(bytes, key)
-    }
-
-    private fun decryptIfNeeded(bytes: ByteArray): ByteArray {
-        val key = cryptoKey ?: return bytes
-        return SyncPayloadCrypto.decrypt(bytes, key)
+    private suspend inline fun <reified T> ApplicationCall.respondPairing(reply: PairingReply<T>) = when (reply) {
+        is PairingReply.Ok -> respondText(json.encodeToString(reply.value), ContentType.Application.Json)
+        is PairingReply.Refused ->
+            respondText(reply.reason, status = HttpStatusCode.fromValue(reply.refusal.httpStatus))
     }
 }
 
-/** Max PUT body: one plaintext chunk plus AES-GCM nonce/tag and slack. */
-private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong() + 1024L
-
-internal enum class HubAuthResult { OK, BAD_TOKEN, BAD_PIN }
-
-/** Bearer token + optional pairing PIN check using constant-time comparisons. */
-internal fun homeLanHubAuthorize(
-    pairing: HomeLanSyncPairing,
-    authorizationHeader: String?,
-    pinHeader: String?,
-): HubAuthResult {
-    val expected = "Bearer ${pairing.sharedSecretHex}"
-    if (!constantTimeEquals(authorizationHeader.orEmpty(), expected)) return HubAuthResult.BAD_TOKEN
-    val requiredPin = pairing.pairingPin?.takeIf { it.isNotBlank() } ?: return HubAuthResult.OK
-    if (!constantTimeEquals(pinHeader.orEmpty(), requiredPin)) return HubAuthResult.BAD_PIN
-    return HubAuthResult.OK
-}
-
-private fun constantTimeEquals(a: String, b: String): Boolean =
-    MessageDigest.isEqual(a.encodeToByteArray(), b.encodeToByteArray())
+/** One chunk is the largest PUT body a client sends. */
+private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
 
 /**
  * Parses a single `bytes=start-end` (or open-ended `bytes=start-`) request range and bounds it

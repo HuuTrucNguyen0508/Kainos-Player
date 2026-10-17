@@ -2,23 +2,31 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
-import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.platform.DeviceIdentity
+import com.universalmusic.player.platform.HUB_PIN_MISMATCH
+import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.PlaybackTrace
-import com.universalmusic.player.platform.generateHomeLanHubCertPin
 import com.universalmusic.player.platform.currentTimeMillis
+import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.secureRandomBytes
 import com.universalmusic.player.platform.withVaultSyncForeground
+import io.ktor.client.plugins.ResponseException
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -28,6 +36,10 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+
+const val HOME_LAN_REPAIR_NOTICE = "Pair again to keep syncing"
+const val HOME_LAN_IDENTITY_CHANGED = "This PC's identity changed. Pair again."
+const val HOME_LAN_NOT_TRUSTED = "This PC no longer trusts this device. Pair again."
 
 /**
  * Coordinates home-LAN hearts + playlist metadata + vault sync.
@@ -39,49 +51,58 @@ class HomeLanSyncService(
     private val updateSettings: suspend ((AppSettings) -> AppSettings) -> Unit,
     private val library: LibraryRepository,
     private val playlists: KainosPlaylistRepository,
-    private val hubFactory: (
-        HomeLanSyncPairing,
-        suspend (HeartsSyncDocument) -> HeartsSyncDocument,
-        suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
-        HomeLanVaultStore?,
-        () -> Set<String>?,
-    ) -> HomeLanSyncHub,
-    private val clientFactory: (HomeLanSyncPairing) -> HomeLanSyncClient,
+    private val hubFactory: (HomeLanHubConfig) -> HomeLanSyncHub,
+    private val clientFactory: (PairedPeer) -> HomeLanSyncClient,
+    private val pairingClientFactory: (HubEndpoint, CertFingerprint) -> HomeLanPairingClient,
+    private val identity: DeviceIdentity,
     private val vaultStore: HomeLanVaultStore,
     private val refreshLocalLibrary: suspend () -> Unit,
     private val rematchLocalHearts: suspend () -> Int = { 0 },
     private val rematchPlaylistLocals: suspend () -> Int = { 0 },
-    private val detectedLanHost: () -> String? = { null },
     private val clock: () -> Long = ::currentTimeMillis,
     private val isDesktop: Boolean = platformLabel() == "Linux",
+    /** The port this device's own hub listens on; a remote hub's port lives in its [PairedPeer]. */
     private val hubPort: Int = HOME_LAN_SYNC_DEFAULT_PORT,
     private val hubBrowser: HubBrowser = platformHubBrowser(),
+    private val deviceName: () -> String = ::homeLanDeviceName,
+    private val pairingPollMs: Long = 1_000,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
 
-    private val _pairing = MutableStateFlow<HomeLanSyncPairing?>(null)
-    override val pairing: StateFlow<HomeLanSyncPairing?> = _pairing.asStateFlow()
+    private val _trust = MutableStateFlow(HomeLanTrust())
+    override val trust: StateFlow<HomeLanTrust> = _trust.asStateFlow()
+
+    private val pairingHost = PairingHost(
+        hubFingerprint = identity::fingerprint,
+        hubDeviceId = { settings().homeLanSyncDeviceId.orEmpty() },
+        onPaired = ::trustPeer,
+        clock = clock,
+    )
+    override val incomingPairing: StateFlow<PairingAttempt?> = pairingHost.incoming
 
     private var hub: HomeLanSyncHub? = null
     private val mutex = Mutex()
     private var idleWatchJob: Job? = null
+    private var pairingExpiryJob: Job? = null
+
     private val resolutionLock = Any()
     private var pairingGeneration = 0L
 
     private data class ResolutionSource(
-        val pairing: HomeLanSyncPairing,
+        val target: PairedPeer,
         val generation: Long,
         val role: HomeLanSyncRole,
     )
 
-    private fun resolutionSource(pairing: HomeLanSyncPairing) = synchronized(resolutionLock) {
-        ResolutionSource(pairing, pairingGeneration, _status.value.role)
+    private fun resolutionSource(target: PairedPeer) = synchronized(resolutionLock) {
+        ResolutionSource(target, pairingGeneration, _status.value.role)
     }
 
     private fun isCurrent(source: ResolutionSource): Boolean = synchronized(resolutionLock) {
-        pairingGeneration == source.generation && _pairing.value == source.pairing &&
-            _status.value.enabled && _status.value.role == source.role
+        pairingGeneration == source.generation &&
+            _status.value.enabled && _status.value.role == source.role &&
+            (if (shouldRunHub(source.role)) syncTarget() else _trust.value.hub) == source.target
     }
 
     private fun invalidateResolution() = synchronized(resolutionLock) {
@@ -90,22 +111,13 @@ class HomeLanSyncService(
 
     fun hydrateFromSettings(current: AppSettings) = synchronized(resolutionLock) {
         invalidateResolution()
-        _pairing.value = current.effectivePairing()
-        val needsTlsRepair = current.homeLanSyncEnabled &&
-            current.homeLanSyncPairing != null &&
-            current.homeLanSyncPairing?.hubCertSha256Hex.isNullOrBlank() &&
-            (current.homeLanSyncRole == HomeLanSyncRole.CLIENT ||
-                (current.homeLanSyncRole == HomeLanSyncRole.AUTO && !isDesktop))
+        _trust.value = current.trust()
         _status.update {
             it.copy(
                 enabled = current.homeLanSyncEnabled,
                 role = current.homeLanSyncRole,
                 lastSyncAtMs = current.homeLanSyncLastAtMs,
-                lastError = when {
-                    needsTlsRepair ->
-                        "Re-pair with kainos-homesync:2 URI from the PC (TLS cert pin required)"
-                    else -> current.homeLanSyncLastError
-                },
+                lastError = current.homeLanSyncLastError,
                 lastDetail = current.homeLanSyncLastDetail,
             )
         }
@@ -118,115 +130,121 @@ class HomeLanSyncService(
         if (enabled) startHubIfNeeded() else stopHub()
     }
 
-    override suspend fun beginHubPairing(): HomeLanSyncPairing {
-        invalidateResolution()
-        val deviceId = settings().homeLanSyncDeviceId ?: newDeviceId().also { id ->
-            updateSettings { it.copy(homeLanSyncDeviceId = id) }
-        }
-        val secret = secureRandomBytes(32).toHex()
-        val pin = (100000..999999).random().toString()
-        var pairing = HomeLanSyncPairing(
-            deviceId = deviceId,
-            sharedSecretHex = secret,
-            hubPort = hubPort,
-            pairingPin = pin,
-            hubHost = detectedLanHost(),
-            encryptPayloads = true,
-        )
-        val certPin = generateHomeLanHubCertPin(pairing)
-            ?: error("Hub TLS certificate generation is only available on desktop")
-        pairing = pairing.copy(hubCertSha256Hex = certPin)
-        updateSettings {
-            it.copy(
-                homeLanSyncEnabled = true,
-                homeLanSyncRole = HomeLanSyncRole.HUB,
-                homeLanSyncPairing = pairing,
-                homeLanSyncDeviceId = deviceId,
-            )
-        }
-        reconcilePairing()
-        _status.update { it.copy(enabled = true, role = HomeLanSyncRole.HUB) }
-        // Always restart: a listening hub still serves the previous cert/secret.
-        stopHub()
-        startHubIfNeeded()
-        return pairing
+    override fun discoverHubs(): Flow<DiscoveredHub> {
+        val own = identity.fingerprint()
+        return hubBrowser.browse().filter { CertFingerprint.parse(it.fp).let { fp -> fp != null && fp != own } }
     }
 
-    override suspend fun completeClientPairing(
-        hubHost: String,
-        hubPort: Int,
-        sharedSecretHex: String,
-        peerDeviceId: String,
-        pairingPin: String,
-        hubCertSha256Hex: String,
-    ) {
+    override suspend fun pairWith(hub: DiscoveredHub): HubPairingSession {
+        val pin = CertFingerprint.parse(hub.fp) ?: error("${hub.name} advertised no valid certificate fingerprint")
+        val own = identity.fingerprint()
+        val deviceId = ensureDeviceId()
+        val client = pairingClientFactory(hub.endpoint, pin)
+        try {
+            val nonce = secureRandomBytes(PAIRING_NONCE_BYTES)
+            val started = client.start(PairStartRequest(deviceId, deviceName(), pairingCommit(nonce).toHex()))
+            val hubNonce = started.nonceHex.hexBytes(PAIRING_NONCE_BYTES) ?: error("${hub.name} sent a malformed nonce")
+            client.reveal(PairRevealRequest(started.attemptId, nonce.toHex()))
+            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "pairing code ready for ${hub.endpoint}")
+            return PhonePairing(started.attemptId, hub, pairingCode(pin, own, hubNonce, nonce), pin, client)
+        } catch (err: Throwable) {
+            client.close()
+            throw err
+        }
+    }
+
+    private inner class PhonePairing(
+        override val attemptId: String,
+        override val hub: DiscoveredHub,
+        override val code: PairingCode,
+        private val pin: CertFingerprint,
+        private val client: HomeLanPairingClient,
+    ) : HubPairingSession {
+        override suspend fun confirm(): PairedPeer = client.use {
+            client.confirm(attemptId)
+            val peer = PairedPeer(
+                deviceId = awaitPaired(),
+                displayName = hub.name,
+                fingerprint = pin,
+                lastKnownHost = hub.host,
+                lastKnownPort = hub.port,
+                pairedAtMs = clock(),
+            )
+            trustHub(peer)
+            peer
+        }
+
+        override suspend fun cancel() = client.use { runCatching { client.cancel(attemptId) }; Unit }
+
+        private suspend fun awaitPaired(): String {
+            repeat((PAIRING_ATTEMPT_TTL_MS / pairingPollMs).toInt() + 5) {
+                val status = client.status(attemptId)
+                when (status.state) {
+                    PairState.PAIRED -> return status.hubDeviceId ?: hub.id ?: error("${hub.name} sent no device id")
+                    PairState.ENDED -> error(status.reason ?: "The pairing ended")
+                    PairState.PENDING -> delay(pairingPollMs)
+                }
+            }
+            error("The PC did not confirm in time")
+        }
+    }
+
+    override suspend fun confirmIncomingPairing(attemptId: String): Result<Unit> =
+        pairingHost.confirmFromPc(attemptId).toResult()
+
+    override suspend fun rejectIncomingPairing(attemptId: String): Result<Unit> =
+        pairingHost.rejectFromPc(attemptId).toResult()
+
+    private suspend fun trustHub(peer: PairedPeer) {
         invalidateResolution()
-        val cert = hubCertSha256Hex.trim().lowercase()
-        require(cert.matches(Regex("[0-9a-f]{64}"))) {
-            "Hub certificate pin required (64 hex chars). Prefer Pair from URI after Start hub pairing on the PC."
-        }
-        val deviceId = settings().homeLanSyncDeviceId ?: newDeviceId().also { id ->
-            updateSettings { it.copy(homeLanSyncDeviceId = id) }
-        }
-        val pairing = HomeLanSyncPairing(
-            deviceId = deviceId,
-            peerDeviceId = peerDeviceId.ifBlank { null },
-            sharedSecretHex = sharedSecretHex.trim(),
-            hubHost = hubHost.trim(),
-            hubPort = hubPort,
-            pairingPin = pairingPin.trim().ifBlank { null },
-            hubCertSha256Hex = cert,
-            encryptPayloads = true,
-        )
         updateSettings {
             it.copy(
                 homeLanSyncEnabled = true,
                 homeLanSyncRole = HomeLanSyncRole.CLIENT,
-                homeLanSyncPairing = pairing,
-                homeLanSyncDeviceId = deviceId,
+                homeLanSyncHub = peer,
+                homeLanSyncRepairNeeded = false,
+                homeLanSyncLastError = null,
             )
         }
-        reconcilePairing()
-        _status.update { it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null) }
+        reconcileTrust()
+        _status.update {
+            it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null, lastDetail = "Paired with ${peer.displayName}")
+        }
         stopHub()
     }
 
-    override suspend fun completeClientPairingFromUri(uri: String) {
-        val parsed = parseHomeLanPairingUri(uri)
-            ?: error("Not a valid kainos-homesync:2 pairing URI (must include cert= pin)")
-        completeClientPairing(
-            hubHost = parsed.hubHost.orEmpty(),
-            hubPort = parsed.hubPort,
-            sharedSecretHex = parsed.sharedSecretHex,
-            peerDeviceId = parsed.peerDeviceId.orEmpty(),
-            pairingPin = parsed.pairingPin.orEmpty(),
-            hubCertSha256Hex = parsed.hubCertSha256Hex.orEmpty(),
-        )
-    }
-
-    override suspend fun unpair() {
-        invalidateResolution()
-        stopHub()
+    private suspend fun trustPeer(peer: PairedPeer) {
         updateSettings {
             it.copy(
-                homeLanSyncEnabled = false,
-                homeLanSyncPairing = null,
-                homeLanSyncLastError = null,
-                homeLanSyncLastDetail = null,
+                homeLanSyncPeers = it.homeLanSyncPeers.filterNot { known ->
+                    known.deviceId == peer.deviceId || known.fingerprint == peer.fingerprint
+                } + peer,
+                homeLanSyncRepairNeeded = false,
             )
         }
-        reconcilePairing()
-        _status.update {
-            HomeLanSyncStatus(enabled = false, role = settings().homeLanSyncRole)
-        }
+        reconcileTrust()
+        _status.update { it.copy(lastError = null, lastDetail = "Paired with ${peer.displayName}") }
     }
 
-    override fun pairingUri(): String? {
-        val pairing = _pairing.value ?: return null
-        if (!shouldRunHub()) return null
-        if (pairing.hubCertSha256Hex.isNullOrBlank()) return null
-        val host = pairing.hubHost?.takeIf { it.isNotBlank() } ?: detectedLanHost()
-        return pairing.toPairingUri(host)
+    override suspend fun removeDevice(deviceId: String) {
+        invalidateResolution()
+        updateSettings {
+            it.copy(
+                homeLanSyncHub = it.homeLanSyncHub?.takeUnless { hub -> hub.deviceId == deviceId },
+                homeLanSyncPeers = it.homeLanSyncPeers.filterNot { peer -> peer.deviceId == deviceId },
+            )
+        }
+        reconcileTrust()
+    }
+
+    override suspend fun resetIdentity() {
+        pairingHost.abandon("This device's identity was reset")
+        stopHub()
+        identity.reset()
+        updateSettings { it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(), homeLanSyncLastError = null) }
+        reconcileTrust()
+        _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
+        startHubIfNeeded()
     }
 
     override suspend fun syncNow(): Result<String> {
@@ -239,31 +257,24 @@ class HomeLanSyncService(
             startHubIfNeeded()
         }
         return mutex.withLock {
-            val pairing = _pairing.value
-                ?: return@withLock Result.failure(IllegalStateException("Not paired"))
             if (!_status.value.enabled) {
                 return@withLock Result.failure(IllegalStateException("Home sync is disabled"))
             }
-            if (pairing.hubCertSha256Hex.isNullOrBlank() && shouldRunClient()) {
-                val msg = "Re-pair with kainos-homesync:2 URI from the PC (TLS cert pin required)"
+            val target = syncTarget()
+            if (target == null) {
+                val msg = if (settings().homeLanSyncRepairNeeded) HOME_LAN_REPAIR_NOTICE else "Not paired"
                 _status.update { it.copy(lastError = msg) }
                 return@withLock Result.failure(IllegalStateException(msg))
             }
-            // Hub Sync now also talks to the local HTTPS endpoint as a client.
-            if (pairing.hubCertSha256Hex.isNullOrBlank()) {
-                val msg = "Re-pair with kainos-homesync:2 URI (TLS cert pin required)"
-                _status.update { it.copy(lastError = msg) }
-                return@withLock Result.failure(IllegalStateException(msg))
-            }
-            var source = resolutionSource(pairing)
+            var source = resolutionSource(target)
             val startedAt = clock()
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync start")
             runCatching {
-                ensureDeviceId()
-                val (connection, resolved) = openHubClient(pairing).getOrThrow()
+                val deviceId = ensureDeviceId()
+                val (connection, resolved) = openHubClient(target).getOrThrow()
                 connection.use { client ->
                     check(rememberHubAddress(source, resolved)) { "Pairing changed during hub discovery" }
-                    source = source.copy(pairing = pairing.at(resolved.endpoint))
+                    if (!shouldRunHub(source.role)) source = source.copy(target = target.at(resolved.endpoint))
                     withVaultSyncForeground("Home library sync") {
                         val remoteHearts = client.syncHearts().getOrThrow()
                         library.mergeAndPersistSyncState(remoteHearts)
@@ -282,7 +293,7 @@ class HomeLanSyncService(
                             val heartsOnly = settings().homeLanSyncVaultHeartsOnly
                             val heartedNames = heartedLocalAudioFileNames(library)
                             val result = planVaultTransfers(
-                                deviceId = pairing.deviceId,
+                                deviceId = deviceId,
                                 store = vaultStore,
                                 client = client,
                                 heartsOnly = heartsOnly,
@@ -349,7 +360,7 @@ class HomeLanSyncService(
         relPath: String,
         direction: VaultCopyDirection,
     ): Result<String> = mutex.withLock {
-        val pairing = _pairing.value
+        val target = syncTarget()
             ?: return Result.failure(IllegalStateException("Not paired"))
         val path = relPath.normalizeVaultRelPath()
         val transfer = _status.value.pendingTransfers.firstOrNull {
@@ -358,7 +369,7 @@ class HomeLanSyncService(
         runCatching {
             require(vaultStore.isConfigured()) { "Vault not configured" }
             withVaultSyncForeground("Vault transfer") {
-                clientFactory(pairing).use { client ->
+                clientFactory(target).use { client ->
                     executeVaultTransfer(vaultStore, client, transfer, onProgress = ::reportVaultProgress)
                 }
             }
@@ -417,12 +428,12 @@ class HomeLanSyncService(
     override suspend fun resolveConflictKeepLocal(relPath: String): Result<String> = mutex.withLock {
         val path = relPath.normalizeVaultRelPath()
         runCatching {
-            val pairing = _pairing.value ?: error("Not paired")
+            val target = syncTarget() ?: error("Not paired")
             require(vaultStore.isConfigured()) { "Vault not configured" }
             val size = vaultStore.localSize(path) ?: error("Local file missing for $path")
             val transfer = PendingVaultTransfer(path, VaultCopyDirection.TO_REMOTE, sizeBytes = size)
             withVaultSyncForeground("Vault conflict") {
-                clientFactory(pairing).use { client ->
+                clientFactory(target).use { client ->
                     executeVaultTransfer(
                         vaultStore,
                         client,
@@ -439,7 +450,7 @@ class HomeLanSyncService(
     override suspend fun resolveConflictKeepRemote(relPath: String): Result<String> = mutex.withLock {
         val path = relPath.normalizeVaultRelPath()
         runCatching {
-            val pairing = _pairing.value ?: error("Not paired")
+            val target = syncTarget() ?: error("Not paired")
             require(vaultStore.isConfigured()) { "Vault not configured" }
             val conflict = _status.value.pendingConflicts.firstOrNull { it.relPath == path }
                 ?: error("No pending conflict for $path")
@@ -452,7 +463,7 @@ class HomeLanSyncService(
             )
             try {
                 withVaultSyncForeground("Vault conflict") {
-                    clientFactory(pairing).use { client ->
+                    clientFactory(target).use { client ->
                         executeVaultTransfer(
                             vaultStore,
                             client,
@@ -500,34 +511,36 @@ class HomeLanSyncService(
 
     override suspend fun startHubIfNeeded() {
         if (!shouldRunHub()) return
-        val pairing = _pairing.value ?: return
         if (!_status.value.enabled) return
+        val deviceId = ensureDeviceId()
         mutex.withLock {
             if (hub?.isListening == true) {
-                // Already up for this process; callers that rotate pairing must stopHub() first.
+                // Already up for this process; callers that change the identity must stopHub() first.
                 return
             }
             hub?.stop()
             runCatching {
                 val created = hubFactory(
-                    pairing,
-                    { remote -> library.mergeAndPersistSyncState(remote) },
-                    { remote -> playlists.mergeAndPersistSyncState(remote) },
-                    vaultStore.takeIf { it.isConfigured() },
-                    {
-                        if (settings().homeLanSyncVaultHeartsOnly) {
-                            heartedLocalAudioFileNames(library)
-                        } else {
-                            null
-                        }
-                    },
+                    HomeLanHubConfig(
+                        deviceId = deviceId,
+                        port = hubPort,
+                        peers = { settings().homeLanSyncPeers },
+                        pairing = pairingHost,
+                        onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
+                        onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
+                        vault = vaultStore.takeIf { it.isConfigured() },
+                        heartedVaultFileNames = {
+                            if (settings().homeLanSyncVaultHeartsOnly) heartedLocalAudioFileNames(library) else null
+                        },
+                    ),
                 )
                 created.start()
                 hub = created
                 _status.update {
-                    it.copy(hubListening = true, lastError = null, lastDetail = "Hub listening on ${pairing.hubPort}")
+                    it.copy(hubListening = true, lastError = null, lastDetail = "Hub listening on $hubPort")
                 }
                 startIdleWatch()
+                startPairingExpiry()
             }.onFailure { err ->
                 hub = null
                 _status.update {
@@ -544,6 +557,8 @@ class HomeLanSyncService(
         invalidateResolution()
         idleWatchJob?.cancel()
         idleWatchJob = null
+        pairingExpiryJob?.cancel()
+        pairingExpiryJob = null
         mutex.withLock {
             hub?.stop()
             hub = null
@@ -558,19 +573,10 @@ class HomeLanSyncService(
                 if (!_status.value.enabled) return@runCatching
                 startHubIfNeeded()
                 if (!shouldRunClient()) return@runCatching
-                val pairing = _pairing.value ?: return@runCatching
-                if (pairing.hubCertSha256Hex.isNullOrBlank()) {
-                    _status.update {
-                        it.copy(
-                            lastError =
-                                "Re-pair with kainos-homesync:2 URI from the PC (TLS cert pin required)",
-                        )
-                    }
-                    return@runCatching
-                }
-                val captured = resolutionSource(pairing)
+                val target = _trust.value.hub ?: return@runCatching
+                val captured = resolutionSource(target)
                 source = captured
-                val reachable = openHubClient(pairing).getOrNull()?.let { (client, resolved) ->
+                val reachable = openHubClient(target).getOrNull()?.let { (client, resolved) ->
                     client.close()
                     rememberHubAddress(captured, resolved)
                 } ?: false
@@ -587,25 +593,43 @@ class HomeLanSyncService(
         }
     }
 
+    /** The hub this device syncs with: its paired hub, or on a PC hub its own listener. */
+    private fun syncTarget(): PairedPeer? =
+        if (shouldRunHub()) localHubTarget(settings().homeLanSyncDeviceId) else settings().homeLanSyncHub
+
+    private fun localHubTarget(deviceId: String?): PairedPeer = PairedPeer(
+        deviceId = deviceId.orEmpty(),
+        displayName = "This PC",
+        fingerprint = identity.fingerprint(),
+        lastKnownHost = "127.0.0.1",
+        lastKnownPort = hubPort,
+        pairedAtMs = 0L,
+    )
+
     private suspend fun openHubClient(
-        pairing: HomeLanSyncPairing,
+        target: PairedPeer,
     ): Result<Pair<HomeLanSyncClient, ResolveResult.Resolved>> {
-        val pin = pairing.hubCertSha256Hex
-            ?: return Result.failure(IllegalStateException("Hub certificate pin required"))
-        val stored = pairing.hubHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, pairing.hubPort) }
+        val stored = target.lastKnownHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, target.lastKnownPort) }
         val clients = mutableMapOf<HubEndpoint, HomeLanSyncClient>()
+        var trustFailure: String? = null
         val startedAt = clock()
         val resolver = HubEndpointResolver(
-            browser = hubBrowser,
+            browser = {
+                hubBrowser.browse().onEach { advertised ->
+                    if (advertised.id == target.deviceId && CertFingerprint.parse(advertised.fp) != target.fingerprint) {
+                        trustFailure = HOME_LAN_IDENTITY_CHANGED
+                    }
+                }
+            },
             probe = { endpoint ->
                 runCatching {
-                    clients.getOrPut(endpoint) { clientFactory(pairing.at(endpoint)) }.probeHub().getOrThrow()
-                }.map { }
+                    clients.getOrPut(endpoint) { clientFactory(target.at(endpoint)) }.probeHub().getOrThrow()
+                }.map { }.onFailure { err -> trustFailureOf(err)?.let { trustFailure = it } }
             },
             log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
         )
         val result = try {
-            resolver.resolve(stored, pin)
+            resolver.resolve(stored, target.fingerprint.hex)
         } catch (err: Throwable) {
             clients.values.forEach { it.close() }
             throw err
@@ -613,7 +637,10 @@ class HomeLanSyncService(
         val winner = (result as? ResolveResult.Resolved)?.endpoint
         clients.filterKeys { it != winner }.values.forEach { it.close() }
         return when (result) {
-            is ResolveResult.HubNotFound -> Result.failure(IllegalStateException(result.reason))
+            is ResolveResult.HubNotFound -> {
+                trustFailure?.let { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "$it (${result.reason})") }
+                Result.failure(IllegalStateException(trustFailure ?: result.reason))
+            }
             is ResolveResult.Resolved -> {
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "hub ${result.endpoint} via ${result.via} in ${clock() - startedAt} ms")
                 Result.success(clients.getValue(result.endpoint) to result)
@@ -624,9 +651,9 @@ class HomeLanSyncService(
     private suspend fun rememberHubAddress(source: ResolutionSource, resolved: ResolveResult.Resolved): Boolean {
         coroutineContext.ensureActive()
         if (!isCurrent(source)) return false
-        if (resolved.via != ResolvedVia.MDNS) return settings().matches(source)
+        if (resolved.via != ResolvedVia.MDNS || shouldRunHub(source.role)) return settings().matches(source)
         val endpoint = resolved.endpoint
-        val committedSource = source.copy(pairing = source.pairing.at(endpoint))
+        val committedSource = source.copy(target = source.target.at(endpoint))
         val resolutionContext = coroutineContext
         var stored = false
         try {
@@ -636,13 +663,13 @@ class HomeLanSyncService(
                     synchronized(resolutionLock) {
                         if (resolutionContext.isActive && isCurrent(source) && current.matches(source)) {
                             stored = true
-                            current.copy(homeLanSyncPairing = committedSource.pairing)
+                            current.copy(homeLanSyncHub = committedSource.target)
                         } else current
                     }
                 }
             }
         } finally {
-            reconcilePairing()
+            reconcileTrust()
         }
         coroutineContext.ensureActive()
         val remembered = synchronized(resolutionLock) {
@@ -654,14 +681,25 @@ class HomeLanSyncService(
     }
 
     private fun AppSettings.matches(source: ResolutionSource): Boolean =
-        homeLanSyncEnabled && homeLanSyncRole == source.role && effectivePairing() == source.pairing
+        homeLanSyncEnabled && homeLanSyncRole == source.role && effectiveTarget() == source.target
 
-    private fun reconcilePairing() = synchronized(resolutionLock) {
-        _pairing.value = settings().effectivePairing()
+    private fun reconcileTrust() = synchronized(resolutionLock) {
+        _trust.value = settings().trust()
     }
 
-    private fun AppSettings.effectivePairing(): HomeLanSyncPairing? = homeLanSyncPairing?.let {
-        if (shouldRunHub(homeLanSyncRole)) it.copy(hubPort = hubPort) else it
+    private fun AppSettings.effectiveTarget(): PairedPeer? =
+        if (shouldRunHub(homeLanSyncRole)) localHubTarget(homeLanSyncDeviceId) else homeLanSyncHub
+
+    /** An attempt that times out disappears from the PC screen without waiting for the next request. */
+    private fun startPairingExpiry() {
+        pairingExpiryJob?.cancel()
+        pairingExpiryJob = scope.launch {
+            pairingHost.incoming.collectLatest { attempt ->
+                if (attempt == null) return@collectLatest
+                delay(PAIRING_ATTEMPT_TTL_MS)
+                pairingHost.expireDue()
+            }
+        }
     }
 
     private fun startIdleWatch() {
@@ -705,7 +743,21 @@ class HomeLanSyncService(
 
 internal const val HOME_SYNC_TRACE_TAG = "HomeSync"
 
-private fun HomeLanSyncPairing.at(endpoint: HubEndpoint) = copy(hubHost = endpoint.host, hubPort = endpoint.port)
+private fun PairedPeer.at(endpoint: HubEndpoint) = copy(lastKnownHost = endpoint.host, lastKnownPort = endpoint.port)
+
+private fun AppSettings.trust() = HomeLanTrust(homeLanSyncHub, homeLanSyncPeers, homeLanSyncRepairNeeded)
+
+private fun PairingReply<Unit>.toResult(): Result<Unit> = when (this) {
+    is PairingReply.Ok -> Result.success(Unit)
+    is PairingReply.Refused -> Result.failure(IllegalStateException(reason))
+}
+
+/** A refusal that means trust broke, not that the hub is unreachable. */
+private fun trustFailureOf(err: Throwable): String? {
+    if ((err as? ResponseException)?.response?.status == HttpStatusCode.Unauthorized) return HOME_LAN_NOT_TRUSTED
+    val pinMismatch = generateSequence(err) { it.cause }.any { HUB_PIN_MISMATCH in (it.message ?: "") }
+    return if (pinMismatch) HOME_LAN_IDENTITY_CHANGED else null
+}
 
 fun ByteArray.toHex(): String =
     joinToString("") { b -> ((b.toInt() and 0xff) + 0x100).toString(16).substring(1) }

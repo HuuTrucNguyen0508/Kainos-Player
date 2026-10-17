@@ -5,40 +5,23 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class HomeLanHubAuthTest {
-    private val pairing = HomeLanSyncPairing(
-        deviceId = "pc",
-        sharedSecretHex = "aabbccddeeff00112233445566778899",
-        pairingPin = "123456",
-    )
+    private val self = PairedPeer("kainos-pc", "This PC", CertFingerprint.parse("aa".repeat(32))!!, pairedAtMs = 0L)
+    private val phone = PairedPeer("kainos-phone", "Phone", CertFingerprint.parse("bb".repeat(32))!!, pairedAtMs = 1L)
 
     @Test
-    fun acceptsRightTokenAndPin() {
-        assertEquals(
-            HubAuthResult.OK,
-            homeLanHubAuthorize(pairing, "Bearer aabbccddeeff00112233445566778899", "123456"),
-        )
+    fun noCertificateIsAnonymous() {
+        assertEquals(HubCaller.Anonymous, identifyHubCaller(null, self, listOf(phone)))
     }
 
     @Test
-    fun rejectsWrongOrMissingToken() {
-        assertEquals(
-            HubAuthResult.BAD_TOKEN,
-            homeLanHubAuthorize(pairing, "Bearer aabbccddeeff00112233445566778800", "123456"),
-        )
-        assertEquals(HubAuthResult.BAD_TOKEN, homeLanHubAuthorize(pairing, "Bearer aabb", "123456"))
-        assertEquals(HubAuthResult.BAD_TOKEN, homeLanHubAuthorize(pairing, null, "123456"))
+    fun aPairedFingerprintMapsToItsPeerAndTheHubToItself() {
+        assertEquals(HubCaller.Paired(phone), identifyHubCaller(phone.fingerprint, self, listOf(phone)))
+        assertEquals(HubCaller.Paired(self), identifyHubCaller(self.fingerprint, self, emptyList()))
     }
 
     @Test
-    fun rejectsWrongPinAndSkipsPinWhenNotRequired() {
-        assertEquals(
-            HubAuthResult.BAD_PIN,
-            homeLanHubAuthorize(pairing, "Bearer aabbccddeeff00112233445566778899", "654321"),
-        )
-        assertEquals(
-            HubAuthResult.OK,
-            homeLanHubAuthorize(pairing.copy(pairingPin = null), "Bearer aabbccddeeff00112233445566778899", null),
-        )
+    fun aRemovedPeerIsUnpaired() {
+        assertEquals(HubCaller.Unpaired(phone.fingerprint), identifyHubCaller(phone.fingerprint, self, emptyList()))
     }
 
     @Test

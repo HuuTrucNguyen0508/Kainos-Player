@@ -19,11 +19,11 @@ import kotlin.test.assertEquals
 
 class HttpHomeLanSyncClientTest {
     @Test
-    fun heartsUsesV2AndDoesNotRetrySuccessfulRequest() = runTest {
+    fun heartsUsesV2WithoutAnAuthorizationHeaderAndDoesNotRetry() = runTest {
         val paths = mutableListOf<String>()
         val result = client { request ->
             paths += request.url.encodedPath
-            assertTrue(request.headers[HttpHeaders.Authorization]?.startsWith("Bearer ") == true)
+            assertEquals(null, request.headers[HttpHeaders.Authorization])
             respond("{\"deviceId\":\"pc\",\"spotifyAccountId\":null}", HttpStatusCode.OK)
         }.use { it.syncHearts() }
         assertTrue(result.isSuccess)
@@ -67,27 +67,27 @@ class HttpHomeLanSyncClientTest {
     @Test
     fun ipv6HubAddressIsBracketedInTheUrl() = runTest {
         val urls = mutableListOf<String>()
-        client(pairing.copy(hubHost = "fe80::1c2:3")) { request ->
+        client(hub.copy(lastKnownHost = "fe80::1c2:3")) { request ->
             urls += request.url.toString()
             respond("{\"deviceId\":\"pc\"}", HttpStatusCode.OK)
         }.use { it.probeHub().getOrThrow() }
         assertEquals(listOf("https://[fe80::1c2:3]:43822$HOME_LAN_SYNC_PATH_HEALTH"), urls)
     }
 
-    private val pairing = HomeLanSyncPairing(
-        deviceId = "phone",
-        sharedSecretHex = "aabbccddeeff00112233445566778899",
-        hubHost = "192.168.1.10",
-        hubCertSha256Hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        encryptPayloads = false,
+    private val hub = PairedPeer(
+        deviceId = "pc",
+        displayName = "Kainos on pc",
+        fingerprint = CertFingerprint.parse("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")!!,
+        lastKnownHost = "192.168.1.10",
+        pairedAtMs = 1L,
     )
 
     private fun client(
-        pairing: HomeLanSyncPairing = this.pairing,
+        hub: PairedPeer = this.hub,
         handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
     ): HttpHomeLanSyncClient =
         HttpHomeLanSyncClient(
-            pairing,
+            hub,
             LibraryRepository(),
             KainosPlaylistRepository(),
             HttpClient(MockEngine(handler)) { expectSuccess = true },
@@ -156,16 +156,5 @@ class HttpHomeLanSyncClientTest {
             )
         }.use { it.downloadBlob("a.flac", 0L, 5) }
         assertContentEquals(byteArrayOf(1, 2, 3, 4, 5), ok.getOrThrow())
-    }
-
-    @Test
-    fun downloadDecryptsAndChecksPlaintextLength() = runTest {
-        val encrypted = pairing.copy(encryptPayloads = true)
-        val key = SyncPayloadCrypto.keyFromSharedSecret(encrypted.sharedSecretHex)
-        val sealed = SyncPayloadCrypto.encrypt(byteArrayOf(9, 8, 7), key)
-        val ok = client(encrypted) {
-            respond(sealed, HttpStatusCode.PartialContent, headersOf(HttpHeaders.ContentRange, "bytes 0-2/3"))
-        }.use { it.downloadBlob("a.flac", 0L, 3) }
-        assertContentEquals(byteArrayOf(9, 8, 7), ok.getOrThrow())
     }
 }

@@ -3,7 +3,12 @@ package com.universalmusic.player.data.settings
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.domain.model.TrackSort
+import com.universalmusic.player.data.sync.PairedPeer
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 enum class ThemeMode {
     SYSTEM,
@@ -73,7 +78,17 @@ data class AppSettings(
     val homeLanSyncRole: com.universalmusic.player.data.sync.HomeLanSyncRole =
         com.universalmusic.player.data.sync.HomeLanSyncRole.AUTO,
     val homeLanSyncDeviceId: String? = null,
-    val homeLanSyncPairing: com.universalmusic.player.data.sync.HomeLanSyncPairing? = null,
+    /** The hub this device syncs with, trusted by the fingerprint it showed while pairing. */
+    val homeLanSyncHub: PairedPeer? = null,
+    /** Devices this hub trusts. */
+    val homeLanSyncPeers: List<PairedPeer> = emptyList(),
+    /** Set when a shared-secret pairing was dropped; Settings asks the user to pair again. */
+    val homeLanSyncRepairNeeded: Boolean = false,
+    /** A shared-secret pairing from before per-device keys, read only so it can be dropped. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @SerialName("homeLanSyncPairing")
+    val legacyHomeLanSyncPairing: JsonElement? = null,
     val homeLanSyncVaultFolder: String? = null,
     /**
      * When true, vault blob sync only transfers files whose basename matches an app-hearted
@@ -93,6 +108,10 @@ data class AppSettings(
         normalizeVolume = normalizeVolume,
     )
 }
+
+fun AppSettings.withoutLegacyHomeLanPairing(): AppSettings =
+    if (legacyHomeLanSyncPairing == null) this
+    else copy(legacyHomeLanSyncPairing = null, homeLanSyncRepairNeeded = true)
 
 interface SettingsStore {
     suspend fun read(): AppSettings

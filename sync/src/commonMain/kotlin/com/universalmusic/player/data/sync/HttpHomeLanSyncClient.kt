@@ -7,7 +7,6 @@ import com.universalmusic.player.data.playlist.forV1Sync
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -25,8 +24,9 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+/** Syncs with [hub] at its last known address; [http] presents this device's certificate and pins the hub's. */
 class HttpHomeLanSyncClient(
-    private val pairing: HomeLanSyncPairing,
+    private val hub: PairedPeer,
     private val library: LibraryRepository,
     private val playlists: KainosPlaylistRepository,
     private val http: HttpClient,
@@ -38,36 +38,19 @@ class HttpHomeLanSyncClient(
         if (ownsHttpClient) http.close()
     }
 
-    private val cryptoKey: ByteArray? =
-        if (pairing.encryptPayloads) SyncPayloadCrypto.keyFromSharedSecret(pairing.sharedSecretHex) else null
-
     private fun baseUrl(): String {
-        val host = pairing.hubHost?.takeIf { it.isNotBlank() }
-            ?: error("Hub host not set; complete client pairing with the PC LAN address")
-        require(!pairing.hubCertSha256Hex.isNullOrBlank()) {
-            "Hub certificate pin required; re-pair from a kainos-homesync:2 URI"
-        }
-        return "https://${HubEndpoint(host, pairing.hubPort).authority}"
-    }
-
-    private fun io.ktor.client.request.HttpRequestBuilder.authHeaders() {
-        bearerAuth(pairing.sharedSecretHex)
-        pairing.pairingPin?.takeIf { it.isNotBlank() }?.let {
-            header(HOME_LAN_SYNC_HEADER_PIN, it)
-        }
+        val host = hub.lastKnownHost?.takeIf { it.isNotBlank() } ?: error("No address known for ${hub.displayName}")
+        return "https://${HubEndpoint(host, hub.lastKnownPort).authority}"
     }
 
     override suspend fun probeHub(): Result<HomeLanHealthResponse> = runCatching {
-        val text = http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_HEALTH") {
-            authHeaders()
-        }.requireSuccess("Hub health").bodyAsText()
+        val text = http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_HEALTH").requireSuccess("Hub health").bodyAsText()
         json.decodeFromString<HomeLanHealthResponse>(text)
     }
 
     override suspend fun syncHearts(): Result<HeartsSyncDocument> = runCatching {
         val local = library.exportHeartsSyncDocument()
         val text = postVersioned(HOME_LAN_SYNC_PATH_V2_HEARTS, HOME_LAN_SYNC_PATH_HEARTS) { v2 ->
-            authHeaders()
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(if (v2) local else local.forV1Sync()))
         }.requireSuccess("Hearts sync").bodyAsText()
@@ -77,7 +60,6 @@ class HttpHomeLanSyncClient(
     override suspend fun syncPlaylists(): Result<PlaylistsSyncDocument> = runCatching {
         val local = playlists.exportSyncDocument()
         val text = postVersioned(HOME_LAN_SYNC_PATH_V2_PLAYLISTS, HOME_LAN_SYNC_PATH_PLAYLISTS) { v2 ->
-            authHeaders()
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(if (v2) local else local.forV1Sync()))
         }.requireSuccess("Playlist sync").bodyAsText()
@@ -87,23 +69,10 @@ class HttpHomeLanSyncClient(
     override suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument> =
         runCatching {
             val text = postVersioned(HOME_LAN_SYNC_PATH_V2_VAULT_INDEX, HOME_LAN_SYNC_PATH_VAULT_INDEX) { v2 ->
-                val encoded = json.encodeToString(if (v2) local else local.forV1Sync())
-                authHeaders()
-                if (cryptoKey != null) {
-                    header(HOME_LAN_SYNC_HEADER_ENC, HOME_LAN_SYNC_ENC_AES_GCM)
-                    contentType(ContentType.Text.Plain)
-                    setBody(SyncPayloadCrypto.encryptToBase64(encoded.encodeToByteArray(), cryptoKey))
-                } else {
-                    contentType(ContentType.Application.Json)
-                    setBody(encoded)
-                }
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(if (v2) local else local.forV1Sync()))
             }.requireSuccess("Vault index").bodyAsText()
-            val plain = if (cryptoKey != null) {
-                SyncPayloadCrypto.decryptFromBase64(text, cryptoKey).decodeToString()
-            } else {
-                text
-            }
-            json.decodeFromString<VaultIndexDocument>(plain)
+            json.decodeFromString<VaultIndexDocument>(text)
         }
 
     /** A missing v2 endpoint is the only reason to retry against the one-release v1 API. */
@@ -131,7 +100,6 @@ class HttpHomeLanSyncClient(
             }
             val end = offset + length - 1
             val response = http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_VAULT_BLOB") {
-                authHeaders()
                 parameter("path", relPath)
                 header(HttpHeaders.Range, "bytes=$offset-$end")
             }
@@ -146,8 +114,7 @@ class HttpHomeLanSyncClient(
             require(range.first == offset && range.last in offset..end) {
                 "Blob $relPath: Content-Range ${range.first}-${range.last} does not match $offset-$end"
             }
-            val raw = response.bodyAsBytes()
-            val bytes = if (cryptoKey != null) SyncPayloadCrypto.decrypt(raw, cryptoKey) else raw
+            val bytes = response.bodyAsBytes()
             val expected = range.last - range.first + 1
             require(bytes.size.toLong() == expected) {
                 "Blob $relPath: body has ${bytes.size} bytes, Content-Range says $expected"
@@ -161,18 +128,74 @@ class HttpHomeLanSyncClient(
         totalSize: Long,
         chunk: ByteArray,
     ): Result<Unit> = runCatching {
-        val payload = if (cryptoKey != null) SyncPayloadCrypto.encrypt(chunk, cryptoKey) else chunk
         http.put("${baseUrl()}$HOME_LAN_SYNC_PATH_VAULT_BLOB") {
-            authHeaders()
             parameter("path", relPath)
             parameter("offset", offset)
             parameter("total", totalSize)
             contentType(ContentType.Application.OctetStream)
-            setBody(payload)
+            setBody(chunk)
         }.requireSuccess("Upload $relPath at $offset")
         Unit
     }
 }
+
+/** The phone's side of the pairing routes; a refusal throws with the hub's reason as its message. */
+interface HomeLanPairingClient : AutoCloseable {
+    override fun close() = Unit
+    suspend fun start(request: PairStartRequest): PairStartResponse
+    suspend fun reveal(request: PairRevealRequest)
+    suspend fun confirm(attemptId: String)
+    suspend fun cancel(attemptId: String)
+    suspend fun status(attemptId: String): PairStatusResponse
+}
+
+class HttpHomeLanPairingClient(
+    private val endpoint: HubEndpoint,
+    private val http: HttpClient,
+    private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+) : HomeLanPairingClient {
+    override fun close() = http.close()
+
+    private val base get() = "https://${endpoint.authority}"
+
+    override suspend fun start(request: PairStartRequest): PairStartResponse =
+        json.decodeFromString(post(HOME_LAN_SYNC_PATH_PAIR_START, json.encodeToString(request)))
+
+    override suspend fun reveal(request: PairRevealRequest) {
+        post(HOME_LAN_SYNC_PATH_PAIR_REVEAL, json.encodeToString(request))
+    }
+
+    override suspend fun confirm(attemptId: String) {
+        post(HOME_LAN_SYNC_PATH_PAIR_CONFIRM, json.encodeToString(PairAttemptRequest(attemptId)))
+    }
+
+    override suspend fun cancel(attemptId: String) {
+        post(HOME_LAN_SYNC_PATH_PAIR_CANCEL, json.encodeToString(PairAttemptRequest(attemptId)))
+    }
+
+    override suspend fun status(attemptId: String): PairStatusResponse =
+        json.decodeFromString(
+            http.get("$base$HOME_LAN_SYNC_PATH_PAIR_STATUS") {
+                expectSuccess = false
+                parameter("attemptId", attemptId)
+            }.pairingBody(),
+        )
+
+    private suspend fun post(path: String, body: String): String =
+        http.post("$base$path") {
+            expectSuccess = false
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }.pairingBody()
+
+    private suspend fun HttpResponse.pairingBody(): String {
+        val text = bodyAsText()
+        if (!status.isSuccess()) throw PairingRefusedException(status.value, text.take(200).ifBlank { "HTTP ${status.value}" })
+        return text
+    }
+}
+
+class PairingRefusedException(val httpStatus: Int, reason: String) : IllegalStateException(reason)
 
 /** Throws with status + a short body excerpt unless the hub answered 2xx. */
 private suspend fun HttpResponse.requireSuccess(what: String): HttpResponse {

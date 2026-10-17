@@ -34,12 +34,7 @@ class HomeLanConflictResolutionTest {
             homeLanSyncRole = HomeLanSyncRole.CLIENT,
             homeLanSyncDeviceId = "phone",
             homeLanSyncVaultHeartsOnly = false,
-            homeLanSyncPairing = HomeLanSyncPairing(
-                deviceId = "phone",
-                sharedSecretHex = "aabb",
-                hubHost = "192.168.1.10",
-                hubCertSha256Hex = cert,
-            ),
+            homeLanSyncHub = PairedPeer("hub", "Kainos on pc", CertFingerprint.parse(cert)!!, "192.168.1.10", pairedAtMs = 1L),
         )
         val created = mutableListOf<FakeVaultClient>()
         val service = HomeLanSyncService(
@@ -48,7 +43,9 @@ class HomeLanConflictResolutionTest {
             updateSettings = { transform -> settings = transform(settings) },
             library = LibraryRepository(),
             playlists = KainosPlaylistRepository(),
-            hubFactory = { _, _, _, _, _ -> NoOpHomeLanSyncHub() },
+            hubFactory = { NoOpHomeLanSyncHub() },
+            pairingClientFactory = noPairingClient(),
+            identity = FixedDeviceIdentity("bb".repeat(32)),
             clientFactory = { clientFor().also { created += it } },
             vaultStore = store,
             refreshLocalLibrary = {},

@@ -1,16 +1,24 @@
 package com.universalmusic.player.platform
 
-import com.universalmusic.player.data.sync.HomeLanSyncPairing
+import com.universalmusic.player.data.sync.CertFingerprint
 import io.ktor.client.HttpClient
 
-/**
- * HTTPS client that only trusts a hub leaf certificate whose SHA-256 (DER) matches [certPinHex].
- * There is no hostname check, so any address that reaches the pinned hub works.
- */
-expect fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient
+/** This device's home-sync key pair and self-signed certificate. */
+interface DeviceIdentity {
+    /** Creates the key on first use. */
+    fun fingerprint(): CertFingerprint
+
+    /** Deletes the key and creates a new one; every device that trusted the old one must pair again. */
+    fun reset(): CertFingerprint
+}
+
+expect fun platformDeviceIdentity(): DeviceIdentity
 
 /**
- * Desktop: generate a new self-signed hub cert, persist PKCS12, return SHA-256 pin.
- * Android: returns null (hub is desktop-only).
+ * HTTPS client that presents this device's certificate and only trusts a hub leaf certificate
+ * whose fingerprint is [pin]. There is no hostname check, so any address that reaches the pinned
+ * hub works.
  */
-expect fun generateHomeLanHubCertPin(pairing: HomeLanSyncPairing): String?
+expect fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient
+
+const val HUB_PIN_MISMATCH = "Hub certificate pin mismatch"

@@ -13,7 +13,8 @@ data class HubEndpoint(val host: String, val port: Int) {
     override fun toString(): String = authority
 }
 
-data class DiscoveredHub(val fp: String, val id: String?, val host: String, val port: Int) {
+/** [name] is the advertised instance name, such as `Kainos on <hostname>`, for the pairing list. */
+data class DiscoveredHub(val fp: String, val id: String?, val host: String, val port: Int, val name: String = host) {
     val endpoint: HubEndpoint get() = HubEndpoint(host, port)
 }
 

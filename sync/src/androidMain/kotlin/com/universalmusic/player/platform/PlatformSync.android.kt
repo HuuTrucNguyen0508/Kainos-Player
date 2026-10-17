@@ -1,12 +1,6 @@
 package com.universalmusic.player.platform
 
-actual fun createHomeLanSyncHub(
-    pairing: com.universalmusic.player.data.sync.HomeLanSyncPairing,
-    onHearts: suspend (com.universalmusic.player.data.sync.HeartsSyncDocument) -> com.universalmusic.player.data.sync.HeartsSyncDocument,
-    onPlaylists: suspend (com.universalmusic.player.data.playlist.PlaylistsSyncDocument) -> com.universalmusic.player.data.playlist.PlaylistsSyncDocument,
-    vault: com.universalmusic.player.data.sync.HomeLanVaultStore?,
-    heartedVaultFileNames: () -> Set<String>?,
-): com.universalmusic.player.data.sync.HomeLanSyncHub =
+actual fun createHomeLanSyncHub(config: HomeLanHubConfig): com.universalmusic.player.data.sync.HomeLanSyncHub =
     com.universalmusic.player.data.sync.NoOpHomeLanSyncHub()
 
 actual fun createHomeLanVaultStore(
@@ -19,7 +13,10 @@ actual fun createHomeLanVaultStore(
 
 actual fun homeLanHubPort(): Int = com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 
-actual fun detectLanHostAddress(): String? = null
+actual fun homeLanDeviceName(): String =
+    android.provider.Settings.Global.getString(androidContext.contentResolver, "device_name")
+        ?.takeIf { it.isNotBlank() }
+        ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
 actual suspend fun <T> withVaultSyncForeground(
     label: String,

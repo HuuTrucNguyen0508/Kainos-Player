@@ -26,12 +26,7 @@ class HomeLanHubRelocationTest {
         homeLanSyncEnabled = true,
         homeLanSyncRole = HomeLanSyncRole.CLIENT,
         homeLanSyncDeviceId = "phone",
-        homeLanSyncPairing = HomeLanSyncPairing(
-            deviceId = "phone",
-            sharedSecretHex = "aabb",
-            hubHost = "192.168.1.10",
-            hubCertSha256Hex = cert,
-        ),
+        homeLanSyncHub = PairedPeer("pc", "Kainos on pc", CertFingerprint.parse(cert)!!, "192.168.1.10", pairedAtMs = 1L),
     )
     private var persistedSettings = settings
     private val settingsMutex = Mutex()
@@ -60,11 +55,23 @@ class HomeLanHubRelocationTest {
             },
             library = LibraryRepository(),
             playlists = KainosPlaylistRepository(),
-            hubFactory = { _, _, _, _, _ -> NoOpHomeLanSyncHub() },
-            clientFactory = { pairing ->
-                clientHosts += pairing.hubHost
+            hubFactory = { NoOpHomeLanSyncHub() },
+            pairingClientFactory = { _, _ ->
+                object : HomeLanPairingClient {
+                    override suspend fun start(request: PairStartRequest) =
+                        PairStartResponse("replacement", "11".repeat(PAIRING_NONCE_BYTES))
+                    override suspend fun reveal(request: PairRevealRequest) = Unit
+                    override suspend fun confirm(attemptId: String) = Unit
+                    override suspend fun cancel(attemptId: String) = Unit
+                    override suspend fun status(attemptId: String) =
+                        PairStatusResponse(PairState.PAIRED, hubDeviceId = "pc-b")
+                }
+            },
+            identity = FixedDeviceIdentity("bb".repeat(32)),
+            clientFactory = { hub ->
+                clientHosts += hub.lastKnownHost
                 val reachable = FakeVaultClient(ByteArray(0)).also { openClients += it }
-                if (pairing.hubHost == liveHost) {
+                if (hub.lastKnownHost == liveHost) {
                     reachable
                 } else {
                     object : HomeLanSyncClient by reachable {
@@ -92,8 +99,8 @@ class HomeLanHubRelocationTest {
         service.syncNow().getOrThrow()
 
         assertEquals(listOf<String?>("192.168.1.10", "192.168.1.57"), clientHosts)
-        assertEquals("192.168.1.57", settings.homeLanSyncPairing?.hubHost)
-        assertEquals("192.168.1.57", service.pairing.value?.hubHost)
+        assertEquals("192.168.1.57", settings.homeLanSyncHub?.lastKnownHost)
+        assertEquals("192.168.1.57", service.trust.value.hub?.lastKnownHost)
         assertNull(service.status.value.lastError)
         assertTrue(openClients.all { it.closed }, "every client session must be closed")
     }
@@ -110,7 +117,7 @@ class HomeLanHubRelocationTest {
             result.exceptionOrNull()?.message,
         )
         assertEquals(result.exceptionOrNull()?.message, service.status.value.lastError)
-        assertEquals("192.168.1.10", settings.homeLanSyncPairing?.hubHost)
+        assertEquals("192.168.1.10", settings.homeLanSyncHub?.lastKnownHost)
         assertEquals(listOf<String?>("192.168.1.10"), clientHosts)
         assertTrue(openClients.all { it.closed }, "every client session must be closed")
     }
@@ -121,12 +128,12 @@ class HomeLanHubRelocationTest {
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
         service.onAppForeground()
         runCurrent()
-        service.completeClientPairing("192.168.2.20", 43999, "ccdd", "pc-b", "123456", "b".repeat(64))
-        val replacement = settings.homeLanSyncPairing
+        service.pairWith(DiscoveredHub("b".repeat(64), "pc-b", "192.168.2.20", 43999, "PC B")).confirm()
+        val replacement = settings.homeLanSyncHub
         gate.complete(Unit)
         runCurrent()
-        assertEquals(replacement, settings.homeLanSyncPairing, "persisted replacement pairing must be untouched")
-        assertEquals(replacement, service.pairing.value, "visible replacement pairing must be untouched")
+        assertEquals(replacement, settings.homeLanSyncHub, "persisted replacement pairing must be untouched")
+        assertEquals(replacement, service.trust.value.hub, "visible replacement pairing must be untouched")
         assertTrue(openClients.all { it.closed })
     }
 
@@ -138,14 +145,14 @@ class HomeLanHubRelocationTest {
         val sync = launch { service.syncNow() }
         runCurrent()
         // Settings hydration can replace pairing while syncNow holds its transport mutex.
-        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
-            hubHost = "192.168.2.20", hubPort = 43999, hubCertSha256Hex = "b".repeat(64)))
+        settings = settings.copy(homeLanSyncHub = settings.homeLanSyncHub!!.copy(
+            lastKnownHost = "192.168.2.20", lastKnownPort = 43999, fingerprint = CertFingerprint.parse("b".repeat(64))!!))
         service.hydrateFromSettings(settings)
-        val replacement = settings.homeLanSyncPairing
+        val replacement = settings.homeLanSyncHub
         gate.complete(Unit)
         sync.join()
-        assertEquals(replacement, settings.homeLanSyncPairing)
-        assertEquals(replacement, service.pairing.value)
+        assertEquals(replacement, settings.homeLanSyncHub)
+        assertEquals(replacement, service.trust.value.hub)
         assertTrue(openClients.all { it.closed })
     }
 
@@ -158,14 +165,14 @@ class HomeLanHubRelocationTest {
             beforeSettingsUpdate = { entered.complete(Unit); release.await() })
         service.onAppForeground()
         entered.await()
-        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
-            hubHost = "192.168.2.20", hubCertSha256Hex = "b".repeat(64)))
+        settings = settings.copy(homeLanSyncHub = settings.homeLanSyncHub!!.copy(
+            lastKnownHost = "192.168.2.20", fingerprint = CertFingerprint.parse("b".repeat(64))!!))
         service.hydrateFromSettings(settings)
-        val replacement = settings.homeLanSyncPairing
+        val replacement = settings.homeLanSyncHub
         release.complete(Unit)
         runCurrent()
-        assertEquals(replacement, settings.homeLanSyncPairing)
-        assertEquals(replacement, service.pairing.value)
+        assertEquals(replacement, settings.homeLanSyncHub)
+        assertEquals(replacement, service.trust.value.hub)
     }
 
     @Test
@@ -177,14 +184,14 @@ class HomeLanHubRelocationTest {
             afterSettingsUpdate = { entered.complete(Unit); release.await() })
         service.onAppForeground()
         entered.await()
-        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
-            hubHost = "192.168.2.20", hubCertSha256Hex = "b".repeat(64)))
+        settings = settings.copy(homeLanSyncHub = settings.homeLanSyncHub!!.copy(
+            lastKnownHost = "192.168.2.20", fingerprint = CertFingerprint.parse("b".repeat(64))!!))
         service.hydrateFromSettings(settings)
-        val replacement = settings.homeLanSyncPairing
+        val replacement = settings.homeLanSyncHub
         release.complete(Unit)
         runCurrent()
-        assertEquals(replacement, settings.homeLanSyncPairing)
-        assertEquals(replacement, service.pairing.value)
+        assertEquals(replacement, settings.homeLanSyncHub)
+        assertEquals(replacement, service.trust.value.hub)
     }
 
     @Test
@@ -192,14 +199,14 @@ class HomeLanHubRelocationTest {
         val gate = CompletableDeferred<Unit>()
         val service = service(backgroundScope, "192.168.1.57",
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
-        val original = settings.homeLanSyncPairing
+        val original = settings.homeLanSyncHub
         service.onAppForeground()
         runCurrent()
         service.stopHub()
         gate.complete(Unit)
         runCurrent()
-        assertEquals(original, settings.homeLanSyncPairing)
-        assertEquals(original, service.pairing.value)
+        assertEquals(original, settings.homeLanSyncHub)
+        assertEquals(original, service.trust.value.hub)
         assertTrue(openClients.all { it.closed })
     }
 
@@ -208,15 +215,15 @@ class HomeLanHubRelocationTest {
         val gate = CompletableDeferred<Unit>()
         val service = service(backgroundScope, "192.168.1.57",
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
-        val original = settings.homeLanSyncPairing
+        val original = settings.homeLanSyncHub
         service.onAppForeground()
         runCurrent()
         service.enable(false)
         service.enable(true)
         gate.complete(Unit)
         runCurrent()
-        assertEquals(original, settings.homeLanSyncPairing)
-        assertEquals(original, service.pairing.value)
+        assertEquals(original, settings.homeLanSyncHub)
+        assertEquals(original, service.trust.value.hub)
         assertTrue(openClients.all { it.closed })
     }
 
@@ -227,11 +234,11 @@ class HomeLanHubRelocationTest {
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
         service.onAppForeground()
         runCurrent()
-        service.unpair()
+        service.removeDevice("pc")
         gate.complete(Unit)
         runCurrent()
-        assertNull(settings.homeLanSyncPairing)
-        assertNull(service.pairing.value)
+        assertNull(settings.homeLanSyncHub)
+        assertNull(service.trust.value.hub)
         assertTrue(openClients.all { it.closed })
     }
 
@@ -242,15 +249,15 @@ class HomeLanHubRelocationTest {
         val scope = CoroutineScope(backgroundScope.coroutineContext + job)
         val service = service(scope, "192.168.1.57",
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
-        val original = settings.homeLanSyncPairing
+        val original = settings.homeLanSyncHub
         try {
             service.onAppForeground()
             runCurrent()
             scope.cancel()
             gate.complete(Unit)
             runCurrent()
-            assertEquals(original, settings.homeLanSyncPairing)
-            assertEquals(original, service.pairing.value)
+            assertEquals(original, settings.homeLanSyncHub)
+            assertEquals(original, service.trust.value.hub)
             assertTrue(openClients.all { it.closed })
         } finally {
             job.cancel()
@@ -281,12 +288,12 @@ class HomeLanHubRelocationTest {
 
         val retry = service.syncNow()
         assertTrue(retry.isSuccess, "retry must use the committed endpoint: ${retry.exceptionOrNull()}")
-        assertEquals("192.168.1.57", persistedSettings.homeLanSyncPairing?.hubHost)
-        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value,
+        assertEquals("192.168.1.57", persistedSettings.homeLanSyncHub?.lastKnownHost)
+        assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub,
             "a committed endpoint must remain visible after lifecycle invalidation")
         assertNull(service.status.value.lastError)
         service.hydrateFromSettings(persistedSettings)
-        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
         assertTrue(openClients.all { it.closed })
     }
 
@@ -313,10 +320,10 @@ class HomeLanHubRelocationTest {
             release.complete(Unit)
             job.join()
 
-            assertEquals("192.168.1.57", persistedSettings.homeLanSyncPairing?.hubHost)
-            assertEquals(persistedSettings.homeLanSyncPairing, settings.homeLanSyncPairing,
+            assertEquals("192.168.1.57", persistedSettings.homeLanSyncHub?.lastKnownHost)
+            assertEquals(persistedSettings.homeLanSyncHub, settings.homeLanSyncHub,
                 "cancellation cannot strand a durable endpoint before settings publication")
-            assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+            assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
             assertNull(service.status.value.lastSyncAtMs, "cancelled foreground work must not sync")
             service.syncNow().getOrThrow()
             assertNull(service.status.value.lastError)
@@ -346,7 +353,7 @@ class HomeLanHubRelocationTest {
         release.complete(Unit)
         runCurrent()
 
-        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
         assertNull(service.status.value.lastSyncAtMs, "stopped foreground work must not sync")
         service.hydrateFromSettings(persistedSettings)
         service.syncNow().getOrThrow()
@@ -377,7 +384,7 @@ class HomeLanHubRelocationTest {
             release.complete(Unit)
             job.join()
 
-            assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+            assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
             assertNull(service.status.value.lastSyncAtMs)
             service.syncNow().getOrThrow()
             assertTrue(openClients.all { it.closed })
@@ -392,7 +399,7 @@ class HomeLanHubRelocationTest {
         val release = CompletableDeferred<Unit>()
         val job = SupervisorJob()
         val scope = CoroutineScope(backgroundScope.coroutineContext + job)
-        val original = settings.homeLanSyncPairing
+        val original = settings.homeLanSyncHub
         val service = service(scope, "192.168.1.57",
             DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
             beforeSettingsUpdate = { entered.complete(Unit); release.await() })
@@ -403,9 +410,9 @@ class HomeLanHubRelocationTest {
             release.complete(Unit)
             job.join()
 
-            assertEquals(original, persistedSettings.homeLanSyncPairing)
-            assertEquals(original, settings.homeLanSyncPairing)
-            assertEquals(original, service.pairing.value)
+            assertEquals(original, persistedSettings.homeLanSyncHub)
+            assertEquals(original, settings.homeLanSyncHub)
+            assertEquals(original, service.trust.value.hub)
             assertTrue(openClients.all { it.closed })
         } finally {
             job.cancel()
@@ -429,17 +436,17 @@ class HomeLanHubRelocationTest {
         service.onAppForeground()
         persisted.await()
         val replacement = launch {
-            service.completeClientPairing("192.168.2.20", 43999, "ccdd", "pc-b", "123456", "b".repeat(64))
+            service.pairWith(DiscoveredHub("b".repeat(64), "pc-b", "192.168.2.20", 43999, "PC B")).confirm()
         }
         runCurrent()
         release.complete(Unit)
         replacement.join()
         runCurrent()
 
-        assertEquals("192.168.2.20", persistedSettings.homeLanSyncPairing?.hubHost)
-        assertEquals("b".repeat(64), persistedSettings.homeLanSyncPairing?.hubCertSha256Hex)
-        assertEquals(persistedSettings.homeLanSyncPairing, settings.homeLanSyncPairing)
-        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertEquals("192.168.2.20", persistedSettings.homeLanSyncHub?.lastKnownHost)
+        assertEquals("b".repeat(64), persistedSettings.homeLanSyncHub?.fingerprint?.hex)
+        assertEquals(persistedSettings.homeLanSyncHub, settings.homeLanSyncHub)
+        assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
         assertNull(service.status.value.lastSyncAtMs)
         assertTrue(openClients.all { it.closed })
     }
@@ -464,8 +471,8 @@ class HomeLanHubRelocationTest {
         release.complete(Unit)
         sync.join()
 
-        assertEquals(persistedSettings.homeLanSyncPairing, settings.homeLanSyncPairing)
-        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertEquals(persistedSettings.homeLanSyncHub, settings.homeLanSyncHub)
+        assertEquals(persistedSettings.homeLanSyncHub, service.trust.value.hub)
         assertNull(service.status.value.lastSyncAtMs)
         assertTrue(openClients.all { it.closed })
         service.syncNow().getOrThrow()
