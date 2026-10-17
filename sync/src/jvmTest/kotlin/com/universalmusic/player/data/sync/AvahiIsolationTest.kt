@@ -16,6 +16,7 @@ import org.freedesktop.dbus.connections.impl.DBusConnectionBuilder
 import org.freedesktop.dbus.exceptions.DBusExecutionException
 import org.freedesktop.dbus.types.UInt16
 import org.freedesktop.dbus.types.UInt32
+import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -69,6 +70,7 @@ class AvahiIsolationTest {
             val result = withTimeout(3_000) { AvahiHubBrowser(bus::client).browse().firstOrNull() }
             assertEquals(DiscoveredHub("a".repeat(64), "pc", "192.168.1.57", 43822), result)
             assertTrue(bus.clients.all { !it.isConnected })
+            assertEquals(1, bus.freed, "successful early collection must Free its browser")
         }
     }
 
@@ -77,6 +79,7 @@ class AvahiIsolationTest {
         PrivateAvahi().use { bus ->
             assertNull(withTimeoutOrNull(150) { AvahiHubBrowser(bus::client).browse().firstOrNull() })
             assertTrue(bus.clients.all { !it.isConnected })
+            assertEquals(1, bus.freed)
         }
     }
 
@@ -89,6 +92,40 @@ class AvahiIsolationTest {
     @Test
     fun stalledFreeCannotOutliveTheResolverDeadline() = stalledRpc("free")
 
+    @Test
+    fun deniedSignalSubscriptionClosesItsPartiallyRegisteredConnection() = runBlocking {
+        PrivateAvahi(denyMatch = true).use { bus ->
+            val failure = runCatching { AvahiHubBrowser(bus::client).browse().firstOrNull() }.exceptionOrNull()
+            assertTrue(failure?.message?.contains("match", ignoreCase = true) == true)
+            assertEquals(1, bus.clients.size)
+            assertFalse(bus.clients.single().isConnected)
+            assertEquals(0, bus.browserCreations)
+        }
+    }
+
+    @Test
+    fun connectionAcquisitionFailureDoesNotStartBrowsing() = runBlocking {
+        val result = HubEndpointResolver(AvahiHubBrowser { error("injected connection failure") },
+            { error("no endpoint should be probed") }).resolve(null, "a".repeat(64))
+        assertTrue(result is ResolveResult.HubNotFound)
+    }
+
+    @Test
+    fun repeatedCancelledRpcLeavesNoDbusWorkers() = runBlocking {
+        fun dbusThreads() = Thread.getAllStackTraces().keys.filter { it.isAlive && "DBus" in it.name }.toSet()
+        val before = dbusThreads()
+        repeat(3) {
+            PrivateAvahi().use { bus ->
+                bus.stall = "create"
+                assertNull(withTimeoutOrNull(200) { AvahiHubBrowser(bus::client).browse().firstOrNull() })
+                assertTrue(bus.stallEntered.await(1, TimeUnit.SECONDS))
+                assertTrue(bus.clients.all { !it.isConnected })
+            }
+        }
+        withTimeout(3_000) { while ((dbusThreads() - before).isNotEmpty()) delay(10) }
+        println("PRIVATE_DBUS repeatedCancellation newLiveWorkers=${(dbusThreads() - before).size}")
+    }
+
     private fun stalledRpc(stage: String) = runBlocking {
         PrivateAvahi().use { bus ->
             bus.stall = stage
@@ -99,6 +136,7 @@ class AvahiIsolationTest {
             val result = resolver.resolve(null, "a".repeat(64))
             val elapsedMs = (System.nanoTime() - started) / 1_000_000
             println("PRIVATE_DBUS stage=$stage result=$result elapsedMs=$elapsedMs")
+            assertTrue(bus.stallEntered.await(1, TimeUnit.SECONDS), "stalled $stage RPC must actually run")
             assertTrue(result is ResolveResult.HubNotFound)
             assertTrue(elapsedMs < 1_000, "200 ms resolver deadline took $elapsedMs ms with stalled $stage")
             assertTrue(bus.clients.all { !it.isConnected }, "no connection may survive cancellation")
@@ -106,15 +144,32 @@ class AvahiIsolationTest {
     }
 }
 
-private class PrivateAvahi : AutoCloseable, TestAvahiServer, AvahiEntryGroup, AvahiServiceBrowser {
-    private val process = ProcessBuilder("dbus-daemon", "--session", "--nofork", "--print-address=1")
+private class PrivateAvahi(denyMatch: Boolean = false) : AutoCloseable, TestAvahiServer, AvahiEntryGroup, AvahiServiceBrowser {
+    private val config = if (denyMatch) Files.createTempFile("kainos-private-bus-", ".conf").also { file ->
+        Files.writeString(file, """
+            <busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth>
+            <policy context="default"><allow user="*"/><allow own="*"/>
+            <allow send_destination="*"/><allow receive_sender="*"/>
+            <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="AddMatch"/>
+            </policy></busconfig>
+        """.trimIndent())
+    } else null
+    private val process = ProcessBuilder("dbus-daemon", config?.let { "--config-file=$it" } ?: "--session",
+        "--nofork", "--print-address=1")
         .redirectError(ProcessBuilder.Redirect.DISCARD).start()
-    private val address = process.inputStream.bufferedReader().readLine()
-    private val server = connect()
+    private val address = process.inputStream.bufferedReader().use { it.readLine() }
+    private val server = try {
+        connect()
+    } catch (error: Throwable) {
+        stopProcess()
+        throw error
+    }
     val clients = CopyOnWriteArrayList<DBusConnection>()
     val commits = CopyOnWriteArrayList<List<Int>>()
     private val added = mutableListOf<Int>()
     private val release = CountDownLatch(1)
+    val stallEntered = CountDownLatch(1)
+    @Volatile var browserCreations = 0
     @Volatile var freed = 0
     @Volatile var announce = false
     @Volatile var failBrowser = false
@@ -145,6 +200,7 @@ private class PrivateAvahi : AutoCloseable, TestAvahiServer, AvahiEntryGroup, Av
     override fun GetState() = 2
     override fun Free() { pause("free"); freed++ }
     override fun ServiceBrowserNew(iface: Int, protocol: Int, type: String, domain: String, flags: UInt32): DBusPath {
+        browserCreations++
         if (failBrowser) throw DBusExecutionException("injected browser creation failure")
         pause("create")
         if (announce) server.sendMessage(AvahiServiceBrowser.ItemNew("/browser", 3, 0,
@@ -158,13 +214,23 @@ private class PrivateAvahi : AutoCloseable, TestAvahiServer, AvahiEntryGroup, Av
             "192.168.1.57", UInt16(43822), listOf("fp=${"a".repeat(64)}", "id=pc")
                 .map { it.encodeToByteArray() }.toTypedArray(), UInt32(0))
     }
-    private fun pause(stage: String) { if (stall == stage) release.await(2, TimeUnit.SECONDS) }
+    private fun pause(stage: String) {
+        if (stall == stage) {
+            stallEntered.countDown()
+            release.await(2, TimeUnit.SECONDS)
+        }
+    }
     override fun close() {
         release.countDown()
         clients.forEach { it.close() }
         server.close()
+        stopProcess()
+    }
+
+    private fun stopProcess() {
         process.destroy()
         if (!process.waitFor(3, TimeUnit.SECONDS)) process.destroyForcibly()
+        config?.let { Files.deleteIfExists(it) }
     }
 }
 

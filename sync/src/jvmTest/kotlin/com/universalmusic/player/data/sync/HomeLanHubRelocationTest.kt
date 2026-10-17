@@ -5,6 +5,8 @@ import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
@@ -35,11 +37,17 @@ class HomeLanHubRelocationTest {
     private fun service(
         scope: CoroutineScope, liveHost: String, vararg advertised: DiscoveredHub,
         discoveryGate: CompletableDeferred<Unit>? = null,
+        beforeSettingsUpdate: suspend () -> Unit = {},
+        afterSettingsUpdate: suspend () -> Unit = {},
     ) =
         HomeLanSyncService(
             scope = scope,
             settings = { settings },
-            updateSettings = { transform -> settings = transform(settings) },
+            updateSettings = { transform ->
+                beforeSettingsUpdate()
+                settings = transform(settings)
+                afterSettingsUpdate()
+            },
             library = LibraryRepository(),
             playlists = KainosPlaylistRepository(),
             hubFactory = { _, _, _, _, _ -> NoOpHomeLanSyncHub() },
@@ -129,6 +137,114 @@ class HomeLanHubRelocationTest {
         assertEquals(replacement, settings.homeLanSyncPairing)
         assertEquals(replacement, service.pairing.value)
         assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun replacementWhileWaitingToPersistDoesNotReceiveTheOldEndpoint() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
+            beforeSettingsUpdate = { entered.complete(Unit); release.await() })
+        service.onAppForeground()
+        entered.await()
+        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
+            hubHost = "192.168.2.20", hubCertSha256Hex = "b".repeat(64)))
+        service.hydrateFromSettings(settings)
+        val replacement = settings.homeLanSyncPairing
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(replacement, settings.homeLanSyncPairing)
+        assertEquals(replacement, service.pairing.value)
+    }
+
+    @Test
+    fun replacementWhilePersistenceFinishesDoesNotReceiveTheOldVisibleEndpoint() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
+            afterSettingsUpdate = { entered.complete(Unit); release.await() })
+        service.onAppForeground()
+        entered.await()
+        settings = settings.copy(homeLanSyncPairing = settings.homeLanSyncPairing!!.copy(
+            hubHost = "192.168.2.20", hubCertSha256Hex = "b".repeat(64)))
+        service.hydrateFromSettings(settings)
+        val replacement = settings.homeLanSyncPairing
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(replacement, settings.homeLanSyncPairing)
+        assertEquals(replacement, service.pairing.value)
+    }
+
+    @Test
+    fun stopInvalidatesDiscoveryEvenIfThePairingIsUnchanged() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        val original = settings.homeLanSyncPairing
+        service.onAppForeground()
+        runCurrent()
+        service.stopHub()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(original, settings.homeLanSyncPairing)
+        assertEquals(original, service.pairing.value)
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun disableAndReenableInvalidatesAnEarlierDiscovery() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        val original = settings.homeLanSyncPairing
+        service.onAppForeground()
+        runCurrent()
+        service.enable(false)
+        service.enable(true)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(original, settings.homeLanSyncPairing)
+        assertEquals(original, service.pairing.value)
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun unpairDuringDiscoveryKeepsSettingsAndVisiblePairingEmpty() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        service.onAppForeground()
+        runCurrent()
+        service.unpair()
+        gate.complete(Unit)
+        runCurrent()
+        assertNull(settings.homeLanSyncPairing)
+        assertNull(service.pairing.value)
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun cancellingTheServiceScopeClosesDiscoveryClientsWithoutRememberingAnEndpoint() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val job = SupervisorJob()
+        val scope = CoroutineScope(backgroundScope.coroutineContext + job)
+        val service = service(scope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822), discoveryGate = gate)
+        val original = settings.homeLanSyncPairing
+        try {
+            service.onAppForeground()
+            runCurrent()
+            scope.cancel()
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(original, settings.homeLanSyncPairing)
+            assertEquals(original, service.pairing.value)
+            assertTrue(openClients.all { it.closed })
+        } finally {
+            job.cancel()
+        }
     }
 
 }

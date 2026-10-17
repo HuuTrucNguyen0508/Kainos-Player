@@ -21,9 +21,7 @@ private val VIRTUAL_INTERFACE_PREFIXES = listOf(
 )
 
 fun selectLanAddress(interfaces: List<LanInterface>, defaultRouteInterface: String?): LanAddress? {
-    val eligible = interfaces
-        .filter { it.isUp && !it.isLoopback && VIRTUAL_INTERFACE_PREFIXES.none(it.name::startsWith) }
-        .flatMap { nic -> nic.ipv4.filter(::isPrivateIpv4).map { LanAddress(nic.name, nic.index, it) } }
+    val eligible = eligibleLanAddresses(interfaces)
     return eligible.firstOrNull { it.interfaceName == defaultRouteInterface }
         ?: eligible.minByOrNull { address ->
             when {
@@ -33,6 +31,14 @@ fun selectLanAddress(interfaces: List<LanInterface>, defaultRouteInterface: Stri
             }
         }
 }
+
+fun eligibleLanAddresses(interfaces: List<LanInterface>): Set<LanAddress> = interfaces
+    .filter { it.isUp && !it.isLoopback && VIRTUAL_INTERFACE_PREFIXES.none(it.name::startsWith) }
+    .flatMap { nic -> nic.ipv4.filter(::isPrivateIpv4).map { LanAddress(nic.name, nic.index, it) } }
+    .toSet()
+
+fun currentLanAddresses(): Set<LanAddress> =
+    runCatching { eligibleLanAddresses(systemInterfaces()) }.getOrDefault(emptySet())
 
 fun currentLanAddress(): LanAddress? =
     runCatching { selectLanAddress(systemInterfaces(), defaultRouteInterface()) }.getOrNull()

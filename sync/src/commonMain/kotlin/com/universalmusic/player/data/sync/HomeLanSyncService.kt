@@ -10,9 +10,11 @@ import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.secureRandomBytes
 import com.universalmusic.player.platform.withVaultSyncForeground
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.coroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -61,8 +64,30 @@ class HomeLanSyncService(
     private var hub: HomeLanSyncHub? = null
     private val mutex = Mutex()
     private var idleWatchJob: Job? = null
+    private val resolutionLock = Any()
+    private var pairingGeneration = 0L
+
+    private data class ResolutionSource(
+        val pairing: HomeLanSyncPairing,
+        val generation: Long,
+        val role: HomeLanSyncRole,
+    )
+
+    private fun resolutionSource(pairing: HomeLanSyncPairing) = synchronized(resolutionLock) {
+        ResolutionSource(pairing, pairingGeneration, _status.value.role)
+    }
+
+    private fun isCurrent(source: ResolutionSource): Boolean = synchronized(resolutionLock) {
+        pairingGeneration == source.generation && _pairing.value == source.pairing &&
+            _status.value.enabled && _status.value.role == source.role
+    }
+
+    private fun invalidateResolution() = synchronized(resolutionLock) {
+        pairingGeneration++
+    }
 
     fun hydrateFromSettings(current: AppSettings) {
+        invalidateResolution()
         _pairing.value = current.homeLanSyncPairing?.let {
             if (shouldRunHub(current.homeLanSyncRole)) it.copy(hubPort = hubPort) else it
         }
@@ -87,12 +112,14 @@ class HomeLanSyncService(
     }
 
     override suspend fun enable(enabled: Boolean) {
+        invalidateResolution()
         updateSettings { it.copy(homeLanSyncEnabled = enabled) }
         _status.update { it.copy(enabled = enabled) }
         if (enabled) startHubIfNeeded() else stopHub()
     }
 
     override suspend fun beginHubPairing(): HomeLanSyncPairing {
+        invalidateResolution()
         val deviceId = settings().homeLanSyncDeviceId ?: newDeviceId().also { id ->
             updateSettings { it.copy(homeLanSyncDeviceId = id) }
         }
@@ -133,6 +160,7 @@ class HomeLanSyncService(
         pairingPin: String,
         hubCertSha256Hex: String,
     ) {
+        invalidateResolution()
         val cert = hubCertSha256Hex.trim().lowercase()
         require(cert.matches(Regex("[0-9a-f]{64}"))) {
             "Hub certificate pin required (64 hex chars). Prefer Pair from URI after Start hub pairing on the PC."
@@ -177,6 +205,7 @@ class HomeLanSyncService(
     }
 
     override suspend fun unpair() {
+        invalidateResolution()
         stopHub()
         updateSettings {
             it.copy(
@@ -226,13 +255,15 @@ class HomeLanSyncService(
                 _status.update { it.copy(lastError = msg) }
                 return@withLock Result.failure(IllegalStateException(msg))
             }
+            var source = resolutionSource(pairing)
             val startedAt = clock()
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync start")
             runCatching {
                 ensureDeviceId()
                 val (connection, resolved) = openHubClient(pairing).getOrThrow()
                 connection.use { client ->
-                    rememberHubAddress(resolved)
+                    check(rememberHubAddress(source, resolved)) { "Pairing changed during hub discovery" }
+                    source = source.copy(pairing = pairing.at(resolved.endpoint))
                     withVaultSyncForeground("Home library sync") {
                         val remoteHearts = client.syncHearts().getOrThrow()
                         library.mergeAndPersistSyncState(remoteHearts)
@@ -303,6 +334,7 @@ class HomeLanSyncService(
             }.onSuccess {
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync ok in ${clock() - startedAt} ms")
             }.onFailure { err ->
+                if (!isCurrent(source)) return@onFailure
                 val message = err.message ?: err.toString()
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync failed in ${clock() - startedAt} ms: $message")
                 updateSettings { it.copy(homeLanSyncLastError = message) }
@@ -509,6 +541,7 @@ class HomeLanSyncService(
     }
 
     override suspend fun stopHub() {
+        invalidateResolution()
         idleWatchJob?.cancel()
         idleWatchJob = null
         mutex.withLock {
@@ -520,6 +553,7 @@ class HomeLanSyncService(
 
     fun onAppForeground() {
         scope.launch {
+            var source: ResolutionSource? = null
             runCatching {
                 if (!_status.value.enabled) return@runCatching
                 startHubIfNeeded()
@@ -534,14 +568,18 @@ class HomeLanSyncService(
                     }
                     return@runCatching
                 }
-                val reachable = openHubClient(pairing).onSuccess { (client, resolved) ->
+                val captured = resolutionSource(pairing)
+                source = captured
+                val reachable = openHubClient(pairing).getOrNull()?.let { (client, resolved) ->
                     client.close()
-                    rememberHubAddress(resolved)
-                }.isSuccess
+                    rememberHubAddress(captured, resolved)
+                } ?: false
                 if (reachable) {
                     syncNow()
                 }
             }.onFailure { err ->
+                if (err is CancellationException) throw err
+                if (source?.let { !isCurrent(it) } == true) return@onFailure
                 _status.update {
                     it.copy(lastError = err.message ?: "Home sync foreground check failed")
                 }
@@ -583,13 +621,33 @@ class HomeLanSyncService(
         }
     }
 
-    private suspend fun rememberHubAddress(resolved: ResolveResult.Resolved) {
-        if (resolved.via != ResolvedVia.MDNS) return
+    private suspend fun rememberHubAddress(source: ResolutionSource, resolved: ResolveResult.Resolved): Boolean {
+        coroutineContext.ensureActive()
+        if (!isCurrent(source)) return false
+        if (resolved.via != ResolvedVia.MDNS) return settings().matches(source)
         val endpoint = resolved.endpoint
+        var stored = false
+        updateSettings { current ->
+            synchronized(resolutionLock) {
+                if (isCurrent(source) && current.matches(source)) {
+                    stored = true
+                    current.copy(homeLanSyncPairing = source.pairing.at(endpoint))
+                } else current
+            }
+        }
+        coroutineContext.ensureActive()
+        val remembered = synchronized(resolutionLock) {
+            stored && isCurrent(source) && _pairing.compareAndSet(source.pairing, source.pairing.at(endpoint))
+        }
+        if (!remembered) return false
         PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
-        updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
-        _pairing.update { it?.at(endpoint) }
+        return true
     }
+
+    private fun AppSettings.matches(source: ResolutionSource): Boolean =
+        homeLanSyncEnabled && homeLanSyncRole == source.role && homeLanSyncPairing?.let {
+            if (shouldRunHub(homeLanSyncRole)) it.copy(hubPort = hubPort) else it
+        } == source.pairing
 
     private fun startIdleWatch() {
         idleWatchJob?.cancel()

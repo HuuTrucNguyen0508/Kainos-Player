@@ -2,7 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.platform.LanAddress
 import com.universalmusic.player.platform.PlaybackTrace
-import com.universalmusic.player.platform.currentLanAddress
+import com.universalmusic.player.platform.currentLanAddresses
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,14 +36,15 @@ internal interface AvahiServer : DBusInterface {
     fun GetHostName(): String
     fun GetAlternativeServiceName(name: String): String
     fun EntryGroupNew(): DBusPath
-    fun ServiceBrowserNew(iface: Int, protocol: Int, type: String, domain: String, flags: UInt32): DBusPath
+    // dbus-java 5.1.1 async lookup uses boxed argument classes.
+    fun ServiceBrowserNew(iface: Int?, protocol: Int?, type: String, domain: String, flags: UInt32): DBusPath
     fun ResolveService(
-        iface: Int,
-        protocol: Int,
+        iface: Int?,
+        protocol: Int?,
         name: String,
         type: String,
         domain: String,
-        aprotocol: Int,
+        aprotocol: Int?,
         flags: UInt32,
     ): AvahiResolvedService
 }
@@ -112,12 +113,12 @@ class AvahiHubAdvertiser internal constructor(
 ) {
     constructor(port: Int, certSha256Hex: String, deviceId: String, instanceLabel: String?) :
         this(port, certSha256Hex, deviceId, instanceLabel, ::avahiSystemBus,
-            { setOfNotNull(currentLanAddress()) }, CHECK_INTERVAL_MS)
+            ::currentLanAddresses, CHECK_INTERVAL_MS)
 
     private var job: Job? = null
     private var connection: DBusConnection? = null
     private var group: AvahiEntryGroup? = null
-    private var publishedOn: LanAddress? = null
+    private var publishedOn: Set<LanAddress> = emptySet()
     private var serviceName: String? = null
     private var reportedUnavailable = false
 
@@ -138,7 +139,7 @@ class AvahiHubAdvertiser internal constructor(
     }
 
     private fun reconcile() {
-        val target = lanAddresses().firstOrNull()
+        val targets = lanAddresses()
         val server = runCatching { server() }.getOrElse {
             if (!reportedUnavailable) PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "Avahi unavailable, not advertising")
             reportedUnavailable = true
@@ -147,12 +148,12 @@ class AvahiHubAdvertiser internal constructor(
         }
         runCatching {
             val state = group?.GetState()
-            if (target == publishedOn && state in setOf(AVAHI_ENTRY_GROUP_REGISTERING, AVAHI_ENTRY_GROUP_ESTABLISHED)) {
+            if (targets == publishedOn && state in setOf(AVAHI_ENTRY_GROUP_REGISTERING, AVAHI_ENTRY_GROUP_ESTABLISHED)) {
                 return
             }
             if (state == AVAHI_ENTRY_GROUP_COLLISION) serviceName = serviceName?.let(server::GetAlternativeServiceName)
             withdraw()
-            if (target != null) publish(server, target)
+            if (targets.isNotEmpty()) publish(server, targets)
         }.onFailure { err ->
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "Avahi advertise failed: ${err.message ?: err}")
             disconnect()
@@ -168,30 +169,32 @@ class AvahiHubAdvertiser internal constructor(
         return server
     }
 
-    private fun publish(server: AvahiServer, target: LanAddress) {
+    private fun publish(server: AvahiServer, targets: Set<LanAddress>) {
         val conn = checkNotNull(connection)
         val path = server.EntryGroupNew()
         val entryGroup = conn.getRemoteObject(AVAHI_BUS, path.path, AvahiEntryGroup::class.java)
+        group = entryGroup
         val txt = listOf(
             "$HOME_LAN_MDNS_TXT_FP=${certSha256Hex.lowercase()}",
             "$HOME_LAN_MDNS_TXT_ID=$deviceId",
             "$HOME_LAN_MDNS_TXT_VERSION=$HOME_LAN_MDNS_VERSION",
         ).map(String::encodeToByteArray)
         val name = checkNotNull(serviceName)
-        entryGroup.AddService(
-            target.interfaceIndex, AVAHI_PROTO_INET, UInt32(0), name,
-            HOME_LAN_MDNS_SERVICE_TYPE, "", "", UInt16(port), txt,
-        )
+        for (target in targets.distinctBy { it.interfaceIndex }) {
+            entryGroup.AddService(
+                target.interfaceIndex, AVAHI_PROTO_INET, UInt32(0), name,
+                HOME_LAN_MDNS_SERVICE_TYPE, "", "", UInt16(port), txt,
+            )
+        }
         entryGroup.Commit()
-        group = entryGroup
-        publishedOn = target
-        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "advertising '$name' on ${target.interfaceName} ${target.ipv4}:$port")
+        publishedOn = targets
+        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "advertising '$name' on ${targets.joinToString()} port $port")
     }
 
     private fun withdraw() {
         group?.let { runCatching { it.Free() } }
         group = null
-        publishedOn = null
+        publishedOn = emptySet()
     }
 
     private fun disconnect() {

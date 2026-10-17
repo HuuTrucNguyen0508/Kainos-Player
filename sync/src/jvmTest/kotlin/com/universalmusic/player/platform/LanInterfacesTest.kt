@@ -52,4 +52,20 @@ class LanInterfacesTest {
         )
         assertNull(selectLanAddress(interfaces, defaultRouteInterface = "eth0"))
     }
+    @Test
+    fun eligibleSetKeepsBothPhysicalLansAndExcludesUnsafeInterfaces() {
+        val interfaces = laptop + listOf(
+            nic("eth0", "10.0.0.7", index = 2),
+            nic("eth1", "172.20.5.4", index = 9),
+            nic("wlan1", "192.168.9.1", index = 10, up = false),
+            nic("tun0", "10.8.0.1", index = 11),
+            nic("wg0", "10.9.0.1", index = 12),
+            nic("eth2", "8.8.8.8", index = 13),
+        )
+        assertEquals(setOf(LanAddress("wlan0", 3, "192.168.1.128"),
+            LanAddress("eth0", 2, "10.0.0.7"), LanAddress("eth1", 9, "172.20.5.4")),
+            eligibleLanAddresses(interfaces))
+        assertEquals(LanAddress("eth0", 2, "10.0.0.7"), selectLanAddress(interfaces, "eth0"))
+    }
+
 }
