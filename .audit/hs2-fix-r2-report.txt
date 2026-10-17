@@ -1,0 +1,119 @@
+HS2 FIX-FORWARD ROUND 2
+Updated 2026-10-17T18:45:49.809359+00:00
+
+Disposition: accepted discovery endpoint coherence warning reproduced, repaired and locally committed. Required checks pass at the verified source head. Root owns the fresh independent fix-diff review, artifact verification, topology and final judgment. No stack-ready claim. This is the second repair round; no further automatic repair iteration was started.
+
+Revision and ownership
+Project: /home/theadenkingof/Documents/Code/Kainos-Player
+Only writing worktree: /home/theadenkingof/Documents/Code/Kainos-Player/.claude/worktrees/hs2
+Branch: hs/2-mdns-pin
+Upstream stack base: 18667dffe689dd98dbf04ada32fe0a2dd0f272fc
+Assignment base: 451f48b9120dad9ed90174e58f20f94dc6112d30
+Verified source head: 2a404c5aecd4e6930c9d0455495f5b2f95b30bae
+Source git status --porcelain before the report: ''. Clean.
+Ordered source commits:
+52729ec4e10f91482215600024990c34751e6eac test(sync): reproduce endpoint commit invalidation races
+2a404c5aecd4e6930c9d0455495f5b2f95b30bae fix(sync): reconcile committed discovery endpoints from settings
+This report is committed in a following audit-only commit. The handoff HEAD is the commit introducing this report, resolved exactly by:
+git log -1 --format=%H -- .audit/hs2-fix-r2-report.txt
+The final reply supplies that literal handoff SHA. No source changes occur in the report commit.
+
+Changed production file: sync/src/commonMain/kotlin/com/universalmusic/player/data/sync/HomeLanSyncService.kt
+Changed test file: sync/src/jvmTest/kotlin/com/universalmusic/player/data/sync/HomeLanHubRelocationTest.kt
+Committed audit file: .audit/hs2-fix-r2-report.txt
+No other worktree, real app data, systemd/unit/autostart, Avahi daemon, device or host network setting was edited. No push, PR, merge, rebase, release, install or real app launch. HS3 was not ported or repaired.
+
+Runtime reproduction and root cause
+AppContainer.updateSettings serializes transform, settingsStore.write, _settings publication and player preference updates under settingsMutex. The prior service only protected the transform decision and its later visible-pairing CAS with resolutionLock. enable/stop invalidation could occur after the durable/effective settings endpoint changed but before that CAS. The CAS rejected the visible update. Disable/re-enable did not hydrate it. Next resolution captured the stale visible endpoint and refused the already-updated authoritative settings, permanently returning Pairing changed during hub discovery.
+
+The fixture now holds a settings mutex across transform, separate persistedSettings assignment, effective settings publication and callback completion. Gates can suspend after persistence or after publication. This matches the relevant production ordering rather than treating transform and publication as atomic. Tests use the public service pairing/status, syncNow, lifecycle methods and hydrateFromSettings. persistedSettings is a synthetic durable snapshot, not a real app settings file. Reload coverage hydrates that snapshot. No actual app or on-disk process restart is claimed.
+
+Red source was untouched at 451f48b. The first two new tests failed before production changes; the expanded failing-test commit contains four boundary regressions and all ten earlier cases. Exact expanded output:
+14 tests completed, 4 failed
+BUILD FAILED in 3s
+Receipts: .audit/hs2-r2-red.log and .audit/hs2-r2-red-xml/.
+The disable/re-enable case failed with:
+java.lang.AssertionError: retry must use the committed endpoint: java.lang.IllegalStateException: Pairing changed during hub discovery
+The stop and post-publication cancellation cases saw persisted host 192.168.1.57 but visible host 192.168.1.10. Cancellation after persistence and before settings publication also left effective settings at 192.168.1.10. The original ten relocation cases passed in the red run. Failing tests are preserved in commit 52729ec4e10f91482215600024990c34751e6eac, before the fix.
+
+Repair and commit contract
+Data shape remains ResolutionSource with the full captured pairing, role and lifecycle generation. Committed settings own endpoint state. Visible pairing is a projection of that authority.
+
+1. Before the settings transform accepts an endpoint, the original resolution context must still be active, the full settings pairing/role must equal the captured source, and generation/visible role/enabled state must still match. A cancelled resolution waiting for settings cannot gain authority from NonCancellable.
+2. An accepted settings commit completes persistence and effective settings publication in NonCancellable. Lifecycle invalidation is still immediate. An invalidation after acceptance may leave that already-accepted endpoint saved for the same pairing, but cannot authorize transport continuation. A result invalidated before the transform cannot persist an endpoint. This is the commit boundary, not a retry workaround.
+3. finally reconciles visible pairing from the latest authoritative settings even when the callback fails or resolution is cancelled. It does not copy a stale discovered endpoint over a replacement pairing. Hub-port normalization is shared with hydration and source matching.
+4. Hub pairing, client re-pair and unpair now reconcile via the same short resolutionLock rather than writing independent visible values outside it. Hydration invalidation plus publication also holds this short lock. A late discovery reconciliation cannot win over an independently written replacement value between a settings read and visible publication.
+5. After reconciliation, cancellation is checked again. Continuation requires the committed endpoint's full source identity, generation, enabled state and role to remain current. Stopped, disabled, replaced or cancelled foreground work does not start sync. A later explicit sync uses the committed endpoint and succeeds.
+
+Lock order: AppContainer settingsMutex -> synchronous transform -> short resolutionLock. Reconciliation acquires resolutionLock and reads only the published StateFlow snapshot through settings(); it never acquires settingsMutex or the transport mutex. No resolutionLock monitor spans a suspension, persistence, network operation or transport-mutex acquisition. The sync transport mutex may enclose a settings commit, as before. No settings transform or reconciliation acquires the transport mutex. Service hydration uses the same short publication lock. No new mutex or lifecycle flag was added.
+
+Alternative considered: serialize lifecycle changes and discovery commit under a new suspend mutex. Rejected because hydration is synchronous and stop/invalidation must remain immediate; nested transport locking would need a broader rewrite. Authoritative reconciliation fixes this bounded source/state issue with no public signature change or AppContainer callback change.
+
+Trust remains source-authoritative. No resolver, TXT fingerprint, pinned TLS, client authentication or transport implementation was changed. Resolver tests still reject a matching TXT fingerprint whose pinned TLS probe fails. The isolated protocol suite still checks a non-SAN loopback endpoint with real pinned HTTPS. The private D-Bus and interface suites retain the round-1 mechanisms.
+
+Focused green
+Command:
+JAVA_HOME=/home/theadenkingof/.jdks/temurin-17 ./gradlew :sync:jvmTest --tests '*HomeLanHubRelocationTest' --tests '*HubEndpointResolverTest' --tests '*AvahiIsolationTest' --tests '*LanInterfacesTest' --tests '*HomeLanProtocolCompatibilityTest' --console=plain
+Log: .audit/hs2-r2-green.log
+BUILD SUCCESSFUL in 10s
+15 actionable tasks: 8 executed, 7 up-to-date. No FROM-CACHE tasks.
+Focused suites contain 46 tests, zero failures/errors/skips: relocation 17, resolver 8, private D-Bus 10, interfaces 6, protocol 5. The focused XML directory contains those same suites copied from the final full execution: .audit/hs2-r2-green-xml/.
+Seven new relocation cases cover disable/re-enable and retry, stop/hydration and retry, cancellation after persistence before effective publication, cancellation after effective publication, cancellation while queued before transform, re-pair queued behind persistence, and cancelled Sync now retaining client closure and a usable later retry. All earlier replacement, unpair, pre-persistence stop/disable and scope-cancellation cases remain.
+
+Final required checks at verified source head
+Command:
+JAVA_HOME=/home/theadenkingof/.jdks/temurin-17 ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:compileKotlinJvm :androidApp:assembleDebug :androidApp:lintDebug --continue --console=plain
+Log: .audit/hs2-r2-full-checks.log
+BUILD SUCCESSFUL in 9s
+254 actionable tasks: 38 executed, 216 up-to-date. No FROM-CACHE tasks.
+Exact selected outcomes:
+> Task :core:data:verifyCommonMainKainosDatabaseMigration UP-TO-DATE
+> Task :core:model:jvmTest UP-TO-DATE
+> Task :core:playback:jvmTest UP-TO-DATE
+> Task :provider:local:jvmTest UP-TO-DATE
+> Task :core:data:jvmTest UP-TO-DATE
+> Task :provider:youtube:jvmTest UP-TO-DATE
+> Task :provider:spotify:jvmTest UP-TO-DATE
+> Task :desktopApp:compileKotlinJvm
+> Task :desktopApp:jvmTest NO-SOURCE
+> Task :shared:jvmTest
+> Task :androidApp:assembleDebug
+> Task :androidApp:lintDebug
+> Task :sync:jvmTest
+
+XML totals: 457 represented cases across 79 suites, zero failures/errors, 2 skips. There are 455 passing represented cases. Sync and shared executed: 131 represented cases, 130 passing and 1 gated skip. The other six test modules were UP-TO-DATE: 326 represented cases, 325 passing and 1 gated skip. Do not describe all 455 as freshly executed.
+core/data: tests=81, failures=0, errors=0, skipped=1
+core/model: tests=54, failures=0, errors=0, skipped=0
+core/playback: tests=102, failures=0, errors=0, skipped=0
+provider/local: tests=26, failures=0, errors=0, skipped=0
+provider/spotify: tests=49, failures=0, errors=0, skipped=0
+provider/youtube: tests=14, failures=0, errors=0, skipped=0
+shared: tests=33, failures=0, errors=0, skipped=0
+sync: tests=98, failures=0, errors=0, skipped=1
+Skipped:
+core/data:com.universalmusic.player.data.db.SessionWritePerfTest.skipInA500EntryQueue[jvm]
+sync:com.universalmusic.player.data.sync.AvahiLiveTest.advertisedHubIsBrowsableOnTheLanAddressAndGoneAfterStop[jvm]
+Counts and XML: .audit/hs2-r2-test-counts.json and .audit/hs2-r2-final-xml/.
+Android lint XML has 19 Warning issues, no Error/Fatal issue. Migration verification was UP-TO-DATE, not forcibly rerun. Desktop compilation, Android assembly and lint executed. No desktop packaging or installation ran. A pre-existing HttpHomeLanSyncClient.kt unused-expression compiler warning remains outside the fix.
+git diff --check passed before both source commits and at final verification. Deslop inspected both source/test diffs. No frontend source changed.
+
+Limits and attention
+Independent fix-diff review and actual artifact verification remain with root. No independent verdict is claimed. This delegate did not start another automatic repair round. Claude was rate-limited and was not retried. Root's fresh review must examine the accepted-commit semantics and NonCancellable settings callback lifetime.
+No real multicast, Avahi publication, Wi-Fi change, daemon restart, phone NSD, real re-pair, Android instrumentation, actual app reload or twenty-press performance comparison ran. Private transport and unit tests do not close HS2 live/perf/operator boxes. The responsive-local-broker assumption for private D-Bus cancellation from round 1 remains. No performance result is claimed.
+Required builds/tests ran during HS4's announced idle-measurement window ending 18:57Z. This task added host build/test load. Root must account for that overlap before trusting another task's idle samples. No HS4 process or file was inspected, modified or stopped.
+
+Task, helper, process and quota state
+Existing reservation: ee428b39-60c0-4e36-ae1d-e28df3402e7a. No duplicate reservation or nested task.
+Task ID: node:delegated-task:command%3Amcp%3Ac817414c-71ae-4b77-9324-8219eda9f755%3Adelegate-task%3Aee428b39-60c0-4e36-ae1d-e28df3402e7a
+Assignment route: codex-pro/gpt-6.1-sol high/default, manual target 35%. Root owns reconciliation of this assignment's terminal result.
+No child agents or helper agents were spawned. In-thread how/architect grounding, regression implementation and checks are this bounded implementation delegate's assignment. No independent review was substituted with self-review. Cross-model trail review is unavailable under the Claude limit and remains with root's review gates.
+All own Gradle/test commands completed. Private D-Bus fixture cleanup completed; final pgrep -x dbus-daemon returned no PID. No own temporary broker or active test worker remains. Gradle/Kotlin build daemons may remain idle. No unrelated process was killed.
+Latest fresh authoritative controller check after final checks: Codex Pro weekly 62% used, reset 2026-10-22T06:38:32Z, no Codex Pro session limit. Claude five-hour window remains 100% used/rate-limited, weekly 53%. Initial fresh Codex usage was 61%. No applicable Codex pause threshold reached. Live execution catalog excludes Astra.
+Decision trail remains append-only in .audit/decisions.tsv. Scope/grounding notes are in .audit/hs2-fix-r2.todo.md. Supporting receipts remain local ignored artifacts; this report is force-added because the brief requires a committed report.
+
+Next root commands
+Recheck authoritative quota/controller status first.
+git -C '/home/theadenkingof/Documents/Code/Kainos-Player/.claude/worktrees/hs2' status --porcelain=v1
+git -C '/home/theadenkingof/Documents/Code/Kainos-Player/.claude/worktrees/hs2' log --reverse --format='%H %s' 451f48b9120dad9ed90174e58f20f94dc6112d30..HEAD
+git -C '/home/theadenkingof/Documents/Code/Kainos-Player/.claude/worktrees/hs2' diff 451f48b9120dad9ed90174e58f20f94dc6112d30..HEAD -- sync
+Dispatch the fresh independent fix-diff review and artifact verification with this report and the actual final HEAD. Keep live/perf/operator gates open. Root alone decides any third repair round and later topology/integration.
