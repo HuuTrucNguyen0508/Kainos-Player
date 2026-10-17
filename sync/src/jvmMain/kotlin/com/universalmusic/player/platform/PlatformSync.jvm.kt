@@ -100,6 +100,7 @@ class HubUserService(
 ) {
     val unitName: String = isolation.instance?.let { "kainos-hub-$it.service" } ?: "kainos-hub.service"
     private val unitFile = configHome.resolve("systemd/user").resolve(unitName)
+    private val hasUserService = !isolation.isIsolated || isolation.instance != null
 
     fun processMode(hubOnly: Boolean, supervisedUnit: String?): HubProcessMode = when {
         !hubOnly -> HubProcessMode.GUI
@@ -108,6 +109,7 @@ class HubUserService(
     }
 
     fun isEnabled(): Boolean {
+        if (skipUnnamedIsolatedService()) return false
         val result = command(listOf("systemctl", "--user", "is-enabled", unitName))
         return when (result.output.trim()) {
             "enabled", "enabled-runtime" -> {
@@ -121,10 +123,12 @@ class HubUserService(
     }
 
     fun stop() {
+        if (skipUnnamedIsolatedService()) return
         check(command(listOf("systemctl", "--user", "stop", unitName)).status == 0) { "Could not stop $unitName" }
     }
 
     internal suspend fun reconcileStop(): HubStopOutcome {
+        if (skipUnnamedIsolatedService()) return HubStopOutcome.STOPPED
         while (true) {
             val result = command(listOf("systemctl", "--user", "show", "--all", "--property=ActiveState", "--property=Job", unitName))
             check(result.status == 0) { "Could not inspect $unitName" }
@@ -141,12 +145,14 @@ class HubUserService(
     }
 
     fun start() {
+        if (skipUnnamedIsolatedService()) return
         check(command(listOf("systemctl", "--user", "start", "--no-block", unitName)).status == 0) {
             "Could not start $unitName"
         }
     }
 
     fun configure(enabled: Boolean) {
+        if (skipUnnamedIsolatedService()) return
         if (!enabled) {
             check(command(listOf("systemctl", "--user", "disable", "--now", unitName)).status == 0) {
                 "Could not disable $unitName"
@@ -184,6 +190,12 @@ class HubUserService(
         }
         check(command(listOf("systemctl", "--user", "enable", unitName)).status == 0) { "Could not enable $unitName" }
         removeLegacyAutostart()
+    }
+
+    private fun skipUnnamedIsolatedService(): Boolean {
+        if (hasUserService) return false
+        System.err.println("Hub user service unchanged: isolated instance without KAINOS_INSTANCE")
+        return true
     }
 
     private fun reload() {
