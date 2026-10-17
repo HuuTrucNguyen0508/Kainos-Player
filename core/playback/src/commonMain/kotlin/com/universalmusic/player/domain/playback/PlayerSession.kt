@@ -143,6 +143,16 @@ class PlayerSession(
                     return@collectLatest
                 }
 
+                val learnedDuration = engineState.durationMs?.takeIf { it > 0 }
+                val item = queue.queue.value.current
+                if (learnedDuration != null && item != null && item.track.durationMs == null &&
+                    _nowPlaying.value.queueItemId == item.id
+                ) {
+                    val updated = item.track.copy(durationMs = learnedDuration)
+                    queue.replaceCurrentTrack(updated)
+                    _nowPlaying.update { it.copy(track = it.track?.copy(durationMs = learnedDuration)) }
+                }
+
                 _nowPlaying.update { current ->
                     current.copy(
                         isPlaying = engineState.status == EngineStatus.PLAYING,

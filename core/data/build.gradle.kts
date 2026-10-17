@@ -16,6 +16,9 @@ sqldelight {
 kotlin {
     sourceSets {
         getByName("jvmTest").resources.srcDir("src/commonMain/sqldelight/databases")
+        jvmTest.dependencies {
+            implementation(project(":core:playback"))
+        }
         commonMain.dependencies {
             api(project(":core:model"))
             api(libs.ktor.client.core)

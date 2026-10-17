@@ -7,6 +7,7 @@ import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.SessionSnapshotStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
@@ -25,7 +26,7 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
 
 internal fun KainosDatabase.writeSessionSnapshot(
     snapshot: SessionSnapshot,
-    storedQueue: QueueContent = QueueContent.of(readQueueItems()),
+    storedQueue: QueueContent?,
 ): QueueContent {
     val queue = QueueContent.of(snapshot.items)
     if (queue != storedQueue) {
@@ -68,18 +69,35 @@ class DbSessionSnapshotStore(
     private val storage: KainosStorage,
 ) : SessionSnapshotStore {
     private val writeMutex = Mutex()
-
-    private var queueKnownStored: QueueContent? = null
+    private var decodedQueue: DecodedQueue? = null
 
     override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
 
     override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
-        val known = queueKnownStored
-        queueKnownStored = null
-        var written: QueueContent? = null
-        storage.write { db ->
-            written = if (known == null) db.writeSessionSnapshot(snapshot) else db.writeSessionSnapshot(snapshot, known)
+        decodedQueue = storage.write { db ->
+            val rows = db.listeningSessionQueries.selectItems().executeAsList()
+            val stored = decodedQueue?.takeIf { it.rows == rows } ?: DecodedQueue(rows, rows.decodeQueue())
+            db.writeSessionSnapshot(snapshot, stored.content)
+            stored
         }
-        queueKnownStored = written
     }
+
+    private data class DecodedQueue(val rows: List<Session_queue_item>, val content: QueueContent?)
+}
+
+internal fun KainosDatabase.readStoredQueue(): QueueContent? =
+    listeningSessionQueries.selectItems().executeAsList().decodeQueue()
+
+private fun List<Session_queue_item>.decodeQueue(): QueueContent? {
+    val items = ArrayList<PersistedQueueItem>(size)
+    try {
+        for ((index, row) in withIndex()) {
+            val track = storageJson.decodeFromString<PersistedTrack>(row.track_json)
+            if (row.position != index.toLong() || row.canonical_id != track.canonicalId) return null
+            items += PersistedQueueItem(row.item_id, track)
+        }
+    } catch (_: SerializationException) {
+        return null
+    }
+    return QueueContent.of(items)
 }

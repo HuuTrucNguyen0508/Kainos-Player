@@ -49,9 +49,9 @@ class KainosStorage(
     }
 
     /** Runs [block] in one transaction: readers never see a half-written snapshot. */
-    suspend fun write(block: (KainosDatabase) -> Unit) {
+    suspend fun <T> write(block: (KainosDatabase) -> T): T {
         val db = database()
-        withContext(Dispatchers.IO) { db.transaction { block(db) } }
+        return withContext(Dispatchers.IO) { db.transactionWithResult { block(db) } }
     }
 
     private suspend fun database(): KainosDatabase = mutex.withLock {
@@ -65,7 +65,7 @@ class KainosStorage(
             db.transaction {
                 data.userLibrary?.let(db::writeUserLibrary)
                 data.playlists?.let(db::writeKainosPlaylists)
-                data.session?.let(db::writeSessionSnapshot)
+                data.session?.let { db.writeSessionSnapshot(it, db.readStoredQueue()) }
                 data.localScanConfigKey?.let { db.writeLocalScan(it, data.localScanTracks, clock()) }
                 db.storageMetaQueries.markDone(LEGACY_JSON_IMPORT_STEP, clock())
             }

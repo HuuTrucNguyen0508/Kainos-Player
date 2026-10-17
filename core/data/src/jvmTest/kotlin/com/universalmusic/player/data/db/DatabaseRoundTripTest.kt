@@ -243,7 +243,7 @@ class DatabaseRoundTripTest {
             shuffleOrder = listOf(2, 0, 1),
             positionMs = 15_000,
         )
-        db.writeSessionSnapshot(first)
+        db.writeSessionSnapshot(first, db.readStoredQueue())
         assertEquals(first, db.readSessionSnapshot())
 
         val second = SessionSnapshot(
@@ -253,7 +253,7 @@ class DatabaseRoundTripTest {
             repeat = RepeatMode.ONE.name,
             positionMs = 4,
         )
-        db.writeSessionSnapshot(second)
+        db.writeSessionSnapshot(second, db.readStoredQueue())
         assertEquals(second, db.readSessionSnapshot())
     }
 
@@ -262,10 +262,10 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = memoryDatabase(driver)
         val first = session(currentIndex = 0, cachedAtMs = 5)
-        db.writeSessionSnapshot(first)
+        db.writeSessionSnapshot(first, db.readStoredQueue())
 
         val skipped = session(currentIndex = 1, cachedAtMs = 99)
-        assertEquals(1, driver.changesDuring { db.writeSessionSnapshot(skipped) })
+        assertEquals(1, driver.changesDuring { db.writeSessionSnapshot(skipped, db.readStoredQueue()) })
         assertEquals(first.copy(currentIndex = 1), db.readSessionSnapshot())
         driver.close()
     }
@@ -275,14 +275,105 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = memoryDatabase(driver)
         val first = session(currentIndex = 0, cachedAtMs = 5)
-        db.writeSessionSnapshot(first)
+        db.writeSessionSnapshot(first, db.readStoredQueue())
 
         val renamed = first.copy(items = first.items.mapIndexed { index, item ->
             if (index == 1) item.copy(track = item.track.copy(title = "Renamed")) else item
         })
-        assertEquals(2L * first.items.size + 1, driver.changesDuring { db.writeSessionSnapshot(renamed) })
+        assertEquals(2L * first.items.size + 1, driver.changesDuring { db.writeSessionSnapshot(renamed, db.readStoredQueue()) })
         assertEquals(renamed, db.readSessionSnapshot())
         driver.close()
+    }
+
+    @Test
+    fun sessionStoreRechecksQueueWrittenByAnotherConnection() = runTest {
+        val directory = Files.createTempDirectory("kainos-session-two-connections")
+        val firstDriver = fileDriver(directory.resolve("kainos.db"))
+        val otherDriver = fileDriver(directory.resolve("kainos.db"))
+        try {
+            val first = DbSessionSnapshotStore(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
+            val other = DbSessionSnapshotStore(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
+            val original = session(currentIndex = 0, cachedAtMs = 5)
+            first.write(original)
+            other.write(SessionSnapshot(items = listOf(PersistedQueueItem("b1", track("yt:b1", "Other")))))
+            first.write(original.copy(currentIndex = 1))
+            assertEquals(original.copy(currentIndex = 1), other.read())
+        } finally {
+            otherDriver.close()
+            firstDriver.close()
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sessionStoreRechecksMetadataChangedByAnotherConnection() = runTest {
+        val directory = Files.createTempDirectory("kainos-session-two-writers-metadata")
+        val firstDriver = fileDriver(directory.resolve("kainos.db"))
+        val otherDriver = fileDriver(directory.resolve("kainos.db"))
+        try {
+            val first = DbSessionSnapshotStore(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
+            val other = DbSessionSnapshotStore(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
+            val original = session(currentIndex = 0, cachedAtMs = 5)
+            first.write(original)
+            first.write(original)
+            val edited = original.copy(items = original.items.map { it.copy(track = it.track.copy(title = "Changed")) })
+            other.write(edited)
+            first.write(original.copy(currentIndex = 1))
+            assertEquals(original.copy(currentIndex = 1), other.read())
+        } finally {
+            otherDriver.close()
+            firstDriver.close()
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sessionStoreKeepsDurationAndArtworkChangesInQueueEquality() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        KainosDatabase.Schema.create(driver)
+        try {
+            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val original = session(currentIndex = 0, cachedAtMs = 5)
+            store.write(original)
+            store.write(original)
+            val changed = original.copy(items = original.items.mapIndexed { index, item ->
+                if (index == 0) item.copy(track = item.track.copy(durationMs = 202_000, artworkUrl = "file:///new-cover.jpg")) else item
+            })
+            val before = driver.totalChanges()
+            store.write(changed)
+            assertEquals(2L * original.items.size + 1, driver.totalChanges() - before)
+            assertEquals(changed, store.read())
+            val skipped = changed.copy(currentIndex = 1)
+            val afterMetadata = driver.totalChanges()
+            store.write(skipped)
+            assertEquals(1L, driver.totalChanges() - afterMetadata)
+            assertEquals(skipped, store.read())
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun sessionStoreReplacesUndecodableQueueWithValidSnapshot() = runTest {
+        assertCorruptQueueReplaced(session(currentIndex = 1, cachedAtMs = 8))
+    }
+
+    @Test
+    fun sessionStoreReplacesUndecodableQueueWithEmptySnapshot() = runTest {
+        assertCorruptQueueReplaced(SessionSnapshot())
+    }
+
+    private suspend fun assertCorruptQueueReplaced(snapshot: SessionSnapshot) {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        KainosDatabase.Schema.create(driver)
+        try {
+            driver.execute(null, "INSERT INTO session_queue_item VALUES (0, 'broken', 'yt:broken', '{bad-json')", 0)
+            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            store.write(snapshot)
+            assertEquals(snapshot, store.read())
+        } finally {
+            driver.close()
+        }
     }
 
     @Test
@@ -527,7 +618,7 @@ private fun SqlDriver.changesDuring(block: () -> Unit): Long {
     return totalChanges() - before
 }
 
-private fun SqlDriver.totalChanges(): Long =
+internal fun SqlDriver.totalChanges(): Long =
     executeQuery(null, "SELECT total_changes()", { cursor ->
         cursor.next()
         QueryResult.Value(cursor.getLong(0)!!)
