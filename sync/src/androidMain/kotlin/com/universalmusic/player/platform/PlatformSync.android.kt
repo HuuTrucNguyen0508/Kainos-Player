@@ -17,6 +17,8 @@ actual fun createHomeLanVaultStore(
         vaultRootProvider = vaultRootProvider,
     )
 
+actual fun homeLanHubPort(): Int = com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
+
 actual fun detectLanHostAddress(): String? = null
 
 actual suspend fun <T> withVaultSyncForeground(

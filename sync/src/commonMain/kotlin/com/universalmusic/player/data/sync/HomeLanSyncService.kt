@@ -48,6 +48,7 @@ class HomeLanSyncService(
     private val detectedLanHost: () -> String? = { null },
     private val clock: () -> Long = ::currentTimeMillis,
     private val isDesktop: Boolean = platformLabel() == "Linux",
+    private val hubPort: Int = HOME_LAN_SYNC_DEFAULT_PORT,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -60,7 +61,6 @@ class HomeLanSyncService(
     private var idleWatchJob: Job? = null
 
     fun hydrateFromSettings(current: AppSettings) {
-        _pairing.value = current.homeLanSyncPairing
         val needsTlsRepair = current.homeLanSyncEnabled &&
             current.homeLanSyncPairing != null &&
             current.homeLanSyncPairing?.hubCertSha256Hex.isNullOrBlank() &&
@@ -79,6 +79,8 @@ class HomeLanSyncService(
                 lastDetail = current.homeLanSyncLastDetail,
             )
         }
+        // The hub listens on this process's port, whatever port it had when it paired.
+        _pairing.value = current.homeLanSyncPairing?.let { if (shouldRunHub()) it.copy(hubPort = hubPort) else it }
     }
 
     override suspend fun enable(enabled: Boolean) {
@@ -96,7 +98,7 @@ class HomeLanSyncService(
         var pairing = HomeLanSyncPairing(
             deviceId = deviceId,
             sharedSecretHex = secret,
-            hubPort = HOME_LAN_SYNC_DEFAULT_PORT,
+            hubPort = hubPort,
             pairingPin = pin,
             hubHost = detectedLanHost(),
             encryptPayloads = true,

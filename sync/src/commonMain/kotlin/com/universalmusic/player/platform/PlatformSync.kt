@@ -16,6 +16,10 @@ expect fun createHomeLanVaultStore(
     vaultRootProvider: () -> String?,
 ): com.universalmusic.player.data.sync.HomeLanVaultStore
 
+/** Port this device's hub listens on: `KAINOS_HUB_PORT` on desktop, the default on Android. */
+
+expect fun homeLanHubPort(): Int
+
 /** Best-effort IPv4 LAN address for pairing URI (desktop); null on Android. */
 
 expect fun detectLanHostAddress(): String?

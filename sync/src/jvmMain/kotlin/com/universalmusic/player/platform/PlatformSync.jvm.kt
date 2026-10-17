@@ -37,6 +37,8 @@ actual fun createHomeLanVaultStore(
         statePath = homeLanConfigDir().resolve("vault-sync-state.json"),
     )
 
+actual fun homeLanHubPort(): Int = DesktopIsolation.current.hubPort
+
 actual fun detectLanHostAddress(): String? =
     runCatching { defaultRouteIpv4() }.getOrNull()?.takeIf(::isPrivateIpv4)
         ?: runCatching { pickLanHostAddress(lanIpv4Candidates()) }.getOrNull()

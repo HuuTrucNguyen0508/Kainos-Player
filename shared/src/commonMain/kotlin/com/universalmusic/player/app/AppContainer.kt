@@ -70,6 +70,7 @@ import com.universalmusic.player.platform.createHomeLanSyncHub
 import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.detectLanHostAddress
+import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.createHttpClient
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -225,6 +226,7 @@ class AppContainer {
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
         detectedLanHost = { detectLanHostAddress() },
+        hubPort = homeLanHubPort(),
     )
     val resolver = DefaultSourceResolver()
     private val settingsMutex = Mutex()
