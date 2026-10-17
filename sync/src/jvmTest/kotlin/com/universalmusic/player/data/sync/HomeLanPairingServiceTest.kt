@@ -22,7 +22,7 @@ class HomeLanPairingServiceTest {
     private val discovered = DiscoveredHub(hubPin.hex, "pc", "192.0.2.1", 43823, "Kainos on studio")
 
     @Test
-    fun phoneStoresTheObservedHubOnlyAfterBothConfirmations() = runTest {
+    fun phoneStoresTheObservedHubAfterBothConfirmationsEvenIfAnotherPairingStarts() = runTest {
         val pcPeers = mutableListOf<PairedPeer>()
         val host = PairingHost({ hubPin }, { "pc" }, { pcPeers += it })
         val directory = Files.createTempDirectory("kainos-pair-service").toFile()
@@ -50,6 +50,7 @@ class HomeLanPairingServiceTest {
             assertTrue(pcPeers.isEmpty())
             assertNull(settings.homeLanSyncHub)
             host.confirmFromPc(session.attemptId).value()
+            host.start(hubPin, PairStartRequest("tablet", "Tablet", pairingCommit(ByteArray(32)).toHex())).value()
             val peer = confirming.await()
             assertEquals(PairedPeer("pc", "Kainos on studio", hubPin, "192.0.2.1", 43823, 123L), peer)
             assertEquals(peer, settings.homeLanSyncHub)

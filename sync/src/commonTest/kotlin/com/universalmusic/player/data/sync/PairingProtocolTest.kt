@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertIs
 
 class PairingProtocolTest {
     private val hubFp = CertFingerprint.parse("11".repeat(32))!!
@@ -86,6 +87,91 @@ class PairingProtocolTest {
         }
         assertEquals(PairingReply.Ok(PairStartResponse(attemptId, hubNonce.toHex())), host.start(phoneFp, startRequest()))
     }
+
+    @Test
+    fun pairedOutcomesSurviveANewStartInBothConfirmationOrders() = runTest {
+        for (phoneFirst in listOf(true, false)) {
+            val host = freshHost()
+            val started = host.start(phoneFp, startRequest()).value()
+            host.reveal(phoneFp, PairRevealRequest(started.attemptId, phoneNonce.toHex())).value()
+            if (phoneFirst) {
+                host.confirmFromPhone(phoneFp, started.attemptId).value()
+                host.confirmFromPc(started.attemptId).value()
+            } else {
+                host.confirmFromPc(started.attemptId).value()
+                host.confirmFromPhone(phoneFp, started.attemptId).value()
+            }
+            val next = host.start(strangerFp, startRequest()).value()
+            assertEquals(
+                PairingReply.Ok(PairStatusResponse(PairState.PAIRED, hubDeviceId = "kainos-pc")),
+                host.status(phoneFp, started.attemptId),
+            )
+            assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(strangerFp, started.attemptId)).refusal)
+            assertEquals(PairingReply.Ok(PairStatusResponse(PairState.PENDING)), host.status(strangerFp, next.attemptId))
+            assertEquals(PairingRefusal.ENDED, assertIs<PairingReply.Refused>(host.cancel(phoneFp, started.attemptId)).refusal)
+            assertEquals(next.attemptId, host.incoming.value?.attemptId)
+        }
+    }
+
+    @Test
+    fun endedOutcomesSurviveANewStartWithoutReopeningTheAttempt() = runTest {
+        for (ending in listOf("reject", "cancel", "mismatch", "timeout")) {
+            val host = freshHost()
+            val started = host.start(phoneFp, startRequest()).value()
+            when (ending) {
+                "reject" -> host.rejectFromPc(started.attemptId).value()
+                "cancel" -> host.cancel(phoneFp, started.attemptId).value()
+                "mismatch" -> host.reveal(phoneFp, PairRevealRequest(started.attemptId, ByteArray(32).toHex()))
+                "timeout" -> { now += PAIRING_ATTEMPT_TTL_MS; host.expireDue() }
+            }
+            val ended = host.status(phoneFp, started.attemptId).value()
+            assertEquals(PairState.ENDED, ended.state)
+            val next = host.start(strangerFp, startRequest()).value()
+            assertEquals(PairingReply.Ok(ended), host.status(phoneFp, started.attemptId))
+            assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(strangerFp, started.attemptId)).refusal)
+            assertEquals(PairingRefusal.ENDED, assertIs<PairingReply.Refused>(host.confirmFromPhone(phoneFp, started.attemptId)).refusal)
+            assertEquals(PairingRefusal.ENDED, assertIs<PairingReply.Refused>(host.confirmFromPc(started.attemptId)).refusal)
+            assertEquals(next.attemptId, host.incoming.value?.attemptId)
+        }
+    }
+
+    @Test
+    fun terminalRetentionCoversThePollingWindowThenExpiresWithoutPollsExtendingIt() = runTest {
+        val host = freshHost()
+        val started = host.start(phoneFp, startRequest()).value()
+        host.cancel(phoneFp, started.attemptId).value()
+        now += 179_999
+        assertEquals(PairState.ENDED, host.status(phoneFp, started.attemptId).value().state)
+        now++
+        assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(phoneFp, started.attemptId)).refusal)
+    }
+
+    @Test
+    fun terminalRetentionStaysBoundedAtTheStartRateLimit() = runTest {
+        val host = freshHost()
+        val attempts = mutableListOf<String>()
+        repeat(4) {
+            repeat(5) {
+                val started = host.start(phoneFp, startRequest()).value()
+                attempts += started.attemptId
+                host.cancel(phoneFp, started.attemptId).value()
+            }
+            assertEquals(PairingRefusal.RATE_LIMITED, assertIs<PairingReply.Refused>(host.start(phoneFp, startRequest())).refusal)
+            now += 60_000
+        }
+        assertEquals(PairingRefusal.FOREIGN, assertIs<PairingReply.Refused>(host.status(phoneFp, attempts.first())).refusal)
+        for (id in attempts.takeLast(10)) {
+            assertEquals(PairState.ENDED, host.status(phoneFp, id).value().state)
+        }
+    }
+
+    private fun freshHost(): PairingHost {
+        var sequence = 0
+        return PairingHost({ hubFp }, { "kainos-pc" }, { paired += it }, clock = { now },
+            random = { size -> sequence++; ByteArray(size) { sequence.toByte() } })
+    }
+
+    private fun <T> PairingReply<T>.value(): T = assertIs<PairingReply.Ok<T>>(this).value
 
     @Test
     fun aSecondStartWhileOneIsPendingGets409() = runTest {
