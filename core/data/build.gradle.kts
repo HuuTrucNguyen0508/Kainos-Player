@@ -34,3 +34,9 @@ kotlin {
         }
     }
 }
+
+tasks.named<Test>("jvmTest") {
+    val perf = providers.systemProperty("kainos.perf").orNull == "true"
+    systemProperty("kainos.perf", perf.toString())
+    testLogging.showStandardStreams = perf
+}
