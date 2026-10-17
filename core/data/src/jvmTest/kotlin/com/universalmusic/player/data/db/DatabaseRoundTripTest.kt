@@ -271,17 +271,20 @@ class DatabaseRoundTripTest {
     }
 
     @Test
-    fun sessionWriteWithOneRenamedTrackRewritesTheWholeQueue() {
+    fun sessionWriteWithOneRenamedTrackOnlyUpdatesThatRowAndState() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = memoryDatabase(driver)
         val first = session(currentIndex = 0, cachedAtMs = 5)
         db.writeSessionSnapshot(first, db.readStoredQueue())
 
         val renamed = first.copy(items = first.items.mapIndexed { index, item ->
-            if (index == 1) item.copy(track = item.track.copy(title = "Renamed")) else item
+            item.copy(track = item.track.copy(title = if (index == 1) "Renamed" else item.track.title, cachedAtMs = 99))
         })
-        assertEquals(2L * first.items.size + 1, driver.changesDuring { db.writeSessionSnapshot(renamed, db.readStoredQueue()) })
-        assertEquals(renamed, db.readSessionSnapshot())
+        assertEquals(2L, driver.changesDuring { db.writeSessionSnapshot(renamed, db.readStoredQueue()) })
+        val expected = first.copy(items = first.items.mapIndexed { index, item ->
+            if (index == 1) renamed.items[index] else item
+        })
+        assertEquals(expected, db.readSessionSnapshot())
         driver.close()
     }
 
@@ -341,7 +344,7 @@ class DatabaseRoundTripTest {
             })
             val before = driver.totalChanges()
             store.write(changed)
-            assertEquals(2L * original.items.size + 1, driver.totalChanges() - before)
+            assertEquals(2L, driver.totalChanges() - before)
             assertEquals(changed, store.read())
             val skipped = changed.copy(currentIndex = 1)
             val afterMetadata = driver.totalChanges()
@@ -371,6 +374,31 @@ class DatabaseRoundTripTest {
             val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
             store.write(snapshot)
             assertEquals(snapshot, store.read())
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun sessionStoreRetriesMetadataUpdateAfterAFailedWrite() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        KainosDatabase.Schema.create(driver)
+        try {
+            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val original = session(currentIndex = 0, cachedAtMs = 5)
+            store.write(original)
+            val changed = original.copy(items = original.items.mapIndexed { index, item ->
+                if (index == 1) item.copy(track = item.track.copy(canonicalId = "local:renamed", title = "Renamed")) else item
+            })
+            driver.execute(null, "CREATE TRIGGER fail_state BEFORE INSERT ON session_state BEGIN SELECT RAISE(ABORT, 'disk full'); END", 0)
+            assertFails { store.write(changed) }
+            assertEquals(original, store.read())
+
+            driver.execute(null, "DROP TRIGGER fail_state", 0)
+            val before = driver.totalChanges()
+            store.write(changed)
+            assertEquals(2L, driver.totalChanges() - before)
+            assertEquals(changed, store.read())
         } finally {
             driver.close()
         }

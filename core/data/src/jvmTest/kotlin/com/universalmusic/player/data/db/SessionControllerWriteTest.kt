@@ -23,9 +23,38 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionControllerWriteTest {
+    @Test
+    fun firstPlaySkipsAcrossNullDurationSafTracksOnlyUpdateTheLearnedRowAndState() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        KainosDatabase.Schema.create(driver)
+        try {
+            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val player = PlayerSession(DurationEngine(), DefaultSourceResolver(), backgroundScope)
+            val controller = SessionPersistenceController(player, store, backgroundScope, clock = { 10 })
+            player.restorePaused(PlaybackQueue(items = (0 until 8).map(::safItem)).toSessionSnapshot(0, 0))
+            controller.flush()
+            assertTrue(store.read().items.all { it.track.durationMs == null })
+
+            repeat(8) { index ->
+                if (index == 0) player.playQueueIndex(0) else player.skipToNext()
+                runCurrent()
+                val before = driver.totalChanges()
+                controller.flush()
+                val delta = driver.totalChanges() - before
+                assertTrue(delta in 1L..2L, "first play at index $index changed $delta rows")
+                val stored = store.read()
+                assertEquals(index, stored.currentIndex)
+                assertEquals(List(8) { if (it <= index) 180_000L else null }, stored.items.map { it.track.durationMs })
+            }
+        } finally {
+            driver.close()
+        }
+    }
+
     @Test
     fun learnedDurationsStayInQueueAndSkipsOnlyWriteStateAfterLearning() = runTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)

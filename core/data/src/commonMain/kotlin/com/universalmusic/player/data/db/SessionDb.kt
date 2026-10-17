@@ -26,18 +26,27 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
 
 internal fun KainosDatabase.writeSessionSnapshot(
     snapshot: SessionSnapshot,
-    storedQueue: QueueContent?,
-): QueueContent {
+    storedQueue: StoredQueue,
+): StoredQueue {
     val queue = QueueContent.of(snapshot.items)
-    if (queue != storedQueue) {
+    val rows = if (queue == storedQueue.content) {
+        storedQueue.rows
+    } else if (storedQueue.content?.items?.map { it.id } == queue.items.map { it.id }) {
+        snapshot.items.mapIndexed { index, item ->
+            if (queue.items[index] == storedQueue.content.items[index]) {
+                storedQueue.rows[index]
+            } else {
+                val row = item.toRow(index)
+                listeningSessionQueries.updateItem(row.item_id, row.canonical_id, row.track_json, row.position)
+                row
+            }
+        }
+    } else {
         listeningSessionQueries.clearItems()
-        snapshot.items.forEachIndexed { index, item ->
-            listeningSessionQueries.insertItem(
-                index.toLong(),
-                item.id,
-                item.track.canonicalId,
-                storageJson.encodeToString(item.track),
-            )
+        snapshot.items.mapIndexed { index, item ->
+            val row = item.toRow(index)
+            listeningSessionQueries.insertItem(row.position, row.item_id, row.canonical_id, row.track_json)
+            row
         }
     }
     listeningSessionQueries.upsertState(
@@ -47,8 +56,15 @@ internal fun KainosDatabase.writeSessionSnapshot(
         storageJson.encodeToString(snapshot.shuffleOrder),
         snapshot.positionMs,
     )
-    return queue
+    return StoredQueue(rows, queue)
 }
+
+private fun PersistedQueueItem.toRow(index: Int) = Session_queue_item(
+    position = index.toLong(),
+    item_id = id,
+    canonical_id = track.canonicalId,
+    track_json = storageJson.encodeToString(track),
+)
 
 private fun KainosDatabase.readQueueItems(): List<PersistedQueueItem> =
     listeningSessionQueries.selectItems().executeAsList().map { row ->
@@ -58,7 +74,7 @@ private fun KainosDatabase.readQueueItems(): List<PersistedQueueItem> =
         )
     }
 
-internal data class QueueContent private constructor(private val items: List<PersistedQueueItem>) {
+internal data class QueueContent private constructor(val items: List<PersistedQueueItem>) {
     companion object {
         fun of(items: List<PersistedQueueItem>) =
             QueueContent(items.map { it.copy(track = it.track.copy(cachedAtMs = 0)) })
@@ -69,24 +85,25 @@ class DbSessionSnapshotStore(
     private val storage: KainosStorage,
 ) : SessionSnapshotStore {
     private val writeMutex = Mutex()
-    private var decodedQueue: DecodedQueue? = null
+    private var decodedQueue: StoredQueue? = null
 
     override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
 
     override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
         decodedQueue = storage.write { db ->
             val rows = db.listeningSessionQueries.selectItems().executeAsList()
-            val stored = decodedQueue?.takeIf { it.rows == rows } ?: DecodedQueue(rows, rows.decodeQueue())
-            db.writeSessionSnapshot(snapshot, stored.content)
-            stored
+            val stored = decodedQueue?.takeIf { it.rows == rows } ?: StoredQueue(rows, rows.decodeQueue())
+            db.writeSessionSnapshot(snapshot, stored)
         }
     }
-
-    private data class DecodedQueue(val rows: List<Session_queue_item>, val content: QueueContent?)
 }
 
-internal fun KainosDatabase.readStoredQueue(): QueueContent? =
-    listeningSessionQueries.selectItems().executeAsList().decodeQueue()
+internal data class StoredQueue(val rows: List<Session_queue_item>, val content: QueueContent?)
+
+internal fun KainosDatabase.readStoredQueue(): StoredQueue {
+    val rows = listeningSessionQueries.selectItems().executeAsList()
+    return StoredQueue(rows, rows.decodeQueue())
+}
 
 private fun List<Session_queue_item>.decodeQueue(): QueueContent? {
     val items = ArrayList<PersistedQueueItem>(size)

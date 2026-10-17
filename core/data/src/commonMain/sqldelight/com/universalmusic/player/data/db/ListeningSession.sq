@@ -30,5 +30,8 @@ SELECT * FROM session_queue_item ORDER BY position;
 insertItem:
 INSERT INTO session_queue_item (position, item_id, canonical_id, track_json) VALUES (?, ?, ?, ?);
 
+updateItem:
+UPDATE session_queue_item SET item_id = ?, canonical_id = ?, track_json = ? WHERE position = ?;
+
 clearItems:
 DELETE FROM session_queue_item;
