@@ -4,6 +4,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.generateHomeLanHubCertPin
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.platformLabel
@@ -49,6 +50,7 @@ class HomeLanSyncService(
     private val clock: () -> Long = ::currentTimeMillis,
     private val isDesktop: Boolean = platformLabel() == "Linux",
     private val hubPort: Int = HOME_LAN_SYNC_DEFAULT_PORT,
+    private val hubBrowser: HubBrowser = platformHubBrowser(),
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -224,10 +226,13 @@ class HomeLanSyncService(
                 _status.update { it.copy(lastError = msg) }
                 return@withLock Result.failure(IllegalStateException(msg))
             }
+            val startedAt = clock()
+            PlaybackTrace.log(TRACE_TAG, "sync start")
             runCatching {
                 ensureDeviceId()
+                val located = locateHub(pairing).getOrThrow()
                 withVaultSyncForeground("Home library sync") {
-                    clientFactory(pairing).use { client ->
+                    clientFactory(located).use { client ->
                         val remoteHearts = client.syncHearts().getOrThrow()
                         library.mergeAndPersistSyncState(remoteHearts)
                         val remotePlaylists = client.syncPlaylists().getOrThrow()
@@ -294,8 +299,11 @@ class HomeLanSyncService(
                         detail
                     }
                 }
+            }.onSuccess {
+                PlaybackTrace.log(TRACE_TAG, "sync ok in ${clock() - startedAt} ms")
             }.onFailure { err ->
                 val message = err.message ?: err.toString()
+                PlaybackTrace.log(TRACE_TAG, "sync failed in ${clock() - startedAt} ms: $message")
                 updateSettings { it.copy(homeLanSyncLastError = message) }
                 _status.update {
                     it.copy(lastError = message, vaultProgress = null)
@@ -525,14 +533,44 @@ class HomeLanSyncService(
                     }
                     return@runCatching
                 }
-                val probe = clientFactory(pairing).use { it.probeHub() }
-                if (probe.isSuccess) {
+                if (locateHub(pairing).isSuccess) {
                     syncNow()
                 }
             }.onFailure { err ->
                 _status.update {
                     it.copy(lastError = err.message ?: "Home sync foreground check failed")
                 }
+            }
+        }
+    }
+
+    /**
+     * [pairing] pointed at the hub that answered the pinned probe. A hub found by mDNS at a new
+     * address is stored, so the next sync tries that address first.
+     */
+    private suspend fun locateHub(pairing: HomeLanSyncPairing): Result<HomeLanSyncPairing> {
+        val pin = pairing.hubCertSha256Hex
+            ?: return Result.failure(IllegalStateException("Hub certificate pin required"))
+        val stored = pairing.hubHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, pairing.hubPort) }
+        val startedAt = clock()
+        val resolver = HubEndpointResolver(
+            browser = hubBrowser,
+            probe = { endpoint ->
+                runCatching { clientFactory(pairing.at(endpoint)).use { it.probeHub().getOrThrow() } }.map { }
+            },
+            log = { PlaybackTrace.log(TRACE_TAG, it) },
+        )
+        return when (val result = resolver.resolve(stored, pin)) {
+            is ResolveResult.HubNotFound -> Result.failure(IllegalStateException(result.reason))
+            is ResolveResult.Resolved -> {
+                val endpoint = result.endpoint
+                PlaybackTrace.log(TRACE_TAG, "hub $endpoint via ${result.via} in ${clock() - startedAt} ms")
+                if (result.via == ResolvedVia.MDNS) {
+                    PlaybackTrace.log(TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
+                    updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
+                    _pairing.update { it?.at(endpoint) }
+                }
+                Result.success(pairing.at(endpoint))
             }
         }
     }
@@ -575,6 +613,10 @@ class HomeLanSyncService(
     private fun newDeviceId(): String =
         "kainos-" + Base64.UrlSafe.encode(secureRandomBytes(12)).trimEnd('=')
 }
+
+private const val TRACE_TAG = "HomeSync"
+
+private fun HomeLanSyncPairing.at(endpoint: HubEndpoint) = copy(hubHost = endpoint.host, hubPort = endpoint.port)
 
 fun ByteArray.toHex(): String =
     joinToString("") { b -> ((b.toInt() and 0xff) + 0x100).toString(16).substring(1) }
