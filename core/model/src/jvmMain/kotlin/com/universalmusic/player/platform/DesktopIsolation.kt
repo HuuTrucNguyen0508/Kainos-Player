@@ -18,7 +18,6 @@ data class DesktopIsolation(
         private const val HUB_PORT_VAR = "KAINOS_HUB_PORT"
         private const val INSTANCE_VAR = "KAINOS_INSTANCE"
 
-        /** Read once per process; desktop main() forces it first so a bad value stops startup. */
         val current: DesktopIsolation by lazy {
             load(System.getenv(), Path.of(System.getProperty("user.home")))
         }

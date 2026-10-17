@@ -54,8 +54,6 @@ private fun configDir(): Path {
     return dir
 }
 
-/** Shared with HomeLanTls.jvm.kt for the hub PKCS12 in the data directory. */
-
 fun homeLanConfigDir(): Path = configDir()
 
 private val kainosStorage by lazy {

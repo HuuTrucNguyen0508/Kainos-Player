@@ -61,6 +61,9 @@ class HomeLanSyncService(
     private var idleWatchJob: Job? = null
 
     fun hydrateFromSettings(current: AppSettings) {
+        _pairing.value = current.homeLanSyncPairing?.let {
+            if (shouldRunHub(current.homeLanSyncRole)) it.copy(hubPort = hubPort) else it
+        }
         val needsTlsRepair = current.homeLanSyncEnabled &&
             current.homeLanSyncPairing != null &&
             current.homeLanSyncPairing?.hubCertSha256Hex.isNullOrBlank() &&
@@ -79,8 +82,6 @@ class HomeLanSyncService(
                 lastDetail = current.homeLanSyncLastDetail,
             )
         }
-        // The hub listens on this process's port, whatever port it had when it paired.
-        _pairing.value = current.homeLanSyncPairing?.let { if (shouldRunHub()) it.copy(hubPort = hubPort) else it }
     }
 
     override suspend fun enable(enabled: Boolean) {
@@ -550,7 +551,7 @@ class HomeLanSyncService(
         }
     }
 
-    private fun shouldRunHub(): Boolean = when (_status.value.role) {
+    private fun shouldRunHub(role: HomeLanSyncRole = _status.value.role): Boolean = when (role) {
         HomeLanSyncRole.HUB -> true
         HomeLanSyncRole.CLIENT -> false
         HomeLanSyncRole.AUTO -> isDesktop

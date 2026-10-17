@@ -19,7 +19,6 @@ import org.freedesktop.dbus.interfaces.Properties
 import org.freedesktop.dbus.messages.DBusSignal
 import org.freedesktop.dbus.types.Variant
 
-/** `KAINOS_INSTANCE=2` exports `org.mpris.MediaPlayer2.kainosplayer.instance2` (`playerctl -p kainosplayer.instance2`). */
 fun mprisBusName(instance: String?): String =
     "org.mpris.MediaPlayer2.kainosplayer" + instance?.let { ".instance$it" }.orEmpty()
 
