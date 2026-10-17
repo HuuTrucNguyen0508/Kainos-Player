@@ -19,7 +19,7 @@ actual fun createHomeLanSyncHub(
         sharedSecretHex = pairing.sharedSecretHex,
         expectedCertSha256Hex = pin,
     )
-    return com.universalmusic.player.data.sync.DesktopHomeLanSyncHub(
+    val hub = com.universalmusic.player.data.sync.DesktopHomeLanSyncHub(
         pairing = pairing,
         onHearts = onHearts,
         onPlaylists = onPlaylists,
@@ -27,6 +27,29 @@ actual fun createHomeLanSyncHub(
         tls = tls,
         heartedVaultFileNames = heartedVaultFileNames,
     )
+    val advertiser = com.universalmusic.player.data.sync.AvahiHubAdvertiser(
+        port = pairing.hubPort,
+        certSha256Hex = pin,
+        deviceId = pairing.deviceId,
+        instanceLabel = DesktopIsolation.current.instance,
+    )
+    return AdvertisedHub(hub, advertiser)
+}
+
+/** The mDNS record lives exactly as long as the hub listens. */
+private class AdvertisedHub(
+    private val hub: com.universalmusic.player.data.sync.HomeLanSyncHub,
+    private val advertiser: com.universalmusic.player.data.sync.AvahiHubAdvertiser,
+) : com.universalmusic.player.data.sync.HomeLanSyncHub by hub {
+    override suspend fun start() {
+        hub.start()
+        advertiser.start()
+    }
+
+    override suspend fun stop() {
+        advertiser.stop()
+        hub.stop()
+    }
 }
 
 actual fun createHomeLanVaultStore(

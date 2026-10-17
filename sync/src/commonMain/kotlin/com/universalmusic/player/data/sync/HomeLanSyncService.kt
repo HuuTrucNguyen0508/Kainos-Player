@@ -227,7 +227,7 @@ class HomeLanSyncService(
                 return@withLock Result.failure(IllegalStateException(msg))
             }
             val startedAt = clock()
-            PlaybackTrace.log(TRACE_TAG, "sync start")
+            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync start")
             runCatching {
                 ensureDeviceId()
                 val located = locateHub(pairing).getOrThrow()
@@ -300,10 +300,10 @@ class HomeLanSyncService(
                     }
                 }
             }.onSuccess {
-                PlaybackTrace.log(TRACE_TAG, "sync ok in ${clock() - startedAt} ms")
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync ok in ${clock() - startedAt} ms")
             }.onFailure { err ->
                 val message = err.message ?: err.toString()
-                PlaybackTrace.log(TRACE_TAG, "sync failed in ${clock() - startedAt} ms: $message")
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync failed in ${clock() - startedAt} ms: $message")
                 updateSettings { it.copy(homeLanSyncLastError = message) }
                 _status.update {
                     it.copy(lastError = message, vaultProgress = null)
@@ -558,15 +558,15 @@ class HomeLanSyncService(
             probe = { endpoint ->
                 runCatching { clientFactory(pairing.at(endpoint)).use { it.probeHub().getOrThrow() } }.map { }
             },
-            log = { PlaybackTrace.log(TRACE_TAG, it) },
+            log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
         )
         return when (val result = resolver.resolve(stored, pin)) {
             is ResolveResult.HubNotFound -> Result.failure(IllegalStateException(result.reason))
             is ResolveResult.Resolved -> {
                 val endpoint = result.endpoint
-                PlaybackTrace.log(TRACE_TAG, "hub $endpoint via ${result.via} in ${clock() - startedAt} ms")
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "hub $endpoint via ${result.via} in ${clock() - startedAt} ms")
                 if (result.via == ResolvedVia.MDNS) {
-                    PlaybackTrace.log(TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
+                    PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
                     updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
                     _pairing.update { it?.at(endpoint) }
                 }
@@ -614,7 +614,7 @@ class HomeLanSyncService(
         "kainos-" + Base64.UrlSafe.encode(secureRandomBytes(12)).trimEnd('=')
 }
 
-private const val TRACE_TAG = "HomeSync"
+internal const val HOME_SYNC_TRACE_TAG = "HomeSync"
 
 private fun HomeLanSyncPairing.at(endpoint: HubEndpoint) = copy(hubHost = endpoint.host, hubPort = endpoint.port)
 

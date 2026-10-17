@@ -26,3 +26,9 @@ kotlin {
         }
     }
 }
+
+tasks.named<Test>("jvmTest") {
+    val avahi = providers.systemProperty("kainos.avahi").orNull == "true"
+    systemProperty("kainos.avahi", avahi.toString())
+    testLogging.showStandardStreams = avahi
+}

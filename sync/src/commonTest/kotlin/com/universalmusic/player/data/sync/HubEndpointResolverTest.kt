@@ -128,4 +128,22 @@ class HubEndpointResolverTest {
         assertEquals(ResolveResult.Resolved(moved, ResolvedVia.MDNS), result)
         assertEquals(listOf(moved), prober.probed)
     }
+
+    @Test
+    fun brokenDiscoveryEndsTheSearchWithoutWaitingForTheBrowseBudget() = runTest {
+        val prober = FakeProber(emptyMap())
+        val failing = HubBrowser { flow { throw IllegalStateException("org.freedesktop.Avahi was not provided") } }
+        val logs = mutableListOf<String>()
+        val result = resolver(failing, prober, logs).resolve(stored, pin)
+
+        assertEquals(
+            ResolveResult.HubNotFound(
+                "Hub not found: stored 192.168.1.20:43822: Connection refused; " +
+                    "mDNS found no hub with the pinned certificate within 4 s",
+            ),
+            result,
+        )
+        assertEquals("discovery failed: org.freedesktop.Avahi was not provided", logs.last())
+        assertEquals(50, currentTime)
+    }
 }

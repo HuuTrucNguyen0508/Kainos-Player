@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.sync
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
@@ -54,6 +55,7 @@ class HubEndpointResolver(
         var advertised = 0
         val found = withTimeoutOrNull(browseTimeoutMs) {
             browser.browse()
+                .catch { log("discovery failed: ${it.message ?: it}") }
                 .filter { it.fp.equals(pinnedFp, ignoreCase = true) && tried.add(it.endpoint) }
                 .firstOrNull { hub ->
                     advertised++
