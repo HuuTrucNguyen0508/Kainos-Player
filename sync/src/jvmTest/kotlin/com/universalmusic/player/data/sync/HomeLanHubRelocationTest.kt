@@ -386,4 +386,91 @@ class HomeLanHubRelocationTest {
         }
     }
 
+    @Test
+    fun cancelledResolutionWaitingForSettingsCannotCommitAnEndpoint() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val job = SupervisorJob()
+        val scope = CoroutineScope(backgroundScope.coroutineContext + job)
+        val original = settings.homeLanSyncPairing
+        val service = service(scope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
+            beforeSettingsUpdate = { entered.complete(Unit); release.await() })
+        try {
+            service.onAppForeground()
+            entered.await()
+            scope.cancel()
+            release.complete(Unit)
+            job.join()
+
+            assertEquals(original, persistedSettings.homeLanSyncPairing)
+            assertEquals(original, settings.homeLanSyncPairing)
+            assertEquals(original, service.pairing.value)
+            assertTrue(openClients.all { it.closed })
+        } finally {
+            job.cancel()
+        }
+    }
+
+    @Test
+    fun replacementQueuedBehindEndpointPersistenceRemainsAuthoritative() = runTest {
+        val persisted = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var pause = true
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
+            afterSettingsPersist = {
+                if (pause) {
+                    pause = false
+                    persisted.complete(Unit)
+                    release.await()
+                }
+            })
+        service.onAppForeground()
+        persisted.await()
+        val replacement = launch {
+            service.completeClientPairing("192.168.2.20", 43999, "ccdd", "pc-b", "123456", "b".repeat(64))
+        }
+        runCurrent()
+        release.complete(Unit)
+        replacement.join()
+        runCurrent()
+
+        assertEquals("192.168.2.20", persistedSettings.homeLanSyncPairing?.hubHost)
+        assertEquals("b".repeat(64), persistedSettings.homeLanSyncPairing?.hubCertSha256Hex)
+        assertEquals(persistedSettings.homeLanSyncPairing, settings.homeLanSyncPairing)
+        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertNull(service.status.value.lastSyncAtMs)
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun cancellingSyncAfterPersistenceClosesItsClientAndKeepsRetryUsable() = runTest {
+        val persisted = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var pause = true
+        val service = service(backgroundScope, "192.168.1.57",
+            DiscoveredHub(cert, "pc-a", "192.168.1.57", 43822),
+            afterSettingsPersist = {
+                if (pause) {
+                    pause = false
+                    persisted.complete(Unit)
+                    release.await()
+                }
+            })
+        val sync = launch { service.syncNow() }
+        persisted.await()
+        sync.cancel()
+        release.complete(Unit)
+        sync.join()
+
+        assertEquals(persistedSettings.homeLanSyncPairing, settings.homeLanSyncPairing)
+        assertEquals(persistedSettings.homeLanSyncPairing, service.pairing.value)
+        assertNull(service.status.value.lastSyncAtMs)
+        assertTrue(openClients.all { it.closed })
+        service.syncNow().getOrThrow()
+        assertNull(service.status.value.lastError)
+        assertTrue(openClients.all { it.closed })
+    }
+
 }

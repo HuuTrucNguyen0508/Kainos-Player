@@ -13,6 +13,7 @@ import com.universalmusic.player.platform.withVaultSyncForeground
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -86,11 +88,9 @@ class HomeLanSyncService(
         pairingGeneration++
     }
 
-    fun hydrateFromSettings(current: AppSettings) {
+    fun hydrateFromSettings(current: AppSettings) = synchronized(resolutionLock) {
         invalidateResolution()
-        _pairing.value = current.homeLanSyncPairing?.let {
-            if (shouldRunHub(current.homeLanSyncRole)) it.copy(hubPort = hubPort) else it
-        }
+        _pairing.value = current.effectivePairing()
         val needsTlsRepair = current.homeLanSyncEnabled &&
             current.homeLanSyncPairing != null &&
             current.homeLanSyncPairing?.hubCertSha256Hex.isNullOrBlank() &&
@@ -144,7 +144,7 @@ class HomeLanSyncService(
                 homeLanSyncDeviceId = deviceId,
             )
         }
-        _pairing.value = pairing
+        reconcilePairing()
         _status.update { it.copy(enabled = true, role = HomeLanSyncRole.HUB) }
         // Always restart: a listening hub still serves the previous cert/secret.
         stopHub()
@@ -186,7 +186,7 @@ class HomeLanSyncService(
                 homeLanSyncDeviceId = deviceId,
             )
         }
-        _pairing.value = pairing
+        reconcilePairing()
         _status.update { it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null) }
         stopHub()
     }
@@ -215,7 +215,7 @@ class HomeLanSyncService(
                 homeLanSyncLastDetail = null,
             )
         }
-        _pairing.value = null
+        reconcilePairing()
         _status.update {
             HomeLanSyncStatus(enabled = false, role = settings().homeLanSyncRole)
         }
@@ -626,18 +626,27 @@ class HomeLanSyncService(
         if (!isCurrent(source)) return false
         if (resolved.via != ResolvedVia.MDNS) return settings().matches(source)
         val endpoint = resolved.endpoint
+        val committedSource = source.copy(pairing = source.pairing.at(endpoint))
+        val resolutionContext = coroutineContext
         var stored = false
-        updateSettings { current ->
-            synchronized(resolutionLock) {
-                if (isCurrent(source) && current.matches(source)) {
-                    stored = true
-                    current.copy(homeLanSyncPairing = source.pairing.at(endpoint))
-                } else current
+        try {
+            // Finish an accepted settings commit before cancellation can interrupt its publication.
+            withContext(NonCancellable) {
+                updateSettings { current ->
+                    synchronized(resolutionLock) {
+                        if (resolutionContext.isActive && isCurrent(source) && current.matches(source)) {
+                            stored = true
+                            current.copy(homeLanSyncPairing = committedSource.pairing)
+                        } else current
+                    }
+                }
             }
+        } finally {
+            reconcilePairing()
         }
         coroutineContext.ensureActive()
         val remembered = synchronized(resolutionLock) {
-            stored && isCurrent(source) && _pairing.compareAndSet(source.pairing, source.pairing.at(endpoint))
+            stored && isCurrent(committedSource) && settings().matches(committedSource)
         }
         if (!remembered) return false
         PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "resolved hub via mDNS ${endpoint.host}")
@@ -645,9 +654,15 @@ class HomeLanSyncService(
     }
 
     private fun AppSettings.matches(source: ResolutionSource): Boolean =
-        homeLanSyncEnabled && homeLanSyncRole == source.role && homeLanSyncPairing?.let {
-            if (shouldRunHub(homeLanSyncRole)) it.copy(hubPort = hubPort) else it
-        } == source.pairing
+        homeLanSyncEnabled && homeLanSyncRole == source.role && effectivePairing() == source.pairing
+
+    private fun reconcilePairing() = synchronized(resolutionLock) {
+        _pairing.value = settings().effectivePairing()
+    }
+
+    private fun AppSettings.effectivePairing(): HomeLanSyncPairing? = homeLanSyncPairing?.let {
+        if (shouldRunHub(homeLanSyncRole)) it.copy(hubPort = hubPort) else it
+    }
 
     private fun startIdleWatch() {
         idleWatchJob?.cancel()
