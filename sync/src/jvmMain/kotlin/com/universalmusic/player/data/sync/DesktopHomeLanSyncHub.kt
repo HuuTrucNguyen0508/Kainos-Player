@@ -296,7 +296,6 @@ class DesktopHomeLanSyncHub(
     }
 }
 
-// 4 KiB covers the bounded identifiers, name and nonce even with JSON unicode escapes.
 private const val MAX_PAIRING_BODY_BYTES = 4_096L
 
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
