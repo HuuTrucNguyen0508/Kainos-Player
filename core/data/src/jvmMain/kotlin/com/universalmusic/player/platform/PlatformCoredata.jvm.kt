@@ -46,15 +46,14 @@ import kotlin.io.path.readText
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-private fun configDir(): Path {
-    val dir = DesktopIsolation.current.dataDir
-    Files.createDirectories(dir)
+internal fun configDir(dataDir: Path = DesktopIsolation.current.dataDir): Path {
+    Files.createDirectories(dataDir)
     // Holds the Spotify refresh token and the Home sync hub key; keep it owner-only.
-    restrictToOwner(dir, directory = true)
-    return dir
+    restrictToOwner(dataDir, directory = true)
+    return dataDir
 }
 
-fun homeLanConfigDir(): Path = configDir()
+fun homeLanConfigDir(dataDir: Path = DesktopIsolation.current.dataDir): Path = configDir(dataDir)
 
 private val kainosStorage by lazy {
     KainosStorage(

@@ -90,8 +90,20 @@ actual suspend fun <T> withVaultSyncForeground(
     block: suspend () -> T,
 ): T = block()
 
-actual fun setHomeLanHubAutostart(enabled: Boolean) {
-    val home = System.getenv("HOME") ?: return
+actual fun setHomeLanHubAutostart(enabled: Boolean) =
+    setHomeLanHubAutostart(enabled, DesktopIsolation.current, System.getenv(), ::println)
+
+internal fun setHomeLanHubAutostart(
+    enabled: Boolean,
+    isolation: DesktopIsolation,
+    env: Map<String, String>,
+    log: (String) -> Unit,
+) {
+    if (isolation.isIsolated) {
+        log("Hub autostart unchanged: isolated instance")
+        return
+    }
+    val home = env["HOME"] ?: return
     val autostart = java.nio.file.Path.of(home, ".config", "autostart")
     val desktop = autostart.resolve("kainos-home-sync-hub.desktop")
     if (!enabled) {
@@ -100,7 +112,7 @@ actual fun setHomeLanHubAutostart(enabled: Boolean) {
     }
     runCatching {
         java.nio.file.Files.createDirectories(autostart)
-        val exec = System.getenv("KAINOS_PLAYER_EXEC")
+        val exec = env["KAINOS_PLAYER_EXEC"]
             ?: listOf(
                 "$home/.local/bin/kainos-player",
                 "/usr/local/bin/kainos-player",

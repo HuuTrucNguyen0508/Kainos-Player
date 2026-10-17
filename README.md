@@ -222,18 +222,20 @@ SQLDelight stores the library, playlists, listening session and local scan in `k
 
 ### Run desktop instances side by side
 
-Three environment variables isolate a desktop instance, so several can run at once without sharing state. The app reads them once at startup. An invalid value stops the app with exit status 2 and a message that names the variable.
+Three environment variables isolate a desktop instance, so several can run at once without sharing state. The app reads them once at startup. A present but blank variable or an invalid value stops the app with exit status 2 and a message that names the variable.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `KAINOS_DATA_DIR` | `~/.universal-music-player` | Data directory for `kainos.db`, settings, tokens, caches, librespot state and the Home sync hub key. The app creates it and stops if it cannot be created or written. Helper binaries are still found under `~/.universal-music-player/bin`. |
+| `KAINOS_DATA_DIR` | `~/.universal-music-player` | Absolute data directory for `kainos.db`, settings, tokens, caches, librespot state and the Home sync hub key. The app creates it and stops if it cannot be created or written. Helper binaries are still found under `~/.universal-music-player/bin`. |
 | `KAINOS_HUB_PORT` | `43822` | Port the Home sync hub listens on and advertises in its pairing URI. Must be 1 to 65535. |
-| `KAINOS_INSTANCE` | unset | Appends `.instance<value>` to the MPRIS bus name `org.mpris.MediaPlayer2.kainosplayer`. Letters, digits, `_` and `-` only. |
+| `KAINOS_INSTANCE` | unset | Appends `.instance<value>` to the MPRIS bus name `org.mpris.MediaPlayer2.kainosplayer`. Letters, digits, `_` and `-` only. The full bus name must be at most 255 characters. |
 
 ```bash
 KAINOS_DATA_DIR=/tmp/kainos-2/data KAINOS_HUB_PORT=44002 KAINOS_INSTANCE=2 ./gradlew :desktopApp:run
 playerctl -p kainosplayer.instance2 play-pause
 ```
+
+Setting any of these overrides leaves login autostart unchanged and logs `Hub autostart unchanged: isolated instance`. With `KAINOS_DATA_DIR`, the Spotify Web Playback browser profile lives in `<dataDir>/spotify-web-player`. Without it, the profile keeps its XDG cache location.
 
 At startup the app prints one `Kainos data dir … , hub port … , MPRIS …` line with the values in use.
 

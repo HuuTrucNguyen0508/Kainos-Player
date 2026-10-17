@@ -29,6 +29,8 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MprisControllerTest {
+    private val busName = mprisBusName("test${ProcessHandle.current().pid()}")
+    private val playerName = busName.removePrefix("org.mpris.MediaPlayer2.")
     @Test
     fun instanceSuffixesTheBusName() {
         assertEquals("org.mpris.MediaPlayer2.kainosplayer", mprisBusName(null))
@@ -39,7 +41,7 @@ class MprisControllerTest {
     fun bindStartsWithoutThrowingWhenSessionBusMissing() = runTest {
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
-        val controller = MprisController(session, backgroundScope)
+        val controller = MprisController(session, backgroundScope, busName)
         controller.start()
         session.play(track("One", "A", provider = ProviderId.SAMPLE))
         runCurrent()
@@ -70,12 +72,10 @@ class MprisControllerTest {
         if (runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() != 0) {
             return@runBlocking
         }
-        // A running Kainos desktop app already owns the bus name; the test would query it instead.
-        if (mprisNameHasOwner()) return@runBlocking
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), scope)
-        val controller = MprisController(session, scope)
+        val controller = MprisController(session, scope, busName)
         controller.start()
         try {
             session.play(
@@ -88,22 +88,22 @@ class MprisControllerTest {
             delay(1_000)
             val listed = playerctl("-l")
             assertTrue(
-                listed.lineSequence().any { it.trim() == "kainosplayer" },
-                "playerctl -l missing kainosplayer: $listed",
+                listed.lineSequence().any { it.trim() == playerName },
+                "playerctl -l missing $playerName: $listed",
             )
-            val dbusTitle = dbusGetTitle()
+            val dbusTitle = dbusGetTitle(busName)
             assertTrue(
                 dbusTitle.contains("MprisSmokeOne"),
                 "D-Bus Metadata missing title. Got: $dbusTitle",
             )
-            val title = playerctl("-p", "kainosplayer", "metadata", "xesam:title").trim()
+            val title = playerctl("-p", playerName, "metadata", "xesam:title").trim()
             if (!title.contains("No player") && title.isNotBlank()) {
                 assertEquals("MprisSmokeOne", title)
             }
-            dbusCall("Next")
+            dbusCall(busName, "Next")
             delay(500)
             assertEquals("MprisSmokeTwo", session.nowPlaying.value.track?.title)
-            val dbusTitle2 = dbusGetTitle()
+            val dbusTitle2 = dbusGetTitle(busName)
             assertTrue(
                 dbusTitle2.contains("MprisSmokeTwo"),
                 "After Next, Metadata should be second track. Got: $dbusTitle2",
@@ -122,27 +122,12 @@ private fun playerctl(vararg args: String): String {
     return out
 }
 
-private fun mprisNameHasOwner(): Boolean {
+private fun dbusGetTitle(busName: String): String {
     val process = ProcessBuilder(
         "dbus-send",
         "--session",
         "--print-reply",
-        "--dest=org.freedesktop.DBus",
-        "/org/freedesktop/DBus",
-        "org.freedesktop.DBus.NameHasOwner",
-        "string:org.mpris.MediaPlayer2.kainosplayer",
-    ).redirectErrorStream(true).start()
-    val out = process.inputStream.bufferedReader().readText()
-    process.waitFor()
-    return out.contains("boolean true")
-}
-
-private fun dbusGetTitle(): String {
-    val process = ProcessBuilder(
-        "dbus-send",
-        "--session",
-        "--print-reply",
-        "--dest=org.mpris.MediaPlayer2.kainosplayer",
+        "--dest=$busName",
         "/org/mpris/MediaPlayer2",
         "org.freedesktop.DBus.Properties.Get",
         "string:org.mpris.MediaPlayer2.Player",
@@ -153,12 +138,12 @@ private fun dbusGetTitle(): String {
     return out
 }
 
-private fun dbusCall(method: String) {
+private fun dbusCall(busName: String, method: String) {
     ProcessBuilder(
         "dbus-send",
         "--session",
         "--type=method_call",
-        "--dest=org.mpris.MediaPlayer2.kainosplayer",
+        "--dest=$busName",
         "/org/mpris/MediaPlayer2",
         "org.mpris.MediaPlayer2.Player.$method",
     ).redirectErrorStream(true).start().waitFor()

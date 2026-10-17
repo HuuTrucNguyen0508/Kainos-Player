@@ -228,8 +228,8 @@ private fun runFfprobe(path: Path): String? {
         ?.takeIf { it.isNotBlank() }
 }
 
-private fun artCacheDir(): Path {
-    val dir = DesktopIsolation.current.dataDir.resolve("art-cache")
+internal fun artCacheDir(dataDir: Path = DesktopIsolation.current.dataDir): Path {
+    val dir = dataDir.resolve("art-cache")
     Files.createDirectories(dir)
     return dir
 }

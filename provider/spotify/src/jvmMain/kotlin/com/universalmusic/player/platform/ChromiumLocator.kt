@@ -94,8 +94,10 @@ internal fun chromiumHasSystemWidevine(): Boolean {
     return markers.any { Files.exists(it) }
 }
 
-fun kainosWebPlayerProfileDir(): Path {
-    val cache = System.getenv("XDG_CACHE_HOME")?.takeIf { it.isNotBlank() }
-        ?: Paths.get(System.getProperty("user.home", "."), ".cache").toString()
-    return Paths.get(cache, "kainos", "spotify-web-player")
-}
+fun kainosWebPlayerProfileDir(
+    isolation: DesktopIsolation = DesktopIsolation.current,
+    cacheHome: Path = System.getenv("XDG_CACHE_HOME")?.takeIf { it.isNotBlank() }?.let(Path::of)
+        ?: Path.of(System.getProperty("user.home", "."), ".cache"),
+): Path = if (isolation.dataDirOverridden) {
+    isolation.dataDir.resolve("spotify-web-player")
+} else cacheHome.resolve("kainos/spotify-web-player")

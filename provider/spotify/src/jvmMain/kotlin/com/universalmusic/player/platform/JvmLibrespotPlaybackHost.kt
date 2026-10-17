@@ -20,12 +20,11 @@ internal data class LibrespotPaths(
     val credentialsFile: Path get() = systemCache.resolve("credentials.json")
 
     companion object {
-        fun defaults(): LibrespotPaths {
-            val appDir = DesktopIsolation.current.dataDir
+        fun defaults(dataDir: Path = DesktopIsolation.current.dataDir): LibrespotPaths {
             return LibrespotPaths(
-                systemCache = appDir.resolve("librespot/system"),
-                audioCache = appDir.resolve("librespot/audio"),
-                logFile = appDir.resolve("logs/librespot.log"),
+                systemCache = dataDir.resolve("librespot/system"),
+                audioCache = dataDir.resolve("librespot/audio"),
+                logFile = dataDir.resolve("logs/librespot.log"),
             )
         }
     }

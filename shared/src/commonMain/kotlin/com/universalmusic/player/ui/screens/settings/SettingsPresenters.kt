@@ -7,6 +7,7 @@ import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.spotify.SpotifyConnectDevice
+import com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 import com.universalmusic.player.data.sync.HomeLanSyncController
 import com.universalmusic.player.data.sync.HomeLanSyncPairing
 import com.universalmusic.player.data.sync.HomeLanSyncStatus
@@ -293,7 +294,7 @@ internal class SettingsSyncPresenter(
     }
     fun removeVaultFile(path: String) = run { controller.tombstoneVaultPath(path.trim()).getOrThrow() }
     fun pairManually(host: String, secret: String, peer: String, pin: String, cert: String) = run {
-        controller.completeClientPairing(host.trim(), controller.pairing.value?.hubPort ?: 43822,
+        controller.completeClientPairing(host.trim(), HOME_LAN_SYNC_DEFAULT_PORT,
             secret.trim(), peer.trim(), pin.trim(), cert.trim())
         "Paired with $host"
     }
