@@ -23,16 +23,11 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
     )
 }
 
-/**
- * Rewrites the queue rows only when the queue differs from [storedQueue], and returns the
- * queue as stored afterwards. Both sides ignore [PersistedTrack.cachedAtMs], which every
- * snapshot stamps with the current time.
- */
 internal fun KainosDatabase.writeSessionSnapshot(
     snapshot: SessionSnapshot,
-    storedQueue: List<PersistedQueueItem> = readQueueItems().withoutCacheStamps(),
-): List<PersistedQueueItem> {
-    val queue = snapshot.items.withoutCacheStamps()
+    storedQueue: QueueContent = QueueContent.of(readQueueItems()),
+): QueueContent {
+    val queue = QueueContent.of(snapshot.items)
     if (queue != storedQueue) {
         listeningSessionQueries.clearItems()
         snapshot.items.forEachIndexed { index, item ->
@@ -62,29 +57,29 @@ private fun KainosDatabase.readQueueItems(): List<PersistedQueueItem> =
         )
     }
 
-private fun List<PersistedQueueItem>.withoutCacheStamps(): List<PersistedQueueItem> =
-    map { it.copy(track = it.track.copy(cachedAtMs = 0)) }
+internal data class QueueContent private constructor(private val items: List<PersistedQueueItem>) {
+    companion object {
+        fun of(items: List<PersistedQueueItem>) =
+            QueueContent(items.map { it.copy(track = it.track.copy(cachedAtMs = 0)) })
+    }
+}
 
 class DbSessionSnapshotStore(
     private val storage: KainosStorage,
 ) : SessionSnapshotStore {
     private val writeMutex = Mutex()
 
-    /**
-     * The queue this store last committed, so a skip does not read 500 rows back. Null until
-     * the first write and after a failed one, when the write compares against the stored rows.
-     */
-    private var committedQueue: List<PersistedQueueItem>? = null
+    private var queueKnownStored: QueueContent? = null
 
     override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
 
     override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
-        val known = committedQueue
-        committedQueue = null
-        var written: List<PersistedQueueItem>? = null
+        val known = queueKnownStored
+        queueKnownStored = null
+        var written: QueueContent? = null
         storage.write { db ->
             written = if (known == null) db.writeSessionSnapshot(snapshot) else db.writeSessionSnapshot(snapshot, known)
         }
-        committedQueue = written
+        queueKnownStored = written
     }
 }

@@ -16,11 +16,6 @@ import kotlin.test.Test
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 
-/**
- * Times the app's write path, [DbSessionSnapshotStore] over a WAL file database. Rows changed
- * is the sum of each statement's update count, which SQLite reports as sqlite3_changes().
- * Run with `./gradlew :core:data:jvmTest --tests '*SessionWritePerfTest*' -Dkainos.perf=true --rerun`.
- */
 class SessionWritePerfTest {
     @Test
     fun skipInA500EntryQueue() = runBlocking {
@@ -36,12 +31,12 @@ class SessionWritePerfTest {
                 KainosDatabase.Schema,
             ))
             val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
-            store.write(queueSnapshot(currentIndex = 0, nowMs = 0))
+            store.write(queueSnapshot(currentIndex = 0, cachedAtMs = 0))
             val deltas = mutableListOf<Long>()
             val nanos = mutableListOf<Long>()
             var lastTrace = emptyMap<String, Int>()
             for (write in 1..200) {
-                val snapshot = queueSnapshot(currentIndex = write % 500, nowMs = write.toLong())
+                val snapshot = queueSnapshot(currentIndex = write % 500, cachedAtMs = write.toLong())
                 driver.reset()
                 val start = System.nanoTime()
                 store.write(snapshot)
@@ -82,8 +77,7 @@ private class TracingDriver(private val inner: SqlDriver) : SqlDriver by inner {
     }
 }
 
-/** Mirrors the app: every snapshot stamps each track's cachedAtMs with the write time. */
-private fun queueSnapshot(currentIndex: Int, nowMs: Long) = SessionSnapshot(
+private fun queueSnapshot(currentIndex: Int, cachedAtMs: Long) = SessionSnapshot(
     items = (0 until 500).map { index ->
         PersistedQueueItem(
             id = "queue-$index",
@@ -107,7 +101,7 @@ private fun queueSnapshot(currentIndex: Int, nowMs: Long) = SessionSnapshot(
                         qualityConfidence = "VERIFIED",
                     ),
                 ),
-                cachedAtMs = nowMs,
+                cachedAtMs = cachedAtMs,
             ),
         )
     },
