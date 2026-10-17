@@ -4,6 +4,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.platform.DeviceIdentity
+import com.universalmusic.player.platform.DeviceIdentityResetException
 import com.universalmusic.player.platform.HUB_PIN_MISMATCH
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.PlaybackTrace
@@ -82,6 +83,7 @@ class HomeLanSyncService(
     override val incomingPairing: StateFlow<PairingAttempt?> = pairingHost.incoming
 
     private var hub: HomeLanSyncHub? = null
+    private var hubStopGeneration = 0L
     private val mutex = Mutex()
     private var idleWatchJob: Job? = null
     private var pairingExpiryJob: Job? = null
@@ -262,8 +264,24 @@ class HomeLanSyncService(
 
     override suspend fun resetIdentity() {
         pairingHost.abandon("This device's identity was reset")
-        stopHub()
-        identity.reset()
+        val restartGeneration = mutex.withLock {
+            val wasListening = hub?.isListening == true
+            stopHubLocked()
+            hubStopGeneration.takeIf { wasListening }
+        }
+        try {
+            identity.reset()
+        } catch (failure: Exception) {
+            val preserved = (failure as? DeviceIdentityResetException)?.preservedFingerprint != null
+            if (preserved && restartGeneration != null) startHubIfNeeded(restartGeneration)
+            val message = if (preserved) {
+                "Could not reset this device's identity. Existing pairings remain."
+            } else {
+                "Could not reset this device's identity. The stored identity could not be verified. Home sync remains stopped."
+            }
+            _status.update { it.copy(lastError = message) }
+            throw IllegalStateException(message, failure)
+        }
         updateSettings { it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(), homeLanSyncLastError = null) }
         reconcileTrust()
         _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
@@ -532,11 +550,15 @@ class HomeLanSyncService(
         _status.update { it.copy(lastError = message, vaultProgress = null) }
     }
 
-    override suspend fun startHubIfNeeded() {
+    override suspend fun startHubIfNeeded() = startHubIfNeeded(null)
+
+    private suspend fun startHubIfNeeded(expectedStopGeneration: Long?) {
         if (!shouldRunHub()) return
         if (!_status.value.enabled) return
         val deviceId = ensureDeviceId()
         mutex.withLock {
+            if (expectedStopGeneration != null && (hubStopGeneration != expectedStopGeneration || !scope.isActive)) return
+            if (!shouldRunHub() || !_status.value.enabled) return
             if (hub?.isListening == true) {
                 return
             }
@@ -577,15 +599,19 @@ class HomeLanSyncService(
 
     override suspend fun stopHub() {
         invalidateResolution()
+        mutex.withLock { stopHubLocked() }
+    }
+
+    private suspend fun stopHubLocked() {
+        invalidateResolution()
+        hubStopGeneration++
         idleWatchJob?.cancel()
         idleWatchJob = null
         pairingExpiryJob?.cancel()
         pairingExpiryJob = null
-        mutex.withLock {
-            hub?.stop()
-            hub = null
-            _status.update { it.copy(hubListening = false) }
-        }
+        hub?.stop()
+        hub = null
+        _status.update { it.copy(hubListening = false) }
     }
 
     fun onAppForeground() {

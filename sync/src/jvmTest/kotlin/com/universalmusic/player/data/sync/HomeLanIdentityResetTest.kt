@@ -9,6 +9,7 @@ import com.universalmusic.player.platform.pinnedHomeLanHttpClient
 import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.get
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import java.net.ServerSocket
@@ -80,6 +81,19 @@ class HomeLanIdentityResetTest {
     }
 
     @Test
+    fun scopeShutdownDuringResetPreventsRecovery() = runTest {
+        Fixture(backgroundScope).use { f ->
+            f.service.startHubIfNeeded()
+            f.beforeReset = { backgroundScope.cancel() }
+            f.makeIdentityUndeletable()
+            assertFailsWith<Exception> { f.service.resetIdentity() }
+            assertEquals(listOf(f.original), f.startedPins)
+            assertFalse(f.service.status.value.hubListening)
+            f.assertTrustPreserved()
+        }
+    }
+
+    @Test
     fun disablingDuringResetPreventsRecovery() = runTest {
         Fixture(backgroundScope).use { f ->
             f.service.startHubIfNeeded()
@@ -125,6 +139,34 @@ class HomeLanIdentityResetTest {
             assertContains(failure.message.orEmpty(), "Could not reset this device's identity")
             assertContains(failure.message.orEmpty(), "could not be verified")
             assertFalse(failure.message.orEmpty().contains("Existing pairings remain"))
+        }
+    }
+
+    @Test
+    fun aCachedFingerprintDoesNotProveTheStoredPrivateIdentitySurvived() = runTest {
+        Fixture(backgroundScope).use { f ->
+            f.service.startHubIfNeeded()
+            Files.writeString(f.identityDirectory.resolve("device.p12.password"), "wrong password")
+            f.makeIdentityUndeletable()
+            val failure = assertFailsWith<Exception> { f.service.resetIdentity() }
+            assertEquals(listOf(f.original), f.startedPins)
+            assertFalse(f.service.status.value.hubListening)
+            f.assertTrustPreserved()
+            assertContains(failure.message.orEmpty(), "could not be verified")
+            assertFalse(failure.message.orEmpty().contains("Existing pairings remain"))
+        }
+    }
+
+    @Test
+    fun anUnclassifiedResetFailureDoesNotTriggerRecovery() = runTest {
+        Fixture(backgroundScope).use { f ->
+            f.service.startHubIfNeeded()
+            f.beforeReset = { error("No proof of persisted identity") }
+            val failure = assertFailsWith<Exception> { f.service.resetIdentity() }
+            assertEquals(listOf(f.original), f.startedPins)
+            assertFalse(f.service.status.value.hubListening)
+            f.assertTrustPreserved()
+            assertContains(failure.message.orEmpty(), "could not be verified")
         }
     }
 

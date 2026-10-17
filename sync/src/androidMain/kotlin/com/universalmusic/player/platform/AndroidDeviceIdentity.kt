@@ -50,9 +50,21 @@ internal class AndroidDeviceIdentity : DeviceIdentity {
 
     @Synchronized
     override fun reset(): CertFingerprint {
-        store.deleteEntry(ALIAS)
-        hardwareLogged = false
-        return fingerprint()
+        val previous = runCatching { store.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry }.getOrNull()
+        var deleted = false
+        try {
+            store.deleteEntry(ALIAS)
+            deleted = true
+            hardwareLogged = false
+            return fingerprint()
+        } catch (failure: Exception) {
+            val preserved = if (deleted || previous == null) null else runCatching {
+                (store.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry)?.takeIf {
+                    it.certificate.encoded.contentEquals(previous.certificate.encoded)
+                }?.let { CertFingerprint.ofCertificate(it.certificate.encoded) }
+            }.getOrNull()
+            throw DeviceIdentityResetException(preserved, failure)
+        }
     }
 
     fun keyManager(): X509ExtendedKeyManager {

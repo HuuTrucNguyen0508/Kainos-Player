@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
+import com.universalmusic.player.platform.DeviceIdentityResetException
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.JvmDeviceIdentity
 import com.universalmusic.player.platform.hubPinTrustManager
@@ -25,6 +26,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
 
 class HomeLanMutualTlsTest {
@@ -209,7 +211,9 @@ class HomeLanMutualTlsTest {
         val originalMode = Files.getPosixFilePermissions(identityDirectory)
         try {
             Files.setPosixFilePermissions(identityDirectory, PosixFilePermissions.fromString("r-x------"))
-            assertFailsWith<IOException> { identity.reset() }
+            val failure = assertFailsWith<DeviceIdentityResetException> { identity.reset() }
+            assertIs<IOException>(failure.cause)
+            assertEquals(original, failure.preservedFingerprint)
             assertEquals(original, identity.fingerprint())
             assertEquals(original, JvmDeviceIdentity(identityDirectory.toFile()).fingerprint())
         } finally {

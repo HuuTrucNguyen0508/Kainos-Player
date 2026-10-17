@@ -8,9 +8,17 @@ interface DeviceIdentity {
     /** Creates the key on first use. */
     fun fingerprint(): CertFingerprint
 
-    /** Deletes the key and creates a new one; every device that trusted the old one must pair again. */
+    /**
+     * Deletes the key and creates a new one; every device that trusted the old one must pair again.
+     * [DeviceIdentityResetException.preservedFingerprint] proves safe recovery after a failed reset.
+     */
     fun reset(): CertFingerprint
 }
+
+class DeviceIdentityResetException(
+    val preservedFingerprint: CertFingerprint?,
+    cause: Throwable,
+) : Exception("Could not reset this device's identity", cause)
 
 expect fun platformDeviceIdentity(): DeviceIdentity
 

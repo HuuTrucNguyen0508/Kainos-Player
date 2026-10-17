@@ -40,10 +40,23 @@ class JvmDeviceIdentity(private val directory: File) : DeviceIdentity {
 
     @Synchronized
     override fun reset(): CertFingerprint {
-        Files.deleteIfExists(keyStoreFile.toPath())
-        Files.deleteIfExists(passwordFile.toPath())
-        loaded = null
-        return material().fingerprint
+        val previous = loaded ?: runCatching { load() }.getOrNull()
+        var deleted = false
+        try {
+            deleted = Files.deleteIfExists(keyStoreFile.toPath())
+            deleted = Files.deleteIfExists(passwordFile.toPath()) || deleted
+            loaded = null
+            return material().fingerprint
+        } catch (failure: Exception) {
+            val preserved = if (deleted) null else runCatching {
+                load()?.takeIf { stored ->
+                    stored.fingerprint == previous?.fingerprint &&
+                        stored.keyStore.getEntry(KEY_ALIAS, KeyStore.PasswordProtection(stored.password())) is KeyStore.PrivateKeyEntry
+                }
+            }.getOrNull()
+            loaded = preserved
+            throw DeviceIdentityResetException(preserved?.fingerprint, failure)
+        }
     }
 
     private fun load(): Material? {

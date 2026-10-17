@@ -10,10 +10,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -134,7 +134,8 @@ class HomeLanPairingServiceTest {
             val originalTrust = service.trust.value
             val originalDetail = service.status.value.lastDetail
             Files.setPosixFilePermissions(identityDirectory, PosixFilePermissions.fromString("r-x------"))
-            assertFailsWith<IOException> { service.resetIdentity() }
+            val failure = assertFailsWith<IllegalStateException> { service.resetIdentity() }
+            assertContains(failure.message.orEmpty(), "Existing pairings remain")
             assertEquals(originalSettings, settings)
             assertEquals(originalTrust, service.trust.value)
             assertEquals(originalDetail, service.status.value.lastDetail)
