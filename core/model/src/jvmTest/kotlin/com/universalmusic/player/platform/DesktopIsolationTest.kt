@@ -19,19 +19,43 @@ class DesktopIsolationTest {
     }
 
     @Test
-    fun blankVariablesCountAsUnset() {
-        val env = mapOf("KAINOS_DATA_DIR" to " ", "KAINOS_HUB_PORT" to "", "KAINOS_INSTANCE" to "")
-        assertEquals(
-            DesktopIsolation(Path.of("/home/u/.universal-music-player"), 43822, null),
-            DesktopIsolation.parse(env, home),
-        )
+    fun blankVariablesFailNamingEachVariable() {
+        for (name in listOf("KAINOS_DATA_DIR", "KAINOS_HUB_PORT", "KAINOS_INSTANCE")) {
+            for (blank in listOf("", " ", "\t")) {
+                val error = assertFailsWith<IllegalArgumentException> {
+                    DesktopIsolation.parse(mapOf(name to blank), home)
+                }
+                assertTrue(error.message!!.contains(name), error.message)
+            }
+        }
+    }
+
+    @Test
+    fun relativeDataDirFailsNamingTheVariable() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            DesktopIsolation.parse(mapOf("KAINOS_DATA_DIR" to "worker/data"), home)
+        }
+        assertTrue(error.message!!.contains("KAINOS_DATA_DIR"), error.message)
+        assertTrue(error.message!!.contains("absolute"), error.message)
+    }
+
+    @Test
+    fun fullBusNameLengthIsValidatedAtParseTime() {
+        val prefix = "org.mpris.MediaPlayer2.kainosplayer.instance"
+        val longest = "a".repeat(255 - prefix.length)
+        assertEquals(longest, DesktopIsolation.parse(mapOf("KAINOS_INSTANCE" to longest), home).instance)
+        val error = assertFailsWith<IllegalArgumentException> {
+            DesktopIsolation.parse(mapOf("KAINOS_INSTANCE" to longest + "a"), home)
+        }
+        assertTrue(error.message!!.contains("KAINOS_INSTANCE"), error.message)
+        assertTrue(error.message!!.contains("255"), error.message)
     }
 
     @Test
     fun setVariablesReplaceEachDefault() {
         val env = mapOf("KAINOS_DATA_DIR" to "/tmp/x", "KAINOS_HUB_PORT" to "44005", "KAINOS_INSTANCE" to "2")
         assertEquals(
-            DesktopIsolation(Path.of("/tmp/x"), 44005, "2"),
+            DesktopIsolation(Path.of("/tmp/x"), 44005, "2", dataDirOverridden = true, hubPortOverridden = true),
             DesktopIsolation.parse(env, home),
         )
     }

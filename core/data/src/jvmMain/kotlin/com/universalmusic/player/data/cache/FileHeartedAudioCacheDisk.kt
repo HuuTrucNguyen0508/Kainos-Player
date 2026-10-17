@@ -11,11 +11,12 @@ import kotlin.io.path.writeText
 import kotlin.streams.asSequence
 
 class FileHeartedAudioCacheDisk(
-    private val root: Path,
+    root: Path,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) : HeartedAudioCacheDisk {
-    private val indexPath: Path = root.resolve("index.json")
-    private val audioDir: Path = root.resolve("audio")
+    private val root = root.toAbsolutePath().normalize()
+    private val indexPath: Path = this.root.resolve("index.json")
+    private val audioDir: Path = this.root.resolve("audio")
 
     private val startupFiles = if (Files.isDirectory(audioDir)) {
         Files.list(audioDir).use { it.filter(Files::isRegularFile).toList() }
@@ -26,7 +27,15 @@ class FileHeartedAudioCacheDisk(
     override suspend fun loadIndex(): HeartedAudioCacheIndex {
         if (!indexPath.exists()) return HeartedAudioCacheIndex()
         return runCatching {
-            json.decodeFromString<HeartedAudioCacheIndex>(indexPath.readText())
+            val index = json.decodeFromString<HeartedAudioCacheIndex>(indexPath.readText())
+            index.copy(entries = index.entries.mapNotNull { (id, entry) ->
+                val path = pathFromUri(entry.localUri) ?: return@mapNotNull null
+                if (isCachePath(path)) return@mapNotNull id to entry
+                val copy = audioDir.resolve(path.fileName ?: return@mapNotNull null)
+                if (isCachePath(copy) && Files.isRegularFile(copy)) {
+                    id to entry.copy(localUri = copy.toUri().toASCIIString())
+                } else null
+            }.toMap())
         }.getOrElse { indexReadable = false; HeartedAudioCacheIndex() }
     }
 
@@ -42,28 +51,28 @@ class FileHeartedAudioCacheDisk(
                 Files.move(tmp, indexPath, StandardCopyOption.REPLACE_EXISTING)
             }
         } finally {
-            Files.deleteIfExists(tmp)
+            deleteCacheFile(tmp)
         }
     }
 
     override suspend fun reconcile(referencedUris: Set<String>) {
         if (reconciled || !indexReadable) return
         val referenced = referencedUris.map(::normalizedAudioUri).toSet()
-        startupFiles.filter { normalizedAudioUri(it.toString()) !in referenced }.forEach { Files.deleteIfExists(it) }
+        startupFiles.filter { normalizedAudioUri(it.toString()) !in referenced }.forEach(::deleteCacheFile)
         reconciled = true
     }
 
     override suspend fun deleteFile(uri: String) {
-        pathFromUri(uri)?.let { runCatching { Files.deleteIfExists(it) } }
+        pathFromUri(uri)?.let(::deleteCacheFile)
     }
 
     override suspend fun clearAll() {
         if (Files.isDirectory(audioDir)) {
             Files.list(audioDir).use { stream ->
-                stream.asSequence().forEach { runCatching { Files.deleteIfExists(it) } }
+                stream.asSequence().forEach(::deleteCacheFile)
             }
         }
-        runCatching { Files.deleteIfExists(indexPath) }
+        deleteCacheFile(indexPath)
         Files.createDirectories(root)
         Files.createDirectories(audioDir)
     }
@@ -83,6 +92,20 @@ class FileHeartedAudioCacheDisk(
         return Files.list(audioDir).use { stream ->
             stream.asSequence().sumOf { runCatching { Files.size(it) }.getOrDefault(0L) }
         }
+    }
+
+    private fun isCachePath(path: Path): Boolean {
+        val normalized = path.toAbsolutePath().normalize()
+        return normalized != root && normalized.startsWith(root)
+    }
+
+    private fun deleteCacheFile(path: Path) {
+        val normalized = path.toAbsolutePath().normalize()
+        if (!isCachePath(normalized)) return
+        val insideRoot = runCatching {
+            normalized.toFile().canonicalFile.toPath().startsWith(root.toFile().canonicalFile.toPath())
+        }.getOrDefault(false)
+        if (insideRoot) runCatching { Files.deleteIfExists(normalized) }
     }
 
     private fun pathFromUri(uri: String): Path? = runCatching {
