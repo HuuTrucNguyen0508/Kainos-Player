@@ -52,7 +52,7 @@ internal class AvahiHubBrowser(
                 runCatching {
                     val browser = connection.getRemoteObject(AVAHI_BUS, path.path, AvahiServiceBrowser::class.java)
                     withContext(NonCancellable) {
-                        withTimeoutOrNull(100) { connection.callMethodAsync(browser, "Free").awaitReply() }
+                        withTimeoutOrNull(100) { connection.callMethodAsync(browser, "Free").awaitCompletion() }
                     }
                 }
             }
@@ -65,8 +65,12 @@ internal class AvahiHubBrowser(
 }
 
 private suspend fun DBusAsyncReply<*>.awaitReply(): Any? {
-    while (!hasReply()) delay(10)
+    awaitCompletion()
     return reply
+}
+
+private suspend fun DBusAsyncReply<*>.awaitCompletion() {
+    while (!call.hasReply()) delay(10)
 }
 
 private fun parseTxt(records: List<List<Byte>>): Map<String, String> =
