@@ -120,8 +120,8 @@ private fun runHubOnly() = runBlocking {
         delay(50)
     }
     val settings = container.settings.value
-    if (!settings.homeLanSyncEnabled || settings.homeLanSyncPairing == null) {
-        System.err.println("kainos-player --hub-only: home sync not paired/enabled; exiting")
+    if (!settings.homeLanSyncEnabled) {
+        System.err.println("kainos-player --hub-only: home sync disabled; exiting")
         return@runBlocking
     }
     container.homeLanSync.startHubIfNeeded()

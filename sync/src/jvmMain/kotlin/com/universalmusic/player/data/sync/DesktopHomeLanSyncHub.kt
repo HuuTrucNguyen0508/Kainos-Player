@@ -263,12 +263,10 @@ class DesktopHomeLanSyncHub(
     private fun caller(call: ApplicationCall): HubCaller =
         identifyHubCaller(call.clientFingerprint(), self, config.peers())
 
-    /** Sync routes: only a paired fingerprint passes. Device ids come from here, never a body. */
     private suspend fun ApplicationCall.pairedPeer(): PairedPeer? =
         (caller(this) as? HubCaller.Paired)?.peer
             ?: null.also { respondText("Unauthorized", status = HttpStatusCode.Unauthorized) }
 
-    /** Pairing routes: any client certificate passes; trust comes from the confirmed code. */
     private suspend fun ApplicationCall.pairingClient(): CertFingerprint? =
         when (val caller = caller(this)) {
             HubCaller.Anonymous -> null.also { respondText("Unauthorized", status = HttpStatusCode.Unauthorized) }
@@ -287,7 +285,6 @@ class DesktopHomeLanSyncHub(
     }
 }
 
-/** One chunk is the largest PUT body a client sends. */
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
 
 /**

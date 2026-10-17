@@ -13,10 +13,6 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.X509TrustManager
 
-/**
- * Server TLS for the hub. Any client certificate completes the handshake, and a client without one
- * does too, because trust is decided per request from the fingerprint, not by PKIX.
- */
 internal fun hubServerSslContext(identity: JvmDeviceIdentity.Material): SslContext {
     val keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         .apply { init(identity.keyStore, identity.password()) }
@@ -33,7 +29,6 @@ private val acceptAnyClientCertificate = object : X509TrustManager {
     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
 }
 
-/** Fingerprint of the leaf certificate this call's client presented, or null when it sent none. */
 internal fun ApplicationCall.clientFingerprint(): CertFingerprint? {
     val engineCall = (this as RoutingCall).pipelineCall.engineCall as NettyApplicationCall
     val channel = engineCall.context.channel()
@@ -50,7 +45,6 @@ internal sealed interface HubCaller {
     data class Paired(val peer: PairedPeer) : HubCaller
 }
 
-/** The hub's only trust decision. This PC's own fingerprint is paired, so the PC can sync with itself. */
 internal fun identifyHubCaller(
     fingerprint: CertFingerprint?,
     self: PairedPeer,

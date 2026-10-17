@@ -23,7 +23,6 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-/** The real Netty hub on loopback, with device identities in temp directories. */
 class HomeLanMutualTlsTest {
     private val directory: File = Files.createTempDirectory("kainos-mtls-").toFile()
     private val pc = JvmDeviceIdentity(directory.resolve("pc")).material()

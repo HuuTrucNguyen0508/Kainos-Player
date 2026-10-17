@@ -15,16 +15,17 @@ import com.universalmusic.player.platform.withVaultSyncForeground
 import io.ktor.client.plugins.ResponseException
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -32,7 +33,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -140,14 +140,19 @@ class HomeLanSyncService(
         val own = identity.fingerprint()
         val deviceId = ensureDeviceId()
         val client = pairingClientFactory(hub.endpoint, pin)
+        var attemptId: String? = null
         try {
             val nonce = secureRandomBytes(PAIRING_NONCE_BYTES)
             val started = client.start(PairStartRequest(deviceId, deviceName(), pairingCommit(nonce).toHex()))
+            attemptId = started.attemptId
             val hubNonce = started.nonceHex.hexBytes(PAIRING_NONCE_BYTES) ?: error("${hub.name} sent a malformed nonce")
             client.reveal(PairRevealRequest(started.attemptId, nonce.toHex()))
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "pairing code ready for ${hub.endpoint}")
             return PhonePairing(started.attemptId, hub, pairingCode(pin, own, hubNonce, nonce), pin, client)
         } catch (err: Throwable) {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(3_000) { attemptId?.let { runCatching { client.cancel(it) } } }
+            }
             client.close()
             throw err
         }
@@ -160,7 +165,7 @@ class HomeLanSyncService(
         private val pin: CertFingerprint,
         private val client: HomeLanPairingClient,
     ) : HubPairingSession {
-        override suspend fun confirm(): PairedPeer = client.use {
+        override suspend fun confirm(): PairedPeer = try {
             client.confirm(attemptId)
             val peer = PairedPeer(
                 deviceId = awaitPaired(),
@@ -172,9 +177,27 @@ class HomeLanSyncService(
             )
             trustHub(peer)
             peer
+        } catch (failure: Throwable) {
+            cancel()
+            throw failure
+        } finally {
+            client.close()
         }
 
-        override suspend fun cancel() = client.use { runCatching { client.cancel(attemptId) }; Unit }
+        override suspend fun cancel() {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(3_000) { runCatching { client.cancel(attemptId) } }
+            }
+            client.close()
+        }
+
+        override suspend fun awaitEnd(): String {
+            while (true) {
+                val status = client.status(attemptId)
+                if (status.state == PairState.ENDED) return status.reason ?: "The pairing ended"
+                delay(pairingPollMs)
+            }
+        }
 
         private suspend fun awaitPaired(): String {
             repeat((PAIRING_ATTEMPT_TTL_MS / pairingPollMs).toInt() + 5) {
@@ -515,7 +538,6 @@ class HomeLanSyncService(
         val deviceId = ensureDeviceId()
         mutex.withLock {
             if (hub?.isListening == true) {
-                // Already up for this process; callers that change the identity must stopHub() first.
                 return
             }
             hub?.stop()
@@ -593,7 +615,6 @@ class HomeLanSyncService(
         }
     }
 
-    /** The hub this device syncs with: its paired hub, or on a PC hub its own listener. */
     private fun syncTarget(): PairedPeer? =
         if (shouldRunHub()) localHubTarget(settings().homeLanSyncDeviceId) else settings().homeLanSyncHub
 
@@ -694,9 +715,8 @@ class HomeLanSyncService(
     private fun startPairingExpiry() {
         pairingExpiryJob?.cancel()
         pairingExpiryJob = scope.launch {
-            pairingHost.incoming.collectLatest { attempt ->
-                if (attempt == null) return@collectLatest
-                delay(PAIRING_ATTEMPT_TTL_MS)
+            while (isActive) {
+                delay(1_000)
                 pairingHost.expireDue()
             }
         }
@@ -752,7 +772,6 @@ private fun PairingReply<Unit>.toResult(): Result<Unit> = when (this) {
     is PairingReply.Refused -> Result.failure(IllegalStateException(reason))
 }
 
-/** A refusal that means trust broke, not that the hub is unreachable. */
 private fun trustFailureOf(err: Throwable): String? {
     if ((err as? ResponseException)?.response?.status == HttpStatusCode.Unauthorized) return HOME_LAN_NOT_TRUSTED
     val pinMismatch = generateSequence(err) { it.cause }.any { HUB_PIN_MISMATCH in (it.message ?: "") }

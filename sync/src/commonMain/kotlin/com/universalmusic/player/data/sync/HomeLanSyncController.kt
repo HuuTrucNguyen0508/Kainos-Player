@@ -21,6 +21,8 @@ interface HubPairingSession {
     suspend fun confirm(): PairedPeer
 
     suspend fun cancel()
+
+    suspend fun awaitEnd(): String
 }
 
 interface HomeLanSyncController {

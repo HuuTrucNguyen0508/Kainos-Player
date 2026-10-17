@@ -9,7 +9,22 @@ import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 import com.universalmusic.player.data.sync.HomeLanSyncController
-import com.universalmusic.player.data.sync.HomeLanSyncPairing
+import com.universalmusic.player.data.sync.HomeLanTrust
+import com.universalmusic.player.data.sync.DiscoveredHub
+import com.universalmusic.player.data.sync.PairedPeer
+import com.universalmusic.player.data.sync.PairingAttempt
+import com.universalmusic.player.data.sync.PairingCode
+import com.universalmusic.player.data.sync.HubPairingSession
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withTimeoutOrNull
 import com.universalmusic.player.data.sync.HomeLanSyncStatus
 import com.universalmusic.player.data.sync.VaultCopyDirection
 import com.universalmusic.player.domain.model.ProviderState
@@ -241,10 +256,21 @@ internal class SettingsConnectPresenter(
     }
 }
 
+internal sealed interface PairingUiState {
+    data object Idle : PairingUiState
+    data object Searching : PairingUiState
+    data class Found(val hubs: List<DiscoveredHub>) : PairingUiState
+    data class Confirming(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
+    data class WaitingForPc(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
+    data class Paired(val peer: PairedPeer) : PairingUiState
+    data class Failed(val reason: String) : PairingUiState
+}
+
 internal data class SettingsSyncUiState(
     val status: HomeLanSyncStatus,
-    val pairing: HomeLanSyncPairing?,
-    val pairingUri: String?,
+    val trust: HomeLanTrust,
+    val incoming: PairingAttempt? = null,
+    val pairing: PairingUiState = PairingUiState.Idle,
     val busy: Boolean = false,
     val notice: String? = null,
 )
@@ -252,16 +278,23 @@ internal data class SettingsSyncUiState(
 internal class SettingsSyncPresenter(
     private val controller: HomeLanSyncController,
     private val scope: CoroutineScope,
+    private val discoveryTimeoutMs: Long = 10_000,
 ) {
     private val operation = MutableStateFlow(false to (null as String?))
-    val state: StateFlow<SettingsSyncUiState> = combine(controller.status, controller.pairing, operation) { status, pairing, op ->
-        SettingsSyncUiState(status, pairing, controller.pairingUri(), op.first, op.second)
+    private val pairing = MutableStateFlow<PairingUiState>(PairingUiState.Idle)
+    private var pairingJob: Job? = null
+    private var session: HubPairingSession? = null
+    private var confirmation: CompletableDeferred<Unit>? = null
+    val state: StateFlow<SettingsSyncUiState> = combine(
+        controller.status, controller.trust, controller.incomingPairing, pairing, operation,
+    ) { status, trust, incoming, pairing, op ->
+        SettingsSyncUiState(status, trust, incoming, pairing, op.first, op.second)
     }.stateIn(scope, SharingStarted.Eagerly,
-        SettingsSyncUiState(controller.status.value, controller.pairing.value, controller.pairingUri()))
+        SettingsSyncUiState(controller.status.value, controller.trust.value, controller.incomingPairing.value))
 
     fun setNotice(message: String) { operation.value = operation.value.first to message }
 
-    fun run(operation: suspend () -> String) {
+    private fun run(operation: suspend () -> String) {
         if (this.operation.value.first) return
         this.operation.value = true to null
         scope.launch {
@@ -272,18 +305,91 @@ internal class SettingsSyncPresenter(
         }
     }
 
-    fun enable(enabled: Boolean) = run { controller.enable(enabled); "Home sync ${if (enabled) "enabled" else "disabled"}." }
-    fun beginPairing(copyUri: (String) -> Unit) = run {
-        val pairing = controller.beginHubPairing()
-        val uri = controller.pairingUri()
-        if (uri != null) {
-            copyUri(uri)
-            "Hub on port ${pairing.hubPort}. PIN ${pairing.pairingPin}. Pairing URI copied to clipboard."
-        } else "Hub on port ${pairing.hubPort}. PIN ${pairing.pairingPin}. URI unavailable. Rotate pairing again."
+    fun search() {
+        if (pairingJob?.isActive == true || session != null) return
+        pairing.value = PairingUiState.Searching
+        pairingJob = scope.launch {
+            try {
+                val hubs = linkedMapOf<String, DiscoveredHub>()
+                withTimeoutOrNull(discoveryTimeoutMs) {
+                    controller.discoverHubs().collect { hub ->
+                        hubs[hub.fp] = hub
+                        pairing.value = PairingUiState.Found(hubs.values.toList())
+                    }
+                }
+                if (hubs.isEmpty()) pairing.value = PairingUiState.Failed("No PCs found. Open Kainos on your PC and enable home sync on the same Wi-Fi.")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Throwable) { pairing.value = PairingUiState.Failed(failure.message ?: "Could not find a PC. Try again.") }
+        }
     }
-    fun pair(uri: String) = run { controller.completeClientPairingFromUri(uri); "Paired from URI" }
+
+    fun pair(hub: DiscoveredHub) {
+        if (session != null || pairing.value !is PairingUiState.Found) return
+        val discovery = pairingJob
+        pairing.value = PairingUiState.Searching
+        pairingJob = scope.launch {
+            discovery?.cancelAndJoin()
+            var paired = false
+            try {
+                val started = controller.pairWith(hub)
+                session = started
+                val confirmed = CompletableDeferred<Unit>()
+                confirmation = confirmed
+                pairing.value = PairingUiState.Confirming(started.attemptId, started.hub, started.code)
+                coroutineScope {
+                    val ended = async { started.awaitEnd() }
+                    select {
+                        confirmed.onAwait { }
+                        ended.onAwait { reason -> error(reason) }
+                    }
+                    ended.cancelAndJoin()
+                }
+                pairing.value = PairingUiState.WaitingForPc(started.attemptId, started.hub, started.code)
+                val peer = started.confirm()
+                paired = true
+                pairing.value = PairingUiState.Paired(peer)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                pairing.value = PairingUiState.Failed(failure.message ?: "Pairing failed. Try again.")
+            } finally {
+                confirmation = null
+                val current = session
+                session = null
+                if (!paired) withContext(NonCancellable) { current?.cancel() }
+            }
+        }
+    }
+
+    fun confirm() {
+        if (pairing.value is PairingUiState.Confirming) confirmation?.complete(Unit)
+    }
+
+    fun cancelPairing() {
+        pairing.value = PairingUiState.Failed("Pairing cancelled. Start again when you are ready.")
+        pairingJob?.cancel()
+    }
+
+    fun dispose() {
+        pairingJob?.cancel()
+        pairing.value = PairingUiState.Idle
+    }
+
+    fun enable(enabled: Boolean) = run { controller.enable(enabled); "Home sync ${if (enabled) "enabled" else "disabled"}." }
+    fun confirmIncoming(attemptId: String) = run { controller.confirmIncomingPairing(attemptId).getOrThrow(); "Confirmed. Waiting for the phone." }
+    fun rejectIncoming(attemptId: String) = run { controller.rejectIncomingPairing(attemptId).getOrThrow(); "Pairing rejected." }
+    fun removeDevice(deviceId: String) = run {
+        controller.removeDevice(deviceId)
+        if ((pairing.value as? PairingUiState.Paired)?.peer?.deviceId == deviceId) pairing.value = PairingUiState.Idle
+        "Device removed."
+    }
+    fun resetIdentity() = run {
+        pairingJob?.cancelAndJoin()
+        controller.resetIdentity()
+        pairing.value = PairingUiState.Idle
+        "Identity reset. Pair your devices again."
+    }
     fun syncNow() = run { controller.syncNow().getOrThrow() }
-    fun unpair() = run { controller.unpair(); "Unpaired" }
     fun transfer(path: String, direction: VaultCopyDirection, confirm: Boolean) = run {
         (if (confirm) controller.confirmVaultTransfer(path, direction)
         else controller.dismissVaultTransfer(path, direction)).getOrThrow()
@@ -293,11 +399,6 @@ internal class SettingsSyncPresenter(
         else controller.resolveConflictKeepRemote(path)).getOrThrow()
     }
     fun removeVaultFile(path: String) = run { controller.tombstoneVaultPath(path.trim()).getOrThrow() }
-    fun pairManually(host: String, secret: String, peer: String, pin: String, cert: String) = run {
-        controller.completeClientPairing(host.trim(), HOME_LAN_SYNC_DEFAULT_PORT,
-            secret.trim(), peer.trim(), pin.trim(), cert.trim())
-        "Paired with $host"
-    }
 
     companion object {
         fun from(container: AppContainer, scope: CoroutineScope) = SettingsSyncPresenter(container.homeLanSync, scope)

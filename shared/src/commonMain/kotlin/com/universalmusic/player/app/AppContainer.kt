@@ -69,7 +69,8 @@ import com.universalmusic.player.data.sync.basenameFromLocalLocation
 import com.universalmusic.player.platform.createHomeLanSyncHub
 import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
-import com.universalmusic.player.platform.detectLanHostAddress
+import com.universalmusic.player.platform.platformDeviceIdentity
+import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.createHttpClient
@@ -194,38 +195,39 @@ class AppContainer {
         updateSettings = { transform -> updateSettings(transform) },
         library = library,
         playlists = kainosPlaylists,
-        hubFactory = { pairing, onHearts, onPlaylists, vault, heartedNames ->
-            createHomeLanSyncHub(
-                pairing,
-                { remote ->
-                    // An inbound phone sync can arrive before this device's library has loaded.
+        hubFactory = { config ->
+            createHomeLanSyncHub(com.universalmusic.player.platform.HomeLanHubConfig(
+                deviceId = config.deviceId,
+                port = config.port,
+                peers = config.peers,
+                pairing = config.pairing,
+                onHearts = { remote ->
                     library.awaitLoaded()
-                    onHearts(remote)
+                    config.onHearts(remote)
                     rematchLocalHeartsByFileName()
                     library.exportHeartsSyncDocument()
                 },
-                { remote ->
+                onPlaylists = { remote ->
                     kainosPlaylists.awaitLoaded()
-                    onPlaylists(remote)
+                    config.onPlaylists(remote)
                     rematchPlaylistLocalsByFileName()
                     kainosPlaylists.exportSyncDocument()
                 },
-                vault,
-                heartedNames,
-            )
+                vault = config.vault,
+                heartedVaultFileNames = config.heartedVaultFileNames,
+            ))
         },
-        clientFactory = { pairing ->
-            val pin = pairing.hubCertSha256Hex?.takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException(
-                    "Hub certificate pin required; re-pair from kainos-homesync:2 URI",
-                )
-            HttpHomeLanSyncClient(pairing, library, kainosPlaylists, createPinnedHomeLanHttpClient(pin))
+        clientFactory = { peer ->
+            HttpHomeLanSyncClient(peer, library, kainosPlaylists, createPinnedHomeLanHttpClient(peer.fingerprint))
         },
+        pairingClientFactory = { endpoint, pin ->
+            HttpHomeLanPairingClient(endpoint, createPinnedHomeLanHttpClient(pin))
+        },
+        identity = platformDeviceIdentity(),
         vaultStore = homeLanVault,
         refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
-        detectedLanHost = { detectLanHostAddress() },
         hubPort = homeLanHubPort(),
     )
     val resolver = DefaultSourceResolver()
