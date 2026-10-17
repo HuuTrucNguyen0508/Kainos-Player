@@ -28,14 +28,16 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
 }
 
 internal fun KainosDatabase.writeSessionSnapshot(snapshot: SessionSnapshot) {
-    listeningSessionQueries.clearItems()
-    snapshot.items.forEachIndexed { index, item ->
-        listeningSessionQueries.insertItem(
-            index.toLong(),
-            item.id,
-            item.track.canonicalId,
-            storageJson.encodeToString(item.track),
-        )
+    if (!storedQueueMatches(snapshot.items)) {
+        listeningSessionQueries.clearItems()
+        snapshot.items.forEachIndexed { index, item ->
+            listeningSessionQueries.insertItem(
+                index.toLong(),
+                item.id,
+                item.track.canonicalId,
+                storageJson.encodeToString(item.track),
+            )
+        }
     }
     listeningSessionQueries.upsertState(
         snapshot.currentIndex.toLong(),
@@ -44,6 +46,17 @@ internal fun KainosDatabase.writeSessionSnapshot(snapshot: SessionSnapshot) {
         storageJson.encodeToString(snapshot.shuffleOrder),
         snapshot.positionMs,
     )
+}
+
+/** Ignores [PersistedTrack.cachedAtMs]: every snapshot stamps it with the current time. */
+private fun KainosDatabase.storedQueueMatches(items: List<PersistedQueueItem>): Boolean {
+    val rows = listeningSessionQueries.selectItems().executeAsList()
+    return rows.size == items.size && rows.zip(items).all { (row, item) ->
+        row.item_id == item.id &&
+            row.canonical_id == item.track.canonicalId &&
+            storageJson.decodeFromString<PersistedTrack>(row.track_json).copy(cachedAtMs = 0) ==
+            item.track.copy(cachedAtMs = 0)
+    }
 }
 
 class DbSessionSnapshotStore(

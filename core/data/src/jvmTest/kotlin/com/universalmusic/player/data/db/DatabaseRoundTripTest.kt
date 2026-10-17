@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.universalmusic.player.data.library.HomePinKind
@@ -257,6 +258,34 @@ class DatabaseRoundTripTest {
     }
 
     @Test
+    fun sessionWriteWithUnchangedQueueOnlyReplacesTheStateRow() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val db = memoryDatabase(driver)
+        val first = session(currentIndex = 0, cachedAtMs = 5)
+        db.writeSessionSnapshot(first)
+
+        val skipped = session(currentIndex = 1, cachedAtMs = 99)
+        assertEquals(1, driver.changesDuring { db.writeSessionSnapshot(skipped) })
+        assertEquals(first.copy(currentIndex = 1), db.readSessionSnapshot())
+        driver.close()
+    }
+
+    @Test
+    fun sessionWriteWithOneRenamedTrackRewritesTheWholeQueue() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val db = memoryDatabase(driver)
+        val first = session(currentIndex = 0, cachedAtMs = 5)
+        db.writeSessionSnapshot(first)
+
+        val renamed = first.copy(items = first.items.mapIndexed { index, item ->
+            if (index == 1) item.copy(track = item.track.copy(title = "Renamed")) else item
+        })
+        assertEquals(2L * first.items.size + 1, driver.changesDuring { db.writeSessionSnapshot(renamed) })
+        assertEquals(renamed, db.readSessionSnapshot())
+        driver.close()
+    }
+
+    @Test
     fun localScanDistinguishesMissingConfigFromEmptyAndSecondWriteReplaces() {
         val db = memoryDatabase()
         assertNull(db.readLocalScan("folders-a"))
@@ -463,6 +492,27 @@ private fun memoryDatabase(driver: SqlDriver = JdbcSqliteDriver(JdbcSqliteDriver
     KainosDatabase.Schema.create(driver)
     return KainosDatabase(driver)
 }
+
+private fun session(currentIndex: Int, cachedAtMs: Long) = SessionSnapshot(
+    items = (1..3).map { PersistedQueueItem("q$it", track("yt:$it", "Track $it").copy(cachedAtMs = cachedAtMs)) },
+    currentIndex = currentIndex,
+    shuffle = true,
+    repeat = RepeatMode.ALL.name,
+    shuffleOrder = listOf(2, 0, 1),
+    positionMs = 10_000,
+)
+
+private fun SqlDriver.changesDuring(block: () -> Unit): Long {
+    val before = totalChanges()
+    block()
+    return totalChanges() - before
+}
+
+private fun SqlDriver.totalChanges(): Long =
+    executeQuery(null, "SELECT total_changes()", { cursor ->
+        cursor.next()
+        QueryResult.Value(cursor.getLong(0)!!)
+    }, 0).value
 
 private fun fileDriver(path: Path): SqlDriver {
     Files.createDirectories(path.parent)
