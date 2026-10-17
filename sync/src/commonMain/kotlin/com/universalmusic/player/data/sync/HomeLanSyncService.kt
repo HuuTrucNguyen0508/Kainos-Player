@@ -25,7 +25,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -696,6 +695,8 @@ class HomeLanSyncService(
         _status.update { it.copy(hubListening = false) }
     }
 
+    private class ForegroundResolutionAborted : Exception()
+
     fun onAppForeground() {
         scope.launch {
             var source: ResolutionSource? = null
@@ -703,16 +704,22 @@ class HomeLanSyncService(
                 if (!_status.value.enabled) return@runCatching
                 startHubIfNeeded()
                 if (!shouldRunClient()) return@runCatching
-                val captured = mutex.withLock {
+                if (!mutex.tryLock()) return@runCatching
+                val captured = try {
                     if (resetBlocked() || !_status.value.enabled || !shouldRunClient()) return@runCatching
                     val target = settings().homeLanSyncHub ?: return@runCatching
                     resolutionSource(target)
+                } finally {
+                    mutex.unlock()
                 }
                 source = captured
                 val reachable = openHubClient(captured.target) { peer ->
-                    mutex.withLock {
-                        check(isCurrent(captured) && settings().matches(captured)) { "Pairing changed during hub discovery" }
+                    if (!mutex.tryLock()) throw ForegroundResolutionAborted()
+                    try {
+                        if (!isCurrent(captured) || !settings().matches(captured)) throw ForegroundResolutionAborted()
                         clientFactory(peer)
+                    } finally {
+                        mutex.unlock()
                     }
                 }.getOrNull()?.let { (client, resolved) ->
                     client.close()
@@ -723,6 +730,7 @@ class HomeLanSyncService(
                 }
             }.onFailure { err ->
                 if (err is CancellationException) throw err
+                if (err is ForegroundResolutionAborted) return@onFailure
                 if (source?.let { !isCurrent(it) } == true) return@onFailure
                 _status.update {
                     it.copy(lastError = err.message ?: "Home sync foreground check failed")
@@ -762,10 +770,13 @@ class HomeLanSyncService(
                 }
             },
             probe = { endpoint ->
+                val client = clients[endpoint] ?: acquireClient(target.at(endpoint)).also { clients[endpoint] = it }
                 runCatching {
-                    val client = clients[endpoint] ?: acquireClient(target.at(endpoint)).also { clients[endpoint] = it }
                     client.probeHub().getOrThrow()
-                }.map { }.onFailure { err -> trustFailureOf(err)?.let { trustFailure = it } }
+                }.map { }.onFailure { err ->
+                    if (err is CancellationException) throw err
+                    trustFailureOf(err)?.let { trustFailure = it }
+                }
             },
             log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
         )

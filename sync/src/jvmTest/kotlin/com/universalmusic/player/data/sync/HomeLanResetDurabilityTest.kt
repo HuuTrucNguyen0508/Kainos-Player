@@ -12,6 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runCurrent
@@ -306,6 +308,156 @@ class HomeLanResetDurabilityTest {
         }
     }
 
+    @Test
+    fun admittedClientProbeCannotPublishOrSyncAfterIdentityRotation() = clientProbeAcrossReset(preserveKey = false)
+
+    @Test
+    fun admittedClientProbeCannotPublishOrSyncAfterVerifiedIntactKeyRecovery() = clientProbeAcrossReset(preserveKey = true)
+
+    private fun clientProbeAcrossReset(preserveKey: Boolean) = runTest {
+        Fixture(backgroundScope, desktop = false).use { f ->
+            val originalHub = PairedPeer("hub", "Hub", CertFingerprint.parse("dd".repeat(32))!!,
+                "192.0.2.1", pairedAtMs = 1L)
+            f.settings = f.settings.copy(homeLanSyncRole = HomeLanSyncRole.CLIENT, homeLanSyncHub = originalHub)
+            val probed = CompletableDeferred<Unit>()
+            val releaseProbe = CompletableDeferred<Unit>()
+            val clearingIntent = CompletableDeferred<Unit>()
+            val releaseReset = CompletableDeferred<Unit>()
+            val clients = mutableListOf<FakeVaultClient>()
+            var payloadCalls = 0
+            f.hubBrowser = {
+                flow { emit(DiscoveredHub(originalHub.fingerprint.hex, "hub", "192.0.2.2", 43822)) }
+            }
+            f.syncClient = { peer ->
+                val client = FakeVaultClient(ByteArray(0)).also { clients += it }
+                object : HomeLanSyncClient by client {
+                    override suspend fun probeHub(): Result<HomeLanHealthResponse> {
+                        if (peer.lastKnownHost == originalHub.lastKnownHost) {
+                            return Result.failure(IllegalStateException("Connection refused"))
+                        }
+                        probed.complete(Unit)
+                        releaseProbe.await()
+                        return client.probeHub()
+                    }
+                    override suspend fun syncHearts(): Result<HeartsSyncDocument> {
+                        payloadCalls++
+                        return client.syncHearts()
+                    }
+                }
+            }
+            f.beforeWrite = { next ->
+                if (!next.homeLanSyncIdentityResetPending) {
+                    clearingIntent.complete(Unit)
+                    releaseReset.await()
+                }
+            }
+            if (preserveKey) f.beforeReset = {
+                Files.setPosixFilePermissions(f.identityDirectory, PosixFilePermissions.fromString("r-x------"))
+            }
+            f.initialize()
+            f.service.onAppForeground()
+            probed.await()
+            val resetting = async { runCatching { f.service.resetIdentity() } }
+            clearingIntent.await()
+            assertTrue(f.settings.homeLanSyncIdentityResetPending)
+            assertEquals(HomeLanTrust(), f.service.trust.value)
+            assertEquals(originalHub, f.settings.homeLanSyncHub)
+            assertEquals(0, payloadCalls)
+            releaseReset.complete(Unit)
+            val outcome = resetting.await()
+            assertEquals(preserveKey, outcome.isFailure)
+            assertFalse(f.settings.homeLanSyncIdentityResetPending)
+            if (preserveKey) {
+                assertContains(outcome.exceptionOrNull()?.message.orEmpty(), "Existing pairings remain")
+                assertEquals(f.original, f.identity.fingerprint())
+                assertEquals(originalHub, f.settings.homeLanSyncHub)
+                assertEquals(originalHub, f.service.trust.value.hub)
+            } else {
+                assertNotEquals(f.original, f.identity.fingerprint())
+                assertNull(f.settings.homeLanSyncHub)
+                assertEquals(HomeLanTrust(), f.service.trust.value)
+            }
+            val afterReset = f.settings
+            releaseProbe.complete(Unit)
+            runCurrent()
+            assertEquals(afterReset, f.settings, "The old probe must not write an endpoint or sync metadata")
+            assertEquals(0, payloadCalls)
+            assertNull(f.settings.homeLanSyncLastAtMs)
+            assertNull(f.service.status.value.lastSyncAtMs)
+            assertEquals(2, clients.size)
+            assertTrue(clients.all { it.closed })
+        }
+    }
+
+    @Test
+    fun contendedForegroundPassesAbortWithoutWaitingForProbeTimeoutOrChangingEndpoint() = runTest {
+        Fixture(backgroundScope, desktop = false).use { f ->
+            val originalHub = PairedPeer("hub", "Hub", CertFingerprint.parse("dd".repeat(32))!!,
+                "192.0.2.1", pairedAtMs = 1L)
+            f.settings = f.settings.copy(homeLanSyncRole = HomeLanSyncRole.CLIENT, homeLanSyncHub = originalHub)
+            val foregroundProbed = CompletableDeferred<Unit>()
+            val releaseForeground = CompletableDeferred<Unit>()
+            val syncProbed = CompletableDeferred<Unit>()
+            val releaseSync = CompletableDeferred<Unit>()
+            val clients = mutableListOf<FakeVaultClient>()
+            var browseCalls = 0
+            var payloadCalls = 0
+            f.hubBrowser = {
+                flow {
+                    browseCalls++
+                    emit(DiscoveredHub(originalHub.fingerprint.hex, "hub", "192.0.2.2", 43822))
+                    kotlinx.coroutines.awaitCancellation()
+                }
+            }
+            f.syncClient = {
+                val first = clients.isEmpty()
+                val client = FakeVaultClient(ByteArray(0)).also { clients += it }
+                object : HomeLanSyncClient by client {
+                    override suspend fun probeHub(): Result<HomeLanHealthResponse> {
+                        if (first) {
+                            foregroundProbed.complete(Unit)
+                            releaseForeground.await()
+                            return Result.failure(IllegalStateException("Connection refused"))
+                        }
+                        syncProbed.complete(Unit)
+                        releaseSync.await()
+                        return client.probeHub()
+                    }
+                    override suspend fun syncHearts(): Result<HeartsSyncDocument> {
+                        payloadCalls++
+                        return client.syncHearts()
+                    }
+                }
+            }
+            f.initialize()
+            f.service.onAppForeground()
+            foregroundProbed.await()
+            val sync = async { f.service.syncNow() }
+            syncProbed.await()
+            val admittedAt = testScheduler.currentTime
+            f.service.onAppForeground()
+            runCurrent()
+            releaseForeground.complete(Unit)
+            runCurrent()
+            assertEquals(admittedAt, testScheduler.currentTime)
+            assertEquals(1, browseCalls)
+            assertEquals(2, clients.size, "Neither contended foreground pass may construct another client")
+            assertTrue(clients.first().closed, "Previously acquired clients close without advancing time")
+            assertFalse(clients.last().closed)
+            assertEquals(originalHub, f.settings.homeLanSyncHub)
+            assertEquals(originalHub, f.service.trust.value.hub)
+            assertNull(f.service.status.value.lastError)
+            assertNull(f.service.status.value.lastSyncAtMs)
+            assertEquals(0, payloadCalls)
+            releaseSync.complete(Unit)
+            assertTrue(sync.await().isSuccess)
+            runCurrent()
+            assertEquals(1, payloadCalls, "Only the explicit sync may exchange payloads")
+            assertEquals(originalHub, f.settings.homeLanSyncHub)
+            assertTrue(clients.all { it.closed })
+        }
+    }
+
     private class Fixture(private val scope: CoroutineScope, private val desktop: Boolean = true) : AutoCloseable {
         private val directory = Files.createTempDirectory("kainos-reset-durability")
         val identityDirectory = directory.resolve("home-lan")
@@ -323,6 +475,8 @@ class HomeLanResetDurabilityTest {
         var afterWrite: suspend (AppSettings) -> Unit = {}
         var beforeReset: () -> Unit = {}
         var pairingClient: HomeLanPairingClient? = null
+        var syncClient: ((PairedPeer) -> HomeLanSyncClient)? = null
+        var hubBrowser = HubBrowser { emptyFlow() }
         var clientCalls = 0
         lateinit var service: HomeLanSyncService
 
@@ -347,12 +501,13 @@ class HomeLanResetDurabilityTest {
                     override fun touchActivity() = Unit
                     override fun lastActivityAtMs(): Long? = null
                 }
-            }, clientFactory = { clientCalls++; error("No sync client expected") }, pairingClientFactory = { _, _ -> pairingClient ?: error("No pairing client expected") },
+            }, clientFactory = { peer -> clientCalls++; syncClient?.invoke(peer) ?: error("No sync client expected") },
+            pairingClientFactory = { _, _ -> pairingClient ?: error("No pairing client expected") },
             identity = object : DeviceIdentity by identity {
                 override fun reset(): CertFingerprint { beforeReset(); return identity.reset() }
             },
             vaultStore = JvmHomeLanVaultStore({ directory.toString() }, directory.resolve("vault.json")),
-            refreshLocalLibrary = {}, isDesktop = desktop,
+            refreshLocalLibrary = {}, isDesktop = desktop, hubBrowser = hubBrowser,
         ).also { it.hydrateFromSettings(settings) }
 
         suspend fun reload() {

@@ -67,7 +67,7 @@ class HomeLanHubRelocationTest {
                         PairStatusResponse(PairState.PAIRED, hubDeviceId = "pc-b")
                 }
             },
-            identity = FixedDeviceIdentity("bb".repeat(32)),
+            identity = FixedDeviceIdentity("cc".repeat(32)),
             clientFactory = { hub ->
                 clientHosts += hub.lastKnownHost
                 val reachable = FakeVaultClient(ByteArray(0)).also { openClients += it }
