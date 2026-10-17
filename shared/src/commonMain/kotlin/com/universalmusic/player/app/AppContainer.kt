@@ -231,7 +231,6 @@ class AppContainer {
         hubPort = homeLanHubPort(),
     )
     val resolver = DefaultSourceResolver()
-    private val settingsMutex = Mutex()
     private val _ready = MutableStateFlow(false)
     val ready = _ready.asStateFlow()
     private val _spotifyTracks = MutableStateFlow<List<Track>>(emptyList())
@@ -293,6 +292,10 @@ class AppContainer {
         player = player,
         scope = scope,
     )
+
+    private val settingsUpdater = AppSettingsUpdater(settingsStore, _settings, { applyProviderSettings(it) }) {
+        player.updatePreferences(it.toPlaybackPreferences())
+    }
 
     // A Channel keeps requests sent before Compose starts collecting. SharedFlow's
     // extraBufferCapacity only helps when a subscriber already exists.
@@ -430,19 +433,7 @@ class AppContainer {
 
     fun searchProvidersConfigured(): Boolean = providersForSearch().isNotEmpty()
 
-    suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsMutex.withLock {
-        val previous = _settings.value
-        val transformed = transform(previous)
-        val next = if (transformed.spotifyClientId != previous.spotifyClientId) {
-            transformed.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null)
-        } else transformed
-        settingsStore.write(next)
-        if (next.spotifyClientId != previous.spotifyClientId || next.youtubeDataApiKey != previous.youtubeDataApiKey) {
-            applyProviderSettings(next)
-        }
-        _settings.value = next
-        player.updatePreferences(next.toPlaybackPreferences())
-    }
+    suspend fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsUpdater.update(transform)
 
     private suspend fun applyProviderSettings(settings: AppSettings, clearSessionOnChange: Boolean = true) {
         val next = defaults.copy(
