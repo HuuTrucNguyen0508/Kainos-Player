@@ -68,7 +68,7 @@ class AvahiIsolationTest {
         PrivateAvahi().use { bus ->
             bus.announce = true
             val result = withTimeout(3_000) { AvahiHubBrowser(bus::client).browse().firstOrNull() }
-            assertEquals(DiscoveredHub("a".repeat(64), "pc", "192.168.1.57", 43822), result)
+            assertEquals(DiscoveredHub("a".repeat(64), "pc", "192.168.1.57", 43822, name = "test"), result)
             assertTrue(bus.clients.all { !it.isConnected })
             assertEquals(1, bus.freed, "successful early collection must Free its browser")
         }
