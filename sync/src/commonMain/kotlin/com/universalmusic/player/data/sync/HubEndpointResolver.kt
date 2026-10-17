@@ -50,7 +50,7 @@ class HubEndpointResolver(
             val failure = probeWithin(stored) ?: return ResolveResult.Resolved(stored, ResolvedVia.STORED)
             failures += "stored $stored: $failure"
         }
-        log("discovery browse for ${HOME_LAN_MDNS_SERVICE_TYPE}")
+        log("discovery browse for $HOME_LAN_MDNS_SERVICE_TYPE")
         val tried = mutableSetOf<HubEndpoint>().apply { stored?.let(::add) }
         var advertised = 0
         val found = withTimeoutOrNull(browseTimeoutMs) {

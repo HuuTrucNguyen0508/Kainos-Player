@@ -43,7 +43,7 @@ internal class AvahiHubBrowser : HubBrowser {
     }.flowOn(Dispatchers.IO)
 }
 
-internal fun parseTxt(records: List<List<Byte>>): Map<String, String> =
+private fun parseTxt(records: List<List<Byte>>): Map<String, String> =
     records.map { it.toByteArray().decodeToString() }
         .filter { '=' in it }
         .associate { it.substringBefore('=') to it.substringAfter('=') }

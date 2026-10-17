@@ -28,6 +28,7 @@ internal const val AVAHI_PROTO_INET = 0
 private const val AVAHI_ENTRY_GROUP_REGISTERING = 1
 private const val AVAHI_ENTRY_GROUP_ESTABLISHED = 2
 private const val AVAHI_ENTRY_GROUP_COLLISION = 3
+private const val CHECK_INTERVAL_MS = 30_000L
 
 @Suppress("FunctionName")
 @DBusInterfaceName("org.freedesktop.Avahi.Server")
@@ -100,17 +101,15 @@ internal interface AvahiServiceBrowser : DBusInterface {
 internal fun avahiSystemBus(): DBusConnection = DBusConnectionBuilder.forSystemBus().withShared(false).build()
 
 /**
- * Publishes the hub as `_kainos-sync._tcp` over IPv4 on the one interface [lanAddress] picks.
- * Every [checkIntervalMs] it publishes again if that interface or address changed, or if Avahi
- * dropped the entry group. Avahi frees the group itself when this process's D-Bus connection drops.
+ * Publishes the hub as `_kainos-sync._tcp` over IPv4 on the interface [currentLanAddress] picks.
+ * Every 30 seconds it publishes again if that interface or address changed, or if Avahi dropped
+ * the entry group. Avahi frees the group itself when this process's D-Bus connection drops.
  */
 class AvahiHubAdvertiser(
     private val port: Int,
     private val certSha256Hex: String,
     private val deviceId: String,
     private val instanceLabel: String?,
-    private val lanAddress: () -> LanAddress? = ::currentLanAddress,
-    private val checkIntervalMs: Long = 30_000,
 ) {
     private var job: Job? = null
     private var connection: DBusConnection? = null
@@ -124,7 +123,7 @@ class AvahiHubAdvertiser(
         job = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             while (isActive) {
                 reconcile()
-                delay(checkIntervalMs)
+                delay(CHECK_INTERVAL_MS)
             }
         }
     }
@@ -136,7 +135,7 @@ class AvahiHubAdvertiser(
     }
 
     private fun reconcile() {
-        val target = lanAddress()
+        val target = currentLanAddress()
         val server = runCatching { server() }.getOrElse {
             if (!reportedUnavailable) PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "Avahi unavailable, not advertising")
             reportedUnavailable = true
