@@ -10,10 +10,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlin.jvm.JvmInline
 
-/**
- * PlayerSession's synchronous guard, advanced on the session thread by every recorded change.
- * It lives as long as one session and is never persisted or compared with [PublicationRevision].
- */
+/** PlayerSession's in-memory guard, advanced on the session thread by every recorded change and never persisted. */
 @JvmInline
 value class SessionRevision(val value: Long)
 
@@ -277,10 +274,8 @@ private fun PersistedTrack.isPortableProviderTrack(id: String): Boolean =
             source.providerTrackId.isProviderToken()
     }
 
-/** Provider ids are opaque tokens; anything with a separator could be a URL or a path. */
 private fun String.isProviderToken(): Boolean =
     isNotEmpty() && none { it == '/' || it == '\\' || it.isWhitespace() || it.isISOControl() }
 
-/** Any file name is fine, punctuation and colons included, as long as it cannot address a path. */
 private fun String.isPortableBasename(): Boolean =
     isNotBlank() && this != "." && this != ".." && none { it == '/' || it == '\\' || it.isISOControl() }

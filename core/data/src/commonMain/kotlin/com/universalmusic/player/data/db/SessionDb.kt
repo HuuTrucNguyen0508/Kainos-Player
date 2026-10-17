@@ -27,17 +27,13 @@ internal fun KainosDatabase.readSessionOrigin(): PublicationOrigin =
         ?.let(PublicationOrigin::valueOf)
         ?: PublicationOrigin.LOCAL
 
-/**
- * Rewrites only what changed. [cached] is trusted only while the stored rows still equal its rows,
- * because another connection may have written the queue since.
- */
 internal fun KainosDatabase.writeSessionSnapshot(
     snapshot: SessionSnapshot,
     cached: StoredQueue?,
     origin: PublicationOrigin = PublicationOrigin.LOCAL,
 ): StoredQueue {
     val storedRows = listeningSessionQueries.selectItems().executeAsList()
-    val storedQueue = cached?.takeIf { it.rows == storedRows } ?: StoredQueue(storedRows, storedRows.decodeQueue())
+    val storedQueue = cached?.reusableFor(storedRows) ?: StoredQueue(storedRows, storedRows.decodeQueue())
     val queue = QueueContent.of(snapshot.items)
     val rows = if (queue == storedQueue.content) {
         storedQueue.rows
@@ -92,7 +88,9 @@ internal data class QueueContent private constructor(val items: List<PersistedQu
     }
 }
 
-internal data class StoredQueue(val rows: List<Session_queue_item>, val content: QueueContent?)
+internal data class StoredQueue(val rows: List<Session_queue_item>, val content: QueueContent?) {
+    fun reusableFor(storedRows: List<Session_queue_item>): StoredQueue? = takeIf { rows == storedRows }
+}
 
 private fun List<Session_queue_item>.decodeQueue(): QueueContent? {
     val items = ArrayList<PersistedQueueItem>(size)

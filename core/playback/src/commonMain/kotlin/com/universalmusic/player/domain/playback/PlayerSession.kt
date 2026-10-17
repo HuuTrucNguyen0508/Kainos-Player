@@ -127,10 +127,8 @@ class PlayerSession(
 
     private var origin = PublicationOrigin.LOCAL
     private var lastActiveAtMs: Long? = null
-    /** The transport state last recorded; engine callbacks that only confirm it record nothing. */
-    private var publishedPlaying = false
-    /** Set by a paused seek so a late engine sample cannot move the accepted position back. */
-    private var holdPausedPosition = false
+    private var lastRecordedPlaying = false
+    private var pausedSeekTargetMs: Long? = null
     private var persistenceReady = false
     private var checkpointJob: Job? = null
 
@@ -179,11 +177,8 @@ class PlayerSession(
                 _nowPlaying.update { current ->
                     current.copy(
                         isPlaying = engineState.status == EngineStatus.PLAYING,
-                        positionMs = if (holdPausedPosition && engineState.status != EngineStatus.PLAYING) {
-                            current.positionMs
-                        } else {
-                            engineState.positionMs
-                        },
+                        positionMs = pausedSeekTargetMs.takeIf { engineState.status != EngineStatus.PLAYING }
+                            ?: engineState.positionMs,
                         durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
                         buffering = engineState.status == EngineStatus.BUFFERING ||
                             (current.buffering && current.resolved == null &&
@@ -196,8 +191,8 @@ class PlayerSession(
                         syncWarning = engineState.syncWarning,
                     )
                 }
-                if (engineState.status == EngineStatus.PLAYING) holdPausedPosition = false
-                if (_nowPlaying.value.isPlaying != publishedPlaying && queue.queue.value.items.isNotEmpty()) {
+                if (engineState.status == EngineStatus.PLAYING) pausedSeekTargetMs = null
+                if (_nowPlaying.value.isPlaying != lastRecordedPlaying && queue.queue.value.items.isNotEmpty()) {
                     record(Change.AUTOMATIC)
                 }
 
@@ -274,10 +269,6 @@ class PlayerSession(
         return recorder.awaitCommitted(sequence)
     }
 
-    /**
-     * Install a peer's session paused without claiming it as local activity, only if no recorded
-     * change happened since [expected]. Session thread only; the public handoff wraps this later.
-     */
     internal fun loadRemotePaused(snapshot: SessionSnapshot, expected: SessionRevision): Boolean {
         if (revision != expected.value) return false
         installPaused(snapshot)
@@ -291,7 +282,7 @@ class PlayerSession(
     private fun installPaused(snapshot: SessionSnapshot) {
         val restored = snapshot.toPlaybackQueue()
         failedItemIds.clear()
-        publishedPlaying = false
+        lastRecordedPlaying = false
         restartCheckpoints(playing = false)
         if (restored.items.isEmpty()) {
             pendingResumePositionMs = null
@@ -452,7 +443,6 @@ class PlayerSession(
         editQueue { moveInPlaybackOrder(fromOrderPos, toOrderPos) }
     }
 
-    /** Records the edit only when it changed the queue; rejected moves and indices record nothing. */
     private inline fun editQueue(edit: QueueController.() -> Unit) {
         val before = queue.queue.value
         queue.edit()
@@ -471,7 +461,6 @@ class PlayerSession(
     /** Idempotent pause; cancels in-flight resolve/buffering. */
     fun pauseTransport() = onSession { pauseTransportNow(Change.USER_PAUSE) }
 
-    /** The sleep timer's pause: an automatic stop that records only a real transition. */
     internal fun pauseForSleepTimer() = onSession { pauseTransportNow(Change.AUTOMATIC) }
 
     private fun pauseTransportNow(change: Change) {
@@ -494,8 +483,7 @@ class PlayerSession(
             EngineStatus.PLAYING, EngineStatus.BUFFERING -> engine.pause()
             else -> Unit
         }
-        // A repeated user pause still records the user's intent; an automatic one only a real stop.
-        val records = if (change.user) queue.queue.value.items.isNotEmpty() else publishedPlaying
+        val records = if (change.user) queue.queue.value.items.isNotEmpty() else lastRecordedPlaying
         if (records) record(change, playing = false)
     }
 
@@ -521,10 +509,6 @@ class PlayerSession(
 
     fun seekTo(positionMs: Long) = onSession { seekNow(positionMs) }
 
-    /**
-     * Accept the target at once: Now Playing, the recorded position and, when nothing is loaded,
-     * the position the next Play resumes from. The engine catches up on its own.
-     */
     private fun seekNow(positionMs: Long) {
         engine.seekTo(positionMs)
         if (queue.queue.value.items.isEmpty()) return
@@ -533,7 +517,7 @@ class PlayerSession(
             EngineStatus.IDLE, EngineStatus.ENDED, EngineStatus.FAILED -> pendingResumePositionMs = target.takeIf { it > 0L }
             EngineStatus.PLAYING, EngineStatus.BUFFERING, EngineStatus.PAUSED -> Unit
         }
-        holdPausedPosition = !_nowPlaying.value.isPlaying
+        pausedSeekTargetMs = target.takeUnless { _nowPlaying.value.isPlaying }
         _nowPlaying.update { it.copy(positionMs = target) }
         record(Change.LOCAL_INTENT)
     }
@@ -731,13 +715,9 @@ class PlayerSession(
     private fun beginTransition() {
         playGeneration++
         completionArmed = false
-        holdPausedPosition = false
+        pausedSeekTargetMs = null
     }
 
-    /**
-     * Publish the selected entry and its starting position before resolving it, so Now Playing and
-     * any capture never pair the new queue entry with the previous track.
-     */
     private fun startCurrent(change: Change, applyResumePosition: Boolean = false): Job? {
         val item = queue.queue.value.current ?: return null
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
@@ -935,21 +915,16 @@ class PlayerSession(
     }
 
     private enum class Change(val user: Boolean, val reclaimsOrigin: Boolean) {
-        /** Play, resume, seek, track selection or queue edit: takes a remotely loaded queue back. */
         LOCAL_INTENT(user = true, reclaimsOrigin = true),
         USER_PAUSE(user = true, reclaimsOrigin = false),
         AUTOMATIC(user = false, reclaimsOrigin = false),
     }
 
-    /**
-     * The one place a change becomes listening state: advance the session revision, update origin
-     * and activity, and hand the worker a coherent capture. Runs on the session thread.
-     */
     private fun record(change: Change, playing: Boolean = _nowPlaying.value.isPlaying) {
         revision++
         if (change.reclaimsOrigin) origin = PublicationOrigin.LOCAL
-        val wasPlaying = publishedPlaying
-        publishedPlaying = playing
+        val wasPlaying = lastRecordedPlaying
+        lastRecordedPlaying = playing
         val now = clock()
         val local = origin == PublicationOrigin.LOCAL
         if (local && (change.user || playing || wasPlaying)) lastActiveAtMs = now
@@ -960,14 +935,13 @@ class PlayerSession(
     private fun offerCapture(local: Boolean, now: Long = clock()): Long? = persistence?.offer(
         queue = queue.queue.value,
         positionMs = _nowPlaying.value.positionMs,
-        isPlaying = publishedPlaying,
+        isPlaying = lastRecordedPlaying,
         capturedAtMs = now,
         lastActiveAtMs = lastActiveAtMs.takeIf { local },
         origin = origin,
         local = local,
     )
 
-    /** While playing: a private checkpoint every 10 s and, for local playback, a recorded heartbeat every 60 s. */
     private fun restartCheckpoints(playing: Boolean) {
         checkpointJob?.cancel()
         checkpointJob = if (playing && persistence != null) {

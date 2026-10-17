@@ -1,5 +1,3 @@
--- This device's latest committed listening publication. revision is allocated in the transaction
--- that commits the row; it is not PlayerSession's in-memory session revision.
 CREATE TABLE local_listening (
     id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
     revision INTEGER NOT NULL CHECK (revision > 0),
@@ -13,15 +11,12 @@ CREATE TABLE local_listening (
     CHECK ((queue_item_id IS NULL) = (track_json IS NULL))
 );
 
--- The portable queue behind local_listening.queue_hash, apart so a skip does not rewrite it.
 CREATE TABLE local_listening_queue (
     id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
     queue_hash TEXT NOT NULL,
     queue_json TEXT NOT NULL
 );
 
--- Newest durable local activity. A non-null unavailable_reason means that activity could not be
--- exported, so local_listening is kept only for diagnostics and is not the current export.
 CREATE TABLE local_listening_export (
     id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
     revision INTEGER NOT NULL CHECK (revision > 0),
@@ -38,14 +33,12 @@ CREATE TABLE peer_listening (
     queue_json TEXT
 );
 
--- local_revision is a local_listening_export.revision, never a session revision from an earlier process.
 CREATE TABLE handoff_applied (
     device_id TEXT NOT NULL PRIMARY KEY,
     revision INTEGER NOT NULL CHECK (revision >= 0),
     local_revision INTEGER NOT NULL CHECK (local_revision >= 0)
 );
 
--- Highest sequences each session worker has committed, so its retry after an ambiguous commit is a no-op.
 CREATE TABLE listening_writer_receipt (
     writer_id TEXT NOT NULL PRIMARY KEY,
     private_sequence INTEGER NOT NULL,

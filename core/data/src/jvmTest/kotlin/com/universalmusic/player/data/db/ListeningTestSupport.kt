@@ -20,7 +20,6 @@ import com.universalmusic.player.domain.playback.PlaybackEngine
 import java.util.Collections
 import kotlinx.coroutines.flow.MutableStateFlow
 
-/** Private-only commits through the runtime store, the way a session checkpoint writes. */
 internal class PrivateSnapshotWriter(storage: KainosStorage, private val writerId: String = "test-writer") : SessionSnapshotStore {
     private val store = DbListeningStore(storage)
     private var sequence = 0L
@@ -76,7 +75,6 @@ internal fun safItem(index: Int) = QueueItem("queue-$index", Track(
     )),
 ))
 
-/** Starts playing at once and reports a fixed duration, like a local file engine. */
 internal class DurationEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {

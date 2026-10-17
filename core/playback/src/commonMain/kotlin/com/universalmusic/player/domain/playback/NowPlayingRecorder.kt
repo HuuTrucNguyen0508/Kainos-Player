@@ -35,7 +35,6 @@ sealed interface FlushResult {
     data class Failed(val cause: Throwable) : FlushResult
 }
 
-/** A coherent copy of the session taken on its thread: references only, no queue traversal. */
 internal class SessionCapture(
     val sequence: Long,
     val queue: PlaybackQueue,
@@ -46,7 +45,6 @@ internal class SessionCapture(
     val origin: PublicationOrigin,
 )
 
-/** The newest private capture and, kept apart, the newest local one, so a private capture never erases it. */
 private class PersistenceIntent(val private: SessionCapture, val local: SessionCapture?) {
     fun then(next: PersistenceIntent) = PersistenceIntent(next.private, next.local ?: local)
 }
@@ -60,7 +58,7 @@ private data class RecorderStatus(
 
 /**
  * Persists one [PlayerSession]'s captures in order: at most one commit in flight and one merged
- * intent waiting. Projection and hashing run on [workerContext]; the store runs SQL on IO.
+ * intent waiting. Projection and hashing run on [workerContext].
  */
 class NowPlayingRecorder(
     private val store: ListeningStore,
@@ -85,12 +83,10 @@ class NowPlayingRecorder(
         null
     }
 
-    /** Captures offered before this are held, then committed in order. */
     internal fun start() {
         if (worker == null) worker = scope.launch(workerContext) { run() }
     }
 
-    /** Session thread only. Constant time: it stores references and wakes the worker. */
     internal fun offer(
         queue: PlaybackQueue,
         positionMs: Long,
@@ -198,7 +194,6 @@ class NowPlayingRecorder(
     }
 }
 
-/** Remembers the last results keyed by list identity: the session replaces the list whenever its content changes. */
 private class IdentityCache<K : Any, V>(private val capacity: Int = 2) {
     private val entries = ArrayDeque<Pair<K, V>>()
 

@@ -557,7 +557,6 @@ private fun snapshot(vararg tracks: Track, currentIndex: Int = 0, positionMs: Lo
     positionMs = positionMs,
 )
 
-/** Plays at once; transport acknowledgements can be withheld to model a slow engine. */
 internal class ScriptedEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     var acknowledgeTransport = true
@@ -591,7 +590,6 @@ internal class ScriptedEngine : PlaybackEngine {
         state.update { it.copy(status = status, positionMs = positionMs) }
 }
 
-/** Runs worker tasks only when the test says so, to hold projection while the session keeps going. */
 private class HeldDispatcher : CoroutineDispatcher() {
     private val tasks = ArrayDeque<Runnable>()
 

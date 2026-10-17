@@ -8,7 +8,6 @@ CREATE TABLE session_state (
     repeat_mode TEXT NOT NULL,
     shuffle_order TEXT NOT NULL,
     position_ms INTEGER NOT NULL,
-    -- LOCAL or REMOTE_SUPPRESSED; written with the snapshot so an imported queue stays suppressed after restart.
     publication_origin TEXT NOT NULL DEFAULT 'LOCAL'
 );
 

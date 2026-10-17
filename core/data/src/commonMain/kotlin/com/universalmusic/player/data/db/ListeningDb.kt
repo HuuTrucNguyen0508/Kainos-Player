@@ -15,7 +15,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 
-/** Receipts outlive their writer only long enough to cover any retry; older ones are dropped. */
 private const val RECEIPT_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
 
 /**

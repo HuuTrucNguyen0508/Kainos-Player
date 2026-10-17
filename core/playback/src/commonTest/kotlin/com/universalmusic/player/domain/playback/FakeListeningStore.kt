@@ -11,7 +11,6 @@ import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.SessionSnapshot
 import kotlinx.coroutines.CompletableDeferred
 
-/** Mirrors DbListeningStore's observable rules: one revision per local update, activity kept when null. */
 internal class FakeListeningStore(
     var restore: ListeningRestore = ListeningRestore(SessionSnapshot(), PublicationOrigin.LOCAL),
 ) : ListeningStore {

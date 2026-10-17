@@ -31,7 +31,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assume.assumeTrue
 
-/** Run with `-Dkainos.perf=true`; each case prints parseable `PERF` lines. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionWritePerfTest {
     @Test
@@ -100,7 +99,6 @@ class SessionWritePerfTest {
         }
     }
 
-    /** HS1's harness, now through the runtime store's private-only commit, so HS4 and HS5 run the same case. */
     @Test
     fun skipInA500EntryQueue() = runBlocking {
         assumeTrue(System.getProperty("kainos.perf") == "true")
