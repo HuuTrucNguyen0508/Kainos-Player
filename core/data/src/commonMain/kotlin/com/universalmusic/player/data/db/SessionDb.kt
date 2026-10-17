@@ -5,20 +5,16 @@ import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.session.SESSION_SNAPSHOT_FORMAT_VERSION
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.SessionSnapshotStore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
 internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
     val state = listeningSessionQueries.selectState().executeAsOneOrNull() ?: return SessionSnapshot()
-    val items = listeningSessionQueries.selectItems().executeAsList().map { row ->
-        PersistedQueueItem(
-            id = row.item_id,
-            track = storageJson.decodeFromString<PersistedTrack>(row.track_json),
-        )
-    }
     return SessionSnapshot(
         version = SESSION_SNAPSHOT_FORMAT_VERSION,
-        items = items,
+        items = readQueueItems(),
         currentIndex = state.current_index.toInt(),
         shuffle = state.shuffle,
         repeat = state.repeat_mode,
@@ -27,8 +23,17 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
     )
 }
 
-internal fun KainosDatabase.writeSessionSnapshot(snapshot: SessionSnapshot) {
-    if (!storedQueueMatches(snapshot.items)) {
+/**
+ * Rewrites the queue rows only when the queue differs from [storedQueue], and returns the
+ * queue as stored afterwards. Both sides ignore [PersistedTrack.cachedAtMs], which every
+ * snapshot stamps with the current time.
+ */
+internal fun KainosDatabase.writeSessionSnapshot(
+    snapshot: SessionSnapshot,
+    storedQueue: List<PersistedQueueItem> = readQueueItems().withoutCacheStamps(),
+): List<PersistedQueueItem> {
+    val queue = snapshot.items.withoutCacheStamps()
+    if (queue != storedQueue) {
         listeningSessionQueries.clearItems()
         snapshot.items.forEachIndexed { index, item ->
             listeningSessionQueries.insertItem(
@@ -46,25 +51,40 @@ internal fun KainosDatabase.writeSessionSnapshot(snapshot: SessionSnapshot) {
         storageJson.encodeToString(snapshot.shuffleOrder),
         snapshot.positionMs,
     )
+    return queue
 }
 
-/** Ignores [PersistedTrack.cachedAtMs]: every snapshot stamps it with the current time. */
-private fun KainosDatabase.storedQueueMatches(items: List<PersistedQueueItem>): Boolean {
-    val rows = listeningSessionQueries.selectItems().executeAsList()
-    return rows.size == items.size && rows.zip(items).all { (row, item) ->
-        row.item_id == item.id &&
-            row.canonical_id == item.track.canonicalId &&
-            storageJson.decodeFromString<PersistedTrack>(row.track_json).copy(cachedAtMs = 0) ==
-            item.track.copy(cachedAtMs = 0)
+private fun KainosDatabase.readQueueItems(): List<PersistedQueueItem> =
+    listeningSessionQueries.selectItems().executeAsList().map { row ->
+        PersistedQueueItem(
+            id = row.item_id,
+            track = storageJson.decodeFromString<PersistedTrack>(row.track_json),
+        )
     }
-}
+
+private fun List<PersistedQueueItem>.withoutCacheStamps(): List<PersistedQueueItem> =
+    map { it.copy(track = it.track.copy(cachedAtMs = 0)) }
 
 class DbSessionSnapshotStore(
     private val storage: KainosStorage,
 ) : SessionSnapshotStore {
+    private val writeMutex = Mutex()
+
+    /**
+     * The queue this store last committed, so a skip does not read 500 rows back. Null until
+     * the first write and after a failed one, when the write compares against the stored rows.
+     */
+    private var committedQueue: List<PersistedQueueItem>? = null
+
     override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
 
-    override suspend fun write(snapshot: SessionSnapshot) {
-        storage.write { it.writeSessionSnapshot(snapshot) }
+    override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
+        val known = committedQueue
+        committedQueue = null
+        var written: List<PersistedQueueItem>? = null
+        storage.write { db ->
+            written = if (known == null) db.writeSessionSnapshot(snapshot) else db.writeSessionSnapshot(snapshot, known)
+        }
+        committedQueue = written
     }
 }

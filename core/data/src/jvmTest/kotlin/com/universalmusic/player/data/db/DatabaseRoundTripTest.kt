@@ -286,6 +286,25 @@ class DatabaseRoundTripTest {
     }
 
     @Test
+    fun sessionStoreRewritesTheQueueAgainAfterAFailedWrite() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        KainosDatabase.Schema.create(driver)
+        val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+        val first = session(currentIndex = 0, cachedAtMs = 5)
+        store.write(first)
+
+        val reordered = first.copy(items = first.items.reversed())
+        driver.execute(null, "CREATE TRIGGER fail_state BEFORE INSERT ON session_state BEGIN SELECT RAISE(ABORT, 'disk full'); END", 0)
+        assertFails { store.write(reordered) }
+        assertEquals(first, store.read())
+
+        driver.execute(null, "DROP TRIGGER fail_state", 0)
+        store.write(reordered.copy(currentIndex = 2))
+        assertEquals(reordered.copy(currentIndex = 2), store.read())
+        driver.close()
+    }
+
+    @Test
     fun localScanDistinguishesMissingConfigFromEmptyAndSecondWriteReplaces() {
         val db = memoryDatabase()
         assertNull(db.readLocalScan("folders-a"))
