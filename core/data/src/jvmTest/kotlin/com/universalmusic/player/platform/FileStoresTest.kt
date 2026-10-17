@@ -59,6 +59,20 @@ class FileStoresTest {
     }
 
     @Test
+    fun settingsStoreDropsLegacyPairingAndKeepsTheRepairNotice() = runBlocking {
+        val path = dir.resolve("settings.json")
+        path.writeText("""{"homeLanSyncEnabled":true,"homeLanSyncPairing":{"obsolete":true}}""")
+        val store = FileSettingsStore(path)
+        val loaded = store.read()
+        assertNull(loaded.homeLanSyncHub)
+        assertNull(loaded.legacyHomeLanSyncPairing)
+        assertTrue(loaded.homeLanSyncRepairNeeded)
+        store.write(loaded)
+        assertFalse(path.readText().contains("homeLanSyncPairing"))
+        assertEquals(loaded, store.read())
+    }
+
+    @Test
     fun corruptTokensAreQuarantinedAndTreatedAsSignedOut() = runBlocking {
         val path = dir.resolve("tokens.json")
         path.writeText("""{"SPOTIFY":{"accessToken":""")

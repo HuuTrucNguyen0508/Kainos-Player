@@ -1,7 +1,6 @@
 package com.universalmusic.player.platform
 
-import com.universalmusic.player.data.sync.HomeLanSyncPairing
-import com.universalmusic.player.data.sync.certSha256Hex
+import com.universalmusic.player.data.sync.CertFingerprint
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -14,9 +13,11 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 import kotlinx.serialization.json.Json
 
-actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
-    val expected = certPinHex.trim().lowercase()
-    require(expected.matches(Regex("[0-9a-f]{64}"))) { "Invalid hub certificate pin" }
+private val androidDeviceIdentity by lazy { AndroidDeviceIdentity() }
+
+actual fun platformDeviceIdentity(): DeviceIdentity = androidDeviceIdentity
+
+actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
     val trustManager = object : X509TrustManager {
         override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) =
             throw CertificateException("Client certs not supported")
@@ -24,16 +25,15 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
         override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
             val leaf = chain.firstOrNull()
                 ?: throw CertificateException("Empty certificate chain")
-            val pin = certSha256Hex(leaf.encoded)
-            if (!pin.equals(expected, ignoreCase = true)) {
-                throw CertificateException("Hub certificate pin mismatch")
+            if (CertFingerprint.ofCertificate(leaf.encoded) != pin) {
+                throw CertificateException(HUB_PIN_MISMATCH)
             }
         }
 
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
     val sslContext = SSLContext.getInstance("TLS").apply {
-        init(null, arrayOf(trustManager), SecureRandom())
+        init(arrayOf(androidDeviceIdentity.keyManager()), arrayOf(trustManager), SecureRandom())
     }
     return HttpClient(OkHttp) {
         engine {
@@ -54,5 +54,3 @@ actual fun createPinnedHomeLanHttpClient(certPinHex: String): HttpClient {
         }
     }
 }
-
-actual fun generateHomeLanHubCertPin(pairing: HomeLanSyncPairing): String? = null

@@ -25,6 +25,7 @@ import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
+import com.universalmusic.player.data.settings.withoutLegacyHomeLanPairing
 import com.universalmusic.player.domain.model.ProviderId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -125,7 +126,7 @@ private class PrefsSettingsStore(context: Context) : SettingsStore {
 
     override suspend fun read(): AppSettings {
         val raw = prefs.getString("settings", null) ?: return AppSettings()
-        return json.decodeFromString(raw)
+        return json.decodeFromString<AppSettings>(raw).withoutLegacyHomeLanPairing()
     }
 
     override suspend fun write(settings: AppSettings) {

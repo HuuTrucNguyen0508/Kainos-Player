@@ -78,12 +78,10 @@ class JvmDeviceIdentity(private val directory: File) : DeviceIdentity {
         return Material(keyStore, password.toCharArray(), CertFingerprint.ofCertificate(cert.encoded))
     }
 
-    /** Created owner-only before any byte is written, so the key is never briefly world-readable. */
     private fun writeOwnerOnly(file: File, write: (java.io.OutputStream) -> Unit) {
-        file.delete()
-        runCatching { Files.createFile(file.toPath(), PosixFilePermissions.asFileAttribute(OWNER_ONLY)) }
+        Files.deleteIfExists(file.toPath())
+        Files.createFile(file.toPath(), PosixFilePermissions.asFileAttribute(OWNER_ONLY))
         file.outputStream().use(write)
-        runCatching { Files.setPosixFilePermissions(file.toPath(), OWNER_ONLY) }
     }
 
     companion object {
