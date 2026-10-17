@@ -14,9 +14,9 @@ data class DesktopIsolation(
     val instance: String?,
 ) {
     companion object {
-        const val DATA_DIR_VAR = "KAINOS_DATA_DIR"
-        const val HUB_PORT_VAR = "KAINOS_HUB_PORT"
-        const val INSTANCE_VAR = "KAINOS_INSTANCE"
+        private const val DATA_DIR_VAR = "KAINOS_DATA_DIR"
+        private const val HUB_PORT_VAR = "KAINOS_HUB_PORT"
+        private const val INSTANCE_VAR = "KAINOS_INSTANCE"
 
         /** Read once per process; desktop main() forces it first so a bad value stops startup. */
         val current: DesktopIsolation by lazy {
@@ -28,8 +28,11 @@ data class DesktopIsolation(
             val dataDir = value(DATA_DIR_VAR)?.let { Path.of(it).toAbsolutePath().normalize() }
                 ?: userHome.resolve(".universal-music-player")
             val hubPort = value(HUB_PORT_VAR)?.let { raw ->
-                raw.toIntOrNull()?.takeIf { it in 1..65535 }
-                    ?: throw IllegalArgumentException("$HUB_PORT_VAR must be a port number from 1 to 65535, got '$raw'")
+                val port = raw.toIntOrNull()
+                require(port != null && port in 1..65535) {
+                    "$HUB_PORT_VAR must be a port number from 1 to 65535, got '$raw'"
+                }
+                port
             } ?: HOME_LAN_SYNC_DEFAULT_PORT
             val instance = value(INSTANCE_VAR)?.also { raw ->
                 // Becomes a D-Bus bus name element, which allows only these characters.
