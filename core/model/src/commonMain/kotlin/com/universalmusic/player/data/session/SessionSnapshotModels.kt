@@ -64,10 +64,15 @@ fun SessionSnapshot.migrated(): SessionSnapshot {
     )
 }
 
-fun PlaybackQueue.toSessionSnapshot(positionMs: Long, nowMs: Long): SessionSnapshot {
-    val persistedItems = items.map { item ->
-        PersistedQueueItem(id = item.id, track = item.track.toPersisted(nowMs))
-    }
+fun PlaybackQueue.toSessionSnapshot(positionMs: Long, nowMs: Long): SessionSnapshot =
+    toSessionSnapshot(persistedItems(nowMs), positionMs)
+
+fun PlaybackQueue.persistedItems(nowMs: Long): List<PersistedQueueItem> =
+    items.map { item -> PersistedQueueItem(id = item.id, track = item.track.toPersisted(nowMs)) }
+
+/** [persistedItems] must be this queue's items, mapped once and reused while the items are unchanged. */
+fun PlaybackQueue.toSessionSnapshot(persistedItems: List<PersistedQueueItem>, positionMs: Long): SessionSnapshot {
+    require(persistedItems.size == items.size) { "Persisted items do not match the queue" }
     return SessionSnapshot(
         version = SESSION_SNAPSHOT_FORMAT_VERSION,
         items = persistedItems,
