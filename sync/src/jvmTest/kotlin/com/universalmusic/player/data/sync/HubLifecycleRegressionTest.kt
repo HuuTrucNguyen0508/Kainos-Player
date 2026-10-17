@@ -74,7 +74,7 @@ class HubLifecycleRegressionTest {
             var successorLock: HubOwnerLock? = null
             f.onStop = { error("systemctl timed out after accepting stop") }
             f.onShow = {
-                if (stopping) "ActiveState=deactivating\nJob=41\n" else "ActiveState=inactive\nJob=0\n"
+                if (stopping) "ActiveState=deactivating\nJob=41\n" else "ActiveState=inactive\nJob=\n"
             }
             f.onStart = {
                 successorLock = assertNotNull(HubOwnerLock.acquire(f.isolation.dataDir, 0))
@@ -114,7 +114,7 @@ class HubLifecycleRegressionTest {
             var pending = true
             f.onStop = { error("systemctl timed out after accepting stop") }
             f.onShow = {
-                if (pending) "ActiveState=active\nJob=42\n" else "ActiveState=inactive\nJob=0\n"
+                if (pending) "ActiveState=active\nJob=42\n" else "ActiveState=inactive\nJob=\n"
             }
             val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
             assertFailsWith<IllegalStateException> { owner.acquire() }
@@ -133,6 +133,51 @@ class HubLifecycleRegressionTest {
     }
 
     @Test
+    fun disabledAutostartDuringPendingStopDoesNotStartASuccessor() = runTest {
+        fixture { f ->
+            var pending = true
+            f.onStop = { error("systemctl timed out after accepting stop") }
+            f.onShow = {
+                if (pending) "ActiveState=deactivating\nJob=43\n" else "ActiveState=inactive\nJob=\n"
+            }
+            val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
+            assertFailsWith<IllegalStateException> { owner.acquire() }
+            val closing = async { owner.close {} }
+            runCurrent()
+            try {
+                assertFalse(closing.isCompleted)
+                f.enabled = false
+            } finally {
+                pending = false
+                advanceUntilIdle()
+                closing.await()
+            }
+            assertFalse(f.managedStarted)
+        }
+    }
+
+    @Test
+    fun invalidManagerSnapshotPreservesRecoveryUntilItCanBeObserved() = runBlocking {
+        fixture { f ->
+            f.onStop = { error("systemctl timed out after accepting stop") }
+            val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
+            assertFailsWith<IllegalStateException> { owner.acquire() }
+            f.failureVerb = "show"
+            assertFailsWith<IllegalStateException> { owner.close {} }
+            f.failureVerb = null
+            for (output in listOf("", "ActiveState=inactive\n", "ActiveState=inactive\nJob=invalid\n",
+                "ActiveState=unrecognized\nJob=\n")) {
+                f.onShow = { output }
+                assertFailsWith<IllegalStateException> { owner.close {} }
+                assertFalse(f.managedStarted)
+            }
+            f.onShow = { "ActiveState=failed\nJob=\n" }
+            owner.close {}
+            assertTrue(f.managedStarted)
+        }
+    }
+
+    @Test
     fun failedRecoveryQueryCanBeRetriedWithoutLosingTheStopRequest() = runBlocking {
         fixture { f ->
             f.onStop = { error("systemctl timed out after accepting stop") }
@@ -141,7 +186,7 @@ class HubLifecycleRegressionTest {
             assertFailsWith<IllegalStateException> { owner.acquire() }
             assertFailsWith<IllegalStateException> { owner.close {} }
             assertFalse(f.managedStarted)
-            f.onShow = { "ActiveState=inactive\nJob=0\n" }
+            f.onShow = { "ActiveState=inactive\nJob=\n" }
             owner.close {}
             owner.close { error("Recovery must run once") }
             assertTrue(f.managedStarted)
@@ -166,10 +211,25 @@ class HubLifecycleRegressionTest {
     }
 
     @Test
+    fun restartRetryYieldsToAGuiThatAcquiredTheReleasedLock() = runBlocking {
+        fixture { f ->
+            val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
+            assertTrue(owner.acquire())
+            f.failureVerb = "start"
+            assertFailsWith<IllegalStateException> { owner.close {} }
+            f.failureVerb = null
+            assertNotNull(HubOwnerLock.acquire(f.isolation.dataDir, 0)).use {
+                owner.close { error("The previous listener already stopped") }
+                assertFalse(f.managedStarted, "Retry must respect the new GUI owner")
+            }
+        }
+    }
+
+    @Test
     fun anUnacceptedStopDoesNotRestartAnAlreadyRunningService() = runBlocking {
         fixture { f ->
             f.onStop = { error("systemctl failed before accepting stop") }
-            f.onShow = { "ActiveState=active\nJob=0\n" }
+            f.onShow = { "ActiveState=active\nJob=\n" }
             val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
             assertFailsWith<IllegalStateException> { owner.acquire() }
             owner.close {}
@@ -227,6 +287,7 @@ class HubLifecycleRegressionTest {
             assertEquals(listOf(
                 "systemctl --user is-enabled kainos-hub.service",
                 "systemctl --user stop kainos-hub.service",
+                "systemctl --user show --all --property=ActiveState --property=Job kainos-hub.service",
                 "systemctl --user is-enabled kainos-hub.service",
                 "systemctl --user start --no-block kainos-hub.service",
             ), f.events)
@@ -248,9 +309,39 @@ class HubLifecycleRegressionTest {
             assertEquals(listOf(
                 "systemctl --user is-enabled kainos-hub.service",
                 "systemctl --user stop kainos-hub.service",
+                "systemctl --user show --all --property=ActiveState --property=Job kainos-hub.service",
                 "systemctl --user is-enabled kainos-hub.service",
                 "systemctl --user start --no-block kainos-hub.service",
             ), f.events)
+        }
+    }
+
+    @Test
+    fun lockOpenErrorDuringRecoveryStillRequestsASupervisedSuccessor() = runBlocking {
+        fixture { f ->
+            var started = false
+            val service = HubUserService(f.isolation, f.config, { "/tmp/kainos-player" }) { args ->
+                when {
+                    args.contains("is-enabled") -> HubSystemctlResult(0, "enabled")
+                    args.contains("stop") -> {
+                        Files.writeString(f.isolation.dataDir, "not a directory")
+                        HubSystemctlResult(0)
+                    }
+                    args.contains("show") -> HubSystemctlResult(0, "ActiveState=inactive\nJob=\n")
+                    args.contains("start") -> {
+                        Files.delete(f.isolation.dataDir)
+                        assertNotNull(HubOwnerLock.acquire(f.isolation.dataDir, 0)).close()
+                        started = true
+                        HubSystemctlResult(0)
+                    }
+                    else -> error("Unexpected command $args")
+                }
+            }
+            val owner = HubOwnership(f.isolation, service, HubProcessMode.GUI)
+            assertFailsWith<java.nio.file.FileSystemException> { owner.acquire() }
+            owner.close {}
+            owner.close { error("Cleanup must be idempotent") }
+            assertTrue(started)
         }
     }
 
@@ -267,6 +358,7 @@ class HubLifecycleRegressionTest {
                 assertEquals(listOf(
                     "systemctl --user is-enabled kainos-hub.service",
                     "systemctl --user stop kainos-hub.service",
+                    "systemctl --user show --all --property=ActiveState --property=Job kainos-hub.service",
                     "systemctl --user is-enabled kainos-hub.service",
                 ), f.events)
             } finally { other.close() }
@@ -463,7 +555,7 @@ class HubLifecycleRegressionTest {
         var enabled = true
         var managedStarted = false
         var onStop: () -> Unit = {}
-        var onShow: () -> String = { "ActiveState=inactive\nJob=0\n" }
+        var onShow: () -> String = { "ActiveState=inactive\nJob=\n" }
         var onStart: () -> Unit = {}
         var failureVerb: String? = null
         var timeout = false
@@ -472,7 +564,6 @@ class HubLifecycleRegressionTest {
         val service = HubUserService(isolation, config, { "/tmp/kainos-player" }) { args ->
             events += args.joinToString(" ")
             val status = when {
-                args.contains("show") -> return@HubUserService HubSystemctlResult(0, onShow())
                 args.contains("is-enabled") -> if (enabled) 0 else 1
                 failureVerb != null && args.contains(failureVerb) -> {
                     if (timeout) {
@@ -481,6 +572,7 @@ class HubLifecycleRegressionTest {
                     }
                     1
                 }
+                args.contains("show") -> return@HubUserService HubSystemctlResult(0, onShow())
                 args.contains("enable") -> { if (!ignoreEnable) enabled = true; 0 }
                 args.contains("disable") -> { enabled = false; 0 }
                 args.contains("stop") -> { onStop(); 0 }
