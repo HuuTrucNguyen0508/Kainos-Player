@@ -218,7 +218,24 @@ It has its own queue and does not control Kainos's player session, Spotify, or Y
 
 `PlayerSession` owns transport and queue state across the app and system controls. Providers implement `MusicProvider`; matching and source resolution use common domain contracts. Kotlin packages stay unchanged across module boundaries. See [module ownership](docs/ARCHITECTURE.md).
 
-SQLDelight stores the library, playlists, listening session and local scan in `kainos.db`. Desktop data lives under `~/.universal-music-player/`; Android uses its private database directory. Legacy JSON snapshots import once and remain as `*.json.migrated`. Settings, tokens, `meta-cache/` and `audio-cache/` stay as files/SharedPreferences. Persisted playback sessions and playlists store identities and metadata, without resolved streaming URLs.
+SQLDelight stores the library, playlists, listening session and local scan in `kainos.db`. Desktop data lives under `~/.universal-music-player/` (or `KAINOS_DATA_DIR`); Android uses its private database directory. Legacy JSON snapshots import once and remain as `*.json.migrated`. Settings, tokens, `meta-cache/` and `audio-cache/` stay as files/SharedPreferences. Persisted playback sessions and playlists store identities and metadata, without resolved streaming URLs.
+
+### Run desktop instances side by side
+
+Three environment variables isolate a desktop instance, so several can run at once without sharing state. The app reads them once at startup. An invalid value stops the app with exit status 2 and a message that names the variable.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `KAINOS_DATA_DIR` | `~/.universal-music-player` | Data directory for `kainos.db`, settings, tokens, caches, librespot state and the Home sync hub key. The app creates it and stops if it cannot be created or written. Helper binaries are still found under `~/.universal-music-player/bin`. |
+| `KAINOS_HUB_PORT` | `43822` | Port the Home sync hub listens on and advertises in its pairing URI. Must be 1 to 65535. |
+| `KAINOS_INSTANCE` | unset | Appends `.instance<value>` to the MPRIS bus name `org.mpris.MediaPlayer2.kainosplayer`. Letters, digits, `_` and `-` only. |
+
+```bash
+KAINOS_DATA_DIR=/tmp/kainos-2/data KAINOS_HUB_PORT=44002 KAINOS_INSTANCE=2 ./gradlew :desktopApp:run
+playerctl -p kainosplayer.instance2 play-pause
+```
+
+At startup the app prints one `Kainos data dir … , hub port … , MPRIS …` line with the values in use.
 
 Run the checks used by CI (`jvmTest` covers every module):
 
