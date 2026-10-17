@@ -73,6 +73,21 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun oversizedDeviceIdsAndNamesAreRejectedBeforeAnAttemptIsRetained() = runTest {
+        for (request in listOf(
+            startRequest().copy(deviceId = "x".repeat(129)),
+            startRequest().copy(displayName = "x".repeat(65)),
+        )) {
+            assertEquals(
+                PairingReply.Refused(PairingRefusal.MALFORMED, "Malformed pairing start"),
+                host.start(phoneFp, request),
+            )
+            assertNull(host.incoming.value)
+        }
+        assertEquals(PairingReply.Ok(PairStartResponse(attemptId, hubNonce.toHex())), host.start(phoneFp, startRequest()))
+    }
+
+    @Test
     fun aSecondStartWhileOneIsPendingGets409() = runTest {
         host.start(phoneFp, startRequest())
         val reply = host.start(strangerFp, startRequest())

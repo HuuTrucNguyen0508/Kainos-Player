@@ -4,6 +4,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.JvmDeviceIdentity
+import com.universalmusic.player.platform.hubPinTrustManager
 import com.universalmusic.player.platform.pinnedHomeLanHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.request.post
@@ -15,6 +16,8 @@ import io.ktor.client.plugins.expectSuccess
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.net.ServerSocket
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.AfterTest
@@ -124,6 +127,59 @@ class HomeLanMutualTlsTest {
         HttpHomeLanSyncClient(hubAsPeer, LibraryRepository(), KainosPlaylistRepository(), client(stranger)).use { sync ->
             assertEquals("kainos-pc", sync.probeHub().getOrThrow().deviceId)
         }
+    }
+
+    @Test
+    fun everyPairingPostRejectsAnOversizedContentLengthBeforeReadingTheBody() = runBlocking {
+        hub.start()
+        for (path in pairingPosts) {
+            assertEquals(413, rawPairingPost(path, "Content-Length: 8192\r\n", ""), path)
+        }
+        pairStrangerAfterRejectedRequests()
+    }
+
+    @Test
+    fun everyPairingPostRejectsAnOversizedChunkBeforeTheStreamEnds() = runBlocking {
+        hub.start()
+        for (path in pairingPosts) {
+            val chunk = "2000\r\n" + "x".repeat(8192) + "\r\n"
+            assertEquals(413, rawPairingPost(path, "Transfer-Encoding: chunked\r\n", chunk), path)
+        }
+        pairStrangerAfterRejectedRequests()
+    }
+
+    private val pairingPosts = listOf(
+        HOME_LAN_SYNC_PATH_PAIR_START,
+        HOME_LAN_SYNC_PATH_PAIR_REVEAL,
+        HOME_LAN_SYNC_PATH_PAIR_CONFIRM,
+        HOME_LAN_SYNC_PATH_PAIR_CANCEL,
+    )
+
+    private fun rawPairingPost(path: String, framing: String, body: String): Int {
+        val context = SSLContext.getInstance("TLS").apply {
+            init(stranger.keyManagers(), arrayOf(hubPinTrustManager(pc.fingerprint)), null)
+        }
+        return (context.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { socket ->
+            socket.soTimeout = 3_000
+            socket.startHandshake()
+            val request = "POST $path HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n" +
+                "Content-Type: application/json\r\nConnection: close\r\n$framing\r\n$body"
+            socket.outputStream.write(request.toByteArray(Charsets.US_ASCII))
+            socket.outputStream.flush()
+            socket.inputStream.bufferedReader(Charsets.US_ASCII).readLine().split(' ')[1].toInt()
+        }
+    }
+
+    private suspend fun pairStrangerAfterRejectedRequests() {
+        HttpHomeLanPairingClient(HubEndpoint("127.0.0.1", port), client(stranger)).use { http ->
+            val nonce = ByteArray(PAIRING_NONCE_BYTES) { 7 }
+            val started = http.start(PairStartRequest("kainos-tablet", "Tablet", pairingCommit(nonce).toHex()))
+            http.reveal(PairRevealRequest(started.attemptId, nonce.toHex()))
+            http.confirm(started.attemptId)
+            assertEquals(PairingReply.Ok(Unit), pairing.confirmFromPc(started.attemptId))
+            assertEquals(PairState.PAIRED, http.status(started.attemptId).state)
+        }
+        assertEquals(stranger.fingerprint, peers.last().fingerprint)
     }
 
     @Test
