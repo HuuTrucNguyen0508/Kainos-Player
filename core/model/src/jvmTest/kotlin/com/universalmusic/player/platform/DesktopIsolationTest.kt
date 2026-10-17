@@ -43,7 +43,9 @@ class DesktopIsolationTest {
     fun fullBusNameLengthIsValidatedAtParseTime() {
         val prefix = "org.mpris.MediaPlayer2.kainosplayer.instance"
         val longest = "a".repeat(255 - prefix.length)
-        assertEquals(longest, DesktopIsolation.parse(mapOf("KAINOS_INSTANCE" to longest), home).instance)
+        val parsed = DesktopIsolation.parse(mapOf("KAINOS_INSTANCE" to longest), home)
+        assertEquals(longest, parsed.instance)
+        assertEquals(255, mprisBusName(parsed.instance).length)
         val error = assertFailsWith<IllegalArgumentException> {
             DesktopIsolation.parse(mapOf("KAINOS_INSTANCE" to longest + "a"), home)
         }

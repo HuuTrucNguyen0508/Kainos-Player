@@ -19,9 +19,6 @@ import org.freedesktop.dbus.interfaces.Properties
 import org.freedesktop.dbus.messages.DBusSignal
 import org.freedesktop.dbus.types.Variant
 
-fun mprisBusName(instance: String?): String =
-    "org.mpris.MediaPlayer2.kainosplayer" + instance?.let { ".instance$it" }.orEmpty()
-
 /**
  * Headless MPRIS media player export for Linux (`playerctl`, desktop shells).
  * Inbound transport calls [PlayerSession]; outbound mirrors nowPlaying + queue.

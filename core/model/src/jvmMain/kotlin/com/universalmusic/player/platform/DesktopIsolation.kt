@@ -4,6 +4,9 @@ import com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 import java.nio.file.Files
 import java.nio.file.Path
 
+fun mprisBusName(instance: String?): String =
+    "org.mpris.MediaPlayer2.kainosplayer" + instance?.let { ".instance$it" }.orEmpty()
+
 /**
  * Per-process overrides that let several desktop instances run side by side:
  * `KAINOS_DATA_DIR`, `KAINOS_HUB_PORT` and `KAINOS_INSTANCE`.
@@ -48,7 +51,7 @@ data class DesktopIsolation(
                 }
             }
             if (instance != null) {
-                val busName = "org.mpris.MediaPlayer2.kainosplayer.instance$instance"
+                val busName = mprisBusName(instance)
                 require(busName.length <= 255 && busName.split('.').all {
                     it.matches(Regex("[A-Za-z_-][A-Za-z0-9_-]*"))
                 }) { "$INSTANCE_VAR must produce a valid D-Bus name of at most 255 characters" }
