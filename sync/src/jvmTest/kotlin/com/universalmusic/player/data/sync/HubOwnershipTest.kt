@@ -180,6 +180,7 @@ class HubOwnershipTest {
             assertTrue(defaultBody.contains("Environment=\"KAINOS_HUB_PORT=43822\""))
             assertFalse(defaultBody.contains("KAINOS_INSTANCE="))
             assertTrue(defaultBody.contains("Restart=on-failure\nRestartSec=5"))
+            assertEquals(listOf("SuccessExitStatus=143"), defaultBody.lineSequence().filter { it.startsWith("SuccessExitStatus=") }.toList())
             assertTrue(defaultBody.contains("WantedBy=graphical-session.target"))
             Files.writeString(legacy, "legacy default")
             for (instance in listOf("3", "4")) {
@@ -191,6 +192,7 @@ class HubOwnershipTest {
                 assertTrue(body.contains("Environment=\"KAINOS_DATA_DIR=${isolation.dataDir}\""))
                 assertTrue(body.contains("Environment=\"KAINOS_HUB_PORT=4400$instance\""))
                 assertTrue(body.contains("Environment=\"KAINOS_INSTANCE=$instance\""))
+                assertEquals(listOf("SuccessExitStatus=143"), body.lineSequence().filter { it.startsWith("SuccessExitStatus=") }.toList())
                 service.configure(false)
                 assertFalse(Files.exists(unit))
                 assertEquals(defaultBody, Files.readString(defaultUnit))
