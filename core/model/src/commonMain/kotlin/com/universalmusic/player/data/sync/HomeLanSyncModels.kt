@@ -17,6 +17,12 @@ const val HOME_LAN_SYNC_HEADER_PIN = "X-Kainos-Pairing-Pin"
 const val HOME_LAN_SYNC_ENC_AES_GCM = "aes-gcm-v1"
 const val HOME_LAN_HUB_IDLE_TIMEOUT_MS = 30L * 60L * 1000L
 
+const val HOME_LAN_MDNS_SERVICE_TYPE = "_kainos-sync._tcp"
+const val HOME_LAN_MDNS_TXT_FP = "fp"
+const val HOME_LAN_MDNS_TXT_ID = "id"
+const val HOME_LAN_MDNS_TXT_VERSION = "v"
+const val HOME_LAN_MDNS_VERSION = "3"
+
 /**
  * Pairing URI with mandatory hub certificate pin (TLS).
  * Older `kainos-homesync:1?` URIs without `cert=` are rejected for sync.
