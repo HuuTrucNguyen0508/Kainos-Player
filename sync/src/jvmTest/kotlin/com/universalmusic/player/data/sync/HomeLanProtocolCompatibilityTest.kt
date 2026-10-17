@@ -33,8 +33,10 @@ import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Real loopback HTTPS sockets and certificate pinning, without the user's pairing or library. */
 class HomeLanProtocolCompatibilityTest {
@@ -191,6 +193,33 @@ class HomeLanProtocolCompatibilityTest {
         } finally {
             hub?.stop()
             directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun probeOfAHubThatNeverFinishesTlsGivesUpWithinTheBudget() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-silent-hub-").toFile()
+        ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { silent ->
+            try {
+                val (pairing, tls) = pairing(directory)
+                val accepted = Thread { runCatching { silent.accept() } }.apply { isDaemon = true; start() }
+                val resolver = HubEndpointResolver(
+                    browser = { kotlinx.coroutines.flow.emptyFlow() },
+                    probe = { endpoint ->
+                        HttpHomeLanSyncClient(pairing.copy(hubHost = endpoint.host, hubPort = endpoint.port),
+                            LibraryRepository(), KainosPlaylistRepository(),
+                            createPinnedHomeLanHttpClient(tls.certSha256Hex)).use { it.probeHub() }.map { }
+                    },
+                )
+                val startedAt = System.nanoTime()
+                val result = resolver.resolve(HubEndpoint("127.0.0.1", silent.localPort), tls.certSha256Hex)
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                assertIs<ResolveResult.HubNotFound>(result)
+                assertTrue(elapsedMs in 3_000..3_900, "probe took $elapsedMs ms")
+                accepted.join(1_000)
+            } finally {
+                directory.deleteRecursively()
+            }
         }
     }
 

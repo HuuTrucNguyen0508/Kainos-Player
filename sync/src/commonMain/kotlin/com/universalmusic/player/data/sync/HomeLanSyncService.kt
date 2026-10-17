@@ -230,9 +230,8 @@ class HomeLanSyncService(
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "sync start")
             runCatching {
                 ensureDeviceId()
-                val located = locateHub(pairing).getOrThrow()
-                withVaultSyncForeground("Home library sync") {
-                    clientFactory(located).use { client ->
+                openHubClient(pairing).getOrThrow().use { client ->
+                    withVaultSyncForeground("Home library sync") {
                         val remoteHearts = client.syncHearts().getOrThrow()
                         library.mergeAndPersistSyncState(remoteHearts)
                         val remotePlaylists = client.syncPlaylists().getOrThrow()
@@ -533,7 +532,7 @@ class HomeLanSyncService(
                     }
                     return@runCatching
                 }
-                if (locateHub(pairing).isSuccess) {
+                if (openHubClient(pairing).onSuccess { it.close() }.isSuccess) {
                     syncNow()
                 }
             }.onFailure { err ->
@@ -545,22 +544,33 @@ class HomeLanSyncService(
     }
 
     /**
-     * [pairing] pointed at the hub that answered the pinned probe. A hub found by mDNS at a new
-     * address is stored, so the next sync tries that address first.
+     * A client for the hub that answered the pinned probe, still holding the probe's connection.
+     * A hub found by mDNS at a new address is stored, so the next sync tries that address first.
      */
-    private suspend fun locateHub(pairing: HomeLanSyncPairing): Result<HomeLanSyncPairing> {
+    private suspend fun openHubClient(pairing: HomeLanSyncPairing): Result<HomeLanSyncClient> {
         val pin = pairing.hubCertSha256Hex
             ?: return Result.failure(IllegalStateException("Hub certificate pin required"))
         val stored = pairing.hubHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, pairing.hubPort) }
+        val clients = mutableMapOf<HubEndpoint, HomeLanSyncClient>()
         val startedAt = clock()
         val resolver = HubEndpointResolver(
             browser = hubBrowser,
             probe = { endpoint ->
-                runCatching { clientFactory(pairing.at(endpoint)).use { it.probeHub().getOrThrow() } }.map { }
+                runCatching {
+                    clients.getOrPut(endpoint) { clientFactory(pairing.at(endpoint)) }.probeHub().getOrThrow()
+                }.map { }
             },
             log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
         )
-        return when (val result = resolver.resolve(stored, pin)) {
+        val result = try {
+            resolver.resolve(stored, pin)
+        } catch (err: Throwable) {
+            clients.values.forEach { it.close() }
+            throw err
+        }
+        val winner = (result as? ResolveResult.Resolved)?.endpoint
+        clients.filterKeys { it != winner }.values.forEach { it.close() }
+        return when (result) {
             is ResolveResult.HubNotFound -> Result.failure(IllegalStateException(result.reason))
             is ResolveResult.Resolved -> {
                 val endpoint = result.endpoint
@@ -570,7 +580,7 @@ class HomeLanSyncService(
                     updateSettings { it.copy(homeLanSyncPairing = it.homeLanSyncPairing?.at(endpoint)) }
                     _pairing.update { it?.at(endpoint) }
                 }
-                Result.success(pairing.at(endpoint))
+                Result.success(clients.getValue(endpoint))
             }
         }
     }

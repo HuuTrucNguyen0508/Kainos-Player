@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class HomeLanHubRelocationTest {
     private val cert = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -25,6 +26,7 @@ class HomeLanHubRelocationTest {
         ),
     )
     private val clientHosts = mutableListOf<String?>()
+    private val openClients = mutableListOf<FakeVaultClient>()
 
     private fun service(scope: CoroutineScope, liveHost: String, vararg advertised: DiscoveredHub) =
         HomeLanSyncService(
@@ -36,7 +38,7 @@ class HomeLanHubRelocationTest {
             hubFactory = { _, _, _, _, _ -> NoOpHomeLanSyncHub() },
             clientFactory = { pairing ->
                 clientHosts += pairing.hubHost
-                val reachable = FakeVaultClient(ByteArray(0))
+                val reachable = FakeVaultClient(ByteArray(0)).also { openClients += it }
                 if (pairing.hubHost == liveHost) {
                     reachable
                 } else {
@@ -63,10 +65,11 @@ class HomeLanHubRelocationTest {
 
         service.syncNow().getOrThrow()
 
-        assertEquals(listOf<String?>("192.168.1.10", "192.168.1.57", "192.168.1.57"), clientHosts)
+        assertEquals(listOf<String?>("192.168.1.10", "192.168.1.57"), clientHosts)
         assertEquals("192.168.1.57", settings.homeLanSyncPairing?.hubHost)
         assertEquals("192.168.1.57", service.pairing.value?.hubHost)
         assertNull(service.status.value.lastError)
+        assertTrue(openClients.all { it.closed }, "every client session must be closed")
     }
 
     @Test
@@ -83,5 +86,6 @@ class HomeLanHubRelocationTest {
         assertEquals(result.exceptionOrNull()?.message, service.status.value.lastError)
         assertEquals("192.168.1.10", settings.homeLanSyncPairing?.hubHost)
         assertEquals(listOf<String?>("192.168.1.10"), clientHosts)
+        assertTrue(openClients.all { it.closed }, "every client session must be closed")
     }
 }
