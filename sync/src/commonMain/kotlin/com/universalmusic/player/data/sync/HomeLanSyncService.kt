@@ -9,6 +9,7 @@ import com.universalmusic.player.platform.HUB_PIN_MISMATCH
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
+import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.secureRandomBytes
@@ -70,6 +71,7 @@ class HomeLanSyncService(
     private val hubBrowser: HubBrowser = platformHubBrowser(),
     private val deviceName: () -> String = ::homeLanDeviceName,
     private val pairingPollMs: Long = 1_000,
+    private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -128,6 +130,11 @@ class HomeLanSyncService(
                 lastDetail = current.homeLanSyncLastDetail,
             )
         }
+    }
+
+    suspend fun setHubAutostartEnabled(enabled: Boolean) {
+        updateSettings { it.copy(homeLanSyncHubAutostart = enabled) }
+        configureHubAutostart(enabled)
     }
 
     override suspend fun enable(enabled: Boolean) {

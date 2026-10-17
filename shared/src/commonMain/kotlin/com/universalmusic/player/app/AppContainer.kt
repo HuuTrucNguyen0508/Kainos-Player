@@ -71,8 +71,8 @@ import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.platformDeviceIdentity
 import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
-import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.setHomeLanHubAutostart
+import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.createHttpClient
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
@@ -734,8 +734,7 @@ class AppContainer {
 
     fun setHomeLanHubAutostartEnabled(enabled: Boolean) {
         scope.launch {
-            updateSettings { it.copy(homeLanSyncHubAutostart = enabled) }
-            setHomeLanHubAutostart(enabled)
+            homeLanSync.setHubAutostartEnabled(enabled)
         }
     }
 
