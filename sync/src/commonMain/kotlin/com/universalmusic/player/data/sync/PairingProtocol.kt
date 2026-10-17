@@ -79,6 +79,7 @@ class PairingHost(
     private val onPaired: suspend (PairedPeer) -> Unit,
     private val clock: () -> Long = ::currentTimeMillis,
     private val random: (Int) -> ByteArray = ::secureRandomBytes,
+    private val isAvailable: () -> Boolean = { true },
 ) {
     private sealed interface Phase {
         data object AwaitingReveal : Phase
@@ -108,6 +109,7 @@ class PairingHost(
 
     suspend fun start(client: CertFingerprint, request: PairStartRequest): PairingReply<PairStartResponse> =
         locked {
+            if (!isAvailable()) return@locked refused(PairingRefusal.ENDED, "Identity reset is in progress")
             if (activeAttempt != null) return@locked refused(PairingRefusal.BUSY, "Another pairing is in progress")
             val now = clock()
             while (recentStarts.firstOrNull()?.let { now - it >= 60_000L } == true) recentStarts.removeFirst()

@@ -32,6 +32,8 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.net.URI
@@ -130,6 +132,10 @@ private class PrefsSettingsStore(context: Context) : SettingsStore {
     }
 
     override suspend fun write(settings: AppSettings) {
-        prefs.edit().putString("settings", json.encodeToString(settings)).apply()
+        withContext(Dispatchers.IO) {
+            check(prefs.edit().putString("settings", json.encodeToString(settings)).commit()) {
+                "Could not persist app settings"
+            }
+        }
     }
 }

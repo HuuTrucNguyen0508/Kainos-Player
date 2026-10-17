@@ -82,6 +82,8 @@ data class AppSettings(
     val homeLanSyncHub: PairedPeer? = null,
     /** Devices this hub trusts. */
     val homeLanSyncPeers: List<PairedPeer> = emptyList(),
+    /** Blocks trust use until identity reset finishes or verified old-key recovery commits. */
+    val homeLanSyncIdentityResetPending: Boolean = false,
     /** Set when a shared-secret pairing was dropped; Settings asks the user to pair again. */
     val homeLanSyncRepairNeeded: Boolean = false,
     /** A shared-secret pairing from before per-device keys, read only so it can be dropped. */
@@ -115,5 +117,6 @@ fun AppSettings.withoutLegacyHomeLanPairing(): AppSettings =
 
 interface SettingsStore {
     suspend fun read(): AppSettings
+    /** Returns only after settings have been persisted; throws when persistence fails. */
     suspend fun write(settings: AppSettings)
 }

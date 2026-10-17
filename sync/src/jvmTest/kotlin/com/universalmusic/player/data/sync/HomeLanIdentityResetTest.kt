@@ -135,7 +135,7 @@ class HomeLanIdentityResetTest {
             assertFalse(Files.exists(f.identityDirectory.resolve("device.p12")))
             assertEquals(listOf(f.original), f.startedPins)
             assertFalse(f.service.status.value.hubListening)
-            f.assertTrustPreserved()
+            f.assertTrustBlocked()
             assertContains(failure.message.orEmpty(), "Could not reset this device's identity")
             assertContains(failure.message.orEmpty(), "could not be verified")
             assertFalse(failure.message.orEmpty().contains("Existing pairings remain"))
@@ -151,7 +151,7 @@ class HomeLanIdentityResetTest {
             val failure = assertFailsWith<Exception> { f.service.resetIdentity() }
             assertEquals(listOf(f.original), f.startedPins)
             assertFalse(f.service.status.value.hubListening)
-            f.assertTrustPreserved()
+            f.assertTrustBlocked()
             assertContains(failure.message.orEmpty(), "could not be verified")
             assertFalse(failure.message.orEmpty().contains("Existing pairings remain"))
         }
@@ -165,7 +165,7 @@ class HomeLanIdentityResetTest {
             val failure = assertFailsWith<Exception> { f.service.resetIdentity() }
             assertEquals(listOf(f.original), f.startedPins)
             assertFalse(f.service.status.value.hubListening)
-            f.assertTrustPreserved()
+            f.assertTrustBlocked()
             assertContains(failure.message.orEmpty(), "could not be verified")
         }
     }
@@ -236,6 +236,15 @@ class HomeLanIdentityResetTest {
             assertEquals(listOf(phone), settings.homeLanSyncPeers)
             assertEquals(pairedHub, settings.homeLanSyncHub)
             assertEquals(listOf(phone), service.trust.value.peers)
+            assertFalse(service.status.value.lastDetail.orEmpty().contains("Created a new identity"))
+        }
+
+        suspend fun assertTrustBlocked() {
+            service.startHubIfNeeded()
+            assertFalse(service.status.value.hubListening)
+            assertEquals(listOf(phone), settings.homeLanSyncPeers)
+            assertTrue(settings.homeLanSyncIdentityResetPending)
+            assertEquals(HomeLanTrust(), service.trust.value)
             assertFalse(service.status.value.lastDetail.orEmpty().contains("Created a new identity"))
         }
 

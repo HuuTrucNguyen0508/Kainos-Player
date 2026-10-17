@@ -41,6 +41,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 const val HOME_LAN_REPAIR_NOTICE = "Pair again to keep syncing"
 const val HOME_LAN_IDENTITY_CHANGED = "This PC's identity changed. Pair again."
 const val HOME_LAN_NOT_TRUSTED = "This PC no longer trusts this device. Pair again."
+const val HOME_LAN_RESET_PENDING = "Identity reset is incomplete. Home sync is stopped and existing pairings are blocked. Retry Reset identity."
 
 /**
  * Coordinates home-LAN hearts + playlist metadata + vault sync.
@@ -79,17 +80,20 @@ class HomeLanSyncService(
         hubDeviceId = { settings().homeLanSyncDeviceId.orEmpty() },
         onPaired = ::trustPeer,
         clock = clock,
+        isAvailable = { !resetBlocked() },
     )
     override val incomingPairing: StateFlow<PairingAttempt?> = pairingHost.incoming
 
     private var hub: HomeLanSyncHub? = null
     private var hubStopGeneration = 0L
     private val mutex = Mutex()
+    private val identityResetMutex = Mutex()
+    private val pairingAttemptGeneration = MutableStateFlow(0L)
     private var idleWatchJob: Job? = null
     private var pairingExpiryJob: Job? = null
 
     private val resolutionLock = Any()
-    private var pairingGeneration = 0L
+    private var resolutionGeneration = 0L
 
     private data class ResolutionSource(
         val target: PairedPeer,
@@ -98,28 +102,28 @@ class HomeLanSyncService(
     )
 
     private fun resolutionSource(target: PairedPeer) = synchronized(resolutionLock) {
-        ResolutionSource(target, pairingGeneration, _status.value.role)
+        ResolutionSource(target, resolutionGeneration, _status.value.role)
     }
 
     private fun isCurrent(source: ResolutionSource): Boolean = synchronized(resolutionLock) {
-        pairingGeneration == source.generation &&
+        !resetBlocked() && resolutionGeneration == source.generation &&
             _status.value.enabled && _status.value.role == source.role &&
             (if (shouldRunHub(source.role)) syncTarget() else _trust.value.hub) == source.target
     }
 
     private fun invalidateResolution() = synchronized(resolutionLock) {
-        pairingGeneration++
+        resolutionGeneration++
     }
 
     fun hydrateFromSettings(current: AppSettings) = synchronized(resolutionLock) {
         invalidateResolution()
-        _trust.value = current.trust()
+        _trust.value = if (resetBlocked()) HomeLanTrust() else current.trust()
         _status.update {
             it.copy(
                 enabled = current.homeLanSyncEnabled,
                 role = current.homeLanSyncRole,
                 lastSyncAtMs = current.homeLanSyncLastAtMs,
-                lastError = current.homeLanSyncLastError,
+                lastError = if (current.homeLanSyncIdentityResetPending) HOME_LAN_RESET_PENDING else current.homeLanSyncLastError,
                 lastDetail = current.homeLanSyncLastDetail,
             )
         }
@@ -127,9 +131,12 @@ class HomeLanSyncService(
 
     override suspend fun enable(enabled: Boolean) {
         invalidateResolution()
-        updateSettings { it.copy(homeLanSyncEnabled = enabled) }
-        _status.update { it.copy(enabled = enabled) }
-        if (enabled) startHubIfNeeded() else stopHub()
+        mutex.withLock {
+            updateSettings { it.copy(homeLanSyncEnabled = enabled) }
+            _status.update { it.copy(enabled = enabled) }
+            if (!enabled) stopHubLocked()
+        }
+        if (enabled) startHubIfNeeded()
     }
 
     override fun discoverHubs(): Flow<DiscoveredHub> {
@@ -138,6 +145,10 @@ class HomeLanSyncService(
     }
 
     override suspend fun pairWith(hub: DiscoveredHub): HubPairingSession {
+        val generation = mutex.withLock {
+            check(!resetBlocked()) { HOME_LAN_RESET_PENDING }
+            pairingAttemptGeneration.value
+        }
         val pin = CertFingerprint.parse(hub.fp) ?: error("${hub.name} advertised no valid certificate fingerprint")
         val own = identity.fingerprint()
         val deviceId = ensureDeviceId()
@@ -150,7 +161,7 @@ class HomeLanSyncService(
             val hubNonce = started.nonceHex.hexBytes(PAIRING_NONCE_BYTES) ?: error("${hub.name} sent a malformed nonce")
             client.reveal(PairRevealRequest(started.attemptId, nonce.toHex()))
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "pairing code ready for ${hub.endpoint}")
-            return PhonePairing(started.attemptId, hub, pairingCode(pin, own, hubNonce, nonce), pin, client)
+            return PhonePairing(started.attemptId, hub, pairingCode(pin, own, hubNonce, nonce), pin, client, generation)
         } catch (err: Throwable) {
             withContext(NonCancellable) {
                 withTimeoutOrNull(3_000) { attemptId?.let { runCatching { client.cancel(it) } } }
@@ -166,8 +177,10 @@ class HomeLanSyncService(
         override val code: PairingCode,
         private val pin: CertFingerprint,
         private val client: HomeLanPairingClient,
+        private val generation: Long,
     ) : HubPairingSession {
         override suspend fun confirm(): PairedPeer = try {
+            checkCurrentIdentity()
             client.confirm(attemptId)
             val peer = PairedPeer(
                 deviceId = awaitPaired(),
@@ -177,7 +190,7 @@ class HomeLanSyncService(
                 lastKnownPort = hub.port,
                 pairedAtMs = clock(),
             )
-            trustHub(peer)
+            trustHub(peer, generation)
             peer
         } catch (failure: Throwable) {
             cancel()
@@ -195,14 +208,20 @@ class HomeLanSyncService(
 
         override suspend fun awaitEnd(): String {
             while (true) {
+                checkCurrentIdentity()
                 val status = client.status(attemptId)
                 if (status.state == PairState.ENDED) return status.reason ?: "The pairing ended"
                 delay(pairingPollMs)
             }
         }
 
+        private fun checkCurrentIdentity() {
+            check(!resetBlocked() && generation == pairingAttemptGeneration.value) { "Identity changed during pairing. Pair again." }
+        }
+
         private suspend fun awaitPaired(): String {
             repeat((PAIRING_ATTEMPT_TTL_MS / pairingPollMs).toInt() + 5) {
+                checkCurrentIdentity()
                 val status = client.status(attemptId)
                 when (status.state) {
                     PairState.PAIRED -> return status.hubDeviceId ?: hub.id ?: error("${hub.name} sent no device id")
@@ -220,7 +239,8 @@ class HomeLanSyncService(
     override suspend fun rejectIncomingPairing(attemptId: String): Result<Unit> =
         pairingHost.rejectFromPc(attemptId).toResult()
 
-    private suspend fun trustHub(peer: PairedPeer) {
+    private suspend fun trustHub(peer: PairedPeer, generation: Long) = mutex.withLock {
+        check(!resetBlocked() && generation == pairingAttemptGeneration.value) { "Identity changed during pairing. Pair again." }
         invalidateResolution()
         updateSettings {
             it.copy(
@@ -235,20 +255,24 @@ class HomeLanSyncService(
         _status.update {
             it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null, lastDetail = "Paired with ${peer.displayName}")
         }
-        stopHub()
+        stopHubLocked()
     }
 
     private suspend fun trustPeer(peer: PairedPeer) {
-        updateSettings {
-            it.copy(
-                homeLanSyncPeers = it.homeLanSyncPeers.filterNot { known ->
-                    known.deviceId == peer.deviceId || known.fingerprint == peer.fingerprint
-                } + peer,
-                homeLanSyncRepairNeeded = false,
-            )
+        val generation = pairingAttemptGeneration.value
+        mutex.withLock {
+            check(!resetBlocked() && generation == pairingAttemptGeneration.value) { "Identity changed during pairing. Pair again." }
+            updateSettings {
+                it.copy(
+                    homeLanSyncPeers = it.homeLanSyncPeers.filterNot { known ->
+                        known.deviceId == peer.deviceId || known.fingerprint == peer.fingerprint
+                    } + peer,
+                    homeLanSyncRepairNeeded = false,
+                )
+            }
+            reconcileTrust()
+            _status.update { it.copy(lastError = null, lastDetail = "Paired with ${peer.displayName}") }
         }
-        reconcileTrust()
-        _status.update { it.copy(lastError = null, lastDetail = "Paired with ${peer.displayName}") }
     }
 
     override suspend fun removeDevice(deviceId: String) {
@@ -262,30 +286,78 @@ class HomeLanSyncService(
         reconcileTrust()
     }
 
+    private enum class ResetPhase { NOT_STARTED, TRUST_BLOCKED, ROTATED, PRESERVED, RESTORED }
+
     override suspend fun resetIdentity() {
-        pairingHost.abandon("This device's identity was reset")
-        val restartGeneration = mutex.withLock {
-            val wasListening = hub?.isListening == true
-            stopHubLocked()
-            hubStopGeneration.takeIf { wasListening }
-        }
+        var restartGeneration: Long? = null
+        var error: Exception? = null
         try {
-            identity.reset()
-        } catch (failure: Exception) {
-            val preserved = (failure as? DeviceIdentityResetException)?.preservedFingerprint != null
-            if (preserved && restartGeneration != null) startHubIfNeeded(restartGeneration)
-            val message = if (preserved) {
-                "Could not reset this device's identity. Existing pairings remain."
-            } else {
-                "Could not reset this device's identity. The stored identity could not be verified. Home sync remains stopped."
+            identityResetMutex.withLock {
+                var wasListening = false
+                val resuming = settings().homeLanSyncIdentityResetPending
+                var phase = if (resuming) ResetPhase.TRUST_BLOCKED else ResetPhase.NOT_STARTED
+                try {
+                    mutex.withLock {
+                        pairingAttemptGeneration.update { it + 1 }
+                        wasListening = hub?.isListening == true
+                        stopHubLocked()
+                        restartGeneration = hubStopGeneration
+                        updateSettings { it.copy(homeLanSyncIdentityResetPending = true) }
+                        phase = ResetPhase.TRUST_BLOCKED
+                        reconcileTrust()
+                    }
+                    pairingHost.abandon("This device's identity was reset")
+                    try {
+                        identity.reset()
+                        phase = ResetPhase.ROTATED
+                    } catch (failure: Exception) {
+                        if (!resuming && (failure as? DeviceIdentityResetException)?.preservedFingerprint != null) {
+                            phase = ResetPhase.PRESERVED
+                            mutex.withLock {
+                                updateSettings { it.copy(homeLanSyncIdentityResetPending = false) }
+                                reconcileTrust()
+                            }
+                            phase = ResetPhase.RESTORED
+                        }
+                        throw failure
+                    }
+                    mutex.withLock {
+                        updateSettings {
+                            it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(),
+                                homeLanSyncIdentityResetPending = false, homeLanSyncLastError = null)
+                        }
+                        reconcileTrust()
+                        _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
+                    }
+                } catch (cancelled: CancellationException) {
+                    reconcileTrust()
+                    if (settings().homeLanSyncIdentityResetPending) _status.update { it.copy(lastError = HOME_LAN_RESET_PENDING) }
+                    throw cancelled
+                } catch (failure: Exception) {
+                    val unchanged = phase == ResetPhase.NOT_STARTED || phase == ResetPhase.RESTORED
+                    if (!wasListening || !unchanged) restartGeneration = null
+                    val message = if (unchanged) {
+                        "Could not reset this device's identity. Existing pairings remain."
+                    } else if (phase == ResetPhase.ROTATED) {
+                        "A new identity was created, but pairing cleanup could not be saved. $HOME_LAN_RESET_PENDING"
+                    } else if (phase == ResetPhase.PRESERVED) {
+                        "The original identity remains, but the reset marker could not be cleared. $HOME_LAN_RESET_PENDING"
+                    } else {
+                        "Could not reset this device's identity. The stored identity could not be verified as unchanged. $HOME_LAN_RESET_PENDING"
+                    }
+                    reconcileTrust()
+                    _status.update { it.copy(lastError = message) }
+                    error = IllegalStateException(message, failure)
+                }
             }
-            _status.update { it.copy(lastError = message) }
-            throw IllegalStateException(message, failure)
+        } finally {
+            reconcileTrust()
         }
-        updateSettings { it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(), homeLanSyncLastError = null) }
-        reconcileTrust()
-        _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
-        startHubIfNeeded()
+        restartGeneration?.let { startHubIfNeeded(it) }
+        error?.let { failure ->
+            _status.update { it.copy(lastError = failure.message) }
+            throw failure
+        }
     }
 
     override suspend fun syncNow(): Result<String> {
@@ -298,6 +370,7 @@ class HomeLanSyncService(
             startHubIfNeeded()
         }
         return mutex.withLock {
+            if (resetBlocked()) return@withLock Result.failure(IllegalStateException(HOME_LAN_RESET_PENDING))
             if (!_status.value.enabled) {
                 return@withLock Result.failure(IllegalStateException("Home sync is disabled"))
             }
@@ -553,12 +626,12 @@ class HomeLanSyncService(
     override suspend fun startHubIfNeeded() = startHubIfNeeded(null)
 
     private suspend fun startHubIfNeeded(expectedStopGeneration: Long?) {
-        if (!shouldRunHub()) return
+        if (resetBlocked() || !shouldRunHub()) return
         if (!_status.value.enabled) return
         val deviceId = ensureDeviceId()
         mutex.withLock {
             if (expectedStopGeneration != null && (hubStopGeneration != expectedStopGeneration || !scope.isActive)) return
-            if (!shouldRunHub() || !_status.value.enabled) return
+            if (resetBlocked() || !shouldRunHub() || !_status.value.enabled) return
             if (hub?.isListening == true) {
                 return
             }
@@ -568,7 +641,7 @@ class HomeLanSyncService(
                     HomeLanHubConfig(
                         deviceId = deviceId,
                         port = hubPort,
-                        peers = { settings().homeLanSyncPeers },
+                        peers = { if (resetBlocked()) emptyList() else settings().homeLanSyncPeers },
                         pairing = pairingHost,
                         onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
                         onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
@@ -621,10 +694,18 @@ class HomeLanSyncService(
                 if (!_status.value.enabled) return@runCatching
                 startHubIfNeeded()
                 if (!shouldRunClient()) return@runCatching
-                val target = _trust.value.hub ?: return@runCatching
-                val captured = resolutionSource(target)
+                val captured = mutex.withLock {
+                    if (resetBlocked() || !_status.value.enabled || !shouldRunClient()) return@runCatching
+                    val target = settings().homeLanSyncHub ?: return@runCatching
+                    resolutionSource(target)
+                }
                 source = captured
-                val reachable = openHubClient(target).getOrNull()?.let { (client, resolved) ->
+                val reachable = openHubClient(captured.target) { peer ->
+                    mutex.withLock {
+                        check(isCurrent(captured) && settings().matches(captured)) { "Pairing changed during hub discovery" }
+                        clientFactory(peer)
+                    }
+                }.getOrNull()?.let { (client, resolved) ->
                     client.close()
                     rememberHubAddress(captured, resolved)
                 } ?: false
@@ -641,8 +722,10 @@ class HomeLanSyncService(
         }
     }
 
+    private fun resetBlocked(): Boolean = identityResetMutex.isLocked || settings().homeLanSyncIdentityResetPending
+
     private fun syncTarget(): PairedPeer? =
-        if (shouldRunHub()) localHubTarget(settings().homeLanSyncDeviceId) else settings().homeLanSyncHub
+        if (resetBlocked()) null else if (shouldRunHub()) localHubTarget(settings().homeLanSyncDeviceId) else settings().homeLanSyncHub
 
     private fun localHubTarget(deviceId: String?): PairedPeer = PairedPeer(
         deviceId = deviceId.orEmpty(),
@@ -655,6 +738,7 @@ class HomeLanSyncService(
 
     private suspend fun openHubClient(
         target: PairedPeer,
+        acquireClient: suspend (PairedPeer) -> HomeLanSyncClient = { clientFactory(it) },
     ): Result<Pair<HomeLanSyncClient, ResolveResult.Resolved>> {
         val stored = target.lastKnownHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, target.lastKnownPort) }
         val clients = mutableMapOf<HubEndpoint, HomeLanSyncClient>()
@@ -670,7 +754,8 @@ class HomeLanSyncService(
             },
             probe = { endpoint ->
                 runCatching {
-                    clients.getOrPut(endpoint) { clientFactory(target.at(endpoint)) }.probeHub().getOrThrow()
+                    val client = clients[endpoint] ?: acquireClient(target.at(endpoint)).also { clients[endpoint] = it }
+                    client.probeHub().getOrThrow()
                 }.map { }.onFailure { err -> trustFailureOf(err)?.let { trustFailure = it } }
             },
             log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
@@ -731,11 +816,12 @@ class HomeLanSyncService(
         homeLanSyncEnabled && homeLanSyncRole == source.role && effectiveTarget() == source.target
 
     private fun reconcileTrust() = synchronized(resolutionLock) {
-        _trust.value = settings().trust()
+        _trust.value = if (resetBlocked()) HomeLanTrust() else settings().trust()
     }
 
     private fun AppSettings.effectiveTarget(): PairedPeer? =
-        if (shouldRunHub(homeLanSyncRole)) localHubTarget(homeLanSyncDeviceId) else homeLanSyncHub
+        if (homeLanSyncIdentityResetPending || resetBlocked()) null
+        else if (shouldRunHub(homeLanSyncRole)) localHubTarget(homeLanSyncDeviceId) else homeLanSyncHub
 
     /** An attempt that times out disappears from the PC screen without waiting for the next request. */
     private fun startPairingExpiry() {
@@ -791,7 +877,9 @@ internal const val HOME_SYNC_TRACE_TAG = "HomeSync"
 
 private fun PairedPeer.at(endpoint: HubEndpoint) = copy(lastKnownHost = endpoint.host, lastKnownPort = endpoint.port)
 
-private fun AppSettings.trust() = HomeLanTrust(homeLanSyncHub, homeLanSyncPeers, homeLanSyncRepairNeeded)
+private fun AppSettings.trust() =
+    if (homeLanSyncIdentityResetPending) HomeLanTrust()
+    else HomeLanTrust(homeLanSyncHub, homeLanSyncPeers, homeLanSyncRepairNeeded)
 
 private fun PairingReply<Unit>.toResult(): Result<Unit> = when (this) {
     is PairingReply.Ok -> Result.success(Unit)
