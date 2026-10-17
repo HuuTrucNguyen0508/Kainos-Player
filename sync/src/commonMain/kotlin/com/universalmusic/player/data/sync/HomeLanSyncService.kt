@@ -91,7 +91,6 @@ class HomeLanSyncService(
     private val mutex = Mutex()
     private val identityResetMutex = Mutex()
     private val pairingAttemptGeneration = MutableStateFlow(0L)
-    private var idleWatchJob: Job? = null
     private var pairingExpiryJob: Job? = null
 
     private val resolutionLock = Any()
@@ -664,7 +663,6 @@ class HomeLanSyncService(
                 _status.update {
                     it.copy(hubListening = true, lastError = null, lastDetail = "Hub listening on $hubPort")
                 }
-                startIdleWatch()
                 startPairingExpiry()
             }.onFailure { err ->
                 hub = null
@@ -686,8 +684,6 @@ class HomeLanSyncService(
     private suspend fun stopHubLocked() {
         invalidateResolution()
         hubStopGeneration++
-        idleWatchJob?.cancel()
-        idleWatchJob = null
         pairingExpiryJob?.cancel()
         pairingExpiryJob = null
         hub?.stop()
@@ -850,20 +846,6 @@ class HomeLanSyncService(
             while (isActive) {
                 delay(1_000)
                 pairingHost.expireDue()
-            }
-        }
-    }
-
-    private fun startIdleWatch() {
-        idleWatchJob?.cancel()
-        idleWatchJob = scope.launch {
-            while (isActive) {
-                delay(60_000)
-                val last = hub?.lastActivityAtMs() ?: continue
-                if (clock() - last >= HOME_LAN_HUB_IDLE_TIMEOUT_MS) {
-                    stopHub()
-                    break
-                }
             }
         }
     }

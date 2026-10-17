@@ -1,9 +1,19 @@
 package com.universalmusic.player.platform
 
-import io.ktor.serialization.kotlinx.json.json
-import java.awt.Desktop
+import com.universalmusic.player.data.sync.HubOwnership
+import com.universalmusic.player.data.sync.HubProcessMode
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
+
+private val hubUserService by lazy { HubUserService.current() }
+
+private var processHubOwnership: HubOwnership? = null
+
+fun desktopHubOwnership(mode: HubProcessMode): HubOwnership {
+    check(processHubOwnership == null)
+    return HubOwnership(DesktopIsolation.current, hubUserService, mode).also { processHubOwnership = it }
+}
 
 actual fun createHomeLanSyncHub(config: HomeLanHubConfig): com.universalmusic.player.data.sync.HomeLanSyncHub {
     val identity = jvmPlatformDeviceIdentity()
@@ -22,8 +32,17 @@ private class AdvertisedHub(
     private val advertiser: com.universalmusic.player.data.sync.AvahiHubAdvertiser,
 ) : com.universalmusic.player.data.sync.HomeLanSyncHub by hub {
     override suspend fun start() {
-        hub.start()
-        advertiser.start()
+        val owner = checkNotNull(processHubOwnership) { "Desktop hub ownership was not initialized" }
+        owner.startHub {
+            try {
+                hub.start()
+                advertiser.start()
+            } catch (error: Throwable) {
+                advertiser.stop()
+                hub.stop()
+                throw error
+            }
+        }
     }
 
     override suspend fun stop() {
@@ -52,45 +71,110 @@ actual suspend fun <T> withVaultSyncForeground(
     block: suspend () -> T,
 ): T = block()
 
-actual fun setHomeLanHubAutostart(enabled: Boolean) =
-    setHomeLanHubAutostart(enabled, DesktopIsolation.current, System.getenv(), ::println)
+actual fun setHomeLanHubAutostart(enabled: Boolean) {
+    runCatching { hubUserService.configure(enabled) }
+        .onFailure { System.err.println("Kainos hub autostart: ${it.message}") }
+}
 
-internal fun setHomeLanHubAutostart(
-    enabled: Boolean,
-    isolation: DesktopIsolation,
-    env: Map<String, String>,
-    log: (String) -> Unit,
+class HubUserService(
+    private val isolation: DesktopIsolation,
+    private val configHome: Path,
+    private val launcher: () -> String?,
+    private val command: (List<String>) -> Int = ::runHubSystemctl,
 ) {
-    if (isolation.isIsolated) {
-        log("Hub autostart unchanged: isolated instance")
-        return
+    val unitName: String = isolation.instance?.let { "kainos-hub-$it.service" } ?: "kainos-hub.service"
+    private val unitFile = configHome.resolve("systemd/user").resolve(unitName)
+
+    fun isEnabled(): Boolean = command(listOf("systemctl", "--user", "is-enabled", unitName)) == 0
+
+    fun stop() {
+        check(command(listOf("systemctl", "--user", "stop", unitName)) == 0) { "Could not stop $unitName" }
     }
-    val home = env["HOME"] ?: return
-    val autostart = java.nio.file.Path.of(home, ".config", "autostart")
-    val desktop = autostart.resolve("kainos-home-sync-hub.desktop")
-    if (!enabled) {
-        runCatching { java.nio.file.Files.deleteIfExists(desktop) }
-        return
+
+    fun start() {
+        check(command(listOf("systemctl", "--user", "start", "--no-block", unitName)) == 0) {
+            "Could not start $unitName"
+        }
     }
-    runCatching {
-        java.nio.file.Files.createDirectories(autostart)
-        val exec = env["KAINOS_PLAYER_EXEC"]
-            ?: listOf(
-                "$home/.local/bin/kainos-player",
-                "/usr/local/bin/kainos-player",
-            ).firstOrNull { java.io.File(it).canExecute() }
-            ?: return
+
+    fun configure(enabled: Boolean) {
+        if (!enabled) {
+            check(command(listOf("systemctl", "--user", "disable", "--now", unitName)) == 0) {
+                "Could not disable $unitName"
+            }
+            Files.deleteIfExists(unitFile)
+            reload()
+            removeLegacyAutostart()
+            return
+        }
+        val executable = checkNotNull(launcher()) { "Cannot find the Kainos launcher" }
         val body = """
-            |[Desktop Entry]
-            |Type=Application
-            |Name=Kainos Home Sync Hub
-            |Comment=Listen for phone library sync on the home LAN
-            |Exec=$exec --hub-only
-            |X-GNOME-Autostart-enabled=true
-            |Terminal=false
-            """.trimMargin()
-        java.nio.file.Files.writeString(desktop, body)
+            |[Unit]
+            |Description=Kainos home sync hub
+            |PartOf=graphical-session.target
+            |
+            |[Service]
+            |Type=simple
+            |ExecStart=${unitValue(executable, escapeDollar = true)} --hub-only
+            |Environment=${unitValue("KAINOS_DATA_DIR=${isolation.dataDir}")}
+            |Environment=${unitValue("KAINOS_HUB_PORT=${isolation.hubPort}")}
+            |${isolation.instance?.let { "Environment=${unitValue("KAINOS_INSTANCE=$it")}" }.orEmpty()}
+            |Restart=on-failure
+            |RestartSec=5
+            |
+            |[Install]
+            |WantedBy=graphical-session.target
+            |
+        """.trimMargin()
+        Files.createDirectories(unitFile.parent)
+        if (!Files.exists(unitFile) || Files.readString(unitFile) != body) {
+            Files.writeString(unitFile, body)
+            reload()
+        }
+        check(command(listOf("systemctl", "--user", "enable", unitName)) == 0) { "Could not enable $unitName" }
+        removeLegacyAutostart()
     }
+
+    private fun reload() {
+        check(command(listOf("systemctl", "--user", "daemon-reload")) == 0) { "Could not reload user units" }
+    }
+
+    private fun removeLegacyAutostart() {
+        if (isolation.instance == null) Files.deleteIfExists(configHome.resolve("autostart/kainos-home-sync-hub.desktop"))
+    }
+
+    companion object {
+        fun current(): HubUserService {
+            val home = Path.of(System.getProperty("user.home"))
+            val config = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }?.let(Path::of)
+                ?: home.resolve(".config")
+            return HubUserService(DesktopIsolation.current, config, launcher = {
+                System.getenv("KAINOS_PLAYER_EXEC")?.takeIf { it.isNotBlank() }
+                    ?: listOf(home.resolve(".local/bin/kainos-player"), Path.of("/usr/local/bin/kainos-player"))
+                        .firstOrNull(Files::isExecutable)?.toString()
+            })
+        }
+    }
+}
+
+private fun unitValue(value: String, escapeDollar: Boolean = false): String {
+    require(value.none { it == '\n' || it == '\r' || it == '\u0000' }) { "Invalid systemd unit value" }
+    val escaped = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%")
+    return "\"${if (escapeDollar) escaped.replace("$", "$$") else escaped}\""
+}
+
+private fun runHubSystemctl(arguments: List<String>): Int = try {
+    val process = ProcessBuilder(arguments)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
+        .start()
+    if (process.waitFor(5, TimeUnit.SECONDS)) process.exitValue() else {
+        process.destroyForcibly()
+        error("systemctl timed out")
+    }
+} catch (error: java.io.IOException) {
+    System.err.println("Kainos hub systemctl: ${error.message}")
+    -1
 }
 
 actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {

@@ -12,7 +12,6 @@ const val HOME_LAN_SYNC_PATH_V2_PLAYLISTS = "/kainos-sync/v2/playlists"
 const val HOME_LAN_SYNC_PATH_V2_VAULT_INDEX = "/kainos-sync/v2/vault/index"
 
 const val HOME_LAN_SYNC_PATH_VAULT_BLOB = "/kainos-sync/v1/vault/blob"
-const val HOME_LAN_HUB_IDLE_TIMEOUT_MS = 30L * 60L * 1000L
 
 const val HOME_LAN_MDNS_SERVICE_TYPE = "_kainos-sync._tcp"
 const val HOME_LAN_MDNS_TXT_FP = "fp"

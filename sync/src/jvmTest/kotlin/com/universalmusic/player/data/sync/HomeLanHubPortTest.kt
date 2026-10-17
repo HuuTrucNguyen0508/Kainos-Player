@@ -5,9 +5,16 @@ import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.universalmusic.player.platform.currentTimeMillis
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HomeLanHubPortTest {
     private val storedHub = PairedPeer(
         deviceId = "pc",
@@ -23,10 +30,15 @@ class HomeLanHubPortTest {
         override suspend fun start() { isListening = true }
         override suspend fun stop() { isListening = false }
         override fun touchActivity() = Unit
-        override fun lastActivityAtMs(): Long? = null
+        override fun lastActivityAtMs(): Long = 0
     }
 
-    private fun service(scope: CoroutineScope, role: HomeLanSyncRole, hubPorts: MutableList<Int>): HomeLanSyncService {
+    private fun service(
+        scope: CoroutineScope,
+        role: HomeLanSyncRole,
+        hubPorts: MutableList<Int>,
+        clock: () -> Long = ::currentTimeMillis,
+    ): HomeLanSyncService {
         val settings = AppSettings(
             homeLanSyncEnabled = true,
             homeLanSyncRole = role,
@@ -47,6 +59,7 @@ class HomeLanHubPortTest {
             refreshLocalLibrary = {},
             isDesktop = true,
             hubPort = 44005,
+            clock = clock,
         ).also { it.hydrateFromSettings(settings) }
     }
 
@@ -59,6 +72,19 @@ class HomeLanHubPortTest {
 
         assertEquals(listOf(44005), hubPorts)
         assertEquals("Hub listening on 44005", service.status.value.lastDetail)
+    }
+
+    @Test
+    fun idleHubStaysListeningUntilExplicitlyStopped() = runTest {
+        val hubPorts = mutableListOf<Int>()
+        val service = service(backgroundScope, HomeLanSyncRole.HUB, hubPorts) { testScheduler.currentTime }
+        service.startHubIfNeeded()
+        advanceTimeBy(40L * 60L * 1_000L)
+        runCurrent()
+        assertTrue(service.status.value.hubListening)
+        assertEquals(listOf(44005), hubPorts)
+        service.stopHub()
+        assertFalse(service.status.value.hubListening)
     }
 
     @Test

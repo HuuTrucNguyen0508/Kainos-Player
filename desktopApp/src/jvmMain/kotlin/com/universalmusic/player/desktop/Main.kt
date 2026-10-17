@@ -16,6 +16,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.data.sync.HUB_OWNED_BY_ANOTHER_INSTANCE
+import com.universalmusic.player.data.sync.HubProcessMode
+import com.universalmusic.player.platform.desktopHubOwnership
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.DesktopIsolation
@@ -26,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
@@ -36,13 +41,38 @@ fun main(args: Array<String>) {
         exitProcess(2)
     }
     println("Kainos data dir ${isolation.dataDir}, hub port ${isolation.hubPort}, MPRIS ${mprisBusName(isolation.instance)}")
-    if (args.any { it == "--hub-only" }) {
-        runHubOnly()
-        return
+    val mode = if (args.any { it == "--hub-only" }) HubProcessMode.HUB_ONLY else HubProcessMode.GUI
+    val ownership = desktopHubOwnership(mode)
+    val acquired = runBlocking { ownership.acquire() }
+    if (!acquired) {
+        System.err.println(HUB_OWNED_BY_ANOTHER_INSTANCE)
+        if (mode == HubProcessMode.HUB_ONLY) exitProcess(75)
     }
+    val container = AtomicReference<AppContainer?>()
+    val closeMonitor = Any()
+    fun closeHub() = synchronized(closeMonitor) {
+        runBlocking { ownership.close { container.get()?.homeLanSync?.stopHub() } }
+    }
+    val shutdown = Thread({ closeHub() }, "kainos-hub-shutdown")
+    Runtime.getRuntime().addShutdownHook(shutdown)
+    val exitCode = try {
+        if (mode == HubProcessMode.HUB_ONLY) {
+            runHubOnly(ensureAppContainer().also(container::set))
+        } else {
+            runGui(container::set)
+            0
+        }
+    } finally {
+        closeHub()
+        Runtime.getRuntime().removeShutdownHook(shutdown)
+    }
+    if (exitCode != 0) exitProcess(exitCode)
+}
+
+private fun runGui(onContainer: (AppContainer) -> Unit) {
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
-        val container = ensureAppContainer()
+        val container = ensureAppContainer().also(onContainer)
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
             onCloseRequest = {
@@ -113,18 +143,20 @@ private fun KeyEvent.typedText(): String? {
 
 private const val CHAR_UNDEFINED = 0xFFFF
 
-/** Headless hub for login autostart (Phase 3). */
-private fun runHubOnly() = runBlocking {
-    val container = ensureAppContainer()
+private fun runHubOnly(container: AppContainer): Int = runBlocking {
     while (!container.ready.value) {
         delay(50)
     }
     val settings = container.settings.value
     if (!settings.homeLanSyncEnabled) {
         System.err.println("kainos-player --hub-only: home sync disabled; exiting")
-        return@runBlocking
+        return@runBlocking 0
     }
     container.homeLanSync.startHubIfNeeded()
-    println("Kainos home sync hub listening (Ctrl+C to quit)")
-    CompletableDeferred<Unit>().await()
+    if (!container.homeLanSync.status.value.hubListening) {
+        System.err.println("Kainos home sync hub failed to listen: ${container.homeLanSync.status.value.lastError}")
+        return@runBlocking 1
+    }
+    println("Kainos home sync hub listening")
+    CompletableDeferred<Int>().await()
 }
