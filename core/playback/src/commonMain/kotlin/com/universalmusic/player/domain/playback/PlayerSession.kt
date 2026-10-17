@@ -113,6 +113,7 @@ class PlayerSession(
      * Cleared on a normal track start that is not a resume-from-restore.
      */
     private var pendingResumePositionMs: Long? = null
+    private var startingResumePositionMs: Long? = null
 
     /**
      * Queue entries that failed terminally since the last successful start or user play request.
@@ -182,7 +183,7 @@ class PlayerSession(
                 _nowPlaying.update { current ->
                     current.copy(
                         isPlaying = playing,
-                        positionMs = pausedSeekTargetMs.takeUnless { playing }
+                        positionMs = startingResumePositionMs ?: pausedSeekTargetMs.takeUnless { playing }
                             ?: engineState.positionMs,
                         durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
                         buffering = !pausePending && (engineState.status == EngineStatus.BUFFERING ||
@@ -719,6 +720,7 @@ class PlayerSession(
     private fun beginTransition() {
         playGeneration++
         completionArmed = false
+        startingResumePositionMs = null
         pausedSeekTargetMs = null
         pausePending = false
     }
@@ -728,6 +730,7 @@ class PlayerSession(
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
         beginTransition()
+        startingResumePositionMs = resumeAt
         val generation = playGeneration
         trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
@@ -749,7 +752,11 @@ class PlayerSession(
         }
         record(change)
         playJob = scope.launch(sessionContext) {
-            playTrack(item.track, item.id, generation, resumeAt)
+            try {
+                playTrack(item.track, item.id, generation, resumeAt)
+            } finally {
+                if (generation == playGeneration) startingResumePositionMs = null
+            }
         }
         return playJob
     }
