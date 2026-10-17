@@ -554,6 +554,40 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun idleSeekResumeDoesNotPublishInitialEngineZeroPositions() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a")), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.acknowledgeTransport = false
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.engine.playReturnGate = CompletableDeferred()
+        rig.session.seekTo(178_000)
+        settle(rig)
+        assertEquals(178_000, rig.store.latest.state.positionMs)
+        val beforePlay = rig.store.publications.size
+        rig.session.playTransport()
+        runCurrent()
+        val bufferingPosition = rig.session.nowPlaying.value.positionMs
+        checkNotNull(rig.engine.bufferingGate).complete(Unit)
+        runCurrent()
+        val playingPosition = rig.session.nowPlaying.value.positionMs
+        val playingPublication = rig.store.latest
+        val privatePosition = rig.store.restore.snapshot.positionMs
+        checkNotNull(rig.engine.playReturnGate).complete(Unit)
+        runCurrent()
+        assertEquals(178_000, rig.engine.seeks.last())
+        rig.engine.report(positionMs = 178_382)
+        runCurrent()
+        assertEquals(178_382, rig.session.nowPlaying.value.positionMs)
+        assertTrue(rig.store.publications.size > beforePlay, "the playing publication is new")
+        assertTrue(playingPublication.state.isPlaying)
+        assertEquals(
+            listOf(178_000L, 178_000L, 178_000L, 178_000L),
+            listOf(bufferingPosition, playingPosition, playingPublication.state.positionMs, privatePosition),
+            "accepted BUFFERING/PLAYING and freshly persisted local/private positions retain the seek",
+        )
+    }
+
+    @Test
     fun immediatePauseThenSeekSurvivesDelayedSamplesAndRestoresTheResumePosition() = runTest {
         val rig = rig()
         rig.session.initializePersistence()
@@ -874,6 +908,8 @@ internal class ScriptedEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     var acknowledgeTransport = true
     var deferTransport = false
+    var bufferingGate: CompletableDeferred<Unit>? = null
+    var playReturnGate: CompletableDeferred<Unit>? = null
     var actualTransportStatus = EngineStatus.IDLE
         private set
     private val transportCommands = ArrayDeque<EngineStatus>()
@@ -883,8 +919,13 @@ internal class ScriptedEngine : PlaybackEngine {
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         playCalls++
+        bufferingGate?.let {
+            state.value = EngineState(EngineStatus.BUFFERING, playGeneration = playGeneration)
+            it.await()
+        }
         actualTransportStatus = EngineStatus.PLAYING
         state.value = EngineState(EngineStatus.PLAYING, durationMs = 200_000, playGeneration = playGeneration)
+        playReturnGate?.await()
     }
 
     override fun pause() = submitTransport(EngineStatus.PAUSED)
