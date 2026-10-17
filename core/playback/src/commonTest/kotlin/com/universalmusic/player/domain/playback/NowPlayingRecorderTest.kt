@@ -756,7 +756,6 @@ class NowPlayingRecorderTest {
         rig.engine.deferTransport = true
         rig.session.playTransport()
         settle(rig)
-        val activeAt = rig.store.latest.lastActiveAtMs
         val timer = SleepTimerController(rig.session, backgroundScope) { testScheduler.currentTime }
         timer.startDuration(1_000)
         runCurrent()
@@ -773,7 +772,7 @@ class NowPlayingRecorderTest {
         assertFalse(restored.session.nowPlaying.value.isPlaying)
         assertEquals(rig.session.queueState.value.current?.id, restored.session.queueState.value.current?.id)
         assertFalse(assertIs<LocalListeningExport.Available>(rig.store.readLocalExport()).publication.state.isPlaying)
-        assertEquals(activeAt, rig.store.latest.lastActiveAtMs, "timer pause remains automatic")
+        assertEquals(T0 + 1_000, rig.store.latest.lastActiveAtMs, "timer stop records the final active time")
     }
 
     @Test
