@@ -7,7 +7,9 @@ CREATE TABLE session_state (
     shuffle INTEGER AS kotlin.Boolean NOT NULL,
     repeat_mode TEXT NOT NULL,
     shuffle_order TEXT NOT NULL,
-    position_ms INTEGER NOT NULL
+    position_ms INTEGER NOT NULL,
+    -- LOCAL or REMOTE_SUPPRESSED; written with the snapshot so an imported queue stays suppressed after restart.
+    publication_origin TEXT NOT NULL DEFAULT 'LOCAL'
 );
 
 CREATE TABLE session_queue_item (
@@ -21,8 +23,8 @@ selectState:
 SELECT * FROM session_state WHERE id = 0;
 
 upsertState:
-INSERT OR REPLACE INTO session_state (id, current_index, shuffle, repeat_mode, shuffle_order, position_ms)
-VALUES (0, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO session_state (id, current_index, shuffle, repeat_mode, shuffle_order, position_ms, publication_origin)
+VALUES (0, ?, ?, ?, ?, ?, ?);
 
 selectItems:
 SELECT * FROM session_queue_item ORDER BY position;

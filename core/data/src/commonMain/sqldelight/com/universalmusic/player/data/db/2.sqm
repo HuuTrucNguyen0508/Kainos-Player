@@ -1,0 +1,50 @@
+ALTER TABLE session_state ADD COLUMN publication_origin TEXT NOT NULL DEFAULT 'LOCAL';
+
+CREATE TABLE local_listening (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    last_active_at_ms INTEGER NOT NULL,
+    queue_item_id TEXT,
+    track_json TEXT,
+    position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+    position_at_ms INTEGER NOT NULL,
+    is_playing INTEGER NOT NULL,
+    queue_hash TEXT NOT NULL,
+    CHECK ((queue_item_id IS NULL) = (track_json IS NULL))
+);
+
+CREATE TABLE local_listening_queue (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    queue_hash TEXT NOT NULL,
+    queue_json TEXT NOT NULL
+);
+
+CREATE TABLE local_listening_export (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    last_active_at_ms INTEGER NOT NULL,
+    unavailable_reason TEXT
+);
+
+CREATE TABLE peer_listening (
+    device_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    last_active_at_ms INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    queue_hash TEXT NOT NULL,
+    queue_json TEXT
+);
+
+CREATE TABLE handoff_applied (
+    device_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    local_revision INTEGER NOT NULL CHECK (local_revision >= 0)
+);
+
+CREATE TABLE listening_writer_receipt (
+    writer_id TEXT NOT NULL PRIMARY KEY,
+    private_sequence INTEGER NOT NULL,
+    local_sequence INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+

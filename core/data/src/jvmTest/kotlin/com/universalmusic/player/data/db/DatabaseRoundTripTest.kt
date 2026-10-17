@@ -19,6 +19,7 @@ import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.playlist.PersistedPlaylistEntry
 import com.universalmusic.player.data.playlist.PlaylistTombstone
 import com.universalmusic.player.data.session.PersistedQueueItem
+import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.sync.HeartAction
 import com.universalmusic.player.data.sync.HeartOp
@@ -38,6 +39,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
 
 class DatabaseRoundTripTest {
     @Test
@@ -72,6 +74,41 @@ class DatabaseRoundTripTest {
             val op = HeartOp("local:new", HeartAction.UNFAVORITE, 20, "pc", localIdentity = identity)
             db.writeUserLibrary(UserLibrarySnapshot(heartOps = listOf(op)))
             assertEquals(op, db.readUserLibrary().heartOps.single())
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaOneThroughTwoKeepsDataAndAddsEmptyListeningTables() {
+        val directory = Files.createTempDirectory("kainos-v1-v3-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/1.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            driver.seedPreHs5Data(heartOpColumns = "'yt:2','FAVORITE',10,'pc',NULL")
+            KainosDatabase.Schema.migrate(driver, 1, 2)
+            assertEquals(listOf(1L, 12_000L), driver.row("SELECT current_index, position_ms FROM session_state"))
+            assertEquals(listOf("yt:2", null), driver.row("SELECT canonical_id, local_identity_json FROM heart_op"))
+            KainosDatabase.Schema.migrate(driver, 2, 3)
+            driver.assertMigratedPreHs5Data()
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromThePreHs5SchemaKeepsDataAndRestoresTheSessionLocally() {
+        val directory = Files.createTempDirectory("kainos-v2-v3-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/2.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            driver.seedPreHs5Data(heartOpColumns = "'yt:2','FAVORITE',10,'pc',NULL,'{}'")
+            KainosDatabase.Schema.migrate(driver, 2, KainosDatabase.Schema.version)
+            driver.assertMigratedPreHs5Data()
             driver.close()
         } finally {
             directory.toFile().deleteRecursively()
@@ -243,7 +280,7 @@ class DatabaseRoundTripTest {
             shuffleOrder = listOf(2, 0, 1),
             positionMs = 15_000,
         )
-        db.writeSessionSnapshot(first, db.readStoredQueue())
+        db.writeSessionSnapshot(first, cached = null)
         assertEquals(first, db.readSessionSnapshot())
 
         val second = SessionSnapshot(
@@ -253,7 +290,7 @@ class DatabaseRoundTripTest {
             repeat = RepeatMode.ONE.name,
             positionMs = 4,
         )
-        db.writeSessionSnapshot(second, db.readStoredQueue())
+        db.writeSessionSnapshot(second, cached = null)
         assertEquals(second, db.readSessionSnapshot())
     }
 
@@ -262,10 +299,10 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = memoryDatabase(driver)
         val first = session(currentIndex = 0, cachedAtMs = 5)
-        db.writeSessionSnapshot(first, db.readStoredQueue())
+        db.writeSessionSnapshot(first, cached = null)
 
         val skipped = session(currentIndex = 1, cachedAtMs = 99)
-        assertEquals(1, driver.changesDuring { db.writeSessionSnapshot(skipped, db.readStoredQueue()) })
+        assertEquals(1, driver.changesDuring { db.writeSessionSnapshot(skipped, cached = null) })
         assertEquals(first.copy(currentIndex = 1), db.readSessionSnapshot())
         driver.close()
     }
@@ -275,12 +312,12 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = memoryDatabase(driver)
         val first = session(currentIndex = 0, cachedAtMs = 5)
-        db.writeSessionSnapshot(first, db.readStoredQueue())
+        db.writeSessionSnapshot(first, cached = null)
 
         val renamed = first.copy(items = first.items.mapIndexed { index, item ->
             item.copy(track = item.track.copy(title = if (index == 1) "Renamed" else item.track.title, cachedAtMs = 99))
         })
-        assertEquals(2L, driver.changesDuring { db.writeSessionSnapshot(renamed, db.readStoredQueue()) })
+        assertEquals(2L, driver.changesDuring { db.writeSessionSnapshot(renamed, cached = null) })
         val expected = first.copy(items = first.items.mapIndexed { index, item ->
             if (index == 1) renamed.items[index] else item
         })
@@ -625,6 +662,49 @@ class JvmLegacyJsonSourceTest {
         }
     }
 }
+
+private val seededSession = SessionSnapshot(
+    items = listOf(PersistedQueueItem("q1", track("yt:1", "One")), PersistedQueueItem("q2", track("yt:2", "Two"))),
+    currentIndex = 1,
+    repeat = RepeatMode.ALL.name,
+    positionMs = 12_000,
+)
+
+private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
+    val statements = listOf(
+        "INSERT INTO favorite VALUES (0, 'yt:2')",
+        "INSERT INTO heart_op VALUES ($heartOpColumns)",
+        "INSERT INTO playlist VALUES ('p1', 0, 'Mix', 1, 2, 3, 'pc')",
+        "INSERT INTO playlist_entry VALUES ('p1', 0, 'e1', 'yt:1', '${storageJson.encodeToString(track("yt:1", "One"))}')",
+        "INSERT INTO session_state VALUES (0, 1, 0, 'ALL', '[]', 12000)",
+    ) + seededSession.items.mapIndexed { index, item ->
+        "INSERT INTO session_queue_item VALUES ($index, '${item.id}', '${item.track.canonicalId}', '${storageJson.encodeToString(item.track)}')"
+    }
+    statements.forEach { execute(null, it, 0) }
+}
+
+private fun SqlDriver.assertMigratedPreHs5Data() {
+    val db = KainosDatabase(this)
+    assertEquals(3L, KainosDatabase.Schema.version)
+    assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
+    assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
+    assertEquals(
+        listOf(1L, 1L, 1L, 1L, 2L),
+        listOf("favorite", "heart_op", "playlist", "playlist_entry", "session_queue_item").map(::count),
+    )
+    assertEquals(seededSession, db.readSessionSnapshot())
+    assertEquals(PublicationOrigin.LOCAL, db.readSessionOrigin())
+    assertNull(db.readLocalExport())
+    assertEquals(
+        List(6) { 0L },
+        listOf(
+            "local_listening", "local_listening_queue", "local_listening_export",
+            "peer_listening", "handoff_applied", "listening_writer_receipt",
+        ).map(::count),
+    )
+}
+
+private fun SqlDriver.count(table: String): Long = row("SELECT count(*) FROM $table").single() as Long
 
 private fun memoryDatabase(driver: SqlDriver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)): KainosDatabase {
     KainosDatabase.Schema.create(driver)

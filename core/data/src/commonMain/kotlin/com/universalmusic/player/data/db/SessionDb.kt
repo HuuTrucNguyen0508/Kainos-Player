@@ -2,6 +2,7 @@ package com.universalmusic.player.data.db
 
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.session.PersistedQueueItem
+import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.SESSION_SNAPSHOT_FORMAT_VERSION
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.SessionSnapshotStore
@@ -24,10 +25,22 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
     )
 }
 
+internal fun KainosDatabase.readSessionOrigin(): PublicationOrigin =
+    listeningSessionQueries.selectState().executeAsOneOrNull()?.publication_origin
+        ?.let { stored -> PublicationOrigin.entries.firstOrNull { it.name == stored } }
+        ?: PublicationOrigin.LOCAL
+
+/**
+ * Rewrites only what changed. [cached] is trusted only while the stored rows still equal its rows,
+ * because another connection may have written the queue since.
+ */
 internal fun KainosDatabase.writeSessionSnapshot(
     snapshot: SessionSnapshot,
-    storedQueue: StoredQueue,
+    cached: StoredQueue?,
+    origin: PublicationOrigin = PublicationOrigin.LOCAL,
 ): StoredQueue {
+    val storedRows = listeningSessionQueries.selectItems().executeAsList()
+    val storedQueue = cached?.takeIf { it.rows == storedRows } ?: StoredQueue(storedRows, storedRows.decodeQueue())
     val queue = QueueContent.of(snapshot.items)
     val rows = if (queue == storedQueue.content) {
         storedQueue.rows
@@ -55,6 +68,7 @@ internal fun KainosDatabase.writeSessionSnapshot(
         snapshot.repeat,
         storageJson.encodeToString(snapshot.shuffleOrder),
         snapshot.positionMs,
+        origin.name,
     )
     return StoredQueue(rows, queue)
 }
@@ -81,7 +95,7 @@ internal data class QueueContent private constructor(val items: List<PersistedQu
     }
 }
 
-class DbSessionSnapshotStore(
+internal class DbSessionSnapshotStore(
     private val storage: KainosStorage,
 ) : SessionSnapshotStore {
     private val writeMutex = Mutex()
@@ -90,20 +104,11 @@ class DbSessionSnapshotStore(
     override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
 
     override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
-        decodedQueue = storage.write { db ->
-            val rows = db.listeningSessionQueries.selectItems().executeAsList()
-            val stored = decodedQueue?.takeIf { it.rows == rows } ?: StoredQueue(rows, rows.decodeQueue())
-            db.writeSessionSnapshot(snapshot, stored)
-        }
+        decodedQueue = storage.write { db -> db.writeSessionSnapshot(snapshot, decodedQueue) }
     }
 }
 
 internal data class StoredQueue(val rows: List<Session_queue_item>, val content: QueueContent?)
-
-internal fun KainosDatabase.readStoredQueue(): StoredQueue {
-    val rows = listeningSessionQueries.selectItems().executeAsList()
-    return StoredQueue(rows, rows.decodeQueue())
-}
 
 private fun List<Session_queue_item>.decodeQueue(): QueueContent? {
     val items = ArrayList<PersistedQueueItem>(size)

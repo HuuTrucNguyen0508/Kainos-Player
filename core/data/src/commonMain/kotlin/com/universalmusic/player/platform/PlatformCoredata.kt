@@ -5,6 +5,7 @@ import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
@@ -21,6 +22,8 @@ expect fun createUserLibraryStore(): UserLibraryStore
 expect fun createKainosPlaylistStore(): KainosPlaylistStore
 
 expect fun createSessionSnapshotStore(): SessionSnapshotStore
+
+expect fun createListeningStore(): ListeningStore
 
 expect fun createMetadataArtworkCache(): MetadataArtworkCache
 

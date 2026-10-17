@@ -1,0 +1,86 @@
+-- This device's latest committed listening publication. revision is allocated in the transaction
+-- that commits the row; it is not PlayerSession's in-memory session revision.
+CREATE TABLE local_listening (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    last_active_at_ms INTEGER NOT NULL,
+    queue_item_id TEXT,
+    track_json TEXT,
+    position_ms INTEGER NOT NULL CHECK (position_ms >= 0),
+    position_at_ms INTEGER NOT NULL,
+    is_playing INTEGER AS kotlin.Boolean NOT NULL,
+    queue_hash TEXT NOT NULL,
+    CHECK ((queue_item_id IS NULL) = (track_json IS NULL))
+);
+
+-- The portable queue behind local_listening.queue_hash, apart so a skip does not rewrite it.
+CREATE TABLE local_listening_queue (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    queue_hash TEXT NOT NULL,
+    queue_json TEXT NOT NULL
+);
+
+-- Newest durable local activity. A non-null unavailable_reason means that activity could not be
+-- exported, so local_listening is kept only for diagnostics and is not the current export.
+CREATE TABLE local_listening_export (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    last_active_at_ms INTEGER NOT NULL,
+    unavailable_reason TEXT
+);
+
+CREATE TABLE peer_listening (
+    device_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    last_active_at_ms INTEGER NOT NULL,
+    state_json TEXT NOT NULL,
+    queue_hash TEXT NOT NULL,
+    queue_json TEXT
+);
+
+-- local_revision is a local_listening_export.revision, never a session revision from an earlier process.
+CREATE TABLE handoff_applied (
+    device_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    local_revision INTEGER NOT NULL CHECK (local_revision >= 0)
+);
+
+-- Highest sequences each session worker has committed, so its retry after an ambiguous commit is a no-op.
+CREATE TABLE listening_writer_receipt (
+    writer_id TEXT NOT NULL PRIMARY KEY,
+    private_sequence INTEGER NOT NULL,
+    local_sequence INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+
+selectLocal:
+SELECT * FROM local_listening WHERE id = 0;
+
+upsertLocal:
+INSERT OR REPLACE INTO local_listening (id, revision, last_active_at_ms, queue_item_id, track_json, position_ms, position_at_ms, is_playing, queue_hash)
+VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectLocalQueue:
+SELECT * FROM local_listening_queue WHERE id = 0;
+
+selectLocalQueueHash:
+SELECT queue_hash FROM local_listening_queue WHERE id = 0;
+
+upsertLocalQueue:
+INSERT OR REPLACE INTO local_listening_queue (id, queue_hash, queue_json) VALUES (0, ?, ?);
+
+selectExport:
+SELECT * FROM local_listening_export WHERE id = 0;
+
+upsertExport:
+INSERT OR REPLACE INTO local_listening_export (id, revision, last_active_at_ms, unavailable_reason) VALUES (0, ?, ?, ?);
+
+selectReceipt:
+SELECT * FROM listening_writer_receipt WHERE writer_id = ?;
+
+upsertReceipt:
+INSERT OR REPLACE INTO listening_writer_receipt (writer_id, private_sequence, local_sequence, updated_at_ms)
+VALUES (?, ?, ?, ?);
+
+deleteReceiptsBefore:
+DELETE FROM listening_writer_receipt WHERE updated_at_ms < ?;

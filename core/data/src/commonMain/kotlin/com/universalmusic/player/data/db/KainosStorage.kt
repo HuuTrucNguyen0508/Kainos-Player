@@ -65,7 +65,7 @@ class KainosStorage(
             db.transaction {
                 data.userLibrary?.let(db::writeUserLibrary)
                 data.playlists?.let(db::writeKainosPlaylists)
-                data.session?.let { db.writeSessionSnapshot(it, db.readStoredQueue()) }
+                data.session?.let { db.writeSessionSnapshot(it, cached = null) }
                 data.localScanConfigKey?.let { db.writeLocalScan(it, data.localScanTracks, clock()) }
                 db.storageMetaQueries.markDone(LEGACY_JSON_IMPORT_STEP, clock())
             }
