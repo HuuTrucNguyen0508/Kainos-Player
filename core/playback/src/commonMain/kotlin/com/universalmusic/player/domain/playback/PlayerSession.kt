@@ -129,6 +129,7 @@ class PlayerSession(
     private var lastActiveAtMs: Long? = null
     private var lastRecordedPlaying = false
     private var pausedSeekTargetMs: Long? = null
+    private var pausePending = false
     private var persistenceReady = false
     private var checkpointJob: Job? = null
 
@@ -174,15 +175,19 @@ class PlayerSession(
                     _nowPlaying.update { it.copy(track = it.track?.copy(durationMs = learnedDuration)) }
                 }
 
+                if (engineState.status != EngineStatus.PLAYING && engineState.status != EngineStatus.BUFFERING) {
+                    pausePending = false
+                }
+                val playing = engineState.status == EngineStatus.PLAYING && !pausePending
                 _nowPlaying.update { current ->
                     current.copy(
-                        isPlaying = engineState.status == EngineStatus.PLAYING,
-                        positionMs = pausedSeekTargetMs.takeIf { engineState.status != EngineStatus.PLAYING }
+                        isPlaying = playing,
+                        positionMs = pausedSeekTargetMs.takeUnless { playing }
                             ?: engineState.positionMs,
                         durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
-                        buffering = engineState.status == EngineStatus.BUFFERING ||
+                        buffering = !pausePending && (engineState.status == EngineStatus.BUFFERING ||
                             (current.buffering && current.resolved == null &&
-                                engineState.status == EngineStatus.IDLE),
+                                engineState.status == EngineStatus.IDLE)),
                         error = if (engineState.status == EngineStatus.FAILED) {
                             engineState.error
                         } else {
@@ -191,7 +196,7 @@ class PlayerSession(
                         syncWarning = engineState.syncWarning,
                     )
                 }
-                if (engineState.status == EngineStatus.PLAYING) pausedSeekTargetMs = null
+                if (playing) pausedSeekTargetMs = null
                 if (_nowPlaying.value.isPlaying != lastRecordedPlaying && queue.queue.value.items.isNotEmpty()) {
                     record(Change.AUTOMATIC)
                 }
@@ -240,17 +245,16 @@ class PlayerSession(
     fun restorePaused(snapshot: SessionSnapshot) = onSession { installPaused(snapshot) }
 
     /**
-     * Read the persisted session and install it paused, unless a recorded change happened while the
-     * read was in flight: an accepted action always wins over a late restore. Then start persisting.
+     * Read the persisted session and install it paused only if this session has never accepted a
+     * recorded change. An accepted action always wins over a late restore. Then start persisting.
      */
     suspend fun initializePersistence() {
         val recorder = persistence ?: return
-        val guard = withContext(sessionContext) { revision }
         val restored = recorder.readRestore()
         withContext(sessionContext) {
             when {
                 restored == null -> Unit
-                revision != guard -> trace("restore skipped: session revision moved from $guard to $revision")
+                revision != 0L -> trace("restore skipped: session revision moved from 0 to $revision")
                 else -> {
                     origin = restored.origin
                     if (restored.snapshot.items.isNotEmpty()) installPaused(restored.snapshot)
@@ -265,7 +269,7 @@ class PlayerSession(
     suspend fun flushPersistence(): FlushResult {
         val recorder = persistence ?: return FlushResult.Committed()
         val sequence = withContext(sessionContext) { if (persistenceReady) offerCapture(local = false) else null }
-            ?: return FlushResult.Committed()
+            ?: return FlushResult.Failed(IllegalStateException("Listening persistence has not initialized"))
         return recorder.awaitCommitted(sequence)
     }
 
@@ -464,6 +468,8 @@ class PlayerSession(
     internal fun pauseForSleepTimer() = onSession { pauseTransportNow(Change.AUTOMATIC) }
 
     private fun pauseTransportNow(change: Change) {
+        val now = _nowPlaying.value
+        if (!now.buffering && !now.isPlaying && !lastRecordedPlaying) return
         val engineStatus = engine.state.value.status
         if (_nowPlaying.value.buffering) {
             trace(
@@ -479,12 +485,13 @@ class PlayerSession(
             return
         }
         trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
+        pausePending = true
+        _nowPlaying.update { it.copy(isPlaying = false) }
         when (engineStatus) {
             EngineStatus.PLAYING, EngineStatus.BUFFERING -> engine.pause()
             else -> Unit
         }
-        val records = if (change.user) queue.queue.value.items.isNotEmpty() else lastRecordedPlaying
-        if (records) record(change, playing = false)
+        record(change, playing = false)
     }
 
     /** Idempotent play/resume; no-op when already playing or buffering. */
@@ -494,16 +501,15 @@ class PlayerSession(
         val now = _nowPlaying.value
         trace("playTransport buffering=${now.buffering} isPlaying=${now.isPlaying} engine=${engine.state.value.status}")
         if (now.buffering || now.isPlaying) return
-        when (engine.state.value.status) {
-            EngineStatus.PAUSED -> {
-                engine.resume()
-                record(Change.LOCAL_INTENT)
-            }
-            EngineStatus.IDLE, EngineStatus.ENDED, EngineStatus.FAILED -> {
-                failedItemIds.clear()
-                startCurrent(Change.LOCAL_INTENT, applyResumePosition = true)
-            }
-            EngineStatus.PLAYING, EngineStatus.BUFFERING -> Unit
+        val engineStatus = engine.state.value.status
+        if (pausePending || engineStatus == EngineStatus.PAUSED) {
+            pausePending = false
+            _nowPlaying.update { it.copy(isPlaying = true) }
+            engine.resume()
+            record(Change.LOCAL_INTENT)
+        } else if (engineStatus == EngineStatus.IDLE || engineStatus == EngineStatus.ENDED || engineStatus == EngineStatus.FAILED) {
+            failedItemIds.clear()
+            startCurrent(Change.LOCAL_INTENT, applyResumePosition = true)
         }
     }
 
@@ -652,6 +658,7 @@ class PlayerSession(
         }
         val change = if (manual) Change.LOCAL_INTENT else Change.AUTOMATIC
         val snapshot = queue.queue.value
+        if (snapshot.items.isEmpty()) return
         val next = queue.nextIndex(respectRepeatOne = !manual)
         trace(
             "advance manual=$manual current=${snapshot.currentIndex} next=$next size=${snapshot.items.size} " +
@@ -716,6 +723,7 @@ class PlayerSession(
         playGeneration++
         completionArmed = false
         pausedSeekTargetMs = null
+        pausePending = false
     }
 
     private fun startCurrent(change: Change, applyResumePosition: Boolean = false): Job? {

@@ -121,7 +121,7 @@ class NowPlayingRecorderTest {
         timed.session.pauseForSleepTimer()
         assertEquals(stopped, timed.session.localRevision, "an automatic pause while paused changes nothing")
         timed.session.pauseTransport()
-        assertEquals(SessionRevision(stopped.value + 1), timed.session.localRevision, "a user pause still records intent")
+        assertEquals(stopped, timed.session.localRevision, "a redundant user pause changes nothing")
     }
 
     @Test
@@ -273,6 +273,60 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun anActionTakenBeforePersistenceInitializationWinsOverTheRestore() = runTest {
+        val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
+        val rig = rig(store)
+        rig.session.play(listOf(yt("chosen")), startIndex = 0)
+        runCurrent()
+        rig.session.pauseTransport()
+        runCurrent()
+        val acceptedQueue = rig.session.queueState.value
+        val acceptedRevision = rig.session.localRevision
+
+        rig.session.initializePersistence()
+        assertEquals(acceptedQueue, rig.session.queueState.value)
+        assertEquals(acceptedQueue.current?.id, rig.session.nowPlaying.value.queueItemId)
+        assertEquals(acceptedRevision, rig.session.localRevision)
+        settle(rig)
+        assertEquals(listOf("yt:chosen"), store.restore.snapshot.items.map { it.track.canonicalId })
+        assertEquals("yt:chosen", store.latest.state.current?.track?.identity)
+        assertFalse(store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun nextOnAnEmptyQueueBeforeInitializationDoesNotDiscardTheRestore() = runTest {
+        val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
+        val rig = rig(store)
+        rig.session.skipToNext()
+        assertEquals(SessionRevision(0), rig.session.localRevision)
+
+        rig.session.initializePersistence()
+        settle(rig)
+        assertEquals("yt:saved", rig.session.nowPlaying.value.track?.canonicalId)
+        assertNull(store.export)
+        assertTrue(store.commits.all { it.local == null })
+    }
+
+    @Test
+    fun nextOnAnEmptyQueueDuringRestoreDoesNotCreateActivityOrDiscardTheRestore() = runTest {
+        val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
+        store.readGate = CompletableDeferred()
+        val rig = rig(store)
+        val startup = async { rig.session.initializePersistence() }
+        runCurrent()
+        rig.session.skipToNext()
+        assertEquals(SessionRevision(0), rig.session.localRevision)
+        assertTrue(store.commits.isEmpty())
+
+        checkNotNull(store.readGate).complete(Unit)
+        startup.await()
+        settle(rig)
+        assertEquals("yt:saved", rig.session.nowPlaying.value.track?.canonicalId)
+        assertNull(store.export)
+        assertTrue(store.commits.all { it.local == null })
+    }
+
+    @Test
     fun unreadableRestoreStillFinishesStartup() = runTest {
         val store = FakeListeningStore().apply { readFailure = IllegalStateException("corrupt") }
         val rig = rig(store)
@@ -306,7 +360,7 @@ class NowPlayingRecorderTest {
         runCurrent()
         val beforePause = session.localRevision
         session.pauseTransport()
-        assertEquals(SessionRevision(beforePause.value + 1), session.localRevision)
+        assertEquals(beforePause, session.localRevision)
         settle(rig)
         assertEquals(local, rig.store.latest, "engine callbacks, metadata, time and a pause do not claim the remote queue")
         assertEquals(PublicationOrigin.REMOTE_SUPPRESSED, rig.store.restore.origin)
@@ -497,6 +551,164 @@ class NowPlayingRecorderTest {
         loaded.session.skipToPrevious()
         assertEquals(SessionRevision(beforePrevious.value + 1), loaded.session.localRevision)
         assertEquals(0, loaded.session.nowPlaying.value.positionMs)
+    }
+
+    @Test
+    fun immediatePauseThenSeekSurvivesDelayedSamplesAndRestoresTheResumePosition() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.engine.report(positionMs = 20_000)
+        runCurrent()
+        rig.engine.acknowledgeTransport = false
+        val beforePause = rig.session.localRevision
+
+        rig.session.pauseTransport()
+        rig.session.seekTo(50_000)
+        assertEquals(SessionRevision(beforePause.value + 2), rig.session.localRevision)
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(50_000, rig.session.nowPlaying.value.positionMs)
+        rig.engine.report(EngineStatus.PLAYING, positionMs = 20_500)
+        settle(rig)
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(50_000, rig.session.nowPlaying.value.positionMs)
+        assertFalse(rig.store.latest.state.isPlaying)
+        assertEquals(50_000, rig.store.latest.state.positionMs)
+        rig.engine.report(EngineStatus.PAUSED, positionMs = 20_000)
+        runCurrent()
+        rig.engine.report(EngineStatus.PAUSED, positionMs = 21_000)
+        runCurrent()
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        assertEquals(50_000, rig.session.nowPlaying.value.positionMs)
+        settle(rig)
+        assertEquals(50_000, rig.store.readRestore().snapshot.positionMs)
+        assertEquals(50_000, rig.store.latest.state.positionMs)
+        assertFalse(rig.store.latest.state.isPlaying)
+
+        val restarted = rig(rig.store)
+        restarted.session.initializePersistence()
+        assertEquals(50_000, restarted.session.nowPlaying.value.positionMs)
+        assertFalse(restarted.session.nowPlaying.value.isPlaying)
+        restarted.session.playTransport()
+        settle(restarted)
+        assertEquals(50_000, restarted.engine.seeks.last())
+        assertTrue(restarted.store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun redundantPausesDoNotCreateActivityWhileCallbacksAreDelayedOrAfterAcknowledgement() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.engine.acknowledgeTransport = false
+        rig.session.pauseTransport()
+        val pausedRevision = rig.session.localRevision
+        settle(rig)
+        val pausedPublication = rig.store.latest
+        val publicationCount = rig.store.publications.size
+
+        advanceTimeBy(1_000)
+        rig.session.pauseTransport()
+        rig.engine.report(EngineStatus.PLAYING, positionMs = 1_000)
+        runCurrent()
+        rig.session.pauseTransport()
+        assertEquals(pausedRevision, rig.session.localRevision)
+        settle(rig)
+        assertEquals(pausedPublication, rig.store.latest)
+        assertEquals(publicationCount, rig.store.publications.size)
+
+        rig.engine.report(EngineStatus.BUFFERING, positionMs = 1_000)
+        runCurrent()
+        rig.session.pauseTransport()
+        assertEquals(pausedRevision, rig.session.localRevision)
+        rig.engine.report(EngineStatus.PAUSED, positionMs = 1_000)
+        runCurrent()
+        rig.session.pauseTransport()
+        assertEquals(pausedRevision, rig.session.localRevision)
+        settle(rig)
+        assertEquals(pausedPublication, rig.store.latest)
+        assertEquals(publicationCount, rig.store.publications.size)
+    }
+
+    @Test
+    fun redundantPausesOnColdAndRemotePausedQueuesDoNotRecordOrReclaimActivity() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        repeat(2) { rig.session.pauseTransport() }
+        assertEquals(SessionRevision(0), rig.session.localRevision)
+        settle(rig)
+        assertNull(rig.store.export)
+
+        assertTrue(rig.session.loadRemotePaused(snapshot(yt("remote")), rig.session.localRevision))
+        runCurrent()
+        val remoteRevision = rig.session.localRevision
+        repeat(2) { rig.session.pauseTransport() }
+        assertEquals(remoteRevision, rig.session.localRevision)
+        settle(rig)
+        assertNull(rig.store.export)
+        assertEquals(PublicationOrigin.REMOTE_SUPPRESSED, rig.store.readRestore().origin)
+    }
+
+    @Test
+    fun flushBeforeAndDuringInitializationReportsFailureUntilTheWorkerCanPersist() = runTest {
+        val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
+        val rig = rig(store)
+        rig.session.addToQueue(yt("chosen"))
+        assertIs<FlushResult.Failed>(rig.session.flushPersistence())
+        assertTrue(store.commits.isEmpty())
+        store.readGate = CompletableDeferred()
+        val startup = async { rig.session.initializePersistence() }
+        runCurrent()
+        assertIs<FlushResult.Failed>(rig.session.flushPersistence())
+        assertTrue(store.commits.isEmpty())
+
+        checkNotNull(store.readGate).complete(Unit)
+        startup.await()
+        settle(rig)
+        assertEquals(listOf("yt:chosen"), store.readRestore().snapshot.items.map { it.track.canonicalId })
+        rig.session.playQueueIndex(0)
+        settle(rig)
+        assertEquals("yt:chosen", store.latest.state.current?.track?.identity)
+        assertTrue(store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun aStalePlayingTickCannotUndoAnAcceptedPause() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a")), startIndex = 0)
+        settle(rig)
+        rig.engine.acknowledgeTransport = false
+        rig.session.pauseTransport()
+        val pausedRevision = rig.session.localRevision
+        rig.engine.report(EngineStatus.PLAYING, positionMs = 1_000)
+        settle(rig)
+        assertEquals(pausedRevision, rig.session.localRevision)
+        assertFalse(rig.session.nowPlaying.value.isPlaying)
+        assertFalse(rig.store.latest.state.isPlaying)
+
+        rig.session.playTransport()
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+        settle(rig)
+        assertTrue(rig.store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun flushDuringADelayedInitializationDoesNotClaimPendingCapturesAreCommitted() = runTest {
+        val store = FakeListeningStore().apply { readGate = CompletableDeferred() }
+        val rig = rig(store)
+        val startup = async { rig.session.initializePersistence() }
+        runCurrent()
+        rig.session.addToQueue(yt("chosen"))
+        assertIs<FlushResult.Failed>(rig.session.flushPersistence())
+        assertTrue(store.commits.isEmpty())
+
+        checkNotNull(store.readGate).complete(Unit)
+        startup.await()
+        settle(rig)
+        assertEquals(listOf("yt:chosen"), store.readRestore().snapshot.items.map { it.track.canonicalId })
     }
 
     private class Rig(val session: PlayerSession, val engine: ScriptedEngine, val store: FakeListeningStore)

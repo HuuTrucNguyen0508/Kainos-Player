@@ -18,9 +18,10 @@ import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import java.util.Collections
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 
-internal class PrivateSnapshotWriter(storage: KainosStorage, private val writerId: String = "test-writer") : SessionSnapshotStore {
+internal class PrivateSnapshotWriter(storage: KainosStorage, private val writerId: String = UUID.randomUUID().toString()) : SessionSnapshotStore {
     private val store = DbListeningStore(storage)
     private var sequence = 0L
 

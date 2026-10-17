@@ -335,7 +335,9 @@ class DatabaseRoundTripTest {
             val other = PrivateSnapshotWriter(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
             val original = session(currentIndex = 0, cachedAtMs = 5)
             first.write(original)
-            other.write(SessionSnapshot(items = listOf(PersistedQueueItem("b1", track("yt:b1", "Other")))))
+            val competing = SessionSnapshot(items = listOf(PersistedQueueItem("b1", track("yt:b1", "Other"))))
+            other.write(competing)
+            assertEquals(competing, first.read(), "the competing queue must commit before the original writer restores it")
             first.write(original.copy(currentIndex = 1))
             assertEquals(original.copy(currentIndex = 1), other.read())
         } finally {
@@ -358,6 +360,7 @@ class DatabaseRoundTripTest {
             first.write(original)
             val edited = original.copy(items = original.items.map { it.copy(track = it.track.copy(title = "Changed")) })
             other.write(edited)
+            assertEquals(edited, first.read(), "the competing metadata must commit before the original writer restores it")
             first.write(original.copy(currentIndex = 1))
             assertEquals(original.copy(currentIndex = 1), other.read())
         } finally {
