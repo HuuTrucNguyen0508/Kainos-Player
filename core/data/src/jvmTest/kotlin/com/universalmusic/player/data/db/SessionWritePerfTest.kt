@@ -1,23 +1,27 @@
 package com.universalmusic.player.data.db
 
-import app.cash.sqldelight.Transacter
-import app.cash.sqldelight.db.QueryResult
-import app.cash.sqldelight.db.SqlDriver
-import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.universalmusic.player.data.library.PersistedArtist
 import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.data.session.ListeningCommit
+import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.session.PersistedQueueItem
+import com.universalmusic.player.data.session.PortableListeningQueue
+import com.universalmusic.player.data.session.QueueProjection
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.data.session.persistedItems
 import com.universalmusic.player.data.session.toSessionSnapshot
 import com.universalmusic.player.domain.model.PlaybackQueue
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
+import com.universalmusic.player.domain.playback.FlushResult
+import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.playback.PlayerSession
-import com.universalmusic.player.domain.playback.SessionPersistenceController
 import java.nio.file.Files
+import java.util.Collections
 import java.util.Locale
 import java.util.Properties
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -27,51 +31,75 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assume.assumeTrue
 
+/** Run with `-Dkainos.perf=true`; each case prints parseable `PERF` lines. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionWritePerfTest {
     @Test
-    fun skipThroughControllerAfterLearning500SafDurations() = runTest {
+    fun skipThroughRecorderAfterLearning500SafDurations() = runTest {
         assumeTrue(System.getProperty("kainos.perf") == "true")
-        val directory = Files.createTempDirectory("kainos-session-controller-perf")
+        val directory = Files.createTempDirectory("kainos-recorder-perf")
         val driver = TracingDriver(JdbcSqliteDriver(
             "jdbc:sqlite:" + directory.resolve("kainos.db"),
             Properties().apply { put("journal_mode", "WAL"); put("foreign_keys", "true") },
             KainosDatabase.Schema,
         ))
         try {
-            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
-            val player = PlayerSession(DurationEngine(), DefaultSourceResolver(), backgroundScope)
-            val controller = SessionPersistenceController(player, store, backgroundScope)
-            player.restorePaused(PlaybackQueue(items = (0 until 500).map(::safItem)).toSessionSnapshot(0, 0))
+            val storage = KainosStorage(openDriver = { driver }, clock = { 0 })
+            val store = TimedStore(DbListeningStore(storage))
+            val queue = PlaybackQueue(items = (0 until 500).map(::safItem))
+            PrivateSnapshotWriter(storage, "seed").write(queue.toSessionSnapshot(0, 0))
+            val recorded = PlayerSession(
+                DurationEngine(), DefaultSourceResolver(), backgroundScope,
+                persistence = NowPlayingRecorder(store, backgroundScope, workerContext = EmptyCoroutineContext),
+            )
+            val plain = PlayerSession(DurationEngine(), DefaultSourceResolver(), backgroundScope)
+            recorded.initializePersistence()
+            plain.restorePaused(queue.toSessionSnapshot(0, 0))
             for (index in 0 until 500) {
-                player.playQueueIndex(index)
+                recorded.playQueueIndex(index)
+                plain.playQueueIndex(index)
                 runCurrent()
             }
-            controller.flush()
-            assertTrue(store.read().items.all { it.track.durationMs == 180_000L })
-            val nanos = mutableListOf<Long>()
+            assertEquals(FlushResult.Committed(), recorded.flushPersistence())
+            assertTrue(PrivateSnapshotWriter(storage).read().items.all { it.track.durationMs == 180_000L })
+
+            val withRecorder = mutableListOf<Long>()
+            val withoutRecorder = mutableListOf<Long>()
+            store.reset()
             repeat(200) { index ->
-                player.playQueueIndex(index)
-                runCurrent()
                 driver.reset()
-                val start = System.nanoTime()
-                controller.flush()
-                nanos += System.nanoTime() - start
-                val delta = driver.rowsChanged
-                assertEquals(1L, delta)
-                assertTrue(driver.statements.none { "session_queue_item" in it })
+                withoutRecorder += nanos { plain.playQueueIndex(index) }
+                withRecorder += nanos { recorded.playQueueIndex(index) }
+                runCurrent()
+                assertEquals(FlushResult.Committed(), recorded.flushPersistence())
+                assertTrue(driver.statements.none { "session_queue_item" in it && !it.startsWith("SELECT") })
+                assertTrue(driver.statements.none { "local_listening_queue" in it && !it.startsWith("SELECT") })
+                assertTrue("INSERT OR REPLACE INTO local_listening" in driver.statements)
             }
-            assertEquals(199, store.read().currentIndex)
-            assertTrue(store.read().items.all { it.track.durationMs == 180_000L })
-            val medianMs = nanos.sorted().let { (it[99] + it[100]) / 2.0 } / 1_000_000
-            println("TRACE HS1 controller " + driver.statements.joinToString("; "))
-            println("PERF HS1 controller delta=1 medianMs=${String.format(Locale.ROOT, "%.3f", medianMs)}")
+            assertEquals(199, PrivateSnapshotWriter(storage).read().currentIndex)
+            val sessionThread = Thread.currentThread().name
+            assertTrue(store.threads.none { it == sessionThread }, "SQL ran on the session thread: ${store.threads}")
+
+            val projection = mutableListOf<Long>()
+            repeat(50) {
+                val items = queue.persistedItems(0)
+                projection += nanos { check(PortableListeningQueue.project(items) is QueueProjection.Complete) }
+            }
+            println("TRACE HS5 commit threads=${store.threads.toSortedSet()} statements=${driver.statements.joinToString("; ")}")
+            println(
+                "PERF HS5 sessionThread withRecorderMedianUs=${micros(withRecorder.median())} " +
+                    "withoutRecorderMedianUs=${micros(withoutRecorder.median())} " +
+                    "addedMedianUs=${micros(withRecorder.median() - withoutRecorder.median())}",
+            )
+            println("PERF HS5 listeningCommit commits=${store.nanos.size} medianMs=${millis(store.nanos.median())}")
+            println("PERF HS5 projection500 medianMs=${millis(projection.median())}")
         } finally {
             driver.close()
             directory.toFile().deleteRecursively()
         }
     }
 
+    /** HS1's harness, now through the runtime store's private-only commit, so HS4 and HS5 run the same case. */
     @Test
     fun skipInA500EntryQueue() = runBlocking {
         assumeTrue(System.getProperty("kainos.perf") == "true")
@@ -85,7 +113,7 @@ class SessionWritePerfTest {
                 },
                 KainosDatabase.Schema,
             ))
-            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val store = PrivateSnapshotWriter(KainosStorage(openDriver = { driver }, clock = { 0 }))
             store.write(queueSnapshot(currentIndex = 0, cachedAtMs = 0))
             val deltas = mutableListOf<Long>()
             val nanos = mutableListOf<Long>()
@@ -97,51 +125,49 @@ class SessionWritePerfTest {
                 store.write(snapshot)
                 nanos += System.nanoTime() - start
                 val delta = driver.rowsChanged
-                assertEquals(1L, delta)
-                assertTrue(driver.statements.none { "session_queue_item" in it })
+                assertEquals(2L, delta, "session_state and the writer receipt")
+                assertTrue(driver.statements.none { "session_queue_item" in it && !it.startsWith("SELECT") })
                 deltas += delta
                 lastTrace = driver.statements.groupingBy { it }.eachCount()
             }
             assertEquals(queueSnapshot(currentIndex = 200, cachedAtMs = 0), store.read())
             driver.close()
-            val medianMs = nanos.sorted().let { (it[99] + it[100]) / 2.0 } / 1_000_000
             println("TRACE HS1 " + lastTrace.entries.joinToString("; ") { "${it.value}x ${it.key}" })
-            println("PERF HS1 delta=${deltas.max()} medianMs=${String.format(Locale.ROOT, "%.3f", medianMs)}")
+            println("PERF HS1 delta=${deltas.max()} medianMs=${millis(nanos.median())}")
         } finally {
             directory.toFile().deleteRecursively()
         }
     }
 }
 
-private class TracingDriver(private val inner: SqlDriver) : SqlDriver by inner {
-    val statements = mutableListOf<String>()
-    private var changesAtStart = 0L
-    var rowsChanged = 0L
-        private set
-
-    override fun newTransaction(): QueryResult<Transacter.Transaction> {
-        val transaction = inner.newTransaction()
-        changesAtStart = inner.totalChanges()
-        return transaction
-    }
+private class TimedStore(private val inner: ListeningStore) : ListeningStore by inner {
+    val nanos: MutableList<Long> = Collections.synchronizedList(mutableListOf())
+    val threads: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
     fun reset() {
-        statements.clear()
-        rowsChanged = 0
+        nanos.clear()
+        threads.clear()
     }
 
-    override fun execute(
-        identifier: Int?,
-        sql: String,
-        parameters: Int,
-        binders: (SqlPreparedStatement.() -> Unit)?,
-    ): QueryResult<Long> {
-        val result = inner.execute(identifier, sql, parameters, binders)
-        rowsChanged = inner.totalChanges() - changesAtStart
-        statements += sql.substringBefore('(').trim()
-        return result
+    override suspend fun commit(commit: ListeningCommit) {
+        val start = System.nanoTime()
+        inner.commit(commit)
+        nanos += System.nanoTime() - start
+        threads += Thread.currentThread().name.substringBefore(" @")
     }
 }
+
+private inline fun nanos(block: () -> Unit): Long {
+    val start = System.nanoTime()
+    block()
+    return System.nanoTime() - start
+}
+
+private fun List<Long>.median(): Long = sorted().let { (it[(it.size - 1) / 2] + it[it.size / 2]) / 2 }
+
+private fun millis(nanos: Long) = String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0)
+
+private fun micros(nanos: Long) = String.format(Locale.ROOT, "%.1f", nanos / 1_000.0)
 
 private fun queueSnapshot(currentIndex: Int, cachedAtMs: Long) = SessionSnapshot(
     items = (0 until 500).map { index ->

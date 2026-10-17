@@ -10,7 +10,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
-import com.universalmusic.player.data.session.SessionSnapshotStore
+import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
@@ -59,7 +59,8 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
 import com.universalmusic.player.domain.playback.PlayerSession
-import com.universalmusic.player.domain.playback.SessionPersistenceController
+import com.universalmusic.player.domain.playback.FlushResult
+import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.playback.SleepTimerController
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.domain.search.UnifiedSearch
@@ -72,6 +73,7 @@ import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.platformDeviceIdentity
 import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
+import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.createHttpClient
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
@@ -80,7 +82,7 @@ import com.universalmusic.player.platform.bindPlatformMediaControls
 import com.universalmusic.player.platform.createMetadataArtworkCache
 import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
-import com.universalmusic.player.platform.createSessionSnapshotStore
+import com.universalmusic.player.platform.createListeningStore
 import com.universalmusic.player.platform.createTokenStore
 import com.universalmusic.player.platform.createUserLibraryStore
 import com.universalmusic.player.platform.createKainosPlaylistStore
@@ -119,7 +121,7 @@ class AppContainer {
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
-    val sessionSnapshotStore: SessionSnapshotStore = createSessionSnapshotStore()
+    val listeningStore: ListeningStore = createListeningStore()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -279,14 +281,10 @@ class AppContainer {
         },
         confineTo = playbackDispatcher(),
         workContext = Dispatchers.Default,
+        persistence = NowPlayingRecorder(store = listeningStore, scope = scope),
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
-    val sessionPersistence = SessionPersistenceController(
-        player = player,
-        store = sessionSnapshotStore,
-        scope = scope,
-    )
     val sleepTimer = SleepTimerController(
         player = player,
         scope = scope,
@@ -394,8 +392,7 @@ class AppContainer {
             runCatching { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            runCatching { sessionPersistence.restore() }
-            sessionPersistence.startObserving()
+            player.initializePersistence()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
             homeLanSync.onAppForeground()
@@ -599,10 +596,14 @@ class AppContainer {
         }
     }
 
-    /** Write the listening session now (app exit / backgrounding) instead of waiting on the debounce. */
+    /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     suspend fun flushListeningSession() {
-        runCatching { sessionPersistence.flush() }
-            .onFailure { if (it is CancellationException) throw it }
+        when (val result = player.flushPersistence()) {
+            is FlushResult.Committed -> result.exportUnavailable?.let {
+                PlaybackTrace.log("Recorder", "flushed; local listening export unavailable: $it")
+            }
+            is FlushResult.Failed -> PlaybackTrace.log("Recorder", "flush failed: ${result.cause.message}")
+        }
     }
 
     fun refreshLocalLibrary() {
@@ -717,10 +718,10 @@ class AppContainer {
 
     fun hasRestorableSession(): Boolean =
         player.nowPlaying.value.track != null ||
-            player.queue.queue.value.items.isNotEmpty()
+            player.queueState.value.items.isNotEmpty()
 
     fun resumeListening() {
-        if (player.nowPlaying.value.track == null && player.queue.queue.value.items.isEmpty()) return
+        if (player.nowPlaying.value.track == null && player.queueState.value.items.isEmpty()) return
         if (player.nowPlaying.value.isPlaying) return
         player.playTransport()
     }

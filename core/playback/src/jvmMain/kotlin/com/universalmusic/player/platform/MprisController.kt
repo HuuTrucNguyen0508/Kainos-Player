@@ -53,7 +53,7 @@ class MprisController(
                 scope.launch {
                     combine(
                         session.nowPlaying,
-                        session.queue.queue,
+                        session.queueState,
                         session.volume,
                     ) { now, queue, _ -> now to queue }
                         .collectLatest { (now, queue) ->
@@ -250,7 +250,7 @@ private class MprisFacade(
         when (propertyName) {
             "Shuffle" -> {
                 val want = raw as? Boolean ?: return
-                if (want != session.queue.queue.value.shuffle) session.toggleShuffle()
+                if (want != session.queueState.value.shuffle) session.toggleShuffle()
             }
             "LoopStatus" -> {
                 val want = raw as? String ?: return
@@ -261,7 +261,7 @@ private class MprisFacade(
                     else -> return
                 }
                 var guard = 0
-                while (session.queue.queue.value.repeat != target && guard++ < 3) {
+                while (session.queueState.value.repeat != target && guard++ < 3) {
                     session.cycleRepeat()
                 }
             }

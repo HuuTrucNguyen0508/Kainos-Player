@@ -19,7 +19,9 @@ import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PlayerSession
-import com.universalmusic.player.domain.playback.SessionPersistenceController
+import com.universalmusic.player.domain.playback.FakeListeningStore
+import com.universalmusic.player.domain.playback.FlushResult
+import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.queue.QueueController
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -135,25 +138,13 @@ class SessionSnapshotPersistenceTest {
         assertEquals(12_500L, session.nowPlaying.value.positionMs)
         assertFalse(session.nowPlaying.value.isPlaying)
         assertFalse(session.nowPlaying.value.buffering)
-        assertEquals(listOf(1, 0), session.queue.queue.value.shuffleOrder)
+        assertEquals(listOf(1, 0), session.queueState.value.shuffleOrder)
         assertEquals(0, engine.playCalls)
     }
 
     @Test
-    fun persistenceControllerRestoresPausedAndRoundTrips() = runTest {
-        val store = InMemorySessionSnapshotStore()
-        val engine = CountingEngine()
-        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
-        val controller = SessionPersistenceController(
-            player = session,
-            store = store,
-            scope = backgroundScope,
-            writeDebounceMs = 0L,
-            positionPersistIntervalMs = 5_000L,
-            clock = { 5_000L },
-        )
-
-        session.restorePaused(
+    fun recorderRestoresPausedAndRoundTrips() = runTest {
+        val store = FakeListeningStore(ListeningRestore(
             SessionSnapshot(
                 items = listOf(
                     PersistedQueueItem(
@@ -178,14 +169,21 @@ class SessionSnapshotPersistenceTest {
                 repeat = RepeatMode.OFF.name,
                 positionMs = 8_000L,
             ),
+            PublicationOrigin.LOCAL,
+        ))
+        val engine = CountingEngine()
+        val session = PlayerSession(
+            engine, DefaultSourceResolver(), backgroundScope,
+            persistence = NowPlayingRecorder(store, backgroundScope, EmptyCoroutineContext, clock = { 5_000L }),
         )
+        session.initializePersistence()
         assertEquals(0, engine.playCalls)
         assertFalse(session.nowPlaying.value.isPlaying)
 
         session.addToQueue(track("Extra", "X", provider = ProviderId.SAMPLE))
-        controller.flush()
+        assertEquals(FlushResult.Committed(ProjectionFailure.UNSUPPORTED_TRACK), session.flushPersistence())
 
-        val onDisk = store.read()
+        val onDisk = store.restore.snapshot
         assertEquals(2, onDisk.items.size)
         assertEquals("entry-1", onDisk.items.first().id)
         assertNull(onDisk.items.first().track.sources.single().localLocation)
@@ -194,13 +192,11 @@ class SessionSnapshotPersistenceTest {
 
         // Cold restore from disk stays paused.
         val engine2 = CountingEngine()
-        val session2 = PlayerSession(engine2, DefaultSourceResolver(), backgroundScope)
-        val controller2 = SessionPersistenceController(
-            player = session2,
-            store = store,
-            scope = backgroundScope,
+        val session2 = PlayerSession(
+            engine2, DefaultSourceResolver(), backgroundScope,
+            persistence = NowPlayingRecorder(store, backgroundScope, EmptyCoroutineContext),
         )
-        controller2.restore()
+        session2.initializePersistence()
         assertEquals("Heart", session2.nowPlaying.value.track?.title)
         assertEquals("entry-1", session2.nowPlaying.value.queueItemId)
         assertEquals(8_000L, session2.nowPlaying.value.positionMs)

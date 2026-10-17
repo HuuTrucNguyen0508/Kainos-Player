@@ -66,7 +66,7 @@ internal class QueuePresenter(
 
     companion object {
         fun from(container: AppContainer, scope: CoroutineScope): QueuePresenter = QueuePresenter(
-            queue = container.player.queue.queue,
+            queue = container.player.queueState,
             playIndex = container.player::playQueueIndex,
             clearQueue = container::clearPlaybackQueue,
             undoEdit = container.player::undoQueueEdit,

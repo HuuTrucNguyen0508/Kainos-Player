@@ -5,9 +5,6 @@ import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.SESSION_SNAPSHOT_FORMAT_VERSION
 import com.universalmusic.player.data.session.SessionSnapshot
-import com.universalmusic.player.data.session.SessionSnapshotStore
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -92,19 +89,6 @@ internal data class QueueContent private constructor(val items: List<PersistedQu
     companion object {
         fun of(items: List<PersistedQueueItem>) =
             QueueContent(items.map { it.copy(track = it.track.copy(cachedAtMs = 0)) })
-    }
-}
-
-internal class DbSessionSnapshotStore(
-    private val storage: KainosStorage,
-) : SessionSnapshotStore {
-    private val writeMutex = Mutex()
-    private var decodedQueue: StoredQueue? = null
-
-    override suspend fun read(): SessionSnapshot = storage.read { it.readSessionSnapshot() }
-
-    override suspend fun write(snapshot: SessionSnapshot) = writeMutex.withLock {
-        decodedQueue = storage.write { db -> db.writeSessionSnapshot(snapshot, decodedQueue) }
     }
 }
 

@@ -135,7 +135,7 @@ class SleepTimerController(
         endOfTrackItemId = null
         deadlineMonotonicMs = null
         _state.value = SleepTimerState()
-        player.pauseTransport()
+        player.pauseForSleepTimer()
     }
 
     private fun clearAfterFire() {

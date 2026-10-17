@@ -331,8 +331,8 @@ class DatabaseRoundTripTest {
         val firstDriver = fileDriver(directory.resolve("kainos.db"))
         val otherDriver = fileDriver(directory.resolve("kainos.db"))
         try {
-            val first = DbSessionSnapshotStore(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
-            val other = DbSessionSnapshotStore(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
+            val first = PrivateSnapshotWriter(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
+            val other = PrivateSnapshotWriter(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
             val original = session(currentIndex = 0, cachedAtMs = 5)
             first.write(original)
             other.write(SessionSnapshot(items = listOf(PersistedQueueItem("b1", track("yt:b1", "Other")))))
@@ -351,8 +351,8 @@ class DatabaseRoundTripTest {
         val firstDriver = fileDriver(directory.resolve("kainos.db"))
         val otherDriver = fileDriver(directory.resolve("kainos.db"))
         try {
-            val first = DbSessionSnapshotStore(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
-            val other = DbSessionSnapshotStore(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
+            val first = PrivateSnapshotWriter(KainosStorage(openDriver = { firstDriver }, clock = { 0 }))
+            val other = PrivateSnapshotWriter(KainosStorage(openDriver = { otherDriver }, clock = { 0 }))
             val original = session(currentIndex = 0, cachedAtMs = 5)
             first.write(original)
             first.write(original)
@@ -372,7 +372,7 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         KainosDatabase.Schema.create(driver)
         try {
-            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val store = PrivateSnapshotWriter(KainosStorage(openDriver = { driver }, clock = { 0 }))
             val original = session(currentIndex = 0, cachedAtMs = 5)
             store.write(original)
             store.write(original)
@@ -381,12 +381,12 @@ class DatabaseRoundTripTest {
             })
             val before = driver.totalChanges()
             store.write(changed)
-            assertEquals(2L, driver.totalChanges() - before)
+            assertEquals(3L, driver.totalChanges() - before, "one queue row, the state row and the writer receipt")
             assertEquals(changed, store.read())
             val skipped = changed.copy(currentIndex = 1)
             val afterMetadata = driver.totalChanges()
             store.write(skipped)
-            assertEquals(1L, driver.totalChanges() - afterMetadata)
+            assertEquals(2L, driver.totalChanges() - afterMetadata, "the state row and the writer receipt")
             assertEquals(skipped, store.read())
         } finally {
             driver.close()
@@ -408,7 +408,7 @@ class DatabaseRoundTripTest {
         KainosDatabase.Schema.create(driver)
         try {
             driver.execute(null, "INSERT INTO session_queue_item VALUES (0, 'broken', 'yt:broken', '{bad-json')", 0)
-            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val store = PrivateSnapshotWriter(KainosStorage(openDriver = { driver }, clock = { 0 }))
             store.write(snapshot)
             assertEquals(snapshot, store.read())
         } finally {
@@ -421,7 +421,7 @@ class DatabaseRoundTripTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         KainosDatabase.Schema.create(driver)
         try {
-            val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val store = PrivateSnapshotWriter(KainosStorage(openDriver = { driver }, clock = { 0 }))
             val original = session(currentIndex = 0, cachedAtMs = 5)
             store.write(original)
             val changed = original.copy(items = original.items.mapIndexed { index, item ->
@@ -434,7 +434,7 @@ class DatabaseRoundTripTest {
             driver.execute(null, "DROP TRIGGER fail_state", 0)
             val before = driver.totalChanges()
             store.write(changed)
-            assertEquals(2L, driver.totalChanges() - before)
+            assertEquals(3L, driver.totalChanges() - before, "one queue row, the state row and the writer receipt")
             assertEquals(changed, store.read())
         } finally {
             driver.close()
@@ -445,7 +445,7 @@ class DatabaseRoundTripTest {
     fun sessionStoreRewritesTheQueueAgainAfterAFailedWrite() = runTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         KainosDatabase.Schema.create(driver)
-        val store = DbSessionSnapshotStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+        val store = PrivateSnapshotWriter(KainosStorage(openDriver = { driver }, clock = { 0 }))
         val first = session(currentIndex = 0, cachedAtMs = 5)
         store.write(first)
 

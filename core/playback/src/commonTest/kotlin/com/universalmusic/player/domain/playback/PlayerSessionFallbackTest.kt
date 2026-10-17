@@ -116,12 +116,12 @@ class PlayerSessionFallbackTest {
         val first = track("One", "A", provider = ProviderId.SAMPLE)
         val second = track("Two", "B", provider = ProviderId.SAMPLE)
         session.play(listOf(first, second), startIndex = 0)
-        val idsAfterPlay = session.queue.queue.value.items.map { it.id }
+        val idsAfterPlay = session.queueState.value.items.map { it.id }
         session.playQueueIndex(1)
 
-        assertEquals(idsAfterPlay, session.queue.queue.value.items.map { it.id })
-        assertEquals(2, session.queue.queue.value.items.size)
-        assertEquals("Two", session.queue.queue.value.current?.track?.title)
+        assertEquals(idsAfterPlay, session.queueState.value.items.map { it.id })
+        assertEquals(2, session.queueState.value.items.size)
+        assertEquals("Two", session.queueState.value.current?.track?.title)
     }
 
     @Test
@@ -245,7 +245,7 @@ class PlayerSessionFallbackTest {
         runCurrent()
         assertEquals("Last", session.nowPlaying.value.track?.title)
 
-        session.removeFromQueue(session.queue.queue.value.current!!.id)
+        session.removeFromQueue(session.queueState.value.current!!.id)
         runCurrent()
 
         assertEquals("First", session.nowPlaying.value.track?.title)

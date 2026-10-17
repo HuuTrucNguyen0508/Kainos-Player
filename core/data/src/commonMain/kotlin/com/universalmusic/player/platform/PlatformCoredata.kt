@@ -6,7 +6,6 @@ import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningStore
-import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import io.ktor.client.HttpClient
@@ -20,8 +19,6 @@ expect fun createSettingsStore(): SettingsStore
 expect fun createUserLibraryStore(): UserLibraryStore
 
 expect fun createKainosPlaylistStore(): KainosPlaylistStore
-
-expect fun createSessionSnapshotStore(): SessionSnapshotStore
 
 expect fun createListeningStore(): ListeningStore
 

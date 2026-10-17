@@ -61,8 +61,8 @@ class PlayerSessionOwnershipTest {
 
         session.updateCurrentTrackArtwork(first.canonicalId, Artwork("file:/late.jpg"))
         assertEquals("file:/late.jpg", session.nowPlaying.value.track?.artwork?.url)
-        assertEquals("file:/late.jpg", session.queue.queue.value.current?.track?.artwork?.url)
-        assertNull(session.queue.queue.value.items[1].track.artwork)
+        assertEquals("file:/late.jpg", session.queueState.value.current?.track?.artwork?.url)
+        assertNull(session.queueState.value.items[1].track.artwork)
 
         session.updateCurrentTrackArtwork(first.canonicalId, Artwork("file:/other.jpg"))
         assertEquals("file:/late.jpg", session.nowPlaying.value.track?.artwork?.url, "existing art wins")
@@ -131,7 +131,7 @@ class PlayerSessionOwnershipTest {
 
         assertEquals(EngineStatus.IDLE, engine.state.value.status)
         assertNull(session.nowPlaying.value.track)
-        assertTrue(session.queue.queue.value.items.isEmpty())
+        assertTrue(session.queueState.value.items.isEmpty())
     }
 
     @Test
@@ -146,7 +146,7 @@ class PlayerSessionOwnershipTest {
             startIndex = 0,
         )
         runCurrent()
-        val currentId = session.queue.queue.value.current!!.id
+        val currentId = session.queueState.value.current!!.id
 
         session.removeFromQueue(currentId)
         runCurrent()
@@ -166,7 +166,8 @@ class PlayerSessionOwnershipTest {
             ),
             startIndex = 0,
         )
-        session.queue.setRepeat(RepeatMode.ONE)
+        session.cycleRepeat()
+        session.cycleRepeat()
         runCurrent()
 
         session.skipToNext()
@@ -186,7 +187,8 @@ class PlayerSessionOwnershipTest {
             ),
             startIndex = 0,
         )
-        session.queue.setRepeat(RepeatMode.ONE)
+        session.cycleRepeat()
+        session.cycleRepeat()
         runCurrent()
 
         engine.emitEnded()
@@ -232,7 +234,7 @@ class PlayerSessionOwnershipTest {
         runCurrent()
         assertEquals(1, fetches)
         assertEquals("Cont", session.nowPlaying.value.track?.title)
-        assertEquals(3, session.queue.queue.value.items.size)
+        assertEquals(3, session.queueState.value.items.size)
 
         // Second exhaustion: controller-style empty result stops cleanly (engine idle).
         engine.emitEnded()

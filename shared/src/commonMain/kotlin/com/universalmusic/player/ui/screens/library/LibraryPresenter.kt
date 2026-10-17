@@ -250,9 +250,9 @@ internal class LibraryPresenter(
             },
             onLoadSpotifyPlaylistTracks = container::loadSpotifyPlaylistTracks,
             onCurrentQueueTracks = {
-                container.player.queue.queue.value.playbackOrder()
+                container.player.queueState.value.playbackOrder()
                     .mapNotNull { idx ->
-                        container.player.queue.queue.value.items.getOrNull(idx)?.track
+                        container.player.queueState.value.items.getOrNull(idx)?.track
                     }
             },
             onTrackAvailability = container::trackAvailability,

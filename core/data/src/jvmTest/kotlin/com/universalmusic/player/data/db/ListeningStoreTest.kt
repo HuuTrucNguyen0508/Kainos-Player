@@ -225,7 +225,7 @@ class ListeningStoreTest {
             val first = fileDriver(directory)
             val other = fileDriver(directory)
             val store = DbListeningStore(KainosStorage(openDriver = { first }, clock = { 0 }))
-            val otherStore = DbSessionSnapshotStore(KainosStorage(openDriver = { other }, clock = { 0 }))
+            val otherStore = PrivateSnapshotWriter(KainosStorage(openDriver = { other }, clock = { 0 }))
             val queue = items("a", "b", "c")
             store.commit(commit("gui", 1, queue, current = 0, local = null))
             otherStore.write(snapshot(items("x"), current = 0))

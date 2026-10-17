@@ -58,7 +58,7 @@ object AndroidMediaControls {
         syncJob = scope.launch {
             // Metadata / transport: skip HyperOS island rebuilds on position ticks.
             launch {
-                combine(session.nowPlaying, session.queue.queue) { now, queue -> now to queue }
+                combine(session.nowPlaying, session.queueState) { now, queue -> now to queue }
                     .distinctUntilChangedBy { (now, queue) -> sessionIdentity(now, queue) }
                     .collectLatest { (now, queue) -> publish(now, queue) }
             }
@@ -116,7 +116,7 @@ object AndroidMediaControls {
         onMain {
             forwardingPlayer = player
             if (player != null) {
-                session?.let { publishOnMain(it.nowPlaying.value, it.queue.queue.value) }
+                session?.let { publishOnMain(it.nowPlaying.value, it.queueState.value) }
             }
         }
     }
@@ -126,7 +126,7 @@ object AndroidMediaControls {
             buttonStateListener = listener
             if (listener != null) {
                 val now = session?.nowPlaying?.value
-                val queue = session?.queue?.queue?.value
+                val queue = session?.queueState?.value
                 listener(now?.favorite == true, queue?.repeat ?: RepeatMode.OFF, now?.track != null)
             }
         }
@@ -153,7 +153,7 @@ object AndroidMediaControls {
     fun canSkipNext(): Boolean = session?.canSkipNext() == true
 
     fun canSkipPrevious(): Boolean {
-        val q = session?.queue?.queue?.value ?: return false
+        val q = session?.queueState?.value ?: return false
         return q.items.size > 1 || (session?.nowPlaying?.value?.positionMs ?: 0L) > 3_000L
     }
 
@@ -174,9 +174,9 @@ object AndroidMediaControls {
         return true
     }
 
-    fun isShuffleEnabled(): Boolean = session?.queue?.queue?.value?.shuffle == true
+    fun isShuffleEnabled(): Boolean = session?.queueState?.value?.shuffle == true
 
-    fun repeatMode(): RepeatMode = session?.queue?.queue?.value?.repeat ?: RepeatMode.OFF
+    fun repeatMode(): RepeatMode = session?.queueState?.value?.repeat ?: RepeatMode.OFF
 
     private fun publish(now: NowPlayingState, queue: PlaybackQueue) {
         onMain { publishOnMain(now, queue) }

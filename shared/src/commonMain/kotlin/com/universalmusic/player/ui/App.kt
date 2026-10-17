@@ -98,7 +98,7 @@ private fun AppScaffold(
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
     val now by container.player.nowPlaying.collectAsState()
-    val queue by container.player.queue.queue.collectAsState()
+    val queue by container.player.queueState.collectAsState()
     val canSkipNext = run {
         queue.shuffle
         queue.repeat

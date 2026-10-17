@@ -32,9 +32,9 @@ class LearnedDurationTest {
         runCurrent()
         engine.state.value = EngineState(EngineStatus.PLAYING, durationMs = 212_000, playGeneration = 1)
         runCurrent()
-        assertEquals(212_000, session.queue.queue.value.items[1].track.durationMs)
+        assertEquals(212_000, session.queueState.value.items[1].track.durationMs)
         assertEquals(212_000, session.nowPlaying.value.track?.durationMs)
-        assertNull(session.queue.queue.value.items[0].track.durationMs)
+        assertNull(session.queueState.value.items[0].track.durationMs)
     }
 
     @Test
@@ -46,7 +46,7 @@ class LearnedDurationTest {
         runCurrent()
         engine.state.value = EngineState(EngineStatus.PLAYING, durationMs = 212_000, playGeneration = 1)
         runCurrent()
-        assertEquals(100_000, session.queue.queue.value.current?.track?.durationMs)
+        assertEquals(100_000, session.queueState.value.current?.track?.durationMs)
     }
 
     @Test
@@ -63,7 +63,7 @@ class LearnedDurationTest {
         )) {
             engine.state.value = event
             runCurrent()
-            assertNull(session.queue.queue.value.current?.track?.durationMs)
+            assertNull(session.queueState.value.current?.track?.durationMs)
         }
     }
 }

@@ -160,7 +160,7 @@ internal class NowPlayingPresenter(
     companion object {
         fun from(container: AppContainer, scope: CoroutineScope): NowPlayingPresenter = NowPlayingPresenter(
             nowPlaying = container.player.nowPlaying,
-            queue = container.player.queue.queue,
+            queue = container.player.queueState,
             volume = container.player.volume,
             settings = container.settings,
             spotifyState = container.spotify.state,

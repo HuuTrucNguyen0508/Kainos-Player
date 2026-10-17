@@ -12,7 +12,6 @@ import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.db.DbKainosPlaylistStore
 import com.universalmusic.player.data.db.DbListeningStore
 import com.universalmusic.player.data.db.DbLocalLibraryScanCache
-import com.universalmusic.player.data.db.DbSessionSnapshotStore
 import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.JvmLegacyJsonSource
 import com.universalmusic.player.data.db.KainosDatabase
@@ -20,7 +19,6 @@ import com.universalmusic.player.data.db.KainosStorage
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningStore
-import com.universalmusic.player.data.session.SessionSnapshotStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
@@ -91,8 +89,6 @@ actual fun createSettingsStore(): SettingsStore = FileSettingsStore(configDir() 
 actual fun createUserLibraryStore(): UserLibraryStore = DbUserLibraryStore(kainosStorage)
 
 actual fun createKainosPlaylistStore(): KainosPlaylistStore = DbKainosPlaylistStore(kainosStorage)
-
-actual fun createSessionSnapshotStore(): SessionSnapshotStore = DbSessionSnapshotStore(kainosStorage)
 
 actual fun createListeningStore(): ListeningStore = DbListeningStore(kainosStorage)
 

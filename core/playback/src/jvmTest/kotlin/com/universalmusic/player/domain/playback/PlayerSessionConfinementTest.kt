@@ -67,7 +67,7 @@ class PlayerSessionConfinementTest {
             assertTrue(engine.syncCallThreads.isNotEmpty(), "transport calls were recorded")
             assertEquals(emptyList(), offThread, "engine transport must only be driven from the session thread")
             val now = session.nowPlaying.value
-            assertEquals(session.queue.queue.value.current?.id, now.queueItemId, "Now Playing matches the queue")
+            assertEquals(session.queueState.value.current?.id, now.queueItemId, "Now Playing matches the queue")
         } finally {
             scope.cancel()
             executor.shutdownNow()
