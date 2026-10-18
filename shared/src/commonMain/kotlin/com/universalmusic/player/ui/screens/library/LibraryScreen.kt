@@ -102,18 +102,24 @@ fun LibraryScreen(
     }
 
     // Desktop type-to-search: keys typed with nothing focused land here (see Main.kt).
-    val pendingTypeAhead by container.libraryTypeAhead.collectAsState()
-    LaunchedEffect(pendingTypeAhead) {
-        if (pendingTypeAhead.isEmpty()) return@LaunchedEffect
-        val typed = container.consumeLibraryTypeAhead()
-        if (typed.isEmpty()) return@LaunchedEffect
-        val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
-        queryField = TextFieldValue(next, selection = TextRange(next.length))
-        typeAheadActive = true
-        tabName = LibraryTab.Songs.name
-        scrollBehavior.state.heightOffset = 0f
-        withFrameNanos { } // let the re-expanded header compose before focusing it
-        runCatching { searchFocusRequester.requestFocus() }
+    LaunchedEffect(container) {
+        container.libraryTypeAhead.collect { pending ->
+            if (pending.isEmpty()) return@collect
+            while (true) {
+                val typed = container.consumeLibraryTypeAhead()
+                if (typed.isEmpty()) break
+                val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
+                queryField = TextFieldValue(next, selection = TextRange(next.length))
+                typeAheadActive = true
+                tabName = LibraryTab.Songs.name
+                scrollBehavior.state.heightOffset = 0f
+                // Frame callbacks run before composition. Let the field receive its new value
+                // before handing it subsequent keystrokes, including any queued during that frame.
+                withFrameNanos { }
+                withFrameNanos { }
+            }
+            searchFocusRequester.requestFocus()
+        }
     }
 
     // Skip the first run so returning to Library keeps scroll; later filter/sort changes
