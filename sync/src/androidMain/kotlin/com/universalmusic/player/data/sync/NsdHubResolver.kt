@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ext.SdkExtensions
 import com.universalmusic.player.platform.androidContext
+import com.universalmusic.player.platform.PlaybackTrace
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicBoolean
@@ -54,6 +55,7 @@ internal class NsdHubResolver(private val context: Context) : HubBrowser {
                 val host = service.addresses().let { all ->
                     all.firstOrNull { it is Inet4Address } ?: all.firstOrNull { !it.isLinkLocalAddress }
                 }?.hostAddress ?: continue
+                PlaybackTrace.log("HomeSync", "NSD resolved ${service.serviceName} $host:${service.port}")
                 send(DiscoveredHub(fp, txt[HOME_LAN_MDNS_TXT_ID]?.decodeToString(), host, service.port, service.serviceName))
             }
         }

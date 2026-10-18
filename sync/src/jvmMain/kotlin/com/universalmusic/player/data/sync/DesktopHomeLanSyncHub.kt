@@ -4,6 +4,7 @@ import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.playlist.forV1Sync
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.JvmDeviceIdentity
+import com.universalmusic.player.platform.PlaybackTrace
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -78,7 +79,15 @@ class DesktopHomeLanSyncHub(
                 channelPipelineConfig = {
                     val ktorSsl = get("ssl") as? SslHandler
                     if (ktorSsl != null && !ktorSsl.handshakeFuture().isDone) {
-                        replace("ssl", "ssl", serverSsl.newHandler(channel().alloc()))
+                        val started = System.nanoTime()
+                        val ssl = serverSsl.newHandler(channel().alloc())
+                        ssl.handshakeFuture().addListener { result ->
+                            val elapsed = (System.nanoTime() - started) / 1_000_000
+                            val outcome = if (result.isSuccess) "complete protocol=${ssl.engine().session.protocol}"
+                                else "failed ${result.cause()?.javaClass?.name}: ${result.cause()?.message}"
+                            PlaybackTrace.log("HomeSync", "hub TLS $outcome in $elapsed ms remote=${channel().remoteAddress()}")
+                        }
+                        replace("ssl", "ssl", ssl)
                     }
                 }
             },
@@ -98,6 +107,7 @@ class DesktopHomeLanSyncHub(
                     )
                 }
                 post(HOME_LAN_SYNC_PATH_PAIR_START) {
+                    PlaybackTrace.log("HomeSync", "hub pair/start received")
                     val client = call.pairingClient() ?: return@post
                     val request = call.receivePairing<PairStartRequest>() ?: return@post
                     call.respondPairing(config.pairing.start(client, request))
