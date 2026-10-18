@@ -153,7 +153,7 @@ class HomeContentTest {
     }
 
     @Test
-    fun favoritesSummaryCountsBySourceAndTakesTheNewestCovers() {
+    fun favoritesSummaryCountsBySourceAndUsesStableCovers() {
         val old = track("Old", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "local:old", artwork = Artwork("old.png"))
         val newer = track("Newer", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "localfile:newer", artwork = Artwork("new.png"))
         val liked = track("Liked", "Artist", provider = ProviderId.SPOTIFY).copy(canonicalId = "spotify:liked")
@@ -166,9 +166,24 @@ class HomeContentTest {
         assertEquals(1, summary.spotify)
         assertEquals(1, summary.youtube)
         assertEquals(listOf("new.png", "old.png"), summary.covers.map { it.url })
+        assertEquals(summary, favoritesSummary(linkedSetOf("localfile:newer", "yt:v1", "spotify:liked", "local:old"), listOf(old, newer, liked)))
         assertEquals(FavoritesSummary.EMPTY, favoritesSummary(emptySet(), listOf(old)))
         assertEquals("4 hearted · 1 local song", homeEyebrow(favorites = 4, localTracks = 1))
         assertEquals("Your listening", homeEyebrow(favorites = 0, localTracks = 0))
+    }
+
+    @Test
+    fun narrowHomeKeepsEightRecentsAfterExcludingTheSessionTrack() {
+        val recent = (0..12).map { index ->
+            track("Recent $index", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "local:$index")
+        }
+        val shown = continueListeningTracks(
+            recent,
+            SessionFocus.Restored(recent.first(), isPlaying = false),
+            playerPaneVisible = false,
+            limit = continueListeningLimit(continueListeningColumns(380)),
+        )
+        assertEquals(listOf("local:1", "local:2", "local:3", "local:4", "local:5", "local:6", "local:7", "local:8"), shown.map { it.canonicalId })
     }
 
     @Test

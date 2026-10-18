@@ -62,7 +62,7 @@ fun HomeScreen(
         val sidePad = if (wide) 28.dp else 20.dp
         val columns = continueListeningColumns((maxWidth - sidePad * 2).value.toInt())
         val continueListening = remember(ui.recent, ui.sessionFocus, playerPaneVisible, columns) {
-            continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible, limit = columns * CONTINUE_LISTENING_ROWS)
+            continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible, limit = continueListeningLimit(columns))
         }
         // The hero shares its row with the library card (and Discover when present).
         val heroShare = if (wide) 1.25f / (if (ui.loadedDiscover != null) 3.25f else 2.25f) else 1f

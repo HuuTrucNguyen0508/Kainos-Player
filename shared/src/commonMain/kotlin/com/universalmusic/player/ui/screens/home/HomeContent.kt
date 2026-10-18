@@ -49,6 +49,8 @@ internal fun homeSessionCardVisible(playerPaneVisible: Boolean, sessionFocus: Se
 /** Rows per column of the recents ledger: the list grows with the width instead of leaving the page short. */
 internal const val CONTINUE_LISTENING_ROWS = 6
 
+internal fun continueListeningLimit(columns: Int): Int = columns * CONTINUE_LISTENING_ROWS
+
 internal fun continueListeningTracks(
     recent: List<Track>,
     sessionFocus: SessionFocus?,
