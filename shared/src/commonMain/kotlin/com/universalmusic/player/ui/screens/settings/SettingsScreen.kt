@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilterChip
+import com.universalmusic.player.ui.components.KainosChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,11 +37,11 @@ fun SettingsScreen(container: AppContainer) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).padding(bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineMedium)
+        Text("Settings", style = MaterialTheme.typography.displaySmall)
         Row(Modifier.horizontalScroll(rememberScrollState()).fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SettingsSection.entries.forEach { item ->
-                FilterChip(selected = section == item, onClick = { sectionName = item.name }, label = { Text(item.label) })
+                KainosChip(section == item, { sectionName = item.name }, item.label, accent = item.accent)
             }
         }
         when (section) {

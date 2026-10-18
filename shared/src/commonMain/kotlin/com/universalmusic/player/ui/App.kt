@@ -31,10 +31,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,7 +59,16 @@ import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.HandoffNotice
 import com.universalmusic.player.domain.playback.NowPlayingState
+import com.universalmusic.player.ui.components.KainosRail
+import com.universalmusic.player.ui.components.KainosTabBar
 import com.universalmusic.player.ui.components.MiniPlayerBar
+import com.universalmusic.player.ui.components.skinGround
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Color
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
 import com.universalmusic.player.ui.screens.LibraryScreen
@@ -266,7 +271,8 @@ private fun AppScaffold(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        modifier = Modifier.skinGround(),
+        containerColor = Color.Transparent,
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
@@ -279,63 +285,27 @@ private fun AppScaffold(
                             onOpen = { openNowPlaying() },
                         )
                     }
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        tonalElevation = 3.dp,
-                    ) {
-                        AppDestination.entries.forEach { item ->
-                            NavigationBarItem(
-                                selected = destination == item,
-                                onClick = { navigateToTab(item) },
-                                icon = { Icon(item.icon(), contentDescription = item.label) },
-                                label = { Text(item.label) },
-                            )
-                        }
-                    }
+                    KainosTabBar(destination, ::navigateToTab)
                 }
             }
         },
     ) { padding ->
         Row(Modifier.fillMaxSize().padding(padding)) {
             if (desktop) {
-                NavigationRail(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(88.dp),
-                    header = {
-                        Column(
-                            Modifier.padding(top = 20.dp, bottom = 12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                "Kainos",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                KainosRail(
+                    selected = destination,
+                    onSelect = ::navigateToTab,
+                    footer = {
+                        if (!nowPlayingPaneExpanded) {
+                            IconButton(onClick = { openNowPlaying() }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Show now playing",
+                                )
+                            }
                         }
                     },
-                ) {
-                    AppDestination.entries.forEach { item ->
-                        NavigationRailItem(
-                            selected = destination == item,
-                            onClick = { navigateToTab(item) },
-                            icon = { Icon(item.icon(), contentDescription = item.label) },
-                            label = { Text(item.label) },
-                        )
-                    }
-                    if (!nowPlayingPaneExpanded) {
-                        IconButton(
-                            onClick = { openNowPlaying() },
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "Show now playing",
-                            )
-                        }
-                    }
-                }
+                )
                 Box(
                     Modifier
                         .fillMaxHeight()
@@ -430,7 +400,7 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
@@ -455,7 +425,7 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
@@ -526,8 +496,9 @@ private fun HandoffNoticeBar(container: AppContainer) {
 @Composable
 internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
     Surface(
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = LocalSkinTokens.current.rounding.full,
         color = MaterialTheme.colorScheme.secondaryContainer,
+        border = BorderStroke(1.dp, LocalKainosPalette.current.hair),
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         shadowElevation = 2.dp,
         modifier = Modifier
@@ -538,7 +509,12 @@ internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
             Modifier.padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(
+                Icons.Default.Devices,
+                contentDescription = null,
+                tint = LocalKainosPalette.current.accent(AccentSlot.Blue, AccentUse.Mark, MaterialTheme.colorScheme.secondaryContainer),
+                modifier = Modifier.size(20.dp),
+            )
             Text(
                 "Continued from $deviceName",
                 style = MaterialTheme.typography.labelLarge,
@@ -589,9 +565,3 @@ private fun DesktopMiniPlayer(
     )
 }
 
-private fun AppDestination.icon() = when (this) {
-    AppDestination.Home -> Icons.Default.Home
-    AppDestination.Search -> Icons.Default.Search
-    AppDestination.Library -> Icons.Default.LibraryMusic
-    AppDestination.Settings -> Icons.Default.Settings
-}
