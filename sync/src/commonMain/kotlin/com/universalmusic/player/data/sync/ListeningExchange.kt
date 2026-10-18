@@ -332,7 +332,7 @@ class ListeningDelivery(
                 if (export == null && !exchangeOnForeground) DeliveryOutcome.IDLE
                 else connect(current.hub).use { client ->
                     if (export == null) {
-                        receiveReply(client.fetchListening(), current)
+                        receiveReply(client, client.fetchListening(), current)
                         DeliveryOutcome.IDLE
                     } else exchange(client, current, export)
                 }
@@ -350,15 +350,15 @@ class ListeningDelivery(
         }
     }
 
-    private suspend fun receiveReply(reply: ListeningReply, current: DeliveryTarget) {
-        reply.hub?.takeIf { it.deviceId == current.hub.deviceId }?.toPeer(clock())?.let { store.receivePeer(it) }
+    private suspend fun receiveReply(client: ListeningHubClient, reply: ListeningReply, current: DeliveryTarget) {
+        reply.hub?.takeIf { it.deviceId == current.hub.deviceId }?.toPeer(clock())?.let { receiveHub(client, it) }
     }
 
     private suspend fun exchange(client: ListeningHubClient, current: DeliveryTarget, export: LocalListeningExport): DeliveryOutcome {
         val revision = export.revision()
         repeat(MAX_ROUNDS) {
             val reply = client.report(export.toReport(current.deviceId, clock()))
-            receiveReply(reply, current)
+            receiveReply(client, reply, current)
             if (!reply.needQueue) {
                 store.markDelivered(current.hub.deviceId, revision)
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening rev=${revision.value} delivered to ${current.hub.displayName}")
@@ -368,6 +368,18 @@ class ListeningDelivery(
             client.uploadQueue(available.publication.state.queue)
         }
         error("The hub still lacks the queue after $MAX_ROUNDS reports")
+    }
+
+    private suspend fun receiveHub(client: ListeningHubClient, peer: PeerListening) {
+        if (!store.receivePeer(peer).needsQueue) return
+        val hash = (peer.state as? PeerListeningState.Available)?.queueHash ?: return
+        try {
+            client.fetchQueue(hash)?.let { store.attachPeerQueue(peer.deviceId, it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (err: Exception) {
+            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "hub listening queue fetch failed: ${err.message ?: err}")
+        }
     }
 
     private companion object {

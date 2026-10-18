@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.session.PublicationRevision
 import java.io.File
 import java.io.IOException
@@ -265,6 +266,51 @@ class ListeningDeliveryLoopTest {
         persisted.complete(Unit)
         runCurrent()
         assertEquals(listOf("scheduling", "persisted", "network"), events)
+    }
+
+    @Test
+    fun aRefreshReadsTheHubRowAndFetchesItsQueueOnce() = runBlocking {
+        ListeningDevice(directory.resolve("phone.db")).use { phone ->
+            phone.publish(queue, current = 0, activeAtMs = 100)
+            val pcQueue = portable(items("x", "y"))
+            val pcRow = ListeningReport(
+                deviceId = "kainos-pc",
+                revision = 5,
+                activeAgeMs = 300,
+                state = ListeningReportState(pcQueue.hash.hex, pcQueue.entries[1].let { PersistedQueueItem(it.itemId, it.track.track) }, 9_000, 300, false),
+            )
+            val hub = FakeHub(hubRow = pcRow, hubQueue = pcQueue)
+            val loop = delivery(phone.exchange, hub)
+            assertEquals(DeliveryOutcome.DELIVERED, loop.deliverPending())
+
+            assertEquals(DeliveryOutcome.IDLE, loop.deliverPending(), "nothing pending, so no exchange")
+            assertEquals(DeliveryOutcome.DELIVERED, loop.deliverPending(exchangeOnForeground = true))
+
+            assertEquals(listOf(1L, 1L), hub.reports)
+            assertEquals(listOf(pcQueue.hash.hex), hub.fetches, "the stored queue is not fetched again")
+            val stored = phone.exchange.readPeer("kainos-pc")!!
+            assertEquals(PublicationRevision(5), stored.listening.revision)
+            assertEquals(700L, stored.listening.lastActiveAtMs)
+            assertEquals(pcQueue, stored.queue)
+        }
+    }
+
+    @Test
+    fun aFailedHubQueueFetchStillDeliversAndIsRetriedNextTime() = runBlocking {
+        ListeningDevice(directory.resolve("phone.db")).use { phone ->
+            phone.publish(queue, current = 0, activeAtMs = 100)
+            val pcQueue = portable(items("x"))
+            val pcRow = ListeningReport(
+                "kainos-pc", 5, 300,
+                ListeningReportState(pcQueue.hash.hex, pcQueue.entries[0].let { PersistedQueueItem(it.itemId, it.track.track) }, 0, 300, false),
+            )
+            assertEquals(DeliveryOutcome.DELIVERED, delivery(phone.exchange, FakeHub(hubRow = pcRow)).deliverPending())
+            assertEquals(null, phone.exchange.readPeer("kainos-pc")!!.queue)
+
+            val hub = FakeHub(hubRow = pcRow, hubQueue = pcQueue)
+            assertEquals(DeliveryOutcome.DELIVERED, delivery(phone.exchange, hub).deliverPending(exchangeOnForeground = true))
+            assertEquals(pcQueue, phone.exchange.readPeer("kainos-pc")!!.queue)
+        }
     }
 
     @Test

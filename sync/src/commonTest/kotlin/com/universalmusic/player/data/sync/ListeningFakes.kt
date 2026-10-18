@@ -27,8 +27,11 @@ internal fun portable(items: List<PersistedQueueItem>): PortableListeningQueue =
 
 internal class FakeHub(
     private val needsQueue: Boolean = false,
+    private val hubRow: ListeningReport? = null,
+    private val hubQueue: PortableListeningQueue? = null,
     private val onReport: suspend (Long) -> Unit = {},
 ) : ListeningHubClient {
+    val fetches = mutableListOf<String>()
     val reports = mutableListOf<Long>()
     val uploads = mutableListOf<String>()
     @Volatile private var hasQueue = !needsQueue
@@ -36,7 +39,7 @@ internal class FakeHub(
     override suspend fun report(report: ListeningReport): ListeningReply {
         reports += report.revision
         onReport(report.revision)
-        return ListeningReply(needQueue = !hasQueue)
+        return ListeningReply(needQueue = !hasQueue, hub = hubRow)
     }
 
     override suspend fun fetchListening(): ListeningReply = ListeningReply(false)
@@ -47,7 +50,10 @@ internal class FakeHub(
         return true
     }
 
-    override suspend fun fetchQueue(hash: QueueHash): PortableListeningQueue? = null
+    override suspend fun fetchQueue(hash: QueueHash): PortableListeningQueue? {
+        fetches += hash.hex
+        return hubQueue?.takeIf { it.hash == hash }
+    }
 
     override fun close() = Unit
 }
