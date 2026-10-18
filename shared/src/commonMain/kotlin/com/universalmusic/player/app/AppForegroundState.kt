@@ -4,7 +4,7 @@ import com.universalmusic.player.platform.platformLabel
 
 internal class AppForegroundState(platform: String = platformLabel()) {
     @kotlin.concurrent.Volatile
-    var isVisible = false
+    var isVisible = platform == "Linux"
 
     fun onReady(onForeground: () -> Unit) {
         if (isVisible) onForeground()

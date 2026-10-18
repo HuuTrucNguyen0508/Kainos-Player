@@ -853,7 +853,11 @@ class HomeLanSyncService(
                 val client = clients[endpoint] ?: acquireClient(target.at(endpoint)).also { clients[endpoint] = it }
                 runCatching {
                     client.probeHub().getOrThrow()
-                    clearListeningRefusal(target)
+                }.onSuccess {
+                    runCatching { clearListeningRefusal(target) }.onFailure { err ->
+                        if (err is CancellationException) throw err
+                        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening refusal recovery failed: ${err.message ?: err}")
+                    }
                 }.map { }.onFailure { err ->
                     if (err is CancellationException) throw err
                     trustFailureOf(err)?.let { trustFailure = it }
@@ -884,7 +888,8 @@ class HomeLanSyncService(
     private suspend fun clearListeningRefusal(hub: PairedPeer) {
         val store = listening ?: return
         val current = settings().listeningDeliveryTarget(isDesktop, identity.fingerprint()) ?: return
-        if (current.hub != hub || store.refusedPairing() != current.pairingIdentity) return
+        val probedPairing = current.copy(hub = hub).pairingIdentity
+        if (current.pairingIdentity != probedPairing || store.refusedPairing() != probedPairing) return
         store.setRefusedPairing(null)
         _status.update { if (it.lastError == HOME_LAN_NOT_TRUSTED) it.copy(lastError = null) else it }
     }
