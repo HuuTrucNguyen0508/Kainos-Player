@@ -5,16 +5,12 @@ import com.universalmusic.player.data.db.DbListeningExchangeStore
 import com.universalmusic.player.data.db.DbListeningStore
 import com.universalmusic.player.data.db.KainosDatabase
 import com.universalmusic.player.data.db.KainosStorage
-import com.universalmusic.player.data.library.PersistedSource
-import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningState
 import com.universalmusic.player.data.session.LocalListeningUpdate
 import com.universalmusic.player.data.session.PersistedQueueItem
-import com.universalmusic.player.data.session.PortableListeningQueue
 import com.universalmusic.player.data.session.ProjectionFailure
 import com.universalmusic.player.data.session.PublicationOrigin
-import com.universalmusic.player.data.session.QueueProjection
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.platform.HomeLanHubConfig
 import com.universalmusic.player.platform.JvmDeviceIdentity
@@ -57,13 +53,6 @@ internal class ListeningDevice(file: File) : AutoCloseable {
 
     override fun close() = driver.close()
 }
-
-internal fun items(vararg ids: String) = ids.map { id ->
-    PersistedQueueItem("q-$id", PersistedTrack("yt:$id", "Track $id", sources = listOf(PersistedSource("YOUTUBE_MUSIC", id))))
-}
-
-internal fun portable(items: List<PersistedQueueItem>): PortableListeningQueue =
-    (PortableListeningQueue.project(items) as QueueProjection.Complete).queue
 
 internal fun listeningHub(
     pc: JvmDeviceIdentity.Material,

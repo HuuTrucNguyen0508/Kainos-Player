@@ -3,6 +3,9 @@ plugins {
 }
 
 kotlin {
+    androidLibrary {
+        withHostTestBuilder {}.configure { isIncludeAndroidResources = true }
+    }
     sourceSets {
         commonMain.dependencies {
             api(project(":core:model"))
@@ -27,6 +30,12 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(libs.sqldelight.sqlite.driver)
+        }
+        getByName("androidHostTest").dependencies {
+            implementation(libs.androidx.work.testing)
+            implementation(libs.androidx.test.core)
+            implementation(libs.robolectric)
+            implementation(libs.junit)
         }
     }
 }

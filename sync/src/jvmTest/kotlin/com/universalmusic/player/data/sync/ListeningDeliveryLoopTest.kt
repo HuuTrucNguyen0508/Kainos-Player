@@ -1,19 +1,10 @@
 package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.session.ListeningExchangeStore
-import com.universalmusic.player.data.session.ListeningState
-import com.universalmusic.player.data.session.LocalListeningExport
-import com.universalmusic.player.data.session.LocalListeningPublication
-import com.universalmusic.player.data.session.PeerListening
-import com.universalmusic.player.data.session.PeerReceipt
-import com.universalmusic.player.data.session.PortableListeningQueue
 import com.universalmusic.player.data.session.PublicationRevision
-import com.universalmusic.player.data.session.QueueHash
-import com.universalmusic.player.data.session.StoredPeerListening
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
-import java.util.Collections
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -142,49 +133,5 @@ class ListeningDeliveryLoopTest {
         runner.request()
         runCurrent()
         assertEquals(4, hub.reports.size)
-    }
-}
-
-private class FakeHub(
-    private val needsQueue: Boolean = false,
-    private val onReport: suspend (Long) -> Unit = {},
-) : ListeningHubClient {
-    val reports: MutableList<Long> = Collections.synchronizedList(mutableListOf())
-    val uploads: MutableList<String> = Collections.synchronizedList(mutableListOf())
-    @Volatile private var hasQueue = !needsQueue
-
-    override suspend fun report(report: ListeningReport): ListeningReply {
-        reports += report.revision
-        onReport(report.revision)
-        return ListeningReply(needQueue = !hasQueue)
-    }
-
-    override suspend fun uploadQueue(queue: PortableListeningQueue): Boolean {
-        uploads += queue.hash.hex
-        hasQueue = true
-        return true
-    }
-
-    override suspend fun fetchQueue(hash: QueueHash): PortableListeningQueue? = null
-
-    override fun close() = Unit
-}
-
-/** Holds one undelivered revision without a database, so the runner test can use virtual time. */
-private class PendingStore(items: List<com.universalmusic.player.data.session.PersistedQueueItem>) : ListeningExchangeStore {
-    private val export = LocalListeningExport.Available(
-        LocalListeningPublication(PublicationRevision(1), 100, ListeningState.create(portable(items), items[0].id, 0, 100, false)),
-    )
-    private var delivered: PublicationRevision? = null
-
-    override suspend fun readLocalExport(): LocalListeningExport = export
-    override suspend fun readLocalQueue(hash: QueueHash): PortableListeningQueue? = null
-    override suspend fun receivePeer(peer: PeerListening): PeerReceipt = PeerReceipt(stored = true, needsQueue = false)
-    override suspend fun attachPeerQueue(deviceId: String, queue: PortableListeningQueue) = false
-    override suspend fun readPeer(deviceId: String): StoredPeerListening? = null
-    override suspend fun deliveredRevision(hubDeviceId: String) = delivered
-    override suspend fun markDelivered(hubDeviceId: String, revision: PublicationRevision): Boolean {
-        delivered = revision
-        return true
     }
 }
