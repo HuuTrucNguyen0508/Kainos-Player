@@ -135,6 +135,7 @@ class PlayerSession(
     private var pausePending = false
     private var persistenceReady = false
     private var checkpointJob: Job? = null
+    private val remoteRevisions = mutableMapOf<String, Long>()
 
     /**
      * Optional gate for sleep-timer end-of-track mode. Invoked on natural completion
@@ -275,14 +276,34 @@ class PlayerSession(
         return recorder.awaitCommitted(sequence)
     }
 
-    internal fun loadRemotePaused(snapshot: SessionSnapshot, expected: SessionRevision): Boolean {
-        if (revision != expected.value) return false
+    internal class HandoffView(val local: LocalHandoffState, val revision: SessionRevision)
+
+    internal suspend fun handoffView(): HandoffView = withContext(sessionContext) {
+        val now = _nowPlaying.value
+        HandoffView(LocalHandoffState(now.isPlaying, now.buffering, lastActiveAtMs), localRevision)
+    }
+
+    internal suspend fun loadRemotePaused(
+        snapshot: SessionSnapshot,
+        peer: PeerHandoff,
+        expected: SessionRevision,
+    ): HandoffDecision = withContext(sessionContext) {
+        val now = _nowPlaying.value
+        val skip = when {
+            now.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
+            now.buffering -> HandoffSkipReason.LOCAL_BUFFERING
+            revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
+            peer.revision.value <= (remoteRevisions[peer.deviceId] ?: 0L) -> HandoffSkipReason.ALREADY_APPLIED
+            else -> null
+        }
+        if (skip != null) return@withContext HandoffDecision.Skip(skip)
+        remoteRevisions[peer.deviceId] = peer.revision.value
         installPaused(snapshot)
-        engine.stop()
+        engine.stopForTransition()
         revision++
         origin = PublicationOrigin.REMOTE_SUPPRESSED
         offerCapture(local = false)
-        return true
+        HandoffDecision.Load(peer)
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
@@ -497,7 +518,7 @@ class PlayerSession(
         val now = _nowPlaying.value
         trace("playTransport buffering=${now.buffering} isPlaying=${now.isPlaying} engine=${engine.state.value.status}")
         if (now.buffering || now.isPlaying) return
-        val engineStatus = engine.state.value.status
+        val engineStatus = currentGenerationEngineStatus()
         if (pausePending || engineStatus == EngineStatus.PAUSED) {
             pausePending = false
             _nowPlaying.update { it.copy(isPlaying = true) }
@@ -508,6 +529,9 @@ class PlayerSession(
             startCurrent(Change.LOCAL_INTENT, applyResumePosition = true)
         }
     }
+
+    private fun currentGenerationEngineStatus(): EngineStatus =
+        engine.state.value.takeIf { it.playGeneration == playGeneration }?.status ?: EngineStatus.IDLE
 
     fun seekTo(positionMs: Long) = onSession { seekNow(positionMs) }
 

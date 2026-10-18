@@ -141,7 +141,7 @@ class NowPlayingRecorderTest {
         assertEquals(1, store.attempts, "the write is in flight and blocked")
 
         session.playNext(yt("n"))
-        assertFalse(session.loadRemotePaused(snapshot(yt("r")), beforeSeek), "a remote load with a stale guard loses")
+        assertFalse(session.loadRemote(snapshot(yt("r")), beforeSeek), "a remote load with a stale guard loses")
         assertEquals(listOf("yt:a", "yt:n", "yt:b"), session.queueState.value.items.map { it.track.canonicalId })
 
         checkNotNull(store.commitGate).complete(Unit)
@@ -350,7 +350,7 @@ class NowPlayingRecorderTest {
         val local = rig.store.latest
 
         advanceTimeBy(5_000)
-        assertTrue(session.loadRemotePaused(snapshot(yt("r1"), yt("r2")), session.localRevision))
+        assertTrue(session.loadRemote(snapshot(yt("r1"), yt("r2")), session.localRevision))
         settle(rig)
         assertEquals(PublicationOrigin.REMOTE_SUPPRESSED, rig.store.restore.origin)
         assertEquals(listOf("yt:r1", "yt:r2"), rig.store.restore.snapshot.items.map { it.track.canonicalId })
@@ -385,7 +385,8 @@ class NowPlayingRecorderTest {
         session.playNext(yt("z"))
         runCurrent()
         session.skipToNext()
-        assertTrue(session.loadRemotePaused(snapshot(yt("r1")), session.localRevision))
+        session.pauseTransport()
+        assertTrue(session.loadRemote(snapshot(yt("r1")), session.localRevision))
         val checkpoint = async { session.flushPersistence() }
         runCurrent()
         checkNotNull(rig.store.commitGate).complete(Unit)
@@ -844,7 +845,7 @@ class NowPlayingRecorderTest {
         settle(rig)
         assertNull(rig.store.export)
 
-        assertTrue(rig.session.loadRemotePaused(snapshot(yt("remote")), rig.session.localRevision))
+        assertTrue(rig.session.loadRemote(snapshot(yt("remote")), rig.session.localRevision))
         runCurrent()
         val remoteRevision = rig.session.localRevision
         repeat(2) { rig.session.pauseTransport() }
@@ -1045,6 +1046,11 @@ class NowPlayingRecorderTest {
 }
 
 private const val T0 = 1_000_000L
+
+private var remoteRevision = 0L
+
+private suspend fun PlayerSession.loadRemote(snapshot: SessionSnapshot, expected: SessionRevision): Boolean =
+    loadRemotePaused(snapshot, peerHandoffOf(snapshot, ++remoteRevision), expected) is HandoffDecision.Load
 
 private data class Row(
     val itemId: String?,
