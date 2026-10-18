@@ -7,13 +7,13 @@ export JAVA_HOME="$HOME/.jdks/temurin-17"
 ./gradlew :shared:skinGallery --console=plain
 ```
 
-The task writes 25 PNGs under `shared/build/skin-gallery/`. It runs separately from `jvmTest`, which excludes `SkinGalleryTest`. The desktop native runtime is on the JVM test classpath only. No app state, network images or screens are loaded.
+The task writes 49 PNGs under `shared/build/skin-gallery/`. It runs separately from `jvmTest`, which excludes `SkinGalleryTest`. The desktop native runtime is on the JVM test classpath only. No app state, network images or screens are loaded.
 
 Each run clears old generated gallery files and writes `manifest.tsv`. The task disables the Gradle build cache because fonts come from the host.
 
-The renderer uses `ImageComposeScene` at density 1 with frames at 0 and 1,000,000,000 nanoseconds. The proof renders twice and compares the PNG bytes. Typography images must contain visible theme ink. The accent and Material sheets check visible swatch and fill pixels, and the two skin typography images must differ. System fonts can differ across machines, so pixel comparisons belong on the same host with the same fonts.
+The renderer uses `ImageComposeScene` at density 1 with frames at 0 and 1,000,000,000 nanoseconds. A test coroutine scheduler drains effects between repeated frames at each timestamp so animation startup cannot race the capture. The proof renders twice and compares the PNG bytes. Typography images must contain visible theme ink. The accent and Material sheets check visible swatch and fill pixels, and the two skin typography images must differ. System fonts can differ across machines, so pixel comparisons belong on the same host with the same fonts.
 
-Each of these directories has `accents.png`, `typography.png` and `material.png`:
+Each of these directories has `accents.png`, `typography.png`, `material.png`, `seek.png`, `marks.png` and `rows.png`:
 
 - `folio-folio-light`
 - `folio-folio-dark`
@@ -24,7 +24,7 @@ Each of these directories has `accents.png`, `typography.png` and `material.png`
 - `caelestia-catppuccin-dark`
 - `caelestia-live-scheme-dark`
 
-`proof/swatch-row.png` is the initial render check. The accent sheet shows Decor, Mark and Text on ground, sheet and tile. The typography sheet covers all 15 M3 styles and a display-family time readout. The Material sheet covers buttons, switches, a slider, text fields and chips.
+`proof/swatch-row.png` is the initial render check. The accent sheet shows Decor, Mark and Text on ground, sheet and tile. The typography sheet covers all 15 M3 styles and a display-family time readout. The Material sheet covers buttons, switches, a slider, text fields and chips. The other sheets cover seek and volume tracks, semantic marks and badges, tiles, ledgers, track rows and the mini player.
 
 The live-scheme case reads the committed `shared/src/jvmTest/resources/caelestia-scheme.json`, so it is repeatable. It applies that palette under both sets of skin tokens. It does not depend on the running shell.
 

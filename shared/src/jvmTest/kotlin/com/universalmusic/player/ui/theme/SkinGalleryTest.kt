@@ -32,6 +32,9 @@ import com.universalmusic.player.data.settings.FolioTint
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.imageio.ImageIO
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertFalse
@@ -94,6 +97,7 @@ class SkinGalleryTest {
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 internal fun renderSkinPng(
     output: Path,
     width: Int,
@@ -102,7 +106,8 @@ internal fun renderSkinPng(
     tokens: SkinTokens,
     content: @Composable () -> Unit,
 ) {
-    val scene = ImageComposeScene(width = width, height = height, density = Density(1f)) {
+    val scheduler = TestCoroutineScheduler()
+    val scene = ImageComposeScene(width = width, height = height, density = Density(1f), coroutineContext = StandardTestDispatcher(scheduler)) {
         KainosTheme(palette, tokens) {
             Surface(Modifier.fillMaxSize(), color = palette.ground, contentColor = palette.scheme.onBackground) {
                 Box(Modifier.fillMaxSize()) { content() }
@@ -111,6 +116,11 @@ internal fun renderSkinPng(
     }
     try {
         scene.render(0).close()
+        scheduler.runCurrent()
+        scene.render(0).close()
+        scheduler.runCurrent()
+        scene.render(1_000_000_000L).close()
+        scheduler.runCurrent()
         scene.render(1_000_000_000L).use { image ->
             Files.createDirectories(output.parent)
             image.encodeToData().use { data -> Files.write(output, checkNotNull(data).bytes) }
