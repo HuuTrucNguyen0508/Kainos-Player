@@ -38,11 +38,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.friendlyPlaybackMessage
 import com.universalmusic.player.ui.components.albumLight
-import com.universalmusic.player.ui.components.isDark
 import com.universalmusic.player.ui.components.rememberAlbumLight
 
 @Composable
@@ -77,7 +77,7 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(scheme.background)
             .onGloballyPositioned { screenBounds = it.boundsInRoot() }
-            .albumLight(albumLight, darkScheme = scheme.isDark, centerX = lightCenter.x, centerY = lightCenter.y)
+            .albumLight(albumLight, darkScheme = LocalKainosPalette.current.isDark, centerX = lightCenter.x, centerY = lightCenter.y)
             .navigationBarsPadding(),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {

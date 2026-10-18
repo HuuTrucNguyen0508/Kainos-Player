@@ -24,7 +24,7 @@ import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
-import com.universalmusic.player.data.settings.withoutLegacyHomeLanPairing
+import com.universalmusic.player.data.settings.decodeAppSettings
 import com.universalmusic.player.domain.model.ProviderId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.ktor.client.HttpClient
@@ -178,7 +178,7 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
 
     override suspend fun read(): AppSettings = mutex.withLock {
         if (!path.exists()) return@withLock AppSettings()
-        (readOrQuarantine(path) { json.decodeFromString<AppSettings>(it) } ?: AppSettings()).withoutLegacyHomeLanPairing()
+        readOrQuarantine(path, ::decodeAppSettings) ?: AppSettings()
     }
 
     override suspend fun write(settings: AppSettings) = mutex.withLock {

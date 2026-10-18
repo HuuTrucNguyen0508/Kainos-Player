@@ -29,6 +29,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.compose.asPainter
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,7 +93,8 @@ fun rememberArtworkTint(artworkUrl: String?): Color? {
 fun rememberAlbumLight(artworkUrl: String?): State<Color> {
     val scheme = MaterialTheme.colorScheme
     val tint = rememberArtworkTint(artworkUrl)
-    val target = remember(tint, scheme) { albumLightColor(tint ?: scheme.primary, scheme) }
+    val dark = LocalKainosPalette.current.isDark
+    val target = remember(tint, scheme, dark) { albumLightColor(tint ?: scheme.primary, scheme, dark) }
     return animateColorAsState(target, animationSpec = tween(durationMillis = 700), label = "albumLight")
 }
 
@@ -125,8 +127,7 @@ fun Modifier.albumLightStrip(light: Color, darkScheme: Boolean): Modifier = draw
     )
 }
 
-internal fun albumLightColor(source: Color, scheme: ColorScheme): Color {
-    val dark = scheme.isDark
+internal fun albumLightColor(source: Color, scheme: ColorScheme, dark: Boolean = scheme.isDark): Color {
     val (h, s, _) = source.toHsl()
     // Near-grey covers keep a hint of the scheme accent instead of glowing flat grey.
     val hue = if (s < 0.12f) scheme.primary.toHsl().first else h

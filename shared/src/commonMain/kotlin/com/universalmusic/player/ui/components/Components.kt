@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.data.cache.TrackAvailability
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.data.library.requiresNetworkToPlay
@@ -312,7 +313,7 @@ fun MiniPlayerBar(
     ) {
         // Same album light as Now Playing, as a quiet wash under the cover.
         val light by rememberAlbumLight(artwork?.url)
-        Column(Modifier.fillMaxWidth().albumLightStrip(light, MaterialTheme.colorScheme.isDark)) {
+        Column(Modifier.fillMaxWidth().albumLightStrip(light, LocalKainosPalette.current.isDark)) {
             when {
                 buffering -> LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(2.dp),

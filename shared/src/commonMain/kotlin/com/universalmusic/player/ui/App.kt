@@ -72,13 +72,13 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
-import com.universalmusic.player.ui.theme.UniversalMusicTheme
+import com.universalmusic.player.ui.theme.KainosTheme
 import kotlinx.coroutines.delay
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
     val settings by container.settings.collectAsState()
-    UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
+    KainosTheme(settings) {
         CompositionLocalProvider(LocalTextInputFocus provides container::setTextInputFocused) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 AppScaffold(
