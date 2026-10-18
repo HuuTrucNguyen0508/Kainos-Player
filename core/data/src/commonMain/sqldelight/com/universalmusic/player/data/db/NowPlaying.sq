@@ -115,3 +115,9 @@ INSERT OR REPLACE INTO listening_refusal (id, pairing_json) VALUES (0, ?);
 
 clearRefusal:
 DELETE FROM listening_refusal;
+
+selectApplied:
+SELECT revision FROM handoff_applied WHERE device_id = ?;
+
+upsertApplied:
+INSERT OR REPLACE INTO handoff_applied (device_id, revision, local_revision) VALUES (?, ?, ?);

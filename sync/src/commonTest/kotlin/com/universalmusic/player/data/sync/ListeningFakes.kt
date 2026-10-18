@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.ListeningState
@@ -76,4 +77,6 @@ internal class PendingStore(items: List<PersistedQueueItem>) : ListeningExchange
         delivered = revision
         return true
     }
+    override suspend fun appliedHandoff(deviceId: String): PublicationRevision? = null
+    override suspend fun claimHandoff(deviceId: String, revision: PublicationRevision) = HandoffClaim.PEER_CHANGED
 }

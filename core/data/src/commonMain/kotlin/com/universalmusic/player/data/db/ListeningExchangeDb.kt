@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.LocalListeningExport
@@ -85,6 +86,22 @@ class DbListeningExchangeStore(
         if (delivered != null && delivered >= revision.value) return@write false
         queries.upsertDelivered(hubDeviceId, revision.value)
         true
+    }
+
+    override suspend fun appliedHandoff(deviceId: String): PublicationRevision? = storage.read { db ->
+        db.nowPlayingQueries.selectApplied(deviceId).executeAsOneOrNull()?.let(::PublicationRevision)
+    }
+
+    override suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim = storage.write { db ->
+        val queries = db.nowPlayingQueries
+        val peer = queries.selectPeer(deviceId).executeAsOneOrNull()
+        if (peer?.revision != revision.value) return@write HandoffClaim.PEER_CHANGED
+        val applied = queries.selectApplied(deviceId).executeAsOneOrNull()
+        if (applied != null && applied >= revision.value) return@write HandoffClaim.ALREADY_APPLIED
+        val export = queries.selectExport().executeAsOneOrNull()
+        if (export != null && export.last_active_at_ms >= peer.last_active_at_ms) return@write HandoffClaim.LOCAL_CHANGED
+        queries.upsertApplied(deviceId, revision.value, export?.revision ?: 0L)
+        HandoffClaim.CLAIMED
     }
 }
 

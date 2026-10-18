@@ -35,6 +35,15 @@ data class ListeningPairingIdentity(
     val pairedAtMs: Long,
 )
 
+enum class HandoffClaim {
+    CLAIMED,
+    /** The stored row is no longer the fetched revision. */
+    PEER_CHANGED,
+    ALREADY_APPLIED,
+    /** This device's durable activity is no longer older than the peer's. */
+    LOCAL_CHANGED,
+}
+
 interface ListeningExchangeStore {
     suspend fun refusedPairing(): ListeningPairingIdentity?
     suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?)
@@ -57,4 +66,12 @@ interface ListeningExchangeStore {
 
     /** Raises the delivered revision; returns false and changes nothing when [revision] is not higher. */
     suspend fun markDelivered(hubDeviceId: String, revision: PublicationRevision): Boolean
+
+    suspend fun appliedHandoff(deviceId: String): PublicationRevision?
+
+    /**
+     * Records [revision] of [deviceId] as loaded, in one transaction that rechecks the stored row,
+     * the applied revision and this device's durable activity, together with that activity's revision.
+     */
+    suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim
 }
