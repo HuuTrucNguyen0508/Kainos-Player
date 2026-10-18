@@ -1,5 +1,11 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.ui.components.AccentBadge
+import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.components.SourceMark
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +28,7 @@ import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 internal fun ProviderQualityRow(
     providerName: String?,
     qualityLabel: String?,
+    qualityClass: QualityClass?,
     syncWarning: String?,
     hasDetails: Boolean,
     detailsExpanded: Boolean,
@@ -35,16 +42,23 @@ internal fun ProviderQualityRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val spine = listOfNotNull(providerName, qualityLabel).joinToString(" · ")
-            if (spine.isNotEmpty()) Text(
-                spine,
-                style = MaterialTheme.typography.labelLarge,
-                // Scheme accent, not the provider brand color: mint/red labels were unreadable on light schemes.
-                color = scheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
+            providerName?.let { name ->
+                val provider = ProviderId.entries.firstOrNull { it.displayName == name }
+                if (provider != null) SourceMark(SourceKind.of(provider), name, showIcon = true)
+                else Text(name, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            }
+            qualityLabel?.let { label ->
+                AccentBadge(
+                    label,
+                    when (qualityClass) {
+                        QualityClass.HiRes -> Accents.hiRes
+                        QualityClass.Cd -> Accents.cdQuality
+                        QualityClass.Lossy -> Accents.lossy
+                        null -> AccentSlot.Gray
+                    },
+                    Modifier.weight(1f, fill = false),
+                )
+            }
             if (hasDetails) {
                 TextButton(onClick = onToggleDetails) {
                     Text(if (detailsExpanded) "Hide details" else "Details")

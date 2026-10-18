@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.skinGround
+import com.universalmusic.player.ui.components.skinAlbumLight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -75,9 +77,9 @@ fun NowPlayingScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .skinGround()
             .onGloballyPositioned { screenBounds = it.boundsInRoot() }
-            .albumLight(albumLight, darkScheme = LocalKainosPalette.current.isDark, centerX = lightCenter.x, centerY = lightCenter.y)
+            .skinAlbumLight(albumLight, lightCenter.x, lightCenter.y)
             .navigationBarsPadding(),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -137,11 +139,12 @@ fun NowPlayingScreen(
                             artMax = artMax,
                             expand = pinControls,
                             compact = compact,
+                            light = albumLight,
                             onPositioned = { artBounds = it },
                         )
                     }
 
-                    Spacer(Modifier.height(if (compact) 12.dp else 16.dp))
+                    Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
 
                     Text(
                         track?.title ?: "Nothing playing",
@@ -211,6 +214,7 @@ fun NowPlayingScreen(
                         // Before a restored track resolves, name its own source instead of nothing.
                         providerName = ui.providerName,
                         qualityLabel = ui.qualityLabel,
+                        qualityClass = ui.qualityClass,
                         syncWarning = ui.now.syncWarning,
                         hasDetails = ui.detailLines.isNotEmpty(),
                         detailsExpanded = showAudioDetails,

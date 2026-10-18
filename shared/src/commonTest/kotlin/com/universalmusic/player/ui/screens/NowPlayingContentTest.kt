@@ -198,4 +198,13 @@ class NowPlayingPresenterTest {
         cancelSleepAction = {},
         scope = scope,
     )
+
+    @Test
+    fun qualityClassPicksBadgeColour() {
+        assertEquals(QualityClass.Cd, qualityClass(AudioQuality(QualityTier.LOSSLESS, sampleRateHz = 44_100, bitDepth = 16)))
+        assertEquals(QualityClass.HiRes, qualityClass(AudioQuality(QualityTier.LOSSLESS, sampleRateHz = 96_000, bitDepth = 24)))
+        assertEquals(QualityClass.HiRes, qualityClass(AudioQuality(QualityTier.HI_RES)))
+        assertEquals(QualityClass.Lossy, qualityClass(AudioQuality(QualityTier.HIGH, bitrateKbps = 320)))
+        assertEquals(null, qualityClass(null))
+    }
 }

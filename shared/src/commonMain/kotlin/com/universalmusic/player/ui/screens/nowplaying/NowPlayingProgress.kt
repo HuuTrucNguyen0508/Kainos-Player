@@ -1,5 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.QuietSeekRail
+import com.universalmusic.player.ui.components.SkinSlider
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,15 +45,12 @@ internal fun NowPlayingProgress(
                 .height(40.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .background(scheme.surfaceVariant, CircleShape),
-            )
+            QuietSeekRail()
         }
     } else {
-        Slider(
+        SkinSlider(
+            durationMs = knownDurationMs,
+            isPlaying = now.isPlaying,
             value = scrubPosition ?: progress,
             onValueChange = { scrubPosition = it },
             onValueChangeFinished = {
@@ -64,15 +64,16 @@ internal fun NowPlayingProgress(
             modifier = Modifier.fillMaxWidth(),
         )
     }
+    val timeStyle = MaterialTheme.typography.titleSmall.copy(fontFamily = LocalSkinTokens.current.display)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
             formatTime(displayedPositionMs(scrubPosition, knownDurationMs, now.positionMs)),
-            style = MaterialTheme.typography.labelMedium,
-            color = scheme.onSurfaceVariant,
+            style = timeStyle,
+            color = scheme.onSurface,
         )
         Text(
             knownDurationMs?.let(::formatTime) ?: "Length shown once playing",
-            style = MaterialTheme.typography.labelMedium,
+            style = timeStyle,
             color = scheme.onSurfaceVariant,
         )
     }

@@ -11,7 +11,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.unit.dp
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.Skin
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -115,6 +125,50 @@ fun Modifier.albumLight(
             radius = radius,
         ),
     )
+}
+
+/** Folio washes the whole Now Playing surface in ink-tinted light; Caelestia keeps it inside the cover card. */
+@Composable
+fun Modifier.skinAlbumLight(light: Color, centerX: Float, centerY: Float): Modifier =
+    if (LocalSkinTokens.current.skin == Skin.FOLIO) albumLight(light, LocalKainosPalette.current.isDark, centerX, centerY) else this
+
+/**
+ * The cover with its album light. Folio adds the coloured rule under the cover, drawn outside the
+ * layout bounds so the controls never move; Caelestia sets the cover in a tonal card whose glow is
+ * the light mixed 45% toward primaryContainer.
+ */
+@Composable
+fun AlbumLightCover(light: Color, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val tokens = LocalSkinTokens.current
+    val scheme = MaterialTheme.colorScheme
+    if (tokens.skin == Skin.FOLIO) {
+        Box(
+            modifier.drawWithContent {
+                drawContent()
+                val width = 44.dp.toPx()
+                val y = size.height + 10.dp.toPx()
+                drawLine(light, Offset((size.width - width) / 2, y), Offset((size.width + width) / 2, y), 2.dp.toPx())
+            },
+        ) { content() }
+    } else {
+        val glow = lerp(light, scheme.primaryContainer, .45f)
+        Box(
+            modifier
+                .clip(RoundedCornerShape(tokens.rounding.extraLarge))
+                .background(scheme.surfaceContainer)
+                .drawBehind {
+                    drawRect(
+                        Brush.radialGradient(
+                            0f to glow.copy(alpha = .7f),
+                            1f to Color.Transparent,
+                            center = Offset(size.width / 2, size.height / 2),
+                            radius = size.maxDimension * .7f,
+                        ),
+                    )
+                }
+                .padding(14.dp),
+        ) { content() }
+    }
 }
 
 /** Horizontal wash for the mini player: the light sits under the cover and fades out across the bar. */

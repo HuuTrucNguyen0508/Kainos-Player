@@ -33,6 +33,9 @@ data class KainosPalette(
     val ground: Color, val sheet: Color, val tile: Color, val hair: Color, val rule: Color,
     val isDark: Boolean,
 ) {
+    /** A quiet fill in the slot's hue, for active toggles and badges; pair it with [accent] `on` this. */
+    fun accentContainer(slot: AccentSlot): Color = lerp(ground, accents[slot], if (isDark) .24f else .16f)
+
     fun accent(slot: AccentSlot, use: AccentUse = AccentUse.Decor, on: Color = ground): Color =
         if (use == AccentUse.Decor) accents[slot]
         else contrastingColor(accents[slot], on.compositeOver(ground), scheme.onSurface,

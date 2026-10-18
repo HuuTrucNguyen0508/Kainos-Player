@@ -24,6 +24,7 @@ internal data class NowPlayingUiState(
     val sleepTimer: SleepTimerState,
     val availability: TrackAvailabilityInfo?,
     val qualityLabel: String?,
+    val qualityClass: QualityClass?,
     val providerName: String?,
     val actualSourceLabel: String?,
     val detailLines: List<String>,
@@ -137,6 +138,7 @@ internal class NowPlayingPresenter(
             sleepTimer = timer,
             availability = availability,
             qualityLabel = nowPlayingQualityLabel(quality, track != null, now.resolved != null),
+            qualityClass = qualityClass(quality),
             providerName = displayedProviderName(provider?.displayName, track),
             actualSourceLabel = actualPlaybackSourceLabel(
                 now.resolved?.source?.providerTrackId,

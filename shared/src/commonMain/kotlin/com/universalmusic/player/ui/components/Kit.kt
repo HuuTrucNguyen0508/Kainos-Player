@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material3.FilterChip
@@ -414,7 +416,7 @@ fun PlaceholderArt(seed: String, modifier: Modifier = Modifier) {
 fun AccentBadge(text: String, slot: AccentSlot, modifier: Modifier = Modifier, icon: ImageVector? = null) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
-    val container = lerp(palette.ground, palette.accents[slot], if (palette.isDark) .22f else .14f)
+    val container = palette.accentContainer(slot)
     Row(
         modifier.widthIn(min = 0.dp)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(tokens.rounding.small))
@@ -429,3 +431,71 @@ fun AccentBadge(text: String, slot: AccentSlot, modifier: Modifier = Modifier, i
     }
 }
 
+
+/** The main play control: Folio's ink circle, Caelestia's wide filled primary button. */
+@Composable
+fun PlayButton(
+    playing: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    size: Dp = 72.dp,
+) {
+    val tokens = LocalSkinTokens.current
+    val scheme = MaterialTheme.colorScheme
+    val folio = tokens.skin == Skin.FOLIO
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = if (folio) tokens.rounding.full else androidx.compose.foundation.shape.RoundedCornerShape(tokens.rounding.large),
+        color = if (folio) scheme.onBackground else scheme.primary,
+        contentColor = if (folio) scheme.background else scheme.onPrimary,
+        modifier = modifier.size(if (folio) size else size * 1.25f, if (folio) size else size * .8f),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = if (playing) "Pause" else "Play",
+                modifier = Modifier.size(size / 2),
+            )
+        }
+    }
+}
+
+/**
+ * An icon toggle whose on state is a filled container in its accent hue, so "on" never rests on
+ * tint alone. Caelestia squares the container when on, the shell's checked-button morph.
+ */
+@Composable
+fun AccentToggle(
+    checked: Boolean,
+    onClick: () -> Unit,
+    slot: AccentSlot,
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val palette = LocalKainosPalette.current
+    val tokens = LocalSkinTokens.current
+    val container = palette.accentContainer(slot)
+    val shape = if (checked && tokens.skin == Skin.CAELESTIA) {
+        androidx.compose.foundation.shape.RoundedCornerShape(tokens.rounding.normal)
+    } else {
+        tokens.rounding.full
+    }
+    androidx.compose.material3.IconToggleButton(
+        checked = checked,
+        onCheckedChange = { onClick() },
+        enabled = enabled,
+        shape = shape,
+        modifier = modifier,
+        colors = androidx.compose.material3.IconButtonDefaults.iconToggleButtonColors(
+            checkedContainerColor = container,
+            checkedContentColor = palette.accent(slot, AccentUse.Mark, container),
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+    ) {
+        Icon(icon, contentDescription = contentDescription)
+    }
+}

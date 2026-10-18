@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
 import com.universalmusic.player.data.cache.PlaybackSourceKind
 import com.universalmusic.player.data.cache.TrackAvailability
@@ -43,6 +44,18 @@ internal fun nowPlayingQualityLabel(
     hasTrack: Boolean,
     hasResolved: Boolean,
 ): String? = quality?.label ?: if (hasTrack && !hasResolved) "quality checked on play" else null
+
+/** Which badge colour the quality earns: hi-res above 16-bit or 48 kHz, CD for other lossless, lossy otherwise. */
+internal enum class QualityClass { HiRes, Cd, Lossy }
+
+internal fun qualityClass(quality: AudioQuality?): QualityClass? = when {
+    quality == null -> null
+    quality.tier == QualityTier.HI_RES -> QualityClass.HiRes
+    quality.tier == QualityTier.LOSSLESS &&
+        ((quality.bitDepth ?: 16) > 16 || (quality.sampleRateHz ?: 44_100) > 48_000) -> QualityClass.HiRes
+    quality.tier == QualityTier.LOSSLESS -> QualityClass.Cd
+    else -> QualityClass.Lossy
+}
 
 internal fun displayedProviderName(resolvedProviderName: String?, track: Track?): String? =
     resolvedProviderName ?: track?.sources?.firstOrNull()?.provider?.displayName

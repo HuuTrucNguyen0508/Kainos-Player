@@ -1,5 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.ui.graphics.Color
+import com.universalmusic.player.ui.components.AlbumLightCover
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.aspectRatio
@@ -22,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.ui.components.ArtworkImage
 
-internal val NowPlayingArtCorner = RoundedCornerShape(20.dp)
 
 @Composable
 internal fun ColumnScope.NowPlayingArtwork(
@@ -31,6 +33,7 @@ internal fun ColumnScope.NowPlayingArtwork(
     artMax: Dp,
     expand: Boolean,
     compact: Boolean,
+    light: Color,
     onPositioned: (Rect) -> Unit,
 ) {
     if (expand) {
@@ -47,6 +50,7 @@ internal fun ColumnScope.NowPlayingArtwork(
             NowPlayingArtworkFrame(
                 title = title,
                 artwork = artwork,
+                light = light,
                 modifier = Modifier
                     .size(minOf(widthShare, maxHeight, artMax))
                     .onGloballyPositioned { onPositioned(it.boundsInRoot()) },
@@ -56,6 +60,7 @@ internal fun ColumnScope.NowPlayingArtwork(
         NowPlayingArtworkFrame(
             title = title,
             artwork = artwork,
+            light = light,
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .widthIn(max = artMax)
@@ -70,21 +75,25 @@ internal fun ColumnScope.NowPlayingArtwork(
 private fun NowPlayingArtworkFrame(
     title: String?,
     artwork: Artwork?,
+    light: Color,
     modifier: Modifier,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = NowPlayingArtCorner,
-        tonalElevation = 0.dp,
-        shadowElevation = 6.dp,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-    ) {
-        ArtworkImage(
-            artwork = artwork,
-            contentDescription = title ?: "Artwork",
+    val corner = RoundedCornerShape(LocalSkinTokens.current.rounding.large)
+    AlbumLightCover(light, modifier) {
+        Surface(
             modifier = Modifier.fillMaxSize(),
-            seed = title ?: "U",
-            shape = NowPlayingArtCorner,
-        )
+            shape = corner,
+            tonalElevation = 0.dp,
+            shadowElevation = 3.dp,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ) {
+            ArtworkImage(
+                artwork = artwork,
+                contentDescription = title ?: "Artwork",
+                modifier = Modifier.fillMaxSize(),
+                seed = title ?: "U",
+                shape = corner,
+            )
+        }
     }
 }

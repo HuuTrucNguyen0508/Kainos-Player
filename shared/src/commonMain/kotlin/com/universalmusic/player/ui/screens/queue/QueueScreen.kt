@@ -1,5 +1,10 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.AccentBadge
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.components.skinGround
+import com.universalmusic.player.ui.theme.Accents
+import androidx.compose.material.icons.filled.Shuffle
 import com.universalmusic.player.ui.reportsTextInputFocus
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
@@ -64,20 +69,16 @@ fun QueueScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().skinGround().padding(16.dp)) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("Queue", style = MaterialTheme.typography.headlineSmall)
+                Text("Queue", style = MaterialTheme.typography.headlineMedium)
                 if (queue.shuffle) {
-                    Text(
-                        "Shuffle order",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    AccentBadge("Shuffle order", Accents.shuffle, icon = Icons.Default.Shuffle)
                 }
             }
             Row {
@@ -183,16 +184,12 @@ fun QueueScreen(
                         else -> null
                     }
                     sectionLabel?.let { label ->
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp),
-                        )
+                        SectionRule(label, Modifier.padding(top = 8.dp))
                     }
                     TrackRow(
                         track = item.track,
                         onClick = { presenter.play(item.id) },
+                        highlighted = isCurrent,
                         trailing = {
                             val density = LocalDensity.current
                             var dragDy by remember(item.id) { mutableFloatStateOf(0f) }
