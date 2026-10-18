@@ -116,10 +116,13 @@ fun Modifier.albumLight(
     centerY: Float = 0.3f,
 ): Modifier = drawBehind {
     val radius = max(size.width, size.height) * 0.75f
+    val opacity = if (darkScheme) 0.55f else 0.45f
     drawRect(
         Brush.radialGradient(
-            0f to light.copy(alpha = if (darkScheme) 0.55f else 0.45f),
-            0.5f to light.copy(alpha = if (darkScheme) 0.20f else 0.16f),
+            0f to light.copy(alpha = opacity),
+            0.25f to light.copy(alpha = opacity * 0.844f),
+            0.5f to light.copy(alpha = opacity * 0.5f),
+            0.75f to light.copy(alpha = opacity * 0.156f),
             1f to Color.Transparent,
             center = Offset(size.width * centerX, size.height * centerY),
             radius = radius,
