@@ -40,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
@@ -75,30 +76,30 @@ fun QueueScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("Queue", style = MaterialTheme.typography.headlineMedium)
                 if (queue.shuffle) {
                     AccentBadge("Shuffle order", Accents.shuffle, icon = Icons.Default.Shuffle)
                 }
             }
-            Row {
-                TextButton(
-                    onClick = {
-                        savePlaylistDraft = "Queue"
-                    },
-                    enabled = orderedItems.isNotEmpty(),
-                ) { Text("Save as playlist") }
-                TextButton(
-                    onClick = {
-                        if (playing) confirmClear = true else {
-                            presenter.clear()
-                            undoMessage = "Queue cleared"
-                        }
-                    },
-                    enabled = orderedItems.isNotEmpty(),
-                ) { Text("Clear") }
-                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close queue") }
-            }
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close queue") }
+        }
+        Row {
+            TextButton(
+                onClick = {
+                    savePlaylistDraft = "Queue"
+                },
+                enabled = orderedItems.isNotEmpty(),
+            ) { Text("Save as playlist") }
+            TextButton(
+                onClick = {
+                    if (playing) confirmClear = true else {
+                        presenter.clear()
+                        undoMessage = "Queue cleared"
+                    }
+                },
+                enabled = orderedItems.isNotEmpty(),
+            ) { Text("Clear") }
         }
         saveMessage?.let { message ->
             Text(
@@ -186,59 +187,59 @@ fun QueueScreen(
                     sectionLabel?.let { label ->
                         SectionRule(label, Modifier.padding(top = 8.dp))
                     }
-                    TrackRow(
-                        track = item.track,
-                        onClick = { presenter.play(item.id) },
-                        highlighted = isCurrent,
-                        trailing = {
-                            val density = LocalDensity.current
-                            var dragDy by remember(item.id) { mutableFloatStateOf(0f) }
-                            Row {
-                                Icon(
-                                    Icons.Default.DragHandle,
-                                    contentDescription = "Drag to reorder ${item.track.title}",
-                                    modifier = Modifier
-                                        .padding(top = 12.dp)
-                                        .pointerInput(item.id) {
-                                            detectDragGesturesAfterLongPress(
-                                                onDragEnd = { dragDy = 0f },
-                                                onDragCancel = { dragDy = 0f },
-                                                onDrag = { change, dragAmount ->
-                                                    change.consume()
-                                                    dragDy += dragAmount.y
-                                                    val rowPx = with(density) { 72.dp.toPx() }
-                                                    val steps = (dragDy / rowPx).toInt()
-                                                    if (steps == 0) return@detectDragGesturesAfterLongPress
-                                                    if (presenter.move(item.id, steps)) dragDy = 0f
-                                                },
-                                            )
-                                        },
-                                )
-                                IconButton(
-                                    onClick = {
-                                        presenter.move(item.id, -1)
+                    val density = LocalDensity.current
+                    var rowHeightPx by remember(item.id) { mutableFloatStateOf(with(density) { 112.dp.toPx() }) }
+                    var dragDy by remember(item.id) { mutableFloatStateOf(0f) }
+                    Column(Modifier.onSizeChanged { rowHeightPx = it.height.toFloat() }) {
+                        TrackRow(
+                            track = item.track,
+                            onClick = { presenter.play(item.id) },
+                            highlighted = isCurrent,
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Icon(
+                                Icons.Default.DragHandle,
+                                contentDescription = "Drag to reorder ${item.track.title}",
+                                modifier = Modifier
+                                    .padding(top = 12.dp)
+                                    .pointerInput(item.id) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragEnd = { dragDy = 0f },
+                                            onDragCancel = { dragDy = 0f },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragDy += dragAmount.y
+                                                val steps = (dragDy / rowHeightPx).toInt()
+                                                if (steps == 0) return@detectDragGesturesAfterLongPress
+                                                if (presenter.move(item.id, steps)) dragDy = 0f
+                                            },
+                                        )
                                     },
-                                    enabled = orderPos > 0,
-                                ) {
-                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
-                                }
-                                IconButton(
-                                    onClick = {
-                                        presenter.move(item.id, 1)
-                                    },
-                                    enabled = orderPos < orderedItems.lastIndex,
-                                ) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
-                                }
-                                IconButton(onClick = {
-                                    presenter.remove(item.id)
-                                    undoMessage = "Removed ${item.track.title}"
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Remove ${item.track.title}")
-                                }
+                            )
+                            IconButton(
+                                onClick = {
+                                    presenter.move(item.id, -1)
+                                },
+                                enabled = orderPos > 0,
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
                             }
-                        },
-                    )
+                            IconButton(
+                                onClick = {
+                                    presenter.move(item.id, 1)
+                                },
+                                enabled = orderPos < orderedItems.lastIndex,
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
+                            }
+                            IconButton(onClick = {
+                                presenter.remove(item.id)
+                                undoMessage = "Removed ${item.track.title}"
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove ${item.track.title}")
+                            }
+                        }
+                    }
                 }
             }
         }

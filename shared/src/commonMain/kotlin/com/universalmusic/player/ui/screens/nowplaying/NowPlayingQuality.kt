@@ -8,6 +8,7 @@ import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,10 +38,11 @@ internal fun ProviderQualityRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth()) {
-        Row(
+        FlowRow(
             Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
         ) {
             providerName?.let { name ->
                 val provider = ProviderId.entries.firstOrNull { it.displayName == name }
@@ -56,7 +58,6 @@ internal fun ProviderQualityRow(
                         QualityClass.Lossy -> Accents.lossy
                         null -> AccentSlot.Gray
                     },
-                    Modifier.weight(1f, fill = false),
                 )
             }
             if (hasDetails) {

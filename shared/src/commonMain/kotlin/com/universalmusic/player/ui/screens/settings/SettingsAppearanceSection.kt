@@ -113,17 +113,18 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                     Text(tint.title, style = MaterialTheme.typography.bodyLarge)
                     Text(tint.blurb, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                // Paper, accent, ink, then three of the tint's accent hues.
-                listOf(
-                    preview.ground, preview.scheme.primary, preview.scheme.onBackground,
-                    preview.accents.teal, preview.accents.pink, preview.accents.yellow,
-                ).forEach { swatch ->
-                    Box(
-                        Modifier.size(18.dp)
-                            .clip(MaterialTheme.shapes.extraSmall)
-                            .background(swatch)
-                            .border(1.dp, palette.hair, MaterialTheme.shapes.extraSmall),
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(
+                        preview.ground, preview.scheme.primary, preview.scheme.onBackground,
+                        preview.accents.teal, preview.accents.pink, preview.accents.yellow,
+                    ).forEach { swatch ->
+                        Box(
+                            Modifier.size(18.dp)
+                                .clip(MaterialTheme.shapes.extraSmall)
+                                .background(swatch)
+                                .border(1.dp, palette.hair, MaterialTheme.shapes.extraSmall),
+                        )
+                    }
                 }
             }
         }
