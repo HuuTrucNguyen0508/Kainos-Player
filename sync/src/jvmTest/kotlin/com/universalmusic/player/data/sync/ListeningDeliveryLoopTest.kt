@@ -131,6 +131,81 @@ class ListeningDeliveryLoopTest {
     }
 
     @Test
+    fun foregroundCompletionWaitsForTheExchangeAndAlsoRunsAfterFailure() = runTest {
+        val release = CompletableDeferred<Unit>()
+        var completions = 0
+        val store = PendingStore(queue)
+        store.markDelivered(hubPeer.deviceId, PublicationRevision(1))
+        val loop = ListeningDelivery(store,
+            { DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) },
+            { release.await(); throw IOException("hub is off") })
+        val runner = ListeningDeliveryRunner(backgroundScope, loop, { true }, {}, isAppForeground = { true },
+            onForegroundExchangeCompleted = { completions++ })
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(0, completions)
+        release.complete(Unit)
+        runCurrent()
+        assertEquals(1, completions)
+        advanceTimeBy(10 * LISTENING_RETRY_MS)
+        runCurrent()
+        assertEquals(1, completions, "an automatic retry is not a new foreground event")
+        runner.request()
+        runCurrent()
+        assertEquals(1, completions)
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(2, completions)
+    }
+
+    @Test
+    fun foregroundCompletionRunsAfterDeliveryOrAnIdlePass() = runTest {
+        val hub = FakeHub()
+        val store = PendingStore(queue)
+        var completions = 0
+        var target: DeliveryTarget? = DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!)
+        val loop = ListeningDelivery(store, { target }, { hub })
+        val runner = ListeningDeliveryRunner(backgroundScope, loop, { true }, {}, isAppForeground = { true },
+            onForegroundExchangeCompleted = { completions++ })
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(listOf(1L), hub.reports)
+        assertEquals(PublicationRevision(1), store.delivered)
+        assertEquals(1, completions)
+        target = null
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(2, completions)
+        assertEquals(listOf(1L), hub.reports)
+    }
+
+    @Test
+    fun aForegroundRequestDuringAnExchangeWaitsForItsOwnPass() = runTest {
+        val first = CompletableDeferred<Unit>()
+        val second = CompletableDeferred<Unit>()
+        var reports = 0
+        var completions = 0
+        val hub = FakeHub {
+            when (++reports) {
+                1 -> first.await()
+                2 -> second.await()
+            }
+        }
+        val runner = ListeningDeliveryRunner(backgroundScope, delivery(PendingStore(queue), hub), { true }, {},
+            isAppForeground = { true }, onForegroundExchangeCompleted = { completions++ })
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        runner.request(exchangeOnForeground = true)
+        first.complete(Unit)
+        runCurrent()
+        assertEquals(2, reports)
+        assertEquals(0, completions)
+        second.complete(Unit)
+        runCurrent()
+        assertEquals(1, completions)
+    }
+
+    @Test
     fun aLateAnswerForOneRevisionLeavesTheNextPending() = runBlocking {
         ListeningDevice(directory.resolve("phone.db")).use { phone ->
             phone.publish(queue, current = 0, activeAtMs = 100)

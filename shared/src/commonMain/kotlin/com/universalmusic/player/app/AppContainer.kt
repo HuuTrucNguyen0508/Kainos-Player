@@ -892,7 +892,7 @@ class AppContainer {
 
 private const val VOLUME_PERSIST_DEBOUNCE_MS = 400L
 
-private class PeerNotifyingExchangeStore(
+internal class PeerNotifyingExchangeStore(
     private val inner: ListeningExchangeStore,
     private val onPeerChanged: () -> Unit,
 ) : ListeningExchangeStore by inner {

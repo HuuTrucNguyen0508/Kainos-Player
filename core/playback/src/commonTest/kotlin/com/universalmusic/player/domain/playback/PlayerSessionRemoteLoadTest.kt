@@ -23,6 +23,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
@@ -175,12 +179,63 @@ class PlayerSessionRemoteLoadTest {
         exchange.beforeClaim = { dispatcher.held = true }
 
         val result = session.loadRemotePaused(remote("r1"), peerHandoffOf(remote("r1"), 1), session.localRevision, exchange, null)
-        assertIs<HandoffDecision.Skip>(result)
+        assertEquals("SESSION_BUSY", assertIs<HandoffDecision.Skip>(result).reason.name)
         assertEquals(null, exchange.appliedHandoff("phone"))
         dispatcher.release()
         runCurrent()
         assertEquals(emptyList(), session.queueState.value.items)
         assertEquals(emptyList(), store.restore.snapshot.items)
+    }
+
+    @Test
+    fun anAbandonedInstallRetriesOnceAndShowsOnlyTheSuccessfulNotice() = runTest {
+        busyHandoff(busyClaims = 1, expectedLoad = true)
+    }
+
+    @Test
+    fun aRepeatedlyBusyOwnerStopsAfterTheSingleRetry() = runTest {
+        busyHandoff(busyClaims = 2, expectedLoad = false)
+    }
+
+    private suspend fun TestScope.busyHandoff(busyClaims: Int, expectedLoad: Boolean) {
+        val dispatcher = HoldingDispatcher(StandardTestDispatcher(testScheduler))
+        val store = FakeListeningStore()
+        val session = PlayerSession(LaggingEngine(), DefaultSourceResolver(), backgroundScope,
+            confineTo = dispatcher, persistence = NowPlayingRecorder(store, backgroundScope), clock = { 1_000_000 })
+        session.initializePersistence()
+        val exchange = FakeExchange(store::commit)
+        exchange.peer("phone", 1, 999_000, "r1")
+        var claims = 0
+        exchange.beforeClaim = {
+            claims++
+            if (claims <= busyClaims) {
+                dispatcher.held = true
+                backgroundScope.launch { delay(501); dispatcher.release() }
+            }
+        }
+        val handoff = ListeningHandoff(exchange, session, localTracks = { emptyList() }, clock = { 1_000_000 })
+        val result = async { handoff.run(listOf(HandoffPeer("phone", "Phone"))) }
+        runCurrent()
+        advanceTimeBy(500)
+        runCurrent()
+        assertEquals(null, exchange.appliedHandoff("phone"))
+        assertEquals(null, handoff.notice.value)
+        val decision = result.await()
+        assertEquals(2, claims, "an abandoned install gets exactly one retry")
+        if (expectedLoad) {
+            assertIs<HandoffDecision.Load>(decision)
+            assertEquals(HandoffNotice(1, "Phone"), handoff.notice.value)
+            assertEquals(listOf("yt:r1"), session.queueState.value.items.map { it.track.canonicalId })
+            assertEquals(1L, exchange.appliedHandoff("phone")?.value)
+        } else {
+            assertEquals("SESSION_BUSY", assertIs<HandoffDecision.Skip>(decision).reason.name)
+            assertEquals(null, handoff.notice.value)
+            assertEquals(null, exchange.appliedHandoff("phone"))
+            assertEquals(emptyList(), store.restore.snapshot.items)
+        }
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(2, claims)
     }
 
     @Test

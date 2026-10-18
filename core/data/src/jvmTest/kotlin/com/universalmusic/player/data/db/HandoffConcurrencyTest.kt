@@ -109,6 +109,33 @@ class HandoffConcurrencyTest {
         }
     }
 
+    @Test
+    fun aRecorderCacheCannotHideAQueueWrittenByAnotherStore() = runBlocking {
+        val directory = Files.createTempDirectory("handoff-cache")
+        val driver = JdbcSqliteDriver("jdbc:sqlite:${directory.resolve("kainos.db")}", properties(), KainosDatabase.Schema)
+        try {
+            val storage = KainosStorage({ driver }, clock = { 0 })
+            val recorder = DbListeningStore(storage)
+            val exchange = DbListeningExchangeStore(storage)
+            val original = SessionSnapshot(items = items(10).map { it.copy(id = "q-11") })
+            recorder.commit(ListeningCommit("gui", 1, original, PublicationOrigin.LOCAL, null, 0))
+            exchange.receivePeer(peer(11))
+            assertEquals(HandoffClaim.CLAIMED,
+                exchange.claimHandoff(HandoffRequest("phone", PublicationRevision(11), null)) { remoteCommit(11) })
+            assertEquals(items(11), recorder.readRestore().snapshot.items)
+
+            val queue = (PortableListeningQueue.project(original.items) as QueueProjection.Complete).queue
+            recorder.commit(ListeningCommit("gui", 2, original, PublicationOrigin.LOCAL,
+                LocalListeningUpdate.Publish(2, 20_000, ListeningState.create(queue, "q-11", 0, 20_000, false)), 20_000))
+
+            assertEquals(original, DbListeningStore(storage).readRestore().snapshot,
+                "a cached pre-handoff queue cannot cause a local write to skip the changed disk rows")
+        } finally {
+            driver.close()
+            directory.toFile().deleteRecursively()
+        }
+    }
+
     private fun peer(revision: Long): PeerListening {
         val queue = (PortableListeningQueue.project(items(revision)) as QueueProjection.Complete).queue
         return PeerListening("phone", PublicationRevision(revision), revision * 1_000,

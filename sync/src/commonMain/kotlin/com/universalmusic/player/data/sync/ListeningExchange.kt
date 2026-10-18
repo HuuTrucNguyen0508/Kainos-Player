@@ -400,6 +400,7 @@ class ListeningDeliveryRunner(
     private val scheduleBackground: suspend () -> Unit,
     private val retryMs: Long = LISTENING_RETRY_MS,
     private val isAppForeground: () -> Boolean,
+    private val onForegroundExchangeCompleted: () -> Unit = {},
 ) {
     private val requests = Channel<Unit>(Channel.CONFLATED)
     private val foregroundRequested = MutableStateFlow(false)
