@@ -18,6 +18,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ListeningDeliveryLoopTest {
     private val directory: File = Files.createTempDirectory("kainos-listening-delivery-").toFile()
     private val hubPeer = PairedPeer("kainos-pc", "PC", CertFingerprint.parse("aa".repeat(32))!!, "127.0.0.1", 1, 1L)
@@ -30,7 +31,7 @@ class ListeningDeliveryLoopTest {
 
     private fun delivery(store: ListeningExchangeStore, hub: ListeningHubClient) = ListeningDelivery(
         store = store,
-        target = { DeliveryTarget(hubPeer, "kainos-phone") },
+        target = { DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) },
         connect = { hub },
         clock = { 1_000 },
     )
@@ -57,7 +58,7 @@ class ListeningDeliveryLoopTest {
             assertEquals(DeliveryOutcome.RETRY, outcome.await())
             assertEquals(listOf(1L, 2L), hub.reports)
             assertEquals(PublicationRevision(1), phone.exchange.deliveredRevision("kainos-pc"))
-            assertEquals(true, loop.hasPending())
+            assertEquals(true, loop.canDeliverPending())
         }
     }
 
@@ -91,7 +92,7 @@ class ListeningDeliveryLoopTest {
         ListeningDevice(file).use { restarted ->
             val hub = FakeHub()
             val loop = delivery(restarted.exchange, hub)
-            assertEquals(true, loop.hasPending())
+            assertEquals(true, loop.canDeliverPending())
             assertEquals(DeliveryOutcome.DELIVERED, loop.deliverPending())
             assertEquals(DeliveryOutcome.IDLE, loop.deliverPending())
             assertEquals(listOf(1L), hub.reports)
@@ -105,8 +106,72 @@ class ListeningDeliveryLoopTest {
             phone.publish(queue, current = 0, activeAtMs = 100)
             val hub = FakeHub { throw ListeningHubRefused("Listening report refused: HTTP 401") }
             assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, hub).deliverPending())
-            assertEquals(true, delivery(phone.exchange, hub).hasPending())
+            assertEquals(false, delivery(phone.exchange, hub).canDeliverPending())
+            assertEquals(null, phone.exchange.deliveredRevision("kainos-pc"))
         }
+    }
+
+    @Test
+    fun refusalSurvivesPublicationsAndProcessRestartUntilThePairingChanges() = runBlocking {
+        val file = directory.resolve("phone.db")
+        val hub = FakeHub { throw ListeningHubRefused("HTTP 403") }
+        ListeningDevice(file).use { phone ->
+            phone.publish(queue, current = 0, activeAtMs = 100)
+            assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, hub).deliverPending())
+            phone.publish(queue, current = 1, activeAtMs = 200)
+            assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, hub).deliverPending())
+            assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, hub).deliverPending(exchangeOnForeground = true))
+            assertEquals(listOf(1L), hub.reports)
+        }
+        ListeningDevice(file).use { phone ->
+            assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, hub).deliverPending())
+            assertEquals(listOf(1L), hub.reports)
+            val repaired = FakeHub()
+            val loop = ListeningDelivery(phone.exchange,
+                { DeliveryTarget(hubPeer.copy(pairedAtMs = 2L), "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) }, { repaired })
+            assertEquals(DeliveryOutcome.DELIVERED, loop.deliverPending())
+            assertEquals(listOf(2L), repaired.reports)
+        }
+    }
+
+    @Test
+    fun changingEitherCertificateClearsThePersistedRefusal() = runBlocking {
+        val original = DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!)
+        val changed = listOf(
+            original.copy(hub = hubPeer.copy(fingerprint = CertFingerprint.parse("cc".repeat(32))!!)),
+            original.copy(ownFingerprint = CertFingerprint.parse("dd".repeat(32))!!),
+        )
+        changed.forEachIndexed { index, repaired ->
+            ListeningDevice(directory.resolve("phone-$index.db")).use { phone ->
+                phone.publish(queue, current = 0, activeAtMs = 100)
+                val refused = FakeHub { throw ListeningHubRefused("certificate mismatch") }
+                assertEquals(DeliveryOutcome.REFUSED, delivery(phone.exchange, refused).deliverPending())
+                assertEquals(original.pairingIdentity, phone.exchange.refusedPairing())
+                val hub = FakeHub()
+                val loop = ListeningDelivery(phone.exchange, { repaired }, { hub })
+                assertEquals(DeliveryOutcome.DELIVERED, loop.deliverPending())
+                assertEquals(null, phone.exchange.refusedPairing())
+                assertEquals(listOf(1L), hub.reports)
+            }
+        }
+    }
+
+    @Test
+    fun backgroundWorkIsDurablyScheduledBeforeTheFirstNetworkAttempt() = runTest {
+        val events = mutableListOf<String>()
+        val persisted = CompletableDeferred<Unit>()
+        val hub = FakeHub { events += "network" }
+        val runner = ListeningDeliveryRunner(backgroundScope, delivery(PendingStore(queue), hub), { false }, {
+            events += "scheduling"
+            persisted.await()
+            events += "persisted"
+        }, isAppForeground = { false })
+        runner.request()
+        runCurrent()
+        assertEquals(listOf("scheduling"), events)
+        persisted.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("scheduling", "persisted", "network"), events)
     }
 
     @Test
@@ -115,7 +180,7 @@ class ListeningDeliveryLoopTest {
         val hub = FakeHub { throw IOException("hub is off") }
         var foreground = true
         var scheduled = 0
-        val runner = ListeningDeliveryRunner(backgroundScope, delivery(store, hub), { foreground }, { scheduled++ })
+        val runner = ListeningDeliveryRunner(backgroundScope, delivery(store, hub), { foreground }, { scheduled++ }, isAppForeground = { foreground })
 
         runner.request()
         runCurrent()

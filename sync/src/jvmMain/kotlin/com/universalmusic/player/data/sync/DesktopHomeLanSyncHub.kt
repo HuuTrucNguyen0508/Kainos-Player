@@ -136,6 +136,11 @@ class DesktopHomeLanSyncHub(
                     call.respondPairing(config.pairing.status(client, attemptId))
                 }
                 listeningExchange?.let { host ->
+                    get(HOME_LAN_SYNC_PATH_V3_LISTENING) {
+                        call.pairedPeer() ?: return@get
+                        touchActivity()
+                        call.respondAnswer(host.fetchListening(), ContentType.Application.Json)
+                    }
                     post(HOME_LAN_SYNC_PATH_V3_LISTENING) {
                         val peer = call.pairedPeer() ?: return@post
                         touchActivity()

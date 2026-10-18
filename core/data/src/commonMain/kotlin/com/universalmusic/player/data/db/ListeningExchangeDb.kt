@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.db
 
 import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.LocalListeningExport
 import com.universalmusic.player.data.session.PeerListening
 import com.universalmusic.player.data.session.PeerListeningState
@@ -19,6 +20,17 @@ import kotlinx.serialization.encodeToString
 class DbListeningExchangeStore(
     private val storage: KainosStorage,
 ) : ListeningExchangeStore {
+    override suspend fun refusedPairing(): ListeningPairingIdentity? = storage.read { db ->
+        db.nowPlayingQueries.selectRefusal().executeAsOneOrNull()
+            ?.let { storageJson.decodeFromString<ListeningPairingIdentity>(it) }
+    }
+
+    override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) = storage.write { db ->
+        if (pairing == null) db.nowPlayingQueries.clearRefusal()
+        else db.nowPlayingQueries.upsertRefusal(storageJson.encodeToString(pairing))
+        Unit
+    }
+
     override suspend fun readLocalExport(): LocalListeningExport? = storage.read { it.readLocalExport() }
 
     override suspend fun readLocalQueue(hash: QueueHash): PortableListeningQueue? = storage.read { db ->

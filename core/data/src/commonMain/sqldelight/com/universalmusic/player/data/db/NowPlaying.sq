@@ -101,3 +101,17 @@ SELECT delivered_revision FROM listening_delivery WHERE peer_device_id = ?;
 
 upsertDelivered:
 INSERT OR REPLACE INTO listening_delivery (peer_device_id, delivered_revision) VALUES (?, ?);
+
+CREATE TABLE listening_refusal (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    pairing_json TEXT NOT NULL
+);
+
+selectRefusal:
+SELECT pairing_json FROM listening_refusal WHERE id = 0;
+
+upsertRefusal:
+INSERT OR REPLACE INTO listening_refusal (id, pairing_json) VALUES (0, ?);
+
+clearRefusal:
+DELETE FROM listening_refusal;

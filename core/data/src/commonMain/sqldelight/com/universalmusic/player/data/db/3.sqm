@@ -2,3 +2,8 @@ CREATE TABLE listening_delivery (
     peer_device_id TEXT NOT NULL PRIMARY KEY,
     delivered_revision INTEGER NOT NULL CHECK (delivered_revision > 0)
 );
+
+CREATE TABLE listening_refusal (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
+    pairing_json TEXT NOT NULL
+);

@@ -54,7 +54,7 @@ expect fun setHomeLanHubAutostart(enabled: Boolean)
 expect fun homeLanHubAutostartEnabled(): Boolean?
 
 /** Asks the platform to deliver a pending listening state after this process is gone. No-op on desktop. */
-expect fun scheduleBackgroundListeningDelivery()
+expect suspend fun scheduleBackgroundListeningDelivery()
 
 /** Rematch local-file hearts whose paths went missing after vault sync. Returns count. */
 

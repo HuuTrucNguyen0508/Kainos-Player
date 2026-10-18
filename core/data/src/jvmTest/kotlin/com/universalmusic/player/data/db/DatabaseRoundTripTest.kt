@@ -133,6 +133,7 @@ class DatabaseRoundTripTest {
             assertEquals(listOf("kainos-phone", 3L, 900L), driver.row("SELECT device_id, revision, last_active_at_ms FROM peer_listening"))
             assertEquals(listOf("kainos-phone", 2L, 5L), driver.row("SELECT device_id, revision, local_revision FROM handoff_applied"))
             assertEquals(0L, driver.count("listening_delivery"))
+            assertEquals(0L, driver.count("listening_refusal"))
             driver.close()
         } finally {
             directory.toFile().deleteRecursively()
@@ -723,10 +724,10 @@ private fun SqlDriver.assertMigratedPreHs5Data() {
     assertEquals(PublicationOrigin.LOCAL, db.readSessionOrigin())
     assertNull(db.readLocalExport())
     assertEquals(
-        List(7) { 0L },
+        List(8) { 0L },
         listOf(
             "local_listening", "local_listening_queue", "local_listening_export",
-            "peer_listening", "handoff_applied", "listening_writer_receipt", "listening_delivery",
+            "peer_listening", "handoff_applied", "listening_writer_receipt", "listening_delivery", "listening_refusal",
         ).map(::count),
     )
 }

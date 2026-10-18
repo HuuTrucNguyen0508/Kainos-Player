@@ -3,6 +3,7 @@ package com.universalmusic.player.data.sync
 import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.ListeningState
 import com.universalmusic.player.data.session.LocalListeningExport
 import com.universalmusic.player.data.session.LocalListeningPublication
@@ -37,6 +38,8 @@ internal class FakeHub(
         return ListeningReply(needQueue = !hasQueue)
     }
 
+    override suspend fun fetchListening(): ListeningReply = ListeningReply(false)
+
     override suspend fun uploadQueue(queue: PortableListeningQueue): Boolean {
         uploads += queue.hash.hex
         hasQueue = true
@@ -49,11 +52,19 @@ internal class FakeHub(
 }
 
 internal class PendingStore(items: List<PersistedQueueItem>) : ListeningExchangeStore {
-    private val export = LocalListeningExport.Available(
+    private var export = LocalListeningExport.Available(
         LocalListeningPublication(PublicationRevision(1), 100, ListeningState.create(portable(items), items[0].id, 0, 100, false)),
     )
     var delivered: PublicationRevision? = null
         private set
+
+    fun publishRevision(revision: Long) {
+        export = LocalListeningExport.Available(export.publication.copy(revision = PublicationRevision(revision)))
+    }
+
+    private var refusal: ListeningPairingIdentity? = null
+    override suspend fun refusedPairing() = refusal
+    override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) { refusal = pairing }
 
     override suspend fun readLocalExport(): LocalListeningExport = export
     override suspend fun readLocalQueue(hash: QueueHash): PortableListeningQueue? = null

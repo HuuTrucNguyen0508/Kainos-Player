@@ -14,6 +14,10 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import com.universalmusic.player.data.session.PublicationRevision
 import java.io.IOException
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.delay
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -30,12 +34,20 @@ class ListeningDeliveryWorkerTest {
     private var attempts = 0
     private val hub = FakeHub { if (++attempts == 1) throw IOException("hub is off") }
 
+    private var finishGate: CompletableDeferred<Unit>? = null
+    private var completedPass: CompletableDeferred<Unit>? = null
+
     @Before
     fun setUp() {
-        val delivery = ListeningDelivery(store, { DeliveryTarget(hubPeer, "kainos-phone") }, { hub }, mutex = Mutex())
+        val delivery = ListeningDelivery(store, { DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) }, { hub }, mutex = Mutex())
         val factory = object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker =
-                ListeningDeliveryWorker(appContext, workerParameters) { delivery.deliverPending() }
+                ListeningDeliveryWorker(appContext, workerParameters) {
+                    val result = delivery.deliverPending()
+                    completedPass?.complete(Unit)
+                    finishGate?.await()
+                    result
+                }
         }
         WorkManagerTestInitHelper.initializeTestWorkManager(
             context,
@@ -44,7 +56,7 @@ class ListeningDeliveryWorkerTest {
     }
 
     @Test
-    fun aFailedDeliveryIsRetriedAndTheSecondAttemptSucceeds() {
+    fun aFailedDeliveryIsRetriedAndTheSecondAttemptSucceeds() = runBlocking {
         val workManager = WorkManager.getInstance(context)
         ListeningDeliveryWorker.enqueue(context)
         ListeningDeliveryWorker.enqueue(context)
@@ -62,5 +74,37 @@ class ListeningDeliveryWorkerTest {
         assertEquals(WorkInfo.State.SUCCEEDED, workManager.getWorkInfoById(queued.id).get()!!.state)
         assertEquals(listOf(1L, 1L), hub.reports)
         assertEquals(PublicationRevision(1), store.delivered)
+    }
+
+    @Test
+    fun aPublicationScheduledWhileTheWorkerFinishesKeepsASuccessor() = runBlocking {
+        attempts = 1
+        finishGate = CompletableDeferred()
+        completedPass = CompletableDeferred()
+        val manager = WorkManager.getInstance(context)
+        val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+        ListeningDeliveryWorker.enqueue(context)
+        val first = manager.getWorkInfosForUniqueWork(ListeningDeliveryWorker.UNIQUE_NAME).get().single()
+        driver.setAllConstraintsMet(first.id)
+        withTimeout(5_000) { completedPass!!.await() }
+        assertEquals(WorkInfo.State.RUNNING, manager.getWorkInfoById(first.id).get()!!.state)
+
+        store.publishRevision(2)
+        ListeningDeliveryWorker.enqueue(context)
+        ListeningDeliveryWorker.enqueue(context)
+        val chain = manager.getWorkInfosForUniqueWork(ListeningDeliveryWorker.UNIQUE_NAME).get()
+        assertEquals(2, chain.size)
+        val successor = chain.single { it.id != first.id }
+        assertEquals(WorkInfo.State.BLOCKED, successor.state)
+        finishGate!!.complete(Unit)
+        withTimeout(5_000) {
+            while (manager.getWorkInfoById(first.id).get()!!.state != WorkInfo.State.SUCCEEDED) delay(10)
+        }
+        driver.setAllConstraintsMet(successor.id)
+        withTimeout(5_000) {
+            while (manager.getWorkInfoById(successor.id).get()!!.state != WorkInfo.State.SUCCEEDED) delay(10)
+        }
+        assertEquals(listOf(1L, 2L), hub.reports)
+        assertEquals(PublicationRevision(2), store.delivered)
     }
 }

@@ -1,5 +1,11 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.library.LibraryRepository
+import com.universalmusic.player.data.playlist.KainosPlaylistRepository
+import com.universalmusic.player.data.settings.AppSettings
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import com.universalmusic.player.data.session.PeerListening
 import com.universalmusic.player.data.session.PeerListeningState
 import com.universalmusic.player.data.session.ProjectionFailure
@@ -9,6 +15,7 @@ import com.universalmusic.player.platform.JvmDeviceIdentity
 import com.universalmusic.player.platform.pinnedHomeLanHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.expectSuccess
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -18,6 +25,10 @@ import java.io.File
 import java.net.ServerSocket
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -26,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ListeningExchangeTest {
     private val directory: File = Files.createTempDirectory("kainos-listening-exchange-").toFile()
     private val pcIdentity = JvmDeviceIdentity(directory.resolve("pc-id")).material()
@@ -56,7 +68,7 @@ class ListeningExchangeTest {
 
     private fun phoneDelivery(phoneNow: Long) = ListeningDelivery(
         store = phone.exchange,
-        target = { DeliveryTarget(hubAsPeer, "kainos-phone") },
+        target = { DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint) },
         connect = { client() },
         clock = { phoneNow },
         mutex = Mutex(),
@@ -202,6 +214,67 @@ class ListeningExchangeTest {
             assertEquals(portable(pcItems), hubClient.fetchQueue(portable(pcItems).hash))
             assertNull(hubClient.fetchQueue(portable(phoneItems).hash))
         }
+    }
+
+    @Test
+    fun foregroundFetchesANewerHubExportAfterThePhoneRevisionWasDelivered() = runTest {
+        hub.start()
+        phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
+        pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW - 1_000)
+        assertEquals(DeliveryOutcome.DELIVERED, phoneDelivery(HUB_NOW).deliverPending())
+        pc.publish(pcItems, current = 1, activeAtMs = HUB_NOW)
+
+        foregroundService(backgroundScope).onAppForeground()
+        runCurrent()
+        withContext(Dispatchers.IO) {
+            withTimeout(5_000) {
+                while (phone.exchange.readPeer("kainos-pc")?.listening?.revision != PublicationRevision(2)) {
+                    delay(10)
+                }
+            }
+        }
+        assertEquals(PublicationRevision(1), phone.exchange.deliveredRevision("kainos-pc"))
+        assertEquals(portable(pcItems).entries[1],
+            (phone.exchange.readPeer("kainos-pc")!!.listening.state as PeerListeningState.Available).current)
+    }
+
+    @Test
+    fun foregroundFetchesTheHubExportBeforeThePhoneHasPublishedAnything() = runTest {
+        hub.start()
+        pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW)
+
+        foregroundService(backgroundScope).onAppForeground()
+        runCurrent()
+        withContext(Dispatchers.IO) {
+            withTimeout(5_000) {
+                while (phone.exchange.readPeer("kainos-pc") == null) delay(10)
+            }
+        }
+        assertEquals(PublicationRevision(1), phone.exchange.readPeer("kainos-pc")?.listening?.revision)
+        assertNull(pc.exchange.readPeer("kainos-phone"))
+    }
+
+    @Test
+    fun aFetchOnlyRequestFromAnUnpairedDeviceIsRefused() = runBlocking {
+        hub.start()
+        pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW)
+        val stranger = JvmDeviceIdentity(directory.resolve("stranger-id")).material()
+        val status = http(stranger).use {
+            it.get("https://127.0.0.1:$port$HOME_LAN_SYNC_PATH_V3_LISTENING") { expectSuccess = false }.status.value
+        }
+        assertEquals(401, status)
+    }
+
+    private fun foregroundService(scope: CoroutineScope): HomeLanSyncService {
+        var settings = AppSettings(homeLanSyncEnabled = true, homeLanSyncRole = HomeLanSyncRole.CLIENT,
+            homeLanSyncDeviceId = "kainos-phone", homeLanSyncHub = hubAsPeer)
+        return HomeLanSyncService(scope, { settings }, { settings = it(settings) },
+            LibraryRepository(), KainosPlaylistRepository(), hubFactory = { error("Phone has no hub") },
+            clientFactory = { error("No library sync needed") }, pairingClientFactory = { _, _ -> error("No pairing needed") },
+            identity = phoneIdentity.let { FixedDeviceIdentity(it.fingerprint.hex) },
+            vaultStore = JvmHomeLanVaultStore({ directory.toString() }, directory.resolve("vault.json").toPath()),
+            refreshLocalLibrary = {}, isDesktop = false, clock = { HUB_NOW },
+            listening = phone.exchange, openListeningHub = { client() })
     }
 
     private fun phoneState(current: Int, at: Long, positionMs: Long = 42_000, playing: Boolean = true) =

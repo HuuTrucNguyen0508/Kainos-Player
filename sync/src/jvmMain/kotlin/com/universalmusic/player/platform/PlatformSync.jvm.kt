@@ -243,4 +243,4 @@ actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {
     return 0
 }
 
-actual fun scheduleBackgroundListeningDelivery() = Unit
+actual suspend fun scheduleBackgroundListeningDelivery() = Unit

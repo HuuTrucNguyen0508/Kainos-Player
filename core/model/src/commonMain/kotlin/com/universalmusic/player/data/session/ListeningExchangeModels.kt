@@ -26,7 +26,19 @@ data class StoredPeerListening(val listening: PeerListening, val queue: Portable
 /** [stored] is false when a newer or equal revision was already held for that device. */
 data class PeerReceipt(val stored: Boolean, val needsQueue: Boolean)
 
+@kotlinx.serialization.Serializable
+data class ListeningPairingIdentity(
+    val hubDeviceId: String,
+    val hubFingerprint: String,
+    val ownDeviceId: String,
+    val ownFingerprint: String,
+    val pairedAtMs: Long,
+)
+
 interface ListeningExchangeStore {
+    suspend fun refusedPairing(): ListeningPairingIdentity?
+    suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?)
+
     suspend fun readLocalExport(): LocalListeningExport?
 
     /** This device's published queue, when it still has [hash]. */

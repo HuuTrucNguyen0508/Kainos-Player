@@ -239,6 +239,7 @@ class AppContainer {
         hubPort = homeLanHubPort(),
         listening = listeningExchange,
         retryListeningInProcess = { appVisible || player.nowPlaying.value.isPlaying },
+        isAppForeground = { appVisible },
     )
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)

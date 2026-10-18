@@ -29,5 +29,5 @@ actual fun homeLanHubAutostartEnabled(): Boolean? = null
 
 actual suspend fun rematchLocalHeartsAfterVaultSync(): Int = 0
 
-actual fun scheduleBackgroundListeningDelivery() =
+actual suspend fun scheduleBackgroundListeningDelivery() =
     com.universalmusic.player.data.sync.ListeningDeliveryWorker.enqueue(androidContext)

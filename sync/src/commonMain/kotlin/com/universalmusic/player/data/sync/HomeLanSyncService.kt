@@ -80,7 +80,8 @@ class HomeLanSyncService(
     private val listening: ListeningExchangeStore? = null,
     private val openListeningHub: suspend (PairedPeer) -> ListeningHubClient = ::openPairedListeningHub,
     private val retryListeningInProcess: () -> Boolean = { true },
-    private val scheduleListeningDelivery: () -> Unit = ::scheduleBackgroundListeningDelivery,
+    private val scheduleListeningDelivery: suspend () -> Unit = ::scheduleBackgroundListeningDelivery,
+    private val isAppForeground: () -> Boolean = { true },
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -108,13 +109,13 @@ class HomeLanSyncService(
     private val listeningDelivery = listening?.let { store ->
         ListeningDelivery(
             store = store,
-            target = { if (resetBlocked()) null else settings().listeningDeliveryTarget(isDesktop) },
+            target = { if (resetBlocked()) null else settings().listeningDeliveryTarget(isDesktop, identity.fingerprint()) },
             connect = openListeningHub,
             clock = clock,
         )
     }
     private val listeningRunner = listeningDelivery?.let {
-        ListeningDeliveryRunner(scope, it, retryListeningInProcess, scheduleListeningDelivery)
+        ListeningDeliveryRunner(scope, it, retryListeningInProcess, scheduleListeningDelivery, isAppForeground = isAppForeground)
     }
 
     private val resolutionLock = Any()
@@ -312,6 +313,7 @@ class HomeLanSyncService(
                 homeLanSyncLastError = null,
             )
         }
+        listening?.setRefusedPairing(null)
         reconcileTrust()
         _status.update {
             it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null, lastDetail = "Paired with ${peer.displayName}")
@@ -387,6 +389,7 @@ class HomeLanSyncService(
                             it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(),
                                 homeLanSyncIdentityResetPending = false, homeLanSyncLastError = null)
                         }
+                        listening?.setRefusedPairing(null)
                         reconcileTrust()
                         _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
                     }
@@ -756,7 +759,7 @@ class HomeLanSyncService(
     suspend fun scheduleListeningDeliveryIfPending() {
         val delivery = listeningDelivery ?: return
         val pending = try {
-            delivery.hasPending()
+            delivery.canDeliverPending()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (err: Exception) {
@@ -767,7 +770,7 @@ class HomeLanSyncService(
     }
 
     fun onAppForeground() {
-        requestListeningDelivery()
+        listeningRunner?.request(exchangeOnForeground = true)
         scope.launch {
             var source: ResolutionSource? = null
             runCatching {
