@@ -45,7 +45,6 @@ internal fun nowPlayingQualityLabel(
     hasResolved: Boolean,
 ): String? = quality?.label ?: if (hasTrack && !hasResolved) "quality checked on play" else null
 
-/** Which badge colour the quality earns: hi-res above 16-bit or 48 kHz, CD for other lossless, lossy otherwise. */
 internal enum class QualityClass { HiRes, Cd, Lossy }
 
 internal fun qualityClass(quality: AudioQuality?): QualityClass? = when {

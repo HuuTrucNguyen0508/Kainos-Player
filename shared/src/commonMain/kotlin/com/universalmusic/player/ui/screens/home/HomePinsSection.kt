@@ -119,7 +119,6 @@ private val PersistedHomePin.kindLabel: String
         HomePinKind.LOCAL_FOLDER -> "Folder"
     }
 
-/** A pin as a launcher icon tile: the source's icon on its own hue, the source's underline mark. */
 @Composable
 private fun PinTile(resolved: ResolvedHomePin, onPlay: () -> Unit) {
     val pin = resolved.pin

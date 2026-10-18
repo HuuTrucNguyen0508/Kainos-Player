@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -534,7 +535,8 @@ fun DisplayHero(
                         fontSize = typography.displayLarge.fontSize * 1.5f,
                         drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
                     ),
-                    color = accent?.let { slot -> palette.accent(slot, AccentUse.Mark) } ?: palette.rule,
+                    color = (accent?.let { slot -> palette.accent(slot) } ?: palette.rule).copy(alpha = .22f),
+                    modifier = Modifier.clearAndSetSemantics { },
                     maxLines = 1,
                 )
             }

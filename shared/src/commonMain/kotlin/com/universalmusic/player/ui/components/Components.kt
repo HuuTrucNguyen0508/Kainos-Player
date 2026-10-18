@@ -161,7 +161,6 @@ fun TrackRow(
                 shape = RoundedCornerShape(LocalSkinTokens.current.rounding.small),
             )
             if (folio && source != null) {
-                // The launcher's tile underline, in the source's hue.
                 Box(
                     Modifier.align(Alignment.BottomCenter).offset(y = 5.dp).size(16.dp, 2.dp)
                         .background(LocalKainosPalette.current.accent(SourceKind.of(source).slot, AccentUse.Mark)),

@@ -566,4 +566,3 @@ private fun DesktopMiniPlayer(
         onNext = { container.player.skipToNext() },
     )
 }
-

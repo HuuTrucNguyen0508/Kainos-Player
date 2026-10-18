@@ -89,7 +89,7 @@ fun KainosTabBar(
     }
 }
 
-/** The desktop rail: the same tab items stacked, with [header] and [footer] slots. */
+/** The desktop rail with a [footer] slot. */
 @Composable
 fun KainosRail(
     selected: AppDestination,
