@@ -37,9 +37,6 @@ internal fun ColumnScope.NowPlayingArtwork(
     onPositioned: (Rect) -> Unit,
 ) {
     if (expand) {
-        // Takes at most the height the controls leave, so they never fall below the first screen.
-        // `fill = false` lets the box shrink to the cover, so the cover sits under the header and
-        // any spare height falls below the controls instead of above the art.
         BoxWithConstraints(
             Modifier
                 .fillMaxWidth()

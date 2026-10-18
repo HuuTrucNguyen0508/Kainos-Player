@@ -134,7 +134,6 @@ fun HomeScreen(
             }
             val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(ui.libraryLines, openDoor, m) }
             if (wide) {
-                // Intrinsic height keeps the cards level; none of them may use BoxWithConstraints.
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (ui.loadedDiscover != null) discover(Modifier.weight(1f).fillMaxHeight())
                     favorites(Modifier.weight(1.25f).fillMaxHeight())

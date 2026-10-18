@@ -61,10 +61,6 @@ import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.providerColor
 
-/**
- * The listener's hearts as one card: their newest covers under the album light, the count, where
- * the hearts come from, and the two ways to play them.
- */
 @Composable
 internal fun FavoritesHero(
     favorites: FavoritesSummary,
@@ -77,7 +73,7 @@ internal fun FavoritesHero(
     val light by rememberAlbumLight(favorites.covers.firstOrNull()?.url)
     val mosaic = if (stacked) 112.dp else 176.dp
     val actions: @Composable () -> Unit = {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onPlay, enabled = favorites.count > 0) {
                 Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -138,7 +134,6 @@ private fun FavoritesHeadline(favorites: FavoritesSummary, stacked: Boolean, mod
         }
         Text(
             if (favorites.count > 0) "${favorites.count} hearted ${if (favorites.count == 1) "song" else "songs"}" else "No hearts yet",
-            // The stacked card is phone-width, so the count steps down a size instead of truncating.
             style = (if (stacked) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge).copy(fontFamily = tokens.display),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -223,7 +218,8 @@ internal fun LibraryCard(
         Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             SectionRule("Your library", accent = Accents.library)
             lines.forEach { line ->
-                val mark = palette.accent(line.mark.slot, AccentUse.Mark, palette.sheet)
+                val fill = palette.accentContainer(line.mark.slot)
+                val mark = palette.accent(line.mark.slot, AccentUse.Mark, fill)
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -236,7 +232,7 @@ internal fun LibraryCard(
                         Modifier
                             .size(30.dp)
                             .clip(CircleShape)
-                            .background(palette.accentContainer(line.mark.slot)),
+                            .background(fill),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(line.mark.icon, contentDescription = null, tint = mark, modifier = Modifier.size(16.dp))

@@ -46,10 +46,9 @@ internal fun sessionFocusOf(
 internal fun homeSessionCardVisible(playerPaneVisible: Boolean, sessionFocus: SessionFocus?): Boolean =
     !playerPaneVisible && sessionFocus != null
 
-/** Rows per column of the recents ledger: the list grows with the width instead of leaving the page short. */
 internal const val CONTINUE_LISTENING_ROWS = 6
 
-internal fun continueListeningLimit(columns: Int): Int = columns * CONTINUE_LISTENING_ROWS
+internal fun continueListeningLimit(columns: Int): Int = maxOf(8, columns * CONTINUE_LISTENING_ROWS)
 
 internal fun continueListeningTracks(
     recent: List<Track>,
@@ -152,7 +151,6 @@ internal fun legendStateWord(state: ProviderState): String? = when (state) {
     ProviderState.AVAILABLE -> null
 }
 
-/** The listener's hearts, counted by where they come from, with the newest covers for the hero. */
 internal data class FavoritesSummary(
     val count: Int,
     val local: Int,
@@ -167,11 +165,10 @@ internal data class FavoritesSummary(
 
 internal const val FAVORITES_HERO_COVERS = 4
 
-/** [favoriteIds] keeps heart order (oldest first), so covers come from the newest hearts that have art. */
 internal fun favoritesSummary(favoriteIds: Set<String>, catalog: List<Track>): FavoritesSummary {
     if (favoriteIds.isEmpty()) return FavoritesSummary.EMPTY
     val byId = catalog.associateBy { it.canonicalId }
-    val covers = favoriteIds.reversed()
+    val covers = favoriteIds.sortedDescending()
         .asSequence()
         .mapNotNull { byId[it]?.artwork }
         .distinctBy { it.url }

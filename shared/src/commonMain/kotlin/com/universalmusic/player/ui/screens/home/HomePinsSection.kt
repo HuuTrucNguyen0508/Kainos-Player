@@ -134,25 +134,31 @@ private fun SuggestionTile(suggestion: PinSuggestion, onPlay: () -> Unit, onPin:
         onClick = onPlay,
         width = if (tokens.skin == Skin.FOLIO) 116.dp else 164.dp,
     ) { art ->
-        Box(art) {
+        Box(Modifier.fillMaxWidth()) {
             val shape = RoundedCornerShape(tokens.rounding.normal)
-            if (suggestion.artwork != null) {
-                ArtworkImage(suggestion.artwork, suggestion.title, Modifier.fillMaxSize(), suggestion.title, shape = shape)
-            } else {
-                val fill = palette.accentContainer(source.slot)
-                Box(Modifier.fillMaxSize().clip(shape).background(fill), contentAlignment = Alignment.Center) {
-                    Icon(source.icon, contentDescription = null, tint = palette.accent(source.slot, AccentUse.Mark, fill), modifier = Modifier.size(28.dp))
+            Box(art.align(Alignment.Center)) {
+                if (suggestion.artwork != null) {
+                    ArtworkImage(suggestion.artwork, suggestion.title, Modifier.fillMaxSize(), suggestion.title, shape = shape)
+                } else {
+                    val fill = palette.accentContainer(source.slot)
+                    Box(Modifier.fillMaxSize().clip(shape).background(fill), contentAlignment = Alignment.Center) {
+                        Icon(source.icon, contentDescription = null, tint = palette.accent(source.slot, AccentUse.Mark, fill), modifier = Modifier.size(28.dp))
+                    }
                 }
             }
-            Surface(
+            IconButton(
                 onClick = onPin,
-                shape = tokens.rounding.full,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = .88f),
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(26.dp),
+                modifier = Modifier.align(Alignment.TopEnd).size(48.dp),
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.PushPin, contentDescription = "Pin ${suggestion.title} to Home", modifier = Modifier.size(14.dp))
+                Surface(
+                    shape = tokens.rounding.full,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = .88f),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(26.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.PushPin, contentDescription = "Pin ${suggestion.title} to Home", modifier = Modifier.size(14.dp))
+                    }
                 }
             }
         }
