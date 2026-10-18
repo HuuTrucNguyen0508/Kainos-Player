@@ -47,7 +47,8 @@ expect suspend fun <T> withVaultSyncForeground(
 
 expect fun setHomeLanHubAutostart(enabled: Boolean)
 
-expect fun homeLanHubAutostartEnabled(): Boolean
+/** Whether login startup is enabled, or null when this process cannot manage it. */
+expect fun homeLanHubAutostartEnabled(): Boolean?
 
 /** Rematch local-file hearts whose paths went missing after vault sync. Returns count. */
 

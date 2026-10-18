@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class HubUserServiceIsolationTest {
@@ -54,7 +55,7 @@ class HubUserServiceIsolationTest {
     @Test
     fun partialOverridesCannotOperateOnTheDefaultUnit() = runBlocking {
         for (overrides in partialOverrides) fixture(overrides) { f ->
-            assertFalse(f.service.isEnabled())
+            assertNull(f.service.isEnabled())
             f.service.stop()
             assertEquals(HubStopOutcome.STOPPED, f.service.reconcileStop())
             f.service.start()

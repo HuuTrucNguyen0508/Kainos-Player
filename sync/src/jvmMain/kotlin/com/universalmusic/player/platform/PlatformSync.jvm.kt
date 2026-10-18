@@ -75,7 +75,7 @@ actual suspend fun <T> withVaultSyncForeground(
 
 actual fun setHomeLanHubAutostart(enabled: Boolean) = hubUserService.configure(enabled)
 
-actual fun homeLanHubAutostartEnabled(): Boolean = hubUserService.isEnabled()
+actual fun homeLanHubAutostartEnabled(): Boolean? = hubUserService.isEnabled()
 
 data class HubSystemctlResult(val status: Int, val output: String = "")
 
@@ -108,8 +108,8 @@ class HubUserService(
         else -> HubProcessMode.HUB_ONLY
     }
 
-    fun isEnabled(): Boolean {
-        if (skipUnnamedIsolatedService()) return false
+    fun isEnabled(): Boolean? {
+        if (skipUnnamedIsolatedService()) return null
         val result = command(listOf("systemctl", "--user", "is-enabled", unitName))
         return when (result.output.trim()) {
             "enabled", "enabled-runtime" -> {

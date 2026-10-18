@@ -73,7 +73,7 @@ class HomeLanSyncService(
     private val deviceName: () -> String = ::homeLanDeviceName,
     private val pairingPollMs: Long = 1_000,
     private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
-    private val hubAutostartEnabled: () -> Boolean = ::homeLanHubAutostartEnabled,
+    private val hubAutostartEnabled: () -> Boolean? = ::homeLanHubAutostartEnabled,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -152,7 +152,9 @@ class HomeLanSyncService(
             Result.failure(error)
         }
         val failure = configured.exceptionOrNull() ?: observed.exceptionOrNull()
-            ?: if (observed.getOrNull() != enabled) IllegalStateException("Start at login did not change. Try again.") else null
+            ?: observed.getOrNull()?.takeIf { it != enabled }?.let {
+                IllegalStateException("Start at login did not change. Try again.")
+            }
         val message = failure?.let { "Could not update hub login startup: ${it.message ?: it.toString()}" }
         observed.getOrNull()?.let { actual ->
             if (settings().homeLanSyncHubAutostart != actual) {

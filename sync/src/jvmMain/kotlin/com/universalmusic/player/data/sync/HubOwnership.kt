@@ -80,7 +80,7 @@ class HubOwnership(
             if (recovery != null && mode != HubProcessMode.SUPERVISED_HUB_ONLY) {
                 val restart = if (recovery.reconcileStop) {
                     service.reconcileStop() == HubStopOutcome.STOPPED &&
-                        service.isEnabled()
+                        service.isEnabled() == true
                 } else {
                     serviceEnabledForOwnership()
                 }
@@ -91,7 +91,7 @@ class HubOwnership(
     }
 
     private fun serviceEnabledForOwnership(): Boolean = try {
-        service.isEnabled()
+        service.isEnabled() == true
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
