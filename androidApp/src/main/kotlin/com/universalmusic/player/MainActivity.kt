@@ -60,13 +60,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        ensureAppContainer().homeLanSync.onAppForeground()
+        ensureAppContainer().onAppForeground()
     }
 
     override fun onStop() {
         // The process may be killed while backgrounded; persist the session before that.
         val container = ensureAppContainer()
-        container.scope.launch { container.flushListeningSession() }
+        container.scope.launch { container.onAppBackground() }
         super.onStop()
     }
 

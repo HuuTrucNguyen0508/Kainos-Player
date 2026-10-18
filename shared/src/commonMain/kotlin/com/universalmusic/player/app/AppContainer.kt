@@ -10,6 +10,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
+import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
@@ -82,6 +83,7 @@ import com.universalmusic.player.platform.bindPlatformMediaControls
 import com.universalmusic.player.platform.createMetadataArtworkCache
 import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
+import com.universalmusic.player.platform.createListeningExchangeStore
 import com.universalmusic.player.platform.createListeningStore
 import com.universalmusic.player.platform.createTokenStore
 import com.universalmusic.player.platform.createUserLibraryStore
@@ -122,6 +124,11 @@ class AppContainer {
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
     val listeningStore: ListeningStore = createListeningStore()
+    private val listeningExchange = createListeningExchangeStore()
+
+    /** False between Android's onStop and the next onResume; desktop windows count as always visible. */
+    @kotlin.concurrent.Volatile
+    private var appVisible = true
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -190,7 +197,7 @@ class AppContainer {
     val homeLanVault = createHomeLanVaultStore(
         vaultRootProvider = { _settings.value.homeLanSyncVaultFolder },
     )
-    val homeLanSync = HomeLanSyncService(
+    val homeLanSync: HomeLanSyncService = HomeLanSyncService(
         scope = scope,
         settings = { _settings.value },
         updateSettings = { transform -> updateSettings(transform) },
@@ -216,6 +223,7 @@ class AppContainer {
                 },
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
+                listening = config.listening,
             ))
         },
         clientFactory = { peer ->
@@ -230,6 +238,8 @@ class AppContainer {
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
         hubPort = homeLanHubPort(),
+        listening = listeningExchange,
+        listeningForeground = { appVisible || player.nowPlaying.value.isPlaying },
     )
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
@@ -281,7 +291,10 @@ class AppContainer {
         },
         confineTo = playbackDispatcher(),
         workContext = Dispatchers.Default,
-        persistence = NowPlayingRecorder(store = listeningStore, scope = scope),
+        persistence = NowPlayingRecorder(
+            store = PublicationNotifyingStore(listeningStore) { homeLanSync.requestListeningDelivery() },
+            scope = scope,
+        ),
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
@@ -597,6 +610,18 @@ class AppContainer {
     }
 
     /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
+    fun onAppForeground() {
+        appVisible = true
+        homeLanSync.onAppForeground()
+    }
+
+    /** Persists the session, then leaves any undelivered listening state to background delivery. */
+    suspend fun onAppBackground() {
+        appVisible = false
+        flushListeningSession()
+        homeLanSync.scheduleListeningDeliveryIfPending()
+    }
+
     suspend fun flushListeningSession() {
         when (val result = player.flushPersistence()) {
             is FlushResult.Committed -> result.exportUnavailable?.let {
@@ -831,6 +856,17 @@ class AppContainer {
 }
 
 private const val VOLUME_PERSIST_DEBOUNCE_MS = 400L
+
+/** Starts a delivery after each commit that changed this device's published listening state. */
+private class PublicationNotifyingStore(
+    private val inner: ListeningStore,
+    private val onPublished: () -> Unit,
+) : ListeningStore by inner {
+    override suspend fun commit(commit: ListeningCommit) {
+        inner.commit(commit)
+        if (commit.local != null) onPublished()
+    }
+}
 
 /**
  * Thread that owns [PlayerSession] state: the platform UI thread when there is one (Android main
