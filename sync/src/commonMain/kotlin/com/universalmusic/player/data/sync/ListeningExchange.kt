@@ -281,9 +281,14 @@ class ListeningDelivery(
     private val clock: () -> Long = ::currentTimeMillis,
     private val mutex: Mutex = processDelivery,
 ) {
-    suspend fun hasPending(): Boolean {
-        val hub = target()?.hub ?: return false
-        return pendingRevision(hub) != null
+    /** False when the store cannot be read; the next publication or foreground retries anyway. */
+    suspend fun hasPending(): Boolean = try {
+        target()?.hub?.let { pendingRevision(it) } != null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (err: Exception) {
+        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening pending check failed: ${err.message ?: err}")
+        false
     }
 
     /** Delivers until nothing is pending; exports committed during a pass get their own pass. */
@@ -305,29 +310,23 @@ class ListeningDelivery(
         return export.takeIf { it.revision().value > delivered }
     }
 
-    private suspend fun pass(): DeliveryOutcome {
-        val current = target() ?: return DeliveryOutcome.IDLE
-        val export = pendingRevision(current.hub) ?: return DeliveryOutcome.IDLE
-        val revision = export.revision()
-        return try {
-            connect(current.hub).use { client -> exchange(client, current, export, revision) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (refused: ListeningHubRefused) {
-            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery refused: ${refused.message}")
-            DeliveryOutcome.REFUSED
-        } catch (err: Exception) {
-            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery of rev=${revision.value} failed: ${err.message ?: err}")
-            DeliveryOutcome.RETRY
-        }
+    private suspend fun pass(): DeliveryOutcome = try {
+        val current = target()
+        val export = current?.let { pendingRevision(it.hub) }
+        if (current == null || export == null) DeliveryOutcome.IDLE
+        else connect(current.hub).use { client -> exchange(client, current, export) }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (refused: ListeningHubRefused) {
+        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery refused: ${refused.message}")
+        DeliveryOutcome.REFUSED
+    } catch (err: Exception) {
+        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery failed: ${err.message ?: err}")
+        DeliveryOutcome.RETRY
     }
 
-    private suspend fun exchange(
-        client: ListeningHubClient,
-        current: DeliveryTarget,
-        export: LocalListeningExport,
-        revision: PublicationRevision,
-    ): DeliveryOutcome {
+    private suspend fun exchange(client: ListeningHubClient, current: DeliveryTarget, export: LocalListeningExport): DeliveryOutcome {
+        val revision = export.revision()
         repeat(MAX_ROUNDS) {
             val reply = client.report(export.toReport(current.deviceId, clock()))
             reply.hub?.takeIf { it.deviceId == current.hub.deviceId }?.toPeer(clock())?.let { store.receivePeer(it) }
