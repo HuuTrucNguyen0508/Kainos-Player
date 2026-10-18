@@ -60,7 +60,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        ensureAppContainer().onAppForeground()
+        ensureAppContainer().apply {
+            enableListeningHandoff()
+            onAppForeground()
+        }
     }
 
     override fun onStop() {

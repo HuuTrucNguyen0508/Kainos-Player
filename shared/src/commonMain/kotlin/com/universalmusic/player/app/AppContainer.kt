@@ -11,7 +11,11 @@ import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningCommit
+import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.ListeningStore
+import com.universalmusic.player.data.session.PeerListening
+import com.universalmusic.player.data.session.PeerReceipt
+import com.universalmusic.player.data.session.PortableListeningQueue
 import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalMusicProvider
@@ -27,6 +31,7 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlin.coroutines.EmptyCoroutineContext
 import com.universalmusic.player.data.settings.AppSettings
@@ -61,6 +66,8 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
 import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.playback.FlushResult
+import com.universalmusic.player.domain.playback.HandoffPeer
+import com.universalmusic.player.domain.playback.ListeningHandoff
 import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.playback.SleepTimerController
 import com.universalmusic.player.domain.provider.MusicProvider
@@ -124,7 +131,7 @@ class AppContainer {
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
     val listeningStore: ListeningStore = createListeningStore()
-    private val listeningExchange = createListeningExchangeStore()
+    private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore()) { requestHandoff() }
 
     private val foreground = AppForegroundState()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
@@ -301,6 +308,11 @@ class AppContainer {
         player = player,
         scope = scope,
     )
+    val listeningHandoff = ListeningHandoff(listeningExchange, player, localTracks = { local.libraryTracks.value })
+    private val handoffRequests = Channel<Unit>(Channel.CONFLATED)
+
+    @kotlin.concurrent.Volatile
+    private var handoffEnabled = false
 
     private val settingsUpdater = AppSettingsUpdater(scope, settingsStore, _settings, { applyProviderSettings(it) }) {
         player.updatePreferences(it.toPlaybackPreferences())
@@ -409,6 +421,27 @@ class AppContainer {
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
             foreground.onReady(homeLanSync::onAppForeground)
         }
+        scope.launch {
+            _ready.first { it }
+            for (request in handoffRequests) runHandoff()
+        }
+    }
+
+    fun enableListeningHandoff() {
+        handoffEnabled = true
+        requestHandoff()
+    }
+
+    private fun requestHandoff() {
+        if (handoffEnabled && appVisible) handoffRequests.trySend(Unit)
+    }
+
+    private suspend fun runHandoff() {
+        val settings = _settings.value
+        if (!settings.homeLanSyncEnabled) return
+        val peers = (listOfNotNull(settings.homeLanSyncHub) + settings.homeLanSyncPeers)
+            .map { HandoffPeer(it.deviceId, it.displayName) }
+        listeningHandoff.run(peers)
     }
 
     private fun migrateLocalLibrarySettings(settings: AppSettings): AppSettings {
@@ -611,6 +644,11 @@ class AppContainer {
     fun onAppForeground() {
         foreground.isVisible = true
         homeLanSync.onAppForeground()
+        scope.launch {
+            _ready.first { it }
+            homeLanSync.refreshListening()
+            requestHandoff()
+        }
     }
 
     suspend fun onAppBackground() {
@@ -854,6 +892,17 @@ class AppContainer {
 }
 
 private const val VOLUME_PERSIST_DEBOUNCE_MS = 400L
+
+private class PeerNotifyingExchangeStore(
+    private val inner: ListeningExchangeStore,
+    private val onPeerChanged: () -> Unit,
+) : ListeningExchangeStore by inner {
+    override suspend fun receivePeer(peer: PeerListening): PeerReceipt =
+        inner.receivePeer(peer).also { if (it.stored) onPeerChanged() }
+
+    override suspend fun attachPeerQueue(deviceId: String, queue: PortableListeningQueue): Boolean =
+        inner.attachPeerQueue(deviceId, queue).also { if (it) onPeerChanged() }
+}
 
 private class PublicationNotifyingStore(
     private val inner: ListeningStore,

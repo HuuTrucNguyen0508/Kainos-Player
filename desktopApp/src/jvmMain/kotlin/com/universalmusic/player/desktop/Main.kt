@@ -1,5 +1,6 @@
 package com.universalmusic.player.desktop
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -72,6 +73,7 @@ private fun runGui(onContainer: (AppContainer) -> Unit) {
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
         val container = ensureAppContainer().also(onContainer)
+        LaunchedEffect(container) { container.enableListeningHandoff() }
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
             onCloseRequest = {
