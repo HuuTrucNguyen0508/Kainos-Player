@@ -197,14 +197,14 @@ private fun AppScaffold(
             showNowPlaying = false
             showQueue = false
         }
-        if (next == destination) return
+        if (next.name == destinationName) return
         if (next == AppDestination.Home) {
             // Home is the root: clear history so the next back can leave the app.
             tabBackStackNames = emptyList()
             destinationName = AppDestination.Home.name
             return
         }
-        tabBackStackNames = tabBackStackNames + destination.name
+        tabBackStackNames = tabBackStackNames + destinationName
         destinationName = next.name
     }
 

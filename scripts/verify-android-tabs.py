@@ -37,16 +37,24 @@ def selected(tree):
 
 tree = snapshot('initial')
 checks = []
-for index, label in enumerate(('Settings', 'Home', 'Library', 'Settings', 'Settings', 'Home', 'Library', 'Home')):
-    bounds = list(map(int, re.findall(r'\d+', tabs(tree)[label].get('bounds'))))
-    x, y = (bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2
+steps = (
+    ('Settings', 'Settings'), ('Home', 'Home'), ('Library', 'Library'),
+    ('Settings', 'Settings'), ('Settings', 'Settings'), ('Back', 'Library'),
+    ('Back', 'Home'), ('Library', 'Library'), ('Home', 'Home'),
+)
+for index, (action, label) in enumerate(steps):
     previous = selected(tree)
-    adb('shell', 'input', 'tap', str(x), str(y))
+    if action == 'Back':
+        adb('shell', 'input', 'keyevent', '4')
+    else:
+        bounds = list(map(int, re.findall(r'\d+', tabs(tree)[label].get('bounds'))))
+        x, y = (bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2
+        adb('shell', 'input', 'tap', str(x), str(y))
     time.sleep(.8)
     tree = snapshot(f'{index + 1:02d}-{previous}-to-{label}')
     actual = selected(tree)
     passed = actual == label
-    result = f'{"PASS" if passed else "FAIL"} {previous} -> {label} at {x},{y}; selected={actual}'
+    result = f'{"PASS" if passed else "FAIL"} {previous} -> {label} via {action}; selected={actual}'
     print(result, flush=True)
     checks.append(result)
     (out / 'results.txt').write_text('\n'.join(checks) + '\n')
