@@ -113,7 +113,9 @@ class PlayerSession(
      * Cleared on a normal track start that is not a resume-from-restore.
      */
     private var pendingResumePositionMs: Long? = null
-    private var startingResumePositionMs: Long? = null
+    private class StartupTarget(var positionMs: Long?)
+
+    private var startupTarget: StartupTarget? = null
 
     /**
      * Queue entries that failed terminally since the last successful start or user play request.
@@ -183,7 +185,7 @@ class PlayerSession(
                 _nowPlaying.update { current ->
                     current.copy(
                         isPlaying = playing,
-                        positionMs = startingResumePositionMs ?: pausedSeekTargetMs.takeUnless { playing }
+                        positionMs = startupTarget?.positionMs ?: pausedSeekTargetMs.takeUnless { playing }
                             ?: engineState.positionMs,
                         durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
                         buffering = !pausePending && (engineState.status == EngineStatus.BUFFERING ||
@@ -225,8 +227,7 @@ class PlayerSession(
                         val current = _nowPlaying.value.resolved ?: return@collectLatest
                         val reason = engineState.error
                         trace("engine FAILED for ${current.track.label()}: $reason -> fallback")
-                        playJob?.cancel()
-                        playJob = scope.launch { tryFallback(current, reason, eventGeneration) }
+                        startFallback(current, reason, eventGeneration)
                     }
                     else -> Unit
                 }
@@ -408,10 +409,7 @@ class PlayerSession(
         val resolved = _nowPlaying.value.resolved ?: return@onSession
         if (resolved.fallbacks.isEmpty()) return@onSession
         val generation = playGeneration
-        playJob?.cancel()
-        playJob = scope.launch(sessionContext) {
-            tryFallback(resolved, "Trying another source", generation)
-        }
+        startFallback(resolved, "Trying another source", generation)
     }
 
     fun removeFromQueue(itemId: String) = onSession {
@@ -514,9 +512,10 @@ class PlayerSession(
     fun seekTo(positionMs: Long) = onSession { seekNow(positionMs) }
 
     private fun seekNow(positionMs: Long) {
+        val target = positionMs.coerceAtLeast(0L)
+        startupTarget?.positionMs = target
         engine.seekTo(positionMs)
         if (queue.queue.value.items.isEmpty()) return
-        val target = positionMs.coerceAtLeast(0L)
         when (engine.state.value.status) {
             EngineStatus.IDLE, EngineStatus.ENDED, EngineStatus.FAILED -> pendingResumePositionMs = target.takeIf { it > 0L }
             EngineStatus.PLAYING, EngineStatus.BUFFERING, EngineStatus.PAUSED -> Unit
@@ -720,7 +719,7 @@ class PlayerSession(
     private fun beginTransition() {
         playGeneration++
         completionArmed = false
-        startingResumePositionMs = null
+        startupTarget = null
         pausedSeekTargetMs = null
         pausePending = false
     }
@@ -730,7 +729,8 @@ class PlayerSession(
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
         beginTransition()
-        startingResumePositionMs = resumeAt
+        val target = StartupTarget(resumeAt)
+        startupTarget = target
         val generation = playGeneration
         trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
@@ -753,9 +753,9 @@ class PlayerSession(
         record(change)
         playJob = scope.launch(sessionContext) {
             try {
-                playTrack(item.track, item.id, generation, resumeAt)
+                playTrack(item.track, item.id, generation, target)
             } finally {
-                if (generation == playGeneration) startingResumePositionMs = null
+                if (startupTarget === target) startupTarget = null
             }
         }
         return playJob
@@ -765,7 +765,7 @@ class PlayerSession(
         track: Track,
         queueItemId: String,
         generation: Long,
-        resumePositionMs: Long? = null,
+        target: StartupTarget,
     ) {
         currentCoroutineContext().ensureActive()
         if (generation != playGeneration) return
@@ -777,7 +777,7 @@ class PlayerSession(
                 queueItemId = queueItemId,
                 resolved = null,
                 isPlaying = false,
-                positionMs = resumePositionMs?.coerceAtLeast(0L) ?: 0,
+                positionMs = target.positionMs?.coerceAtLeast(0L) ?: 0,
                 durationMs = playable.durationMs,
                 buffering = true,
                 error = null,
@@ -799,14 +799,14 @@ class PlayerSession(
             }
         if (generation != playGeneration) return
         currentCoroutineContext().ensureActive()
-        startResolved(resolved, fallback = null, generation = generation, resumePositionMs = resumePositionMs)
+        startResolved(resolved, fallback = null, generation = generation, target = target)
     }
 
     private suspend fun startResolved(
         resolved: ResolvedPlayback,
         fallback: SourceFallbackEvent?,
         generation: Long,
-        resumePositionMs: Long? = null,
+        target: StartupTarget?,
     ) {
         if (generation != playGeneration) return
         currentCoroutineContext().ensureActive()
@@ -816,7 +816,7 @@ class PlayerSession(
                 if (generation != playGeneration) return
                 currentCoroutineContext().ensureActive()
                 trace("enrich failed for ${resolved.track.label()} via ${resolved.source.provider}: ${error.message}")
-                tryFallback(resolved, error.message, generation)
+                tryFallback(resolved, error.message, generation, target)
                 return
             }
         if (generation != playGeneration) {
@@ -843,11 +843,12 @@ class PlayerSession(
             }
             if (generation == playGeneration) {
                 engine.setVolume(_volume.value)
-                val seekTo = resumePositionMs
-                if (seekTo != null && seekTo > 0L) {
+                val seekTo = target?.positionMs
+                if (seekTo != null) {
                     trace("seek after restore resumeAt=$seekTo gen=$generation")
                     engine.seekTo(seekTo)
                 }
+                if (startupTarget === target) startupTarget = null
             }
         }.onFailure { error ->
             if (error is CancellationException) {
@@ -857,7 +858,7 @@ class PlayerSession(
             if (generation != playGeneration) return
             currentCoroutineContext().ensureActive()
             trace("engine.play failed gen=$generation: ${error.message}")
-            tryFallback(playable, error.message, generation)
+            tryFallback(playable, error.message, generation, target)
             return
         }
         if (generation != playGeneration) {
@@ -868,7 +869,25 @@ class PlayerSession(
         trace("engine.play ok gen=$generation; completion armed")
     }
 
-    private suspend fun tryFallback(current: ResolvedPlayback, reason: String? = null, generation: Long) {
+    private fun startFallback(current: ResolvedPlayback, reason: String?, generation: Long) {
+        val target = startupTarget?.let { StartupTarget(it.positionMs) }
+        playJob?.cancel()
+        startupTarget = target
+        playJob = scope.launch(sessionContext) {
+            try {
+                tryFallback(current, reason, generation, target)
+            } finally {
+                if (startupTarget === target) startupTarget = null
+            }
+        }
+    }
+
+    private suspend fun tryFallback(
+        current: ResolvedPlayback,
+        reason: String?,
+        generation: Long,
+        target: StartupTarget?,
+    ) {
         if (generation != playGeneration) return
         trace(
             "tryFallback from ${current.source.provider} reason=$reason remaining=" +
@@ -895,6 +914,7 @@ class PlayerSession(
             resolved = current.copy(source = next, fallbacks = remaining, reason = event.message),
             fallback = event,
             generation = generation,
+            target = target,
         )
     }
 
