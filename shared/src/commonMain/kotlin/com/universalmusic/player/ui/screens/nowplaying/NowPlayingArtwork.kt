@@ -37,14 +37,15 @@ internal fun ColumnScope.NowPlayingArtwork(
     onPositioned: (Rect) -> Unit,
 ) {
     if (expand) {
-        // Takes whatever height the controls leave, so they never fall below the first screen.
+        // Takes at most the height the controls leave, so they never fall below the first screen.
+        // `fill = false` lets the box shrink to the cover, so the cover sits under the header and
+        // any spare height falls below the controls instead of above the art.
         BoxWithConstraints(
             Modifier
                 .fillMaxWidth()
-                .weight(1f, fill = true)
+                .weight(1f, fill = false)
                 .heightIn(min = 120.dp),
-            // Spare height goes above the cover (album light fills it) so the title hugs the art.
-            contentAlignment = Alignment.BottomCenter,
+            contentAlignment = Alignment.TopCenter,
         ) {
             val widthShare = if (compact) maxWidth else maxWidth * 0.92f
             NowPlayingArtworkFrame(
