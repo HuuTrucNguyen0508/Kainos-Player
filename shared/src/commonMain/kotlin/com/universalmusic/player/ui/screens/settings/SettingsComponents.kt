@@ -5,7 +5,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import com.universalmusic.player.ui.components.LedgerRow
 import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.AccentUse
@@ -32,9 +34,9 @@ import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 
 @Composable
 internal fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    LedgerRow(onClick = { onChange(!checked) }) {
+    LedgerRow(modifier = Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)) {
         Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

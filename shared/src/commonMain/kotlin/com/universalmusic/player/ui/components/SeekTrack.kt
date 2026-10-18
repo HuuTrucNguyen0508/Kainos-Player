@@ -2,6 +2,7 @@ package com.universalmusic.player.ui.components
 
 import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -146,7 +147,6 @@ private inline fun DrawScope.drawRuledTicks(
 ) {
     val seconds = durationMs / 1000f
     val pxPerSecond = size.width / seconds
-    // Keep ticks at least 6 dp apart: 30 s, then minutes, then 5-minute marks on long tracks.
     val step = listOf(30, 60, 300, 600, 1800).first { it * pxPerSecond >= 6.dp.toPx() || it == 1800 }
     val labelEvery = listOf(1, 2, 5, 10, 15, 30, 60).first { it * 60 * pxPerSecond >= 30.dp.toPx() || it == 60 }
     var t = step
@@ -163,7 +163,6 @@ private inline fun DrawScope.drawRuledTicks(
 private fun DrawScope.drawWave(color: Color, start: Float, end: Float, y: Float, stroke: Float, phase: Float) {
     val wavelength = 28.dp.toPx()
     val amplitude = 3.dp.toPx()
-    // Taper the amplitude in over the first wavelength so the wave grows out of the start cap.
     val path = Path()
     var x = start
     val stepPx = 1.5f
@@ -198,6 +197,10 @@ fun SkinSlider(
     val dragged by interaction.collectIsDraggedAsState()
     val pressed by interaction.collectIsPressedAsState()
     val focused by interaction.collectIsFocusedAsState()
+    val palette = LocalKainosPalette.current
+    val focusOutline = if (focused) {
+        Modifier.border(2.dp, palette.scheme.primary, LocalSkinTokens.current.rounding.full)
+    } else Modifier
     val wavy = LocalSkinTokens.current.seek == SeekStyle.WAVY
     val thumb: Dp = if (wavy) 4.dp else 12.dp
     Slider(
@@ -206,7 +209,7 @@ fun SkinSlider(
         onValueChangeFinished = onValueChangeFinished,
         enabled = enabled,
         interactionSource = interaction,
-        modifier = modifier,
+        modifier = modifier.then(focusOutline),
         thumb = { Spacer(Modifier.size(thumb, if (kind == SeekKind.Level) 24.dp else 36.dp)) },
         track = { state ->
             val range = state.valueRange
