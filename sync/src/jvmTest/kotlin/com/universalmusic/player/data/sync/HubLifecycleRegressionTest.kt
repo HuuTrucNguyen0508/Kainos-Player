@@ -490,6 +490,112 @@ class HubLifecycleRegressionTest {
         fixture { f -> assertSettingsFailure(f, backgroundScope, requested = true, timeout = false, noChange = true) }
     }
 
+    @Test
+    fun generatedDefaultUnitChildPreservesEnabledAutostartAtBootstrap() = runTest {
+        fixture { f ->
+            f.service.configure(true)
+            val unit = f.config.resolve("systemd/user/kainos-hub.service")
+            val body = Files.readString(unit)
+            val environment = body.lineSequence().filter { it.startsWith("Environment=") }
+                .map { it.removePrefix("Environment=").removeSurrounding("\"") }
+                .associate { it.substringBefore('=') to it.substringAfter('=') }
+            assertEquals(setOf("KAINOS_DATA_DIR", "KAINOS_HUB_PORT", "KAINOS_HUB_UNIT"), environment.keys)
+            val childIsolation = DesktopIsolation.parse(environment, f.config.resolve("child-home"))
+            assertEquals(f.isolation.dataDir, childIsolation.dataDir)
+            assertEquals(f.isolation.hubPort, childIsolation.hubPort)
+            f.events.clear()
+            val childService = HubUserService(childIsolation, f.config, { error("No launcher lookup") }) {
+                f.events += it.joinToString(" ")
+                error("No protected unit operations")
+            }
+            assertEquals(HubProcessMode.SUPERVISED_HUB_ONLY,
+                childService.processMode(true, environment["KAINOS_HUB_UNIT"]))
+            assertUnavailableAutostartPreservesSettings(f, backgroundScope, childService, saved = true, requested = true)
+            assertEquals(body, Files.readString(unit))
+        }
+    }
+
+    @Test
+    fun portOnlyDefaultProfilePreservesEnabledAutostartAtBootstrap() = runTest {
+        fixture { f ->
+            val isolation = DesktopIsolation.parse(mapOf("KAINOS_HUB_PORT" to "44003"), f.config.resolve("private-home"))
+            assertFalse(isolation.dataDirOverridden)
+            assertUnavailableProfile(f, backgroundScope, isolation, saved = true, requested = true)
+        }
+    }
+
+    @Test
+    fun unavailableAutostartDoesNotInventAChangeOrRetryError() = runTest {
+        fixture { f ->
+            for (saved in listOf(false, true)) {
+                for (requested in listOf(false, true)) {
+                    val isolation = DesktopIsolation.parse(mapOf("KAINOS_HUB_PORT" to "44003"), f.config.resolve("private-home"))
+                    assertUnavailableProfile(f, backgroundScope, isolation, saved, requested)
+                }
+            }
+        }
+    }
+
+    private suspend fun assertUnavailableProfile(
+        f: Fixture,
+        scope: CoroutineScope,
+        isolation: DesktopIsolation,
+        saved: Boolean,
+        requested: Boolean,
+    ) {
+        val unit = f.config.resolve("systemd/user/kainos-hub.service")
+        val legacy = f.config.resolve("autostart/kainos-home-sync-hub.desktop")
+        Files.createDirectories(unit.parent)
+        Files.createDirectories(legacy.parent)
+        Files.writeString(unit, "protected unit")
+        Files.writeString(legacy, "protected legacy entry")
+        val service = HubUserService(isolation, f.config, { error("No launcher lookup") }) {
+            f.events += it.joinToString(" ")
+            error("No protected unit operations")
+        }
+        assertUnavailableAutostartPreservesSettings(f, scope, service, saved, requested)
+        assertEquals("protected unit", Files.readString(unit))
+        assertEquals("protected legacy entry", Files.readString(legacy))
+    }
+
+    private suspend fun assertUnavailableAutostartPreservesSettings(
+        f: Fixture,
+        scope: CoroutineScope,
+        unitService: HubUserService,
+        saved: Boolean,
+        requested: Boolean,
+    ) {
+        var persisted = AppSettings(homeLanSyncHubAutostart = saved)
+        val settingsFile = f.config.resolve("settings.json")
+        Files.createDirectories(settingsFile.parent)
+        Files.writeString(settingsFile, Json.encodeToString(AppSettings.serializer(), persisted))
+        val service = HomeLanSyncService(
+            scope = scope,
+            settings = { persisted },
+            updateSettings = { transform ->
+                persisted = transform(persisted)
+                Files.writeString(settingsFile, Json.encodeToString(AppSettings.serializer(), persisted))
+            },
+            library = LibraryRepository(),
+            playlists = KainosPlaylistRepository(),
+            hubFactory = { error("No listener in this test") },
+            clientFactory = { error("No client in this test") },
+            pairingClientFactory = noPairingClient(),
+            identity = FixedDeviceIdentity("aa".repeat(32)),
+            vaultStore = JvmHomeLanVaultStore({ null }, f.config.resolve("vault-state.json")),
+            refreshLocalLibrary = {},
+            configureHubAutostart = unitService::configure,
+            hubAutostartEnabled = unitService::isEnabled,
+        )
+        service.hydrateFromSettings(persisted)
+        val result = service.setHubAutostartEnabled(requested)
+        assertEquals(saved, persisted.homeLanSyncHubAutostart, "Unsupported management must preserve the preference")
+        assertEquals(saved, Json.decodeFromString<AppSettings>(Files.readString(settingsFile)).homeLanSyncHubAutostart)
+        assertNull(service.status.value.hubAutostartError, "Unsupported management is not a failed retry")
+        assertTrue(result.isSuccess)
+        assertTrue(f.events.isEmpty(), "No protected unit operations")
+    }
+
     private suspend fun assertSettingsFailure(
         f: Fixture,
         scope: CoroutineScope,
