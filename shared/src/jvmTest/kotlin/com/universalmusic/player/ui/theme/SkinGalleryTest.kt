@@ -131,6 +131,9 @@ internal val galleryEntries = listOf(
     GalleryEntry("accents") { AccentSpecimens() },
     GalleryEntry("typography", height = 1200) { TypographySpecimens() },
     GalleryEntry("material", height = 800) { MaterialSpecimens() },
+    GalleryEntry("seek", height = 760) { SeekSpecimens() },
+    GalleryEntry("marks", width = 1200, height = 640) { MarkSpecimens() },
+    GalleryEntry("rows", height = 1000) { RowSpecimens() },
 )
 
 private data class GalleryCase(val id: String, val palette: KainosPalette)

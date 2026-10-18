@@ -582,6 +582,7 @@ private fun DesktopMiniPlayer(
         canSkipNext = canSkipNext,
         progress = miniProgress,
         buffering = now.buffering,
+        durationMs = durationMs,
         onOpen = onOpen,
         onToggle = { container.player.togglePlayPause() },
         onNext = { container.player.skipToNext() },
