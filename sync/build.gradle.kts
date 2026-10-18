@@ -14,6 +14,7 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.documentfile)
+            implementation(libs.androidx.work.runtime.ktx)
             implementation(libs.ktor.client.okhttp)
         }
         jvmMain.dependencies {
@@ -23,6 +24,9 @@ kotlin {
             implementation(libs.ktor.network.tls.certificates)
             implementation(libs.dbus.java.core)
             implementation(libs.dbus.java.transport.native.unixsocket)
+        }
+        jvmTest.dependencies {
+            implementation(libs.sqldelight.sqlite.driver)
         }
     }
 }

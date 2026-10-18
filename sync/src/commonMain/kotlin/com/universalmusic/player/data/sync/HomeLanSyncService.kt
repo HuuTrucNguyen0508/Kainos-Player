@@ -2,6 +2,7 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
+import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.platform.DeviceIdentity
 import com.universalmusic.player.platform.DeviceIdentityResetException
@@ -13,6 +14,7 @@ import com.universalmusic.player.platform.homeLanHubAutostartEnabled
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.platform.scheduleBackgroundListeningDelivery
 import com.universalmusic.player.platform.secureRandomBytes
 import com.universalmusic.player.platform.withVaultSyncForeground
 import io.ktor.client.plugins.ResponseException
@@ -74,6 +76,12 @@ class HomeLanSyncService(
     private val pairingPollMs: Long = 1_000,
     private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
     private val hubAutostartEnabled: () -> Boolean? = ::homeLanHubAutostartEnabled,
+    /** This device's listening rows; null turns the listening exchange off in both directions. */
+    private val listening: ListeningExchangeStore? = null,
+    private val openListeningHub: suspend (PairedPeer) -> ListeningHubClient = ::openPairedListeningHub,
+    /** Whether the process is visibly in use, so a failed delivery retries in-process. */
+    private val listeningForeground: () -> Boolean = { true },
+    private val scheduleListeningDelivery: () -> Unit = ::scheduleBackgroundListeningDelivery,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -97,6 +105,18 @@ class HomeLanSyncService(
     private val pairingAttemptGeneration = MutableStateFlow(0L)
     private val autostartMutex = Mutex()
     private var pairingExpiryJob: Job? = null
+
+    private val listeningDelivery = listening?.let { store ->
+        ListeningDelivery(
+            store = store,
+            target = { if (resetBlocked()) null else settings().listeningDeliveryTarget(isDesktop) },
+            connect = openListeningHub,
+            clock = clock,
+        )
+    }
+    private val listeningRunner = listeningDelivery?.let {
+        ListeningDeliveryRunner(scope, it, listeningForeground, scheduleListeningDelivery)
+    }
 
     private val resolutionLock = Any()
     private var resolutionGeneration = 0L
@@ -691,6 +711,7 @@ class HomeLanSyncService(
                         heartedVaultFileNames = {
                             if (settings().homeLanSyncVaultHeartsOnly) heartedLocalAudioFileNames(library) else null
                         },
+                        listening = listening,
                     ),
                 )
                 created.start()
@@ -728,7 +749,18 @@ class HomeLanSyncService(
 
     private class ForegroundResolutionAborted : Exception()
 
+    /** Sends the current listening state to the hub now; a failure retries on its own. */
+    fun requestListeningDelivery() {
+        listeningRunner?.request()
+    }
+
+    /** Hands an undelivered listening state to the platform's background delivery. */
+    suspend fun scheduleListeningDeliveryIfPending() {
+        if (listeningDelivery?.hasPending() == true) scheduleListeningDelivery()
+    }
+
     fun onAppForeground() {
+        requestListeningDelivery()
         scope.launch {
             var source: ResolutionSource? = null
             runCatching {
@@ -923,7 +955,7 @@ private fun PairingReply<Unit>.toResult(): Result<Unit> = when (this) {
     is PairingReply.Refused -> Result.failure(IllegalStateException(reason))
 }
 
-private fun trustFailureOf(err: Throwable): String? {
+internal fun trustFailureOf(err: Throwable): String? {
     if ((err as? ResponseException)?.response?.status == HttpStatusCode.Unauthorized) return HOME_LAN_NOT_TRUSTED
     val pinMismatch = generateSequence(err) { it.cause }.any { HUB_PIN_MISMATCH in (it.message ?: "") }
     return if (pinMismatch) HOME_LAN_IDENTITY_CHANGED else null

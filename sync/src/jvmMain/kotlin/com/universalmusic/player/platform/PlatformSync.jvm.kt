@@ -242,3 +242,6 @@ actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {
     // the vault root is the music folder. Filename rematch is primarily an Android need.
     return 0
 }
+
+/** The desktop process stays up while it has anything to deliver, so its in-process retry covers it. */
+actual fun scheduleBackgroundListeningDelivery() = Unit

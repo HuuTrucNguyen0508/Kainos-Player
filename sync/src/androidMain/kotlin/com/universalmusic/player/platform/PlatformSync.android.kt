@@ -28,3 +28,6 @@ actual fun setHomeLanHubAutostart(enabled: Boolean) = Unit
 actual fun homeLanHubAutostartEnabled(): Boolean? = null
 
 actual suspend fun rematchLocalHeartsAfterVaultSync(): Int = 0
+
+actual fun scheduleBackgroundListeningDelivery() =
+    com.universalmusic.player.data.sync.ListeningDeliveryWorker.enqueue(androidContext)

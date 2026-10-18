@@ -18,6 +18,7 @@ import io.ktor.server.request.header
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -37,6 +38,7 @@ class DesktopHomeLanSyncHub(
     private val identity: JvmDeviceIdentity.Material,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
     private val bindHost: String = "0.0.0.0",
+    clock: () -> Long = System::currentTimeMillis,
 ) : HomeLanSyncHub {
     private var server: EmbeddedServer<*, *>? = null
     @Volatile
@@ -46,6 +48,7 @@ class DesktopHomeLanSyncHub(
     private val vaultMutex = Mutex()
     private val self = PairedPeer(config.deviceId, "This PC", identity.fingerprint, pairedAtMs = 0L)
     private val vault get() = config.vault
+    private val listeningExchange = config.listening?.let { ListeningExchangeHost(it, config.deviceId, clock) }
 
     override val isListening: Boolean get() = listening
 
@@ -131,6 +134,25 @@ class DesktopHomeLanSyncHub(
                     val client = call.pairingClient() ?: return@get
                     val attemptId = call.request.queryParameters["attemptId"].orEmpty()
                     call.respondPairing(config.pairing.status(client, attemptId))
+                }
+                listeningExchange?.let { host ->
+                    post(HOME_LAN_SYNC_PATH_V3_LISTENING) {
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveBounded(MAX_LISTENING_BODY_BYTES) ?: return@post
+                        call.respondAnswer(host.report(peer, body), ContentType.Application.Json)
+                    }
+                    put("$HOME_LAN_SYNC_PATH_V3_QUEUE/{hash}") {
+                        val peer = call.pairedPeer() ?: return@put
+                        touchActivity()
+                        val body = call.receiveBounded(MAX_QUEUE_BODY_BYTES) ?: return@put
+                        call.respondAnswer(host.uploadQueue(peer, call.parameters["hash"].orEmpty(), body), ContentType.Text.Plain)
+                    }
+                    get("$HOME_LAN_SYNC_PATH_V3_QUEUE/{hash}") {
+                        call.pairedPeer() ?: return@get
+                        touchActivity()
+                        call.respondAnswer(host.fetchQueue(call.parameters["hash"].orEmpty()), ContentType.Application.Json)
+                    }
                 }
                 for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_V2_HEARTS)) {
                     post(path) {
@@ -284,6 +306,19 @@ class DesktopHomeLanSyncHub(
             is HubCaller.Paired -> caller.peer.fingerprint
         }
 
+    /** Reads at most [limit] bytes; a larger body is answered with 413 and null. */
+    private suspend fun ApplicationCall.receiveBounded(limit: Long): String? {
+        val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+        val body = if (declared != null && declared > limit) null
+            else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
+        if (body == null) respondText("Request too large", status = HttpStatusCode.PayloadTooLarge)
+        return body?.decodeToString()
+    }
+
+    private suspend fun ApplicationCall.respondAnswer(answer: HubAnswer, type: ContentType) =
+        if (answer.status == HttpStatusCode.NoContent.value) respond(HttpStatusCode.NoContent)
+        else respondText(answer.body, type, HttpStatusCode.fromValue(answer.status))
+
     private suspend inline fun <reified T> ApplicationCall.receivePairing(): T? {
         val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
         if (declared != null && declared > MAX_PAIRING_BODY_BYTES) {
@@ -307,6 +342,11 @@ class DesktopHomeLanSyncHub(
 }
 
 private const val MAX_PAIRING_BODY_BYTES = 4_096L
+
+private const val MAX_LISTENING_BODY_BYTES = 64L * 1024
+
+/** A whole portable queue; thousands of entries stay well below this. */
+private const val MAX_QUEUE_BODY_BYTES = 16L * 1024 * 1024
 
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
 
