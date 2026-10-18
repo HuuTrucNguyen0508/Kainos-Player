@@ -1,5 +1,12 @@
 package com.universalmusic.player.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -9,10 +16,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
@@ -41,11 +52,16 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.HandoffNotice
 import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.ui.components.MiniPlayerBar
 import com.universalmusic.player.ui.navigation.AppDestination
@@ -57,6 +73,7 @@ import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.UniversalMusicTheme
+import kotlinx.coroutines.delay
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
@@ -329,6 +346,7 @@ private fun AppScaffold(
 
             // Main content column: tabs stay composed across resize so Library scroll survives.
             Column(Modifier.weight(1f).fillMaxSize()) {
+                HandoffNoticeBar(container)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxSize()) {
                         when {
@@ -477,6 +495,68 @@ private fun AppScaffold(
         }
     }
 }
+
+@Composable
+private fun HandoffNoticeBar(container: AppContainer) {
+    val handoff = container.listeningHandoff
+    val notice by handoff.notice.collectAsState()
+    var shown by remember { mutableStateOf<HandoffNotice?>(null) }
+    notice?.let { shown = it }
+    LaunchedEffect(notice?.id) {
+        val id = notice?.id ?: return@LaunchedEffect
+        delay(HandoffNoticeVisibleMs)
+        handoff.dismissNotice(id)
+    }
+    AnimatedVisibility(
+        visible = notice != null,
+        modifier = Modifier.fillMaxWidth(),
+        enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing)) +
+            fadeIn(tween(HandoffNoticeEnterMs, easing = StandardEasing)),
+        exit = shrinkVertically(tween(HandoffNoticeExitMs, easing = StandardEasing)) +
+            fadeOut(tween(HandoffNoticeExitMs, easing = StandardEasing)),
+    ) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            shown?.let { current ->
+                HandoffNoticePill(current.deviceName) { handoff.dismissNotice(current.id) }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(20.dp))
+            Text(
+                "Continued from $deviceName",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp).weight(1f, fill = false),
+            )
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Default.Close, contentDescription = "Dismiss")
+            }
+        }
+    }
+}
+
+private const val HandoffNoticeVisibleMs = 6_000L
+private const val HandoffNoticeEnterMs = 300
+private const val HandoffNoticeExitMs = 200
+private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 @Composable
 private fun DesktopMiniPlayer(
