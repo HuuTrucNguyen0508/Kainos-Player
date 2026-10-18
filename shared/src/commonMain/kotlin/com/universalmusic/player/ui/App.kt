@@ -273,6 +273,8 @@ private fun AppScaffold(
     Scaffold(
         modifier = Modifier.skinGround(),
         containerColor = Color.Transparent,
+        // A transparent container has no content colour of its own; text must still get the ink.
+        contentColor = MaterialTheme.colorScheme.onBackground,
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
