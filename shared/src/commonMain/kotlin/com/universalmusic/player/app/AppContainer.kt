@@ -646,7 +646,6 @@ class AppContainer {
         homeLanSync.onAppForeground()
         scope.launch {
             _ready.first { it }
-            homeLanSync.refreshListening()
             requestHandoff()
         }
     }

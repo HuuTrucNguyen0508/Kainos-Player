@@ -132,6 +132,8 @@ private const val T0 = 1_000_000L
 private fun yt(id: String) = track(id, "Artist", provider = ProviderId.YOUTUBE_MUSIC, canonicalId = "yt:$id")
 
 private class FakeExchange : ListeningExchangeStore {
+    override suspend fun refusedPairing(): com.universalmusic.player.data.session.ListeningPairingIdentity? = null
+    override suspend fun setRefusedPairing(pairing: com.universalmusic.player.data.session.ListeningPairingIdentity?) = Unit
     private val peers = mutableMapOf<String, StoredPeerListening>()
     val applied = mutableMapOf<String, Long>()
     var claim = HandoffClaim.CLAIMED
