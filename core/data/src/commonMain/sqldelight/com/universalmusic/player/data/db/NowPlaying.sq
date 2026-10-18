@@ -8,6 +8,7 @@ CREATE TABLE local_listening (
     position_at_ms INTEGER NOT NULL,
     is_playing INTEGER AS kotlin.Boolean NOT NULL,
     queue_hash TEXT NOT NULL,
+    shuffle INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
     CHECK ((queue_item_id IS NULL) = (track_json IS NULL))
 );
 
@@ -55,8 +56,8 @@ selectLocal:
 SELECT * FROM local_listening WHERE id = 0;
 
 upsertLocal:
-INSERT OR REPLACE INTO local_listening (id, revision, last_active_at_ms, queue_item_id, track_json, position_ms, position_at_ms, is_playing, queue_hash)
-VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO local_listening (id, revision, last_active_at_ms, queue_item_id, track_json, position_ms, position_at_ms, is_playing, queue_hash, shuffle)
+VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectLocalQueue:
 SELECT * FROM local_listening_queue WHERE id = 0;

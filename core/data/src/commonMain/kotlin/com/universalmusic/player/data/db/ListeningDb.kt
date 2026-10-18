@@ -99,6 +99,7 @@ private fun KainosDatabase.publishLocal(update: LocalListeningUpdate, committedA
                 state.positionAtMs,
                 state.isPlaying,
                 hash,
+                state.shuffle,
             )
             queries.upsertExport(revision, lastActiveAtMs, null)
         }
@@ -118,6 +119,6 @@ internal fun KainosDatabase.readLocalExport(): LocalListeningExport? {
     val stored = queries.selectLocalQueue().executeAsOne()
     check(stored.queue_hash == row.queue_hash) { "Local listening queue does not match its row" }
     val queue = PortableListeningQueue.decode(stored.queue_json, QueueHash.parse(row.queue_hash))
-    val state = ListeningState.create(queue, row.queue_item_id, row.position_ms, row.position_at_ms, row.is_playing)
+    val state = ListeningState.create(queue, row.queue_item_id, row.position_ms, row.position_at_ms, row.is_playing, row.shuffle)
     return LocalListeningExport.Available(LocalListeningPublication(revision, row.last_active_at_ms, state))
 }

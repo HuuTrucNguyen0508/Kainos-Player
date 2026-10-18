@@ -81,6 +81,7 @@ fun LocalListeningExport.toReport(deviceId: String, nowMs: Long): ListeningRepor
                 positionMs = state.positionMs,
                 positionAgeMs = ageMs(nowMs, state.positionAtMs),
                 isPlaying = state.isPlaying,
+                shuffle = state.shuffle,
             ),
         )
     }
@@ -99,7 +100,7 @@ fun ListeningReport.toPeer(nowMs: Long): PeerListening? = runCatching {
         }
         PeerListeningState.Available(
             QueueHash.parse(reported.queueHash), current, reported.positionMs,
-            nowMs - reported.positionAgeMs, reported.isPlaying,
+            nowMs - reported.positionAgeMs, reported.isPlaying, reported.shuffle,
         )
     } ?: PeerListeningState.Unavailable(ProjectionFailure.valueOf(unavailable!!))
     PeerListening(deviceId, PublicationRevision(revision), nowMs - activeAgeMs, peerState)

@@ -197,6 +197,7 @@ class NowPlayingRecorder(
                         capture.positionMs.coerceAtLeast(0L),
                         capture.capturedAtMs,
                         capture.isPlaying,
+                        shuffle = capture.queue.shuffle,
                     ),
                 )
                 is QueueProjection.Unsupported -> {

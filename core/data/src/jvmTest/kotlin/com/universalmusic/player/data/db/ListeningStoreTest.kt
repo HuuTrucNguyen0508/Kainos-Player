@@ -66,14 +66,18 @@ class ListeningStoreTest {
                 val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
                 store.commit(commit("gui", 1, items, 1, local = LocalListeningUpdate.Publish(1, 5_000, state)))
                 assertEquals(true, (store.readLocalExport() as LocalListeningExport.Available).publication.state.shuffle)
-                store.commit(commit("gui", 2, items, 1, local = null))
+                store.commit(commit("gui", 2, items, 1, origin = PublicationOrigin.REMOTE_SUPPRESSED, local = null))
             }
             fileDriver(directory).use { driver ->
                 val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
                 val published = (store.readLocalExport() as LocalListeningExport.Available).publication
                 assertEquals(state, published.state)
                 assertEquals(PublicationRevision(1), published.revision)
+                val queueJson = driver.row("SELECT queue_json FROM local_listening_queue")
+                driver.execute(null, "CREATE TRIGGER reject_queue_rewrite BEFORE INSERT ON local_listening_queue BEGIN SELECT RAISE(ABORT, 'queue rewrite on shuffle toggle'); END", 0)
+                driver.execute(null, "CREATE TRIGGER reject_session_queue_rewrite BEFORE INSERT ON session_queue_item BEGIN SELECT RAISE(ABORT, 'session queue rewrite on shuffle toggle'); END", 0)
                 store.commit(commit("new", 1, items, 1, local = LocalListeningUpdate.Publish(1, 6_000, state(items, 1, 42_000, 5_000, false))))
+                assertEquals(queueJson, driver.row("SELECT queue_json FROM local_listening_queue"))
                 assertEquals(false, (store.readLocalExport() as LocalListeningExport.Available).publication.state.shuffle)
             }
         } finally {

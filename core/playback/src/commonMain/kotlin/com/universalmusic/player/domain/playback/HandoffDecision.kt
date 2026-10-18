@@ -69,7 +69,7 @@ fun decideHandoff(
     val queue = peer.queue ?: return HandoffDecision.Skip(HandoffSkipReason.NO_QUEUE)
     val current = reported.current ?: return HandoffDecision.Skip(HandoffSkipReason.NOTHING_TO_LOAD)
     val state = runCatching {
-        ListeningState.create(queue, current.itemId, reported.positionMs, reported.positionAtMs, reported.isPlaying)
+        ListeningState.create(queue, current.itemId, reported.positionMs, reported.positionAtMs, reported.isPlaying, reported.shuffle)
     }.getOrNull()
     if (state?.current != current) return HandoffDecision.Skip(HandoffSkipReason.INCONSISTENT)
     return HandoffDecision.Load(PeerHandoff(listening.deviceId, listening.revision, listening.lastActiveAtMs, state))
@@ -89,6 +89,7 @@ fun PeerHandoff.toSessionSnapshot(localTracks: LocalSyncIdentityIndex, nowMs: Lo
         items = items,
         currentIndex = entries.indexOfFirst { it.itemId == current.itemId },
         positionMs = positionMs,
+        shuffle = state.shuffle,
         remoteSession = RemoteSession(deviceId, revision.value, lastActiveAtMs),
     )
 }

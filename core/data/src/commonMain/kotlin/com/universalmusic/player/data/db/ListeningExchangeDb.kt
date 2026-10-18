@@ -124,6 +124,7 @@ private data class StoredPeerState(
     val positionAtMs: Long = 0,
     val isPlaying: Boolean = false,
     val unavailable: String? = null,
+    val shuffle: Boolean = false,
 )
 
 private fun PeerListeningState.toStored(): StoredPeerState = when (this) {
@@ -132,6 +133,7 @@ private fun PeerListeningState.toStored(): StoredPeerState = when (this) {
         positionMs = positionMs,
         positionAtMs = positionAtMs,
         isPlaying = isPlaying,
+        shuffle = shuffle,
     )
     is PeerListeningState.Unavailable -> StoredPeerState(unavailable = reason.name)
 }
@@ -142,5 +144,5 @@ private fun StoredPeerState.toState(queueHash: String): PeerListeningState {
         val track = requireNotNull(PortableListeningTrack.parse(item.track)) { "Stored peer track ${item.id} is not portable" }
         PortableListeningEntry(item.id, track)
     }
-    return PeerListeningState.Available(QueueHash.parse(queueHash), entry, positionMs, positionAtMs, isPlaying)
+    return PeerListeningState.Available(QueueHash.parse(queueHash), entry, positionMs, positionAtMs, isPlaying, shuffle)
 }
