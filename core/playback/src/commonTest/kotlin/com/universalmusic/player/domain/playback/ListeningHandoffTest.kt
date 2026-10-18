@@ -2,7 +2,10 @@ package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.data.library.toPersisted
 import com.universalmusic.player.data.session.HandoffClaim
+import com.universalmusic.player.data.session.HandoffRequest
+import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.LocalListeningExport
 import com.universalmusic.player.data.session.PeerListening
 import com.universalmusic.player.data.session.PeerListeningState
@@ -13,17 +16,18 @@ import com.universalmusic.player.data.session.ProjectionFailure
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.QueueHash
 import com.universalmusic.player.data.session.QueueProjection
+import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.StoredPeerListening
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.ProviderId
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ListeningHandoffTest {
@@ -116,7 +120,7 @@ class ListeningHandoffTest {
         rig.store.peer("phone", 4, T0 - 1_000, "p1")
         rig.store.beforeClaim = { rig.session.play(listOf(yt("mine")), startIndex = 0) }
 
-        assertEquals(HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED), rig.handoff.run(listOf(phone)))
+        assertEquals(HandoffDecision.Skip(HandoffSkipReason.LOCAL_BUFFERING), rig.handoff.run(listOf(phone)))
         assertNull(rig.store.appliedHandoff("phone"), "a rejected install must remain retryable")
     }
 
@@ -160,10 +164,13 @@ class ListeningHandoffTest {
 
     private class Rig(val session: PlayerSession, val store: FakeExchange, val handoff: ListeningHandoff)
 
-    private fun TestScope.rig(): Rig {
+    private suspend fun TestScope.rig(): Rig {
         val clock = { T0 + testScheduler.currentTime }
-        val session = PlayerSession(ScriptedEngine(), DefaultSourceResolver(), backgroundScope, clock = clock)
-        val store = FakeExchange()
+        val persistence = FakeListeningStore()
+        val session = PlayerSession(ScriptedEngine(), DefaultSourceResolver(), backgroundScope,
+            persistence = NowPlayingRecorder(persistence, backgroundScope, clock = clock), clock = clock)
+        session.initializePersistence()
+        val store = FakeExchange(persistence::commit)
         return Rig(session, store, ListeningHandoff(store, session, localTracks = { emptyList() }, clock = clock))
     }
 
@@ -179,14 +186,15 @@ private const val T0 = 1_000_000L
 
 private fun yt(id: String) = track(id, "Artist", provider = ProviderId.YOUTUBE_MUSIC, canonicalId = "yt:$id")
 
-private class FakeExchange : ListeningExchangeStore {
-    override suspend fun refusedPairing(): com.universalmusic.player.data.session.ListeningPairingIdentity? = null
-    override suspend fun setRefusedPairing(pairing: com.universalmusic.player.data.session.ListeningPairingIdentity?) = Unit
+internal class FakeExchange(private val persist: suspend (ListeningCommit) -> Unit = {}) : ListeningExchangeStore {
+    override suspend fun refusedPairing(): ListeningPairingIdentity? = null
+    override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) = Unit
     private val peers = mutableMapOf<String, StoredPeerListening>()
     val applied = mutableMapOf<String, Long>()
     var beforeClaim: suspend () -> Unit = {}
     var afterClaim: suspend () -> Unit = {}
     var localRevision = 1L
+    private var represented: RemoteSession? = null
     var claim = HandoffClaim.CLAIMED
     var localActiveAtMs: Long? = null
 
@@ -209,10 +217,21 @@ private class FakeExchange : ListeningExchangeStore {
     override suspend fun markDelivered(hubDeviceId: String, revision: PublicationRevision) = false
     override suspend fun appliedHandoff(deviceId: String) = applied[deviceId]?.let(::PublicationRevision)
 
-    override suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim {
+    override suspend fun claimHandoff(request: HandoffRequest, accept: suspend () -> ListeningCommit?): HandoffClaim {
         beforeClaim()
-        if (claim == HandoffClaim.CLAIMED) applied[deviceId] = revision.value
         afterClaim()
-        return claim
+        val (deviceId, revision, expectedLocalRevision) = request
+        if (claim != HandoffClaim.CLAIMED) return claim
+        val peer = peers[deviceId]
+        if (peer != null && peer.listening.revision != revision) return HandoffClaim.PEER_CHANGED
+        if ((applied[deviceId] ?: 0) >= revision.value) return HandoffClaim.ALREADY_APPLIED
+        val local = readLocalExport() as? LocalListeningExport.Unavailable
+        if (local?.revision != expectedLocalRevision) return HandoffClaim.LOCAL_CHANGED
+        if (represented != null && peer != null && peer.listening.lastActiveAtMs <= represented!!.lastActiveAtMs) return HandoffClaim.NOT_NEWER
+        val commit = accept() ?: return HandoffClaim.INSTALL_REJECTED
+        persist(commit)
+        represented = commit.snapshot.remoteSession
+        applied[deviceId] = revision.value
+        return HandoffClaim.CLAIMED
     }
 }

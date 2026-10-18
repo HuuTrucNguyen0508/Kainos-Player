@@ -1,5 +1,10 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.data.session.HandoffClaim
+import com.universalmusic.player.data.session.HandoffRequest
+import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.RemoteSession
+import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningRestore
 import com.universalmusic.player.data.session.ListeningState
@@ -27,6 +32,10 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.CoroutineContext
 
 sealed interface FlushResult {
@@ -43,6 +52,7 @@ internal class SessionCapture(
     val capturedAtMs: Long,
     val lastActiveAtMs: Long?,
     val origin: PublicationOrigin,
+    val remoteSession: RemoteSession?,
 )
 
 private class PersistenceIntent(val private: SessionCapture, val local: SessionCapture?) {
@@ -68,6 +78,7 @@ class NowPlayingRecorder(
     private val writerId: String = newWriterId(),
 ) {
     private var sequence = 0L
+    private val writes = Mutex()
     private val pending = MutableStateFlow<PersistenceIntent?>(null)
     private val status = MutableStateFlow(RecorderStatus())
     private var worker: Job? = null
@@ -95,8 +106,9 @@ class NowPlayingRecorder(
         lastActiveAtMs: Long?,
         origin: PublicationOrigin,
         local: Boolean,
+        remoteSession: RemoteSession?,
     ): Long {
-        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin)
+        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin, remoteSession)
         val intent = PersistenceIntent(capture, capture.takeIf { local })
         pending.update { waiting -> waiting?.then(intent) ?: intent }
         return capture.sequence
@@ -111,6 +123,26 @@ class NowPlayingRecorder(
         }
     }
 
+    internal suspend fun finalizeHandoff(
+        exchange: ListeningExchangeStore,
+        request: HandoffRequest,
+        accept: suspend () -> ListeningCommit?,
+    ): HandoffClaim = writes.withLock {
+        withContext(NonCancellable) {
+            var accepted: ListeningCommit? = null
+            val result = exchange.claimHandoff(request) { accept().also { accepted = it } }
+            if (result == HandoffClaim.CLAIMED) {
+                val committed = checkNotNull(accepted)
+                status.update { it.copy(committedThrough = maxOf(it.committedThrough, committed.sequence)) }
+            }
+            result
+        }
+    }
+
+    internal fun remoteCommit(snapshot: SessionSnapshot): ListeningCommit = ListeningCommit(
+        writerId, ++sequence, snapshot, PublicationOrigin.REMOTE_SUPPRESSED, local = null, committedAtMs = clock(),
+    )
+
     private suspend fun run() {
         var inFlight: PersistenceIntent? = null
         var backoffMs = INITIAL_BACKOFF_MS
@@ -124,7 +156,7 @@ class NowPlayingRecorder(
             }
             inFlight = intent
             val commit = try {
-                prepare(intent).also { store.commit(it) }
+                prepare(intent).also { commit -> writes.withLock { store.commit(commit) } }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -138,7 +170,7 @@ class NowPlayingRecorder(
             backoffMs = INITIAL_BACKOFF_MS
             status.update { previous ->
                 RecorderStatus(
-                    committedThrough = commit.sequence,
+                    committedThrough = maxOf(previous.committedThrough, commit.sequence),
                     exportUnavailable = when (val local = commit.local) {
                         is LocalListeningUpdate.Unavailable -> local.reason
                         is LocalListeningUpdate.Publish -> null
@@ -176,7 +208,7 @@ class NowPlayingRecorder(
         return ListeningCommit(
             writerId = writerId,
             sequence = private.sequence,
-            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs),
+            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs).copy(remoteSession = private.remoteSession),
             origin = private.origin,
             local = local,
             committedAtMs = clock(),

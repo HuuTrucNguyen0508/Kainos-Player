@@ -6,6 +6,7 @@ import com.universalmusic.player.data.session.PeerListeningState
 import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.session.PortableListeningEntry
 import com.universalmusic.player.data.session.PublicationRevision
+import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.StoredPeerListening
 import com.universalmusic.player.data.sync.LocalSyncIdentityIndex
@@ -16,25 +17,19 @@ const val HANDOFF_MAX_AGE_MS = 24L * 60 * 60 * 1000
 enum class HandoffSkipReason {
     LOCAL_PLAYING,
     LOCAL_BUFFERING,
-    /** The peer could not export its queue. */
     UNAVAILABLE,
     ALREADY_APPLIED,
     TOO_OLD,
     NOT_NEWER,
-    /** The row arrived but its queue has not. */
     NO_QUEUE,
-    /** The peer has no current entry. */
     NOTHING_TO_LOAD,
-    /** The peer's current entry is not the entry its queue holds under that id. */
     INCONSISTENT,
-    /** This device acted after the decision. */
     LOCAL_CHANGED,
-    /** A newer peer row replaced the one this load read. */
     PEER_CHANGED,
+    PERSISTENCE_UNAVAILABLE,
 }
 
-/** [lastActiveAtMs] is null when this device has never had local listening activity. */
-data class LocalHandoffState(val isPlaying: Boolean, val buffering: Boolean, val lastActiveAtMs: Long?)
+data class LocalHandoffState(val isPlaying: Boolean, val buffering: Boolean, val lastActiveAtMs: Long?, val remoteSession: RemoteSession? = null)
 
 data class PeerHandoff(
     val deviceId: String,
@@ -65,6 +60,7 @@ fun decideHandoff(
         applied != null && listening.revision.value <= applied.value -> HandoffSkipReason.ALREADY_APPLIED
         nowMs - listening.lastActiveAtMs > HANDOFF_MAX_AGE_MS -> HandoffSkipReason.TOO_OLD
         local.lastActiveAtMs != null && listening.lastActiveAtMs <= local.lastActiveAtMs -> HandoffSkipReason.NOT_NEWER
+        local.remoteSession != null && listening.lastActiveAtMs <= local.remoteSession.lastActiveAtMs -> HandoffSkipReason.NOT_NEWER
         else -> null
     }
     if (skip != null) return HandoffDecision.Skip(skip)
@@ -78,10 +74,6 @@ fun decideHandoff(
     return HandoffDecision.Load(PeerHandoff(listening.deviceId, listening.revision, listening.lastActiveAtMs, state))
 }
 
-/**
- * The peer's queue as this device's paused session. Local entries become the matching library
- * track; an entry with no match stays as the peer sent it.
- */
 fun PeerHandoff.toSessionSnapshot(localTracks: LocalSyncIdentityIndex, nowMs: Long): SessionSnapshot {
     val entries = state.queue.entries
     val items = entries.map { entry ->
@@ -96,5 +88,6 @@ fun PeerHandoff.toSessionSnapshot(localTracks: LocalSyncIdentityIndex, nowMs: Lo
         items = items,
         currentIndex = entries.indexOfFirst { it.itemId == current.itemId },
         positionMs = positionMs,
+        remoteSession = RemoteSession(deviceId, revision.value, lastActiveAtMs),
     )
 }

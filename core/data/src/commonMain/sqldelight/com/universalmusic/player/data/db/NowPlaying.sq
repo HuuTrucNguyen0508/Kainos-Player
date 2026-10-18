@@ -121,3 +121,9 @@ SELECT revision FROM handoff_applied WHERE device_id = ?;
 
 upsertApplied:
 INSERT OR REPLACE INTO handoff_applied (device_id, revision, local_revision) VALUES (?, ?, ?);
+
+lockHandoff:
+UPDATE handoff_applied SET revision = revision WHERE device_id = ?;
+
+selectAppliedActivity:
+SELECT local_revision FROM handoff_applied WHERE device_id = ?;

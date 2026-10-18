@@ -8,7 +8,8 @@ CREATE TABLE session_state (
     repeat_mode TEXT NOT NULL,
     shuffle_order TEXT NOT NULL,
     position_ms INTEGER NOT NULL,
-    publication_origin TEXT NOT NULL DEFAULT 'LOCAL'
+    publication_origin TEXT NOT NULL DEFAULT 'LOCAL',
+    remote_session_json TEXT
 );
 
 CREATE TABLE session_queue_item (
@@ -22,8 +23,8 @@ selectState:
 SELECT * FROM session_state WHERE id = 0;
 
 upsertState:
-INSERT OR REPLACE INTO session_state (id, current_index, shuffle, repeat_mode, shuffle_order, position_ms, publication_origin)
-VALUES (0, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO session_state (id, current_index, shuffle, repeat_mode, shuffle_order, position_ms, publication_origin, remote_session_json)
+VALUES (0, ?, ?, ?, ?, ?, ?, ?);
 
 selectItems:
 SELECT * FROM session_queue_item ORDER BY position;

@@ -24,7 +24,11 @@ data class SessionSnapshot(
     val shuffleOrder: List<Int> = emptyList(),
     /** Coarse playback position within the current track. */
     val positionMs: Long = 0L,
+    val remoteSession: RemoteSession? = null,
 )
+
+@Serializable
+data class RemoteSession(val deviceId: String, val revision: Long, val lastActiveAtMs: Long)
 
 @Serializable
 data class PersistedQueueItem(

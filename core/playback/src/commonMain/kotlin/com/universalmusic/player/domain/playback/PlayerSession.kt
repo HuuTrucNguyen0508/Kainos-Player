@@ -1,12 +1,17 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.data.session.HandoffClaim
+import com.universalmusic.player.data.session.HandoffRequest
+import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.PublicationOrigin
+import com.universalmusic.player.data.session.PublicationRevision
+import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.toPlaybackQueue
 import com.universalmusic.player.domain.model.Artwork
-import com.universalmusic.player.domain.model.PlaybackQueue
 import com.universalmusic.player.domain.model.PlaybackPreferences
+import com.universalmusic.player.domain.model.PlaybackQueue
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.RepeatMode
@@ -16,10 +21,15 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.queue.QueueController
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
+import kotlin.concurrent.Volatile
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -30,9 +40,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.concurrent.Volatile
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class NowPlayingState(
     val track: Track? = null,
@@ -135,7 +143,7 @@ class PlayerSession(
     private var pausePending = false
     private var persistenceReady = false
     private var checkpointJob: Job? = null
-    private val remoteRevisions = mutableMapOf<String, Long>()
+    private var remoteSession: RemoteSession? = null
 
     /**
      * Optional gate for sleep-timer end-of-track mode. Invoked on natural completion
@@ -260,6 +268,7 @@ class PlayerSession(
                 revision != 0L -> trace("restore skipped: session revision moved from 0 to $revision")
                 else -> {
                     origin = restored.origin
+                    remoteSession = restored.snapshot.remoteSession
                     if (restored.snapshot.items.isNotEmpty()) installPaused(restored.snapshot)
                 }
             }
@@ -280,30 +289,112 @@ class PlayerSession(
 
     internal suspend fun handoffView(): HandoffView = withContext(sessionContext) {
         val now = _nowPlaying.value
-        HandoffView(LocalHandoffState(now.isPlaying, now.buffering, lastActiveAtMs), localRevision)
+        HandoffView(LocalHandoffState(now.isPlaying, now.buffering, lastActiveAtMs, remoteSession), localRevision)
     }
 
     internal suspend fun loadRemotePaused(
         snapshot: SessionSnapshot,
         peer: PeerHandoff,
         expected: SessionRevision,
-    ): HandoffDecision = withContext(sessionContext) {
-        val now = _nowPlaying.value
-        val skip = when {
-            now.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
-            now.buffering -> HandoffSkipReason.LOCAL_BUFFERING
-            revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
-            peer.revision.value <= (remoteRevisions[peer.deviceId] ?: 0L) -> HandoffSkipReason.ALREADY_APPLIED
-            else -> null
+        exchange: ListeningExchangeStore,
+        expectedPublication: PublicationRevision?,
+    ): HandoffDecision {
+        val recorder = persistence ?: return HandoffDecision.Skip(HandoffSkipReason.PERSISTENCE_UNAVAILABLE)
+        val earlySkip = withContext(sessionContext) {
+            when {
+                _nowPlaying.value.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
+                _nowPlaying.value.buffering -> HandoffSkipReason.LOCAL_BUFFERING
+                revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
+                else -> null
+            }
         }
-        if (skip != null) return@withContext HandoffDecision.Skip(skip)
-        remoteRevisions[peer.deviceId] = peer.revision.value
-        installPaused(snapshot)
-        engine.stopForTransition()
-        revision++
-        origin = PublicationOrigin.REMOTE_SUPPRESSED
-        offerCapture(local = false)
-        HandoffDecision.Load(peer)
+        if (earlySkip != null) return HandoffDecision.Skip(earlySkip)
+        var decision: HandoffDecision = HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED)
+        var rollback: (() -> Unit)? = null
+        var finalized = false
+        try {
+            val claim = recorder.finalizeHandoff(exchange, HandoffRequest(peer.deviceId, peer.revision, expectedPublication)) {
+                installWithinDeadline {
+                    val now = _nowPlaying.value
+                    val skip = when {
+                        now.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
+                        now.buffering -> HandoffSkipReason.LOCAL_BUFFERING
+                        revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
+                        clock() - peer.lastActiveAtMs > HANDOFF_MAX_AGE_MS -> HandoffSkipReason.TOO_OLD
+                        lastActiveAtMs != null && peer.lastActiveAtMs <= lastActiveAtMs!! -> HandoffSkipReason.NOT_NEWER
+                        remoteSession != null && peer.lastActiveAtMs <= remoteSession!!.lastActiveAtMs -> HandoffSkipReason.NOT_NEWER
+                        else -> null
+                    }
+                    if (skip != null) {
+                        decision = HandoffDecision.Skip(skip)
+                        return@installWithinDeadline null
+                    }
+                    val oldQueue = queue.queue.value
+                    val oldNow = _nowPlaying.value
+                    val oldOrigin = origin
+                    val oldRemote = remoteSession
+                    val oldResume = pendingResumePositionMs
+                    revision++
+                    val installedRevision = revision
+                    rollback = {
+                        if (revision == installedRevision) {
+                            queue.restore(oldQueue)
+                            _nowPlaying.value = oldNow
+                            origin = oldOrigin
+                            remoteSession = oldRemote
+                            pendingResumePositionMs = oldResume
+                            revision++
+                            offerCapture(local = false)
+                        }
+                    }
+                    val remoteSnapshot = snapshot.copy(remoteSession = RemoteSession(peer.deviceId, peer.revision.value, peer.lastActiveAtMs))
+                    installPaused(remoteSnapshot)
+                    origin = PublicationOrigin.REMOTE_SUPPRESSED
+                    remoteSession = remoteSnapshot.remoteSession
+                    decision = HandoffDecision.Load(peer)
+                    recorder.remoteCommit(remoteSnapshot)
+                }
+            }
+            return when (claim) {
+                HandoffClaim.CLAIMED -> {
+                    finalized = true
+                    withContext(sessionContext) {
+                        if (revision == expected.value + 1) engine.stopForTransition()
+                    }
+                    decision
+                }
+                HandoffClaim.INSTALL_REJECTED -> decision
+                HandoffClaim.PEER_CHANGED -> HandoffDecision.Skip(HandoffSkipReason.PEER_CHANGED)
+                HandoffClaim.ALREADY_APPLIED -> HandoffDecision.Skip(HandoffSkipReason.ALREADY_APPLIED)
+                HandoffClaim.LOCAL_CHANGED -> HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED)
+                HandoffClaim.NOT_NEWER -> HandoffDecision.Skip(HandoffSkipReason.NOT_NEWER)
+            }
+        } catch (error: Exception) {
+            if (!finalized) withContext(NonCancellable + sessionContext) { rollback?.invoke() }
+            throw error
+        }
+    }
+
+    private enum class InstallDispatch { PENDING, RUNNING, ABANDONED }
+
+    private suspend fun <T> installWithinDeadline(block: () -> T): T? {
+        if (confineTo == null || !confineTo.isDispatchNeeded(currentCoroutineContext())) return block()
+        val phase = MutableStateFlow(InstallDispatch.PENDING)
+        val result = CompletableDeferred<T>()
+        val job = CoroutineScope(NonCancellable + sessionContext).launch {
+            if (!phase.compareAndSet(InstallDispatch.PENDING, InstallDispatch.RUNNING)) return@launch
+            try {
+                result.complete(block())
+            } catch (error: Throwable) {
+                result.completeExceptionally(error)
+            }
+        }
+        val finished = withTimeoutOrNull(500) { result.await(); true } == true
+        if (!finished && phase.compareAndSet(InstallDispatch.PENDING, InstallDispatch.ABANDONED)) {
+            job.cancel()
+            return null
+        }
+        return result.await()
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
@@ -978,7 +1069,10 @@ class PlayerSession(
 
     private fun record(change: Change, playing: Boolean = _nowPlaying.value.isPlaying) {
         revision++
-        if (change.reclaimsOrigin) origin = PublicationOrigin.LOCAL
+        if (change.reclaimsOrigin) {
+            origin = PublicationOrigin.LOCAL
+            remoteSession = null
+        }
         val wasPlaying = lastRecordedPlaying
         lastRecordedPlaying = playing
         val now = clock()
@@ -996,6 +1090,7 @@ class PlayerSession(
         lastActiveAtMs = lastActiveAtMs.takeIf { local },
         origin = origin,
         local = local,
+        remoteSession = remoteSession,
     )
 
     private fun restartCheckpoints(playing: Boolean) {

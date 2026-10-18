@@ -9,6 +9,7 @@ import com.universalmusic.player.data.session.LocalListeningPublication
 import com.universalmusic.player.data.session.LocalListeningUpdate
 import com.universalmusic.player.data.session.PortableListeningQueue
 import com.universalmusic.player.data.session.ProjectionFailure
+import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.QueueHash
 import kotlinx.coroutines.sync.Mutex
@@ -50,12 +51,21 @@ internal fun KainosDatabase.commitListening(
     val receipt = queries.selectReceipt(commit.writerId).executeAsOneOrNull()
     val committedPrivate = receipt?.private_sequence ?: 0L
     val committedLocal = receipt?.local_sequence ?: 0L
-    val stored = if (commit.sequence > committedPrivate) {
+    val local = commit.local?.takeIf { it.sequence > committedLocal }
+    val incomingRemote = commit.snapshot.remoteSession
+    val represented = readRemoteSession()
+    val supersededRemote = commit.origin == PublicationOrigin.REMOTE_SUPPRESSED && incomingRemote != null && (
+        queries.selectAppliedActivity(incomingRemote.deviceId).executeAsOneOrNull() !=
+            (queries.selectExport().executeAsOneOrNull()?.revision ?: 0L) ||
+        represented != null && if (incomingRemote.deviceId == represented.deviceId) incomingRemote.revision < represented.revision
+        else incomingRemote.lastActiveAtMs <= represented.lastActiveAtMs
+    )
+    val staleLocalCheckpoint = local == null && commit.origin == PublicationOrigin.LOCAL && represented != null
+    val stored = if (commit.sequence > committedPrivate && !supersededRemote && !staleLocalCheckpoint) {
         writeSessionSnapshot(commit.snapshot, cached, commit.origin)
     } else {
         cached
     }
-    val local = commit.local?.takeIf { it.sequence > committedLocal }
     if (local != null) publishLocal(local, commit.committedAtMs)
     queries.upsertReceipt(
         commit.writerId,

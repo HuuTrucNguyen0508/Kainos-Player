@@ -37,12 +37,18 @@ data class ListeningPairingIdentity(
 
 enum class HandoffClaim {
     CLAIMED,
-    /** The stored row is no longer the fetched revision. */
     PEER_CHANGED,
     ALREADY_APPLIED,
-    /** This device's durable activity is no longer older than the peer's. */
     LOCAL_CHANGED,
+    NOT_NEWER,
+    INSTALL_REJECTED,
 }
+
+data class HandoffRequest(
+    val deviceId: String,
+    val revision: PublicationRevision,
+    val expectedLocalRevision: PublicationRevision?,
+)
 
 interface ListeningExchangeStore {
     suspend fun refusedPairing(): ListeningPairingIdentity?
@@ -70,8 +76,9 @@ interface ListeningExchangeStore {
     suspend fun appliedHandoff(deviceId: String): PublicationRevision?
 
     /**
-     * Records [revision] of [deviceId] as loaded, in one transaction that rechecks the stored row,
-     * the applied revision and this device's durable activity, together with that activity's revision.
+     * Holds the database writer transaction through [accept], then atomically commits its suppressed
+     * snapshot and applied marker. The callback only dispatches a bounded session install, never IO
+     * or recorder waits. Null rejects the install without consuming the revision.
      */
-    suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim
+    suspend fun claimHandoff(request: HandoffRequest, accept: suspend () -> ListeningCommit?): HandoffClaim
 }

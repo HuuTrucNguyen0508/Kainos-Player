@@ -1,6 +1,6 @@
 package com.universalmusic.player.domain.playback
 
-import com.universalmusic.player.data.session.HandoffClaim
+import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.LocalListeningExport
 import com.universalmusic.player.data.sync.LocalSyncIdentityIndex
@@ -17,10 +17,8 @@ import kotlinx.coroutines.sync.withLock
 
 data class HandoffPeer(val deviceId: String, val name: String)
 
-/** [id] tells two loads from the same device apart. */
 data class HandoffNotice(val id: Long, val deviceName: String)
 
-/** Loads the newest peer session paused when this device is idle and older; one attempt at a time. */
 class ListeningHandoff(
     private val store: ListeningExchangeStore,
     private val session: PlayerSession,
@@ -36,7 +34,6 @@ class ListeningHandoff(
         _notice.update { if (it?.id == id) null else it }
     }
 
-    /** Null when no peer has a stored row or the attempt failed. */
     suspend fun run(peers: List<HandoffPeer>): HandoffDecision? = mutex.withLock {
         try {
             attempt(peers)
@@ -50,7 +47,13 @@ class ListeningHandoff(
 
     private suspend fun attempt(peers: List<HandoffPeer>): HandoffDecision? {
         val view = session.handoffView()
-        val durableActiveAtMs = when (val export = store.readLocalExport()) {
+        val export = store.readLocalExport()
+        val durableRevision: PublicationRevision? = when (export) {
+            is LocalListeningExport.Available -> export.publication.revision
+            is LocalListeningExport.Unavailable -> export.revision
+            null -> null
+        }
+        val durableActiveAtMs = when (export) {
             is LocalListeningExport.Available -> export.publication.lastActiveAtMs
             is LocalListeningExport.Unavailable -> export.lastActiveAtMs
             null -> null
@@ -67,12 +70,7 @@ class ListeningHandoff(
             .maxByOrNull { (_, load) -> load.peer.lastActiveAtMs }
             ?: return decisions.firstOrNull()?.second
         val snapshot = load.peer.toSessionSnapshot(LocalSyncIdentityIndex(localTracks()), now)
-        val claim = store.claimHandoff(peer.deviceId, load.peer.revision)
-        val result = if (claim == HandoffClaim.CLAIMED) {
-            session.loadRemotePaused(snapshot, load.peer, view.revision)
-        } else {
-            HandoffDecision.Skip(claim.skipReason())
-        }
+        val result = session.loadRemotePaused(snapshot, load.peer, view.revision, store, durableRevision)
         log(peer, result)
         if (result is HandoffDecision.Load) _notice.value = HandoffNotice(++loads, peer.name)
         return result
@@ -87,11 +85,4 @@ class ListeningHandoff(
     }
 
     private fun trace(message: String) = PlaybackTrace.log("Handoff", message)
-}
-
-private fun HandoffClaim.skipReason(): HandoffSkipReason = when (this) {
-    HandoffClaim.CLAIMED -> error("A claimed handoff is not a skip")
-    HandoffClaim.PEER_CHANGED -> HandoffSkipReason.PEER_CHANGED
-    HandoffClaim.ALREADY_APPLIED -> HandoffSkipReason.ALREADY_APPLIED
-    HandoffClaim.LOCAL_CHANGED -> HandoffSkipReason.LOCAL_CHANGED
 }

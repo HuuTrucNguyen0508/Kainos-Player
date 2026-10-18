@@ -11,6 +11,7 @@ import com.universalmusic.player.data.session.PortableListeningQueue
 import com.universalmusic.player.data.session.ProjectionFailure
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.QueueProjection
+import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.StoredPeerListening
 import com.universalmusic.player.data.sync.LocalSyncIdentityIndex
@@ -120,6 +121,7 @@ class HandoffDecisionTest {
                 ),
                 currentIndex = 2,
                 positionMs = 15_000,
+                remoteSession = RemoteSession("phone", 3, NOW),
             ),
             snapshot,
         )

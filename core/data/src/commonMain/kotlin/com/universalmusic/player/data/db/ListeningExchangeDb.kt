@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.data.session.ListeningCommit
+import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.ListeningPairingIdentity
@@ -15,6 +17,7 @@ import com.universalmusic.player.data.session.ProjectionFailure
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.QueueHash
 import com.universalmusic.player.data.session.StoredPeerListening
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
@@ -92,15 +95,22 @@ class DbListeningExchangeStore(
         db.nowPlayingQueries.selectApplied(deviceId).executeAsOneOrNull()?.let(::PublicationRevision)
     }
 
-    override suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim = storage.write { db ->
+    override suspend fun claimHandoff(request: HandoffRequest, accept: suspend () -> ListeningCommit?): HandoffClaim = storage.write { db ->
+        val (deviceId, revision, expectedLocalRevision) = request
         val queries = db.nowPlayingQueries
+        queries.lockHandoff(deviceId)
         val peer = queries.selectPeer(deviceId).executeAsOneOrNull()
         if (peer?.revision != revision.value) return@write HandoffClaim.PEER_CHANGED
         val applied = queries.selectApplied(deviceId).executeAsOneOrNull()
         if (applied != null && applied >= revision.value) return@write HandoffClaim.ALREADY_APPLIED
         val export = queries.selectExport().executeAsOneOrNull()
-        if (export != null && export.last_active_at_ms >= peer.last_active_at_ms) return@write HandoffClaim.LOCAL_CHANGED
+        if (export?.revision != expectedLocalRevision?.value ||
+            export != null && export.last_active_at_ms >= peer.last_active_at_ms) return@write HandoffClaim.LOCAL_CHANGED
+        val represented = db.readRemoteSession()
+        if (represented != null && peer.last_active_at_ms <= represented.lastActiveAtMs) return@write HandoffClaim.NOT_NEWER
+        val commit = runBlocking { accept() } ?: return@write HandoffClaim.INSTALL_REJECTED
         queries.upsertApplied(deviceId, revision.value, export?.revision ?: 0L)
+        db.commitListening(commit, cached = null, pruneReceipts = false)
         HandoffClaim.CLAIMED
     }
 }

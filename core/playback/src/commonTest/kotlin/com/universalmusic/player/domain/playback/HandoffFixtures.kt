@@ -10,7 +10,7 @@ internal fun peerHandoffOf(
     snapshot: SessionSnapshot,
     revision: Long,
     deviceId: String = "phone",
-    lastActiveAtMs: Long = 0,
+    lastActiveAtMs: Long = 2_000_000,
 ): PeerHandoff {
     val queue = (PortableListeningQueue.project(snapshot.items) as QueueProjection.Complete).queue
     val state = ListeningState.create(queue, snapshot.items[snapshot.currentIndex].id, snapshot.positionMs, lastActiveAtMs, false)
