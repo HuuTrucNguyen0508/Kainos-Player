@@ -91,7 +91,7 @@ class DatabaseRoundTripTest {
             KainosDatabase.Schema.migrate(driver, 1, 2)
             assertEquals(listOf(1L, 12_000L), driver.row("SELECT current_index, position_ms FROM session_state"))
             assertEquals(listOf("yt:2", null), driver.row("SELECT canonical_id, local_identity_json FROM heart_op"))
-            KainosDatabase.Schema.migrate(driver, 2, 3)
+            KainosDatabase.Schema.migrate(driver, 2, KainosDatabase.Schema.version)
             driver.assertMigratedPreHs5Data()
             driver.close()
         } finally {
@@ -109,6 +109,30 @@ class DatabaseRoundTripTest {
             driver.seedPreHs5Data(heartOpColumns = "'yt:2','FAVORITE',10,'pc',NULL,'{}'")
             KainosDatabase.Schema.migrate(driver, 2, KainosDatabase.Schema.version)
             driver.assertMigratedPreHs5Data()
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromTheHs5SchemaKeepsListeningRowsAndAddsAnEmptyDeliveryTable() {
+        val directory = Files.createTempDirectory("kainos-v3-v4-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/3.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            listOf(
+                "INSERT INTO local_listening_export VALUES (0, 7, 1000, 'UNSUPPORTED_TRACK')",
+                "INSERT INTO peer_listening VALUES ('kainos-phone', 3, 900, '{}', '', NULL)",
+                "INSERT INTO handoff_applied VALUES ('kainos-phone', 2, 5)",
+            ).forEach { driver.execute(null, it, 0) }
+            KainosDatabase.Schema.migrate(driver, 3, KainosDatabase.Schema.version)
+            assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            assertEquals(listOf(7L, 1000L, "UNSUPPORTED_TRACK"), driver.row("SELECT revision, last_active_at_ms, unavailable_reason FROM local_listening_export"))
+            assertEquals(listOf("kainos-phone", 3L, 900L), driver.row("SELECT device_id, revision, last_active_at_ms FROM peer_listening"))
+            assertEquals(listOf("kainos-phone", 2L, 5L), driver.row("SELECT device_id, revision, local_revision FROM handoff_applied"))
+            assertEquals(0L, driver.count("listening_delivery"))
             driver.close()
         } finally {
             directory.toFile().deleteRecursively()
@@ -688,7 +712,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(3L, KainosDatabase.Schema.version)
+    assertEquals(4L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(
@@ -699,10 +723,10 @@ private fun SqlDriver.assertMigratedPreHs5Data() {
     assertEquals(PublicationOrigin.LOCAL, db.readSessionOrigin())
     assertNull(db.readLocalExport())
     assertEquals(
-        List(6) { 0L },
+        List(7) { 0L },
         listOf(
             "local_listening", "local_listening_queue", "local_listening_export",
-            "peer_listening", "handoff_applied", "listening_writer_receipt",
+            "peer_listening", "handoff_applied", "listening_writer_receipt", "listening_delivery",
         ).map(::count),
     )
 }

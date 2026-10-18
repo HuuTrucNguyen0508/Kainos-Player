@@ -1,0 +1,4 @@
+CREATE TABLE listening_delivery (
+    peer_device_id TEXT NOT NULL PRIMARY KEY,
+    delivered_revision INTEGER NOT NULL CHECK (delivered_revision > 0)
+);

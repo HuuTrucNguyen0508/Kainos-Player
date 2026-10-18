@@ -46,6 +46,12 @@ CREATE TABLE listening_writer_receipt (
     updated_at_ms INTEGER NOT NULL
 );
 
+-- The highest local publication revision each hub has acknowledged with its queue.
+CREATE TABLE listening_delivery (
+    peer_device_id TEXT NOT NULL PRIMARY KEY,
+    delivered_revision INTEGER NOT NULL CHECK (delivered_revision > 0)
+);
+
 selectLocal:
 SELECT * FROM local_listening WHERE id = 0;
 
@@ -77,3 +83,22 @@ VALUES (?, ?, ?, ?);
 
 deleteReceiptsBefore:
 DELETE FROM listening_writer_receipt WHERE updated_at_ms < ?;
+
+selectLocalQueueByHash:
+SELECT queue_json FROM local_listening_queue WHERE id = 0 AND queue_hash = ?;
+
+selectPeer:
+SELECT * FROM peer_listening WHERE device_id = ?;
+
+upsertPeer:
+INSERT OR REPLACE INTO peer_listening (device_id, revision, last_active_at_ms, state_json, queue_hash, queue_json)
+VALUES (?, ?, ?, ?, ?, ?);
+
+attachPeerQueue:
+UPDATE peer_listening SET queue_json = ? WHERE device_id = ? AND queue_hash = ?;
+
+selectDelivered:
+SELECT delivered_revision FROM listening_delivery WHERE peer_device_id = ?;
+
+upsertDelivered:
+INSERT OR REPLACE INTO listening_delivery (peer_device_id, delivered_revision) VALUES (?, ?);
