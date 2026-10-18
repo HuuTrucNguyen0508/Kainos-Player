@@ -433,7 +433,7 @@ class AppContainer {
     }
 
     private fun requestHandoff() {
-        if (handoffEnabled && appVisible) handoffRequests.trySend(Unit)
+        if (handoffEnabled && foreground.isVisible) handoffRequests.trySend(Unit)
     }
 
     private suspend fun runHandoff() {
