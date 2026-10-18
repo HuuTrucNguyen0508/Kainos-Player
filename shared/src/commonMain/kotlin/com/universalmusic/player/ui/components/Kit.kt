@@ -266,6 +266,7 @@ fun Slip(
 fun SectionRule(
     title: String,
     modifier: Modifier = Modifier,
+    accent: AccentSlot? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val palette = LocalKainosPalette.current
@@ -279,6 +280,10 @@ fun SectionRule(
         ).padding(vertical = if (folio) 6.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        accent?.let {
+            AccentTick(palette.accent(it, AccentUse.Mark))
+            Spacer(Modifier.width(8.dp))
+        }
         Text(
             title,
             style = if (folio) MaterialTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic) else MaterialTheme.typography.titleSmall,

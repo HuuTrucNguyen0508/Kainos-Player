@@ -331,6 +331,7 @@ private fun AppScaffold(
                                         onOpenNowPlaying = { openNowPlaying() },
                                         onOpenSettings = { navigateToTab(AppDestination.Settings) },
                                         onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                        onOpenLibrary = { navigateToTab(AppDestination.Library) },
                                         // The side pane already shows the session, so Home skips its session card.
                                         playerPaneVisible = showSideNowPlaying,
                                     )

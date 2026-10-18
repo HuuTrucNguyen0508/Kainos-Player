@@ -744,9 +744,11 @@ class AppContainer {
         return favoriteIds.mapNotNull { byId[it] }
     }
 
-    fun playFavorites(): Boolean {
+    /** [shuffle] turns shuffle on before the queue builds, so the fresh order starts with the first heart. */
+    fun playFavorites(shuffle: Boolean = false): Boolean {
         val tracks = resolveFavoriteTracks()
         if (tracks.isEmpty()) return false
+        if (shuffle && !player.queueState.value.shuffle) player.toggleShuffle()
         playTracks(tracks, startIndex = 0)
         return true
     }

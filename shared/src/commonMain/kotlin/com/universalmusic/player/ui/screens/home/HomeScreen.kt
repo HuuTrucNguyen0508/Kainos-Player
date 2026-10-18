@@ -1,12 +1,12 @@
 package com.universalmusic.player.ui.screens
 
-import com.universalmusic.player.ui.components.DisplayHero
-import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,8 +27,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
-import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.ui.components.DisplayHero
+import com.universalmusic.player.ui.components.Slip
+import com.universalmusic.player.ui.theme.Accents
 
 @Composable
 fun HomeScreen(
@@ -37,52 +39,53 @@ fun HomeScreen(
     onOpenNowPlaying: () -> Unit,
     onOpenSettings: (() -> Unit)? = null,
     onOpenSearch: (() -> Unit)? = null,
+    onOpenLibrary: (() -> Unit)? = null,
     playerPaneVisible: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { HomePresenter.from(container, scope) }
     val ui by presenter.state.collectAsState()
     var editingPins by remember { mutableStateOf(false) }
-    val continueListening = remember(ui.recent, ui.sessionFocus, playerPaneVisible) {
-        continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible)
-    }
     val sessionFocus = ui.sessionFocus
     val showSessionCard = homeSessionCardVisible(playerPaneVisible, sessionFocus)
+    val openDoor: (LibraryDoor) -> Unit = { door ->
+        when (door) {
+            LibraryDoor.LIBRARY -> onOpenLibrary?.invoke()
+            LibraryDoor.FAVORITES -> presenter.playFavorites(onOpenNowPlaying = onOpenNowPlaying)
+            LibraryDoor.SETTINGS -> onOpenSettings?.invoke()
+            LibraryDoor.SEARCH -> onOpenSearch?.invoke()
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val useTwoColumn = playerPaneVisible && maxWidth >= 780.dp
-        val contentMaxWidth = when {
-            useTwoColumn -> 1080.dp
-            playerPaneVisible -> 640.dp
-            maxWidth >= 900.dp -> 640.dp
-            else -> 720.dp
+        val wide = maxWidth >= 900.dp
+        val sidePad = if (wide) 28.dp else 20.dp
+        val columns = continueListeningColumns((maxWidth - sidePad * 2).value.toInt())
+        val continueListening = remember(ui.recent, ui.sessionFocus, playerPaneVisible, columns) {
+            continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible, limit = columns * CONTINUE_LISTENING_ROWS)
         }
+        // The hero shares its row with the library card (and Discover when present).
+        val heroShare = if (wide) 1.25f / (if (ui.loadedDiscover != null) 3.25f else 2.25f) else 1f
+        val heroStacked = (maxWidth - sidePad * 2) * heroShare < 440.dp
 
         Column(
             Modifier
-                .widthIn(max = contentMaxWidth)
+                .widthIn(max = 1480.dp)
                 .fillMaxWidth()
-                .align(if (playerPaneVisible || maxWidth >= 900.dp) Alignment.TopCenter else Alignment.TopStart)
+                .align(Alignment.TopCenter)
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 8.dp),
+                .padding(start = sidePad, end = sidePad, bottom = 24.dp),
         ) {
             DisplayHero(
                 title = "Home",
-                eyebrow = if (ui.favoriteCount > 0) "${ui.favoriteCount} hearted songs" else "Your listening",
-                ghost = ui.favoriteCount.takeIf { it > 0 }?.toString(),
+                eyebrow = homeEyebrow(ui.favorites.count, ui.localTrackCount),
+                ghost = ui.favorites.count.takeIf { it > 0 }?.toString(),
                 accent = Accents.home,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp),
+                modifier = Modifier.padding(top = 20.dp),
             )
-            if (!ui.empty) {
-                ProviderAttentionLine(
-                    message = ui.attentionMessage,
-                    onOpenSettings = onOpenSettings,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
-                )
-            }
 
             if (showSessionCard && sessionFocus != null) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 SessionCard(
                     focus = sessionFocus,
                     onOpenNowPlaying = onOpenNowPlaying,
@@ -92,79 +95,6 @@ fun HomeScreen(
                         onPlayTracks(queue, lastPlayedStartIndex(queue, track))
                         onOpenNowPlaying()
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-
-            Spacer(Modifier.height(if (playerPaneVisible) 16.dp else 12.dp))
-            PlayFavoritesAction(
-                favoriteCount = ui.favoriteCount,
-                onPlayFavorites = { presenter.playFavorites(onOpenNowPlaying) },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            ui.actionMessage?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                )
-            }
-
-            if (useTwoColumn) {
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        HomePinsAndDiscover(
-                            ui = ui,
-                            editingPins = editingPins,
-                            onToggleEditing = { editingPins = !editingPins },
-                            onPlayPin = { presenter.playPin(it, onPlayTracks, onOpenNowPlaying) },
-                            onMoveUp = { presenter.movePin(it, -1) },
-                            onMoveDown = { presenter.movePin(it, 1) },
-                            onRemove = { id ->
-                                presenter.unpin(id)
-                                if (ui.homePins.size <= 1) editingPins = false
-                            },
-                            onPlayDiscover = { presenter.playDiscover(it, onPlayTracks, onOpenNowPlaying) },
-                            pinErrorPadding = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            discoverPadding = Modifier.padding(horizontal = 8.dp),
-                            discoverErrorPadding = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        )
-                    }
-                    Column(Modifier.weight(1f)) {
-                        ContinueListeningSection(
-                            tracks = continueListening,
-                            onPlayTracks = onPlayTracks,
-                        )
-                    }
-                }
-            } else {
-                Spacer(Modifier.height(8.dp))
-                HomePinsAndDiscover(
-                    ui = ui,
-                    editingPins = editingPins,
-                    onToggleEditing = { editingPins = !editingPins },
-                    onPlayPin = { presenter.playPin(it, onPlayTracks, onOpenNowPlaying) },
-                    onMoveUp = { presenter.movePin(it, -1) },
-                    onMoveDown = { presenter.movePin(it, 1) },
-                    onRemove = { id ->
-                        presenter.unpin(id)
-                        if (ui.homePins.size <= 1) editingPins = false
-                    },
-                    onPlayDiscover = { presenter.playDiscover(it, onPlayTracks, onOpenNowPlaying) },
-                    pinErrorPadding = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                    discoverPadding = Modifier.padding(horizontal = 16.dp),
-                    discoverErrorPadding = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                )
-                ContinueListeningSection(
-                    tracks = continueListening,
-                    onPlayTracks = onPlayTracks,
                 )
             }
 
@@ -175,60 +105,91 @@ fun HomeScreen(
                     youtubeState = ui.youtubeState,
                     onOpenSettings = onOpenSettings,
                     onOpenSearch = onOpenSearch,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 40.dp),
+                    modifier = Modifier.padding(vertical = 40.dp),
+                )
+                return@Column
+            }
+
+            Spacer(Modifier.height(16.dp))
+            val discover: @Composable (Modifier) -> Unit = { m ->
+                ui.loadedDiscover?.let { playlist ->
+                    Slip(m) {
+                        DiscoverBlock(
+                            playlist = playlist,
+                            busy = ui.discoverBusy,
+                            onClick = { presenter.playDiscover(playlist, onPlayTracks, onOpenNowPlaying) },
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+            }
+            val favorites: @Composable (Modifier) -> Unit = { m ->
+                FavoritesHero(
+                    favorites = ui.favorites,
+                    stacked = heroStacked,
+                    onPlay = { presenter.playFavorites(onOpenNowPlaying = onOpenNowPlaying) },
+                    onShuffle = { presenter.playFavorites(shuffle = true, onOpenNowPlaying = onOpenNowPlaying) },
+                    modifier = m,
                 )
             }
-        }
-    }
-}
+            val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(ui.libraryLines, openDoor, m) }
+            if (wide) {
+                // Intrinsic height keeps the cards level; none of them may use BoxWithConstraints.
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (ui.loadedDiscover != null) discover(Modifier.weight(1f).fillMaxHeight())
+                    favorites(Modifier.weight(1.25f).fillMaxHeight())
+                    library(Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    discover(Modifier.fillMaxWidth())
+                    favorites(Modifier.fillMaxWidth())
+                    library(Modifier.fillMaxWidth())
+                }
+            }
+            listOfNotNull(ui.actionMessage, ui.discoverError).forEach { message ->
+                Text(
+                    message,
+                    color = if (message == ui.discoverError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
 
-@Composable
-private fun HomePinsAndDiscover(
-    ui: HomeUiState,
-    editingPins: Boolean,
-    onToggleEditing: () -> Unit,
-    onPlayPin: (ResolvedHomePin) -> Unit,
-    onMoveUp: (String) -> Unit,
-    onMoveDown: (String) -> Unit,
-    onRemove: (String) -> Unit,
-    onPlayDiscover: (Playlist) -> Unit,
-    pinErrorPadding: Modifier,
-    discoverPadding: Modifier,
-    discoverErrorPadding: Modifier,
-) {
-    PinnedSection(
-        resolvedPins = ui.resolvedPins,
-        homePinsEmpty = ui.homePins.isEmpty(),
-        editingPins = editingPins,
-        onToggleEditing = onToggleEditing,
-        onPlayPin = onPlayPin,
-        onMoveUp = onMoveUp,
-        onMoveDown = onMoveDown,
-        onRemove = onRemove,
-    )
-    ui.pinError?.let {
-        Text(
-            it,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = pinErrorPadding,
-        )
-    }
-    ui.loadedDiscover?.let { playlist ->
-        Spacer(Modifier.height(20.dp))
-        DiscoverBlock(
-            playlist = playlist,
-            busy = ui.discoverBusy,
-            onClick = { onPlayDiscover(playlist) },
-            modifier = discoverPadding,
-        )
-    }
-    ui.discoverError?.let {
-        Text(
-            it,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = discoverErrorPadding,
-        )
+            Spacer(Modifier.height(20.dp))
+            PinnedSection(
+                resolvedPins = ui.resolvedPins,
+                editingPins = editingPins,
+                onToggleEditing = { editingPins = !editingPins },
+                onPlayPin = { presenter.playPin(it, onPlayTracks, onOpenNowPlaying) },
+                onMoveUp = { presenter.movePin(it, -1) },
+                onMoveDown = { presenter.movePin(it, 1) },
+                onRemove = { id ->
+                    presenter.unpin(id)
+                    if (ui.homePins.size <= 1) editingPins = false
+                },
+            )
+            if (ui.resolvedPins.isNotEmpty() && ui.pinSuggestions.isNotEmpty()) Spacer(Modifier.height(12.dp))
+            PinSuggestionsSection(
+                suggestions = ui.pinSuggestions,
+                onPlay = { presenter.playPin(it.asResolvedPin(), onPlayTracks, onOpenNowPlaying) },
+                onPin = presenter::pinSuggestion,
+            )
+            ui.pinError?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+            ContinueListeningSection(
+                tracks = continueListening,
+                columns = columns,
+                onPlayTracks = onPlayTracks,
+            )
+        }
     }
 }

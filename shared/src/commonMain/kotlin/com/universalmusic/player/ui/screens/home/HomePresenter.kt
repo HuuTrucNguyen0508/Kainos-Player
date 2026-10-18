@@ -26,13 +26,15 @@ internal data class HomeUiState(
     val homePins: List<PersistedHomePin>,
     val sessionFocus: SessionFocus?,
     val resolvedPins: List<ResolvedHomePin>,
+    val pinSuggestions: List<PinSuggestion>,
     val loadedDiscover: Playlist?,
     val empty: Boolean,
-    val favoriteCount: Int,
+    val favorites: FavoritesSummary,
+    val libraryLines: List<LibraryLine>,
+    val localTrackCount: Int,
     val localState: ProviderState,
     val spotifyState: ProviderState,
     val youtubeState: ProviderState,
-    val attentionMessage: String?,
     val discoverBusy: Boolean,
     val discoverError: String?,
     val pinError: String?,
@@ -51,6 +53,8 @@ internal class HomePresenter(
     private val recentlyPlayed: StateFlow<List<Track>>,
     private val homePins: StateFlow<List<PersistedHomePin>>,
     private val favoriteIds: StateFlow<Set<String>>,
+    private val savedTracks: StateFlow<List<Track>>,
+    private val spotifyTracks: StateFlow<List<Track>>,
     private val spotifyState: StateFlow<ProviderState>,
     private val youtubeState: StateFlow<ProviderState>,
     private val localState: StateFlow<ProviderState>,
@@ -66,10 +70,11 @@ internal class HomePresenter(
     private val playKainosPlaylist: (String) -> Boolean,
     private val playAlbumById: (String) -> Boolean,
     private val playLocalFolder: (String) -> Boolean,
-    private val playFavoritesTracks: () -> Boolean,
+    private val playFavoritesTracks: (shuffle: Boolean) -> Boolean,
     private val resumeListeningSession: () -> Unit,
     private val moveHomePin: (String, Int) -> Unit,
     private val unpinHome: (String) -> Unit,
+    private val pinSuggestionHome: (PinSuggestion) -> Unit,
     private val scope: CoroutineScope,
 ) {
     // Home reads track and play state only. Position ticks must not rebuild the landing page.
@@ -98,11 +103,12 @@ internal class HomePresenter(
         ) { spotify, youtube, local, tracks, discover ->
             ProviderSlice(spotify, youtube, local, tracks, discover)
         },
+        combine(savedTracks, spotifyTracks) { saved, spotify -> CatalogSlice(saved, spotify) },
         combine(stableNow, settings, actions) { now, appSettings, action ->
             PlaybackSlice(now, appSettings, action)
         },
-    ) { library, providers, playback ->
-        derive(library, providers, playback)
+    ) { library, providers, catalog, playback ->
+        derive(library, providers, catalog, playback)
     }.stateIn(scope, SharingStarted.Eagerly, snapshot())
 
     fun clearActionMessage() {
@@ -117,15 +123,19 @@ internal class HomePresenter(
         unpinHome(id)
     }
 
+    fun pinSuggestion(suggestion: PinSuggestion) {
+        pinSuggestionHome(suggestion)
+    }
+
     fun resumeListening(onOpenNowPlaying: () -> Unit) {
         actions.update { it.copy(actionMessage = null) }
         resumeListeningSession()
         onOpenNowPlaying()
     }
 
-    fun playFavorites(onOpenNowPlaying: () -> Unit) {
+    fun playFavorites(shuffle: Boolean = false, onOpenNowPlaying: () -> Unit) {
         actions.update { it.copy(actionMessage = null) }
-        if (playFavoritesTracks()) {
+        if (playFavoritesTracks(shuffle)) {
             onOpenNowPlaying()
         } else {
             val message = if (favoriteIds.value.isEmpty()) {
@@ -242,6 +252,7 @@ internal class HomePresenter(
             localTracks.value,
             discoverWeekly.value,
         ),
+        CatalogSlice(savedTracks.value, spotifyTracks.value),
         PlaybackSlice(
             nowPlaying.value.copy(positionMs = 0),
             settings.value,
@@ -249,7 +260,12 @@ internal class HomePresenter(
         ),
     )
 
-    private fun derive(library: LibrarySlice, providers: ProviderSlice, playback: PlaybackSlice): HomeUiState {
+    private fun derive(
+        library: LibrarySlice,
+        providers: ProviderSlice,
+        catalog: CatalogSlice,
+        playback: PlaybackSlice,
+    ): HomeUiState {
         val now = playback.now
         val action = playback.action
         val folders = configuredMusicFolders(
@@ -260,6 +276,10 @@ internal class HomePresenter(
         val counts = folderTrackCounts(folders, tracksInLocalFolder)
         val focus = sessionFocusOf(now.track, now.isPlaying, library.recent)
         val discover = loadedDiscoverPlaylist(providers.discover)
+        val favorites = favoritesSummary(
+            library.favorites,
+            catalog.saved + providers.localTracks + catalog.spotify,
+        )
         return HomeUiState(
             recent = library.recent,
             homePins = library.homePins,
@@ -274,6 +294,15 @@ internal class HomePresenter(
                 spotifyState = providers.spotifyState,
                 busyPinId = action.pinBusyId,
             ),
+            pinSuggestions = pinSuggestions(
+                homePins = library.homePins,
+                kainosPlaylists = library.kainos,
+                spotifyPlaylists = library.spotifyPlaylists,
+                spotifyState = providers.spotifyState,
+                localTracks = providers.localTracks,
+                folders = folders,
+                folderTrackCounts = counts,
+            ),
             loadedDiscover = discover,
             empty = homeIsEmpty(
                 library.recent,
@@ -283,15 +312,21 @@ internal class HomePresenter(
                 library.favorites,
                 now.track,
             ),
-            favoriteCount = library.favorites.size,
+            favorites = favorites,
+            libraryLines = libraryLines(
+                localTrackCount = providers.localTracks.size,
+                folderCount = folders.size,
+                localState = providers.localState,
+                favorites = favorites,
+                kainosPlaylistCount = library.kainos.size,
+                spotifyState = providers.spotifyState,
+                spotifyPlaylistCount = library.spotifyPlaylists.size,
+                youtubeState = providers.youtubeState,
+            ),
+            localTrackCount = providers.localTracks.size,
             localState = providers.localState,
             spotifyState = providers.spotifyState,
             youtubeState = providers.youtubeState,
-            attentionMessage = providerAttentionMessage(
-                providers.localState,
-                providers.spotifyState,
-                providers.youtubeState,
-            ),
             discoverBusy = action.discoverBusy,
             discoverError = action.discoverError,
             pinError = action.pinError,
@@ -315,6 +350,11 @@ internal class HomePresenter(
         val discover: Playlist?,
     )
 
+    private data class CatalogSlice(
+        val saved: List<Track>,
+        val spotify: List<Track>,
+    )
+
     private data class PlaybackSlice(
         val now: NowPlayingState,
         val settings: AppSettings,
@@ -326,6 +366,8 @@ internal class HomePresenter(
             recentlyPlayed = container.library.recentlyPlayed,
             homePins = container.library.homePins,
             favoriteIds = container.library.favoriteIds,
+            savedTracks = container.library.savedTracks,
+            spotifyTracks = container.spotifyTracks,
             spotifyState = container.spotify.state,
             youtubeState = container.youtube.state,
             localState = container.local.state,
@@ -341,10 +383,20 @@ internal class HomePresenter(
             playKainosPlaylist = container::playKainosPlaylist,
             playAlbumById = container::playAlbumById,
             playLocalFolder = container::playLocalFolder,
-            playFavoritesTracks = container::playFavorites,
+            playFavoritesTracks = { shuffle -> container.playFavorites(shuffle) },
             resumeListeningSession = container::resumeListening,
             moveHomePin = { id, delta -> container.library.moveHomePin(id, delta) },
             unpinHome = { id -> container.library.unpinHome(id) },
+            pinSuggestionHome = { suggestion ->
+                container.library.pinHome(
+                    kind = suggestion.kind,
+                    targetId = suggestion.targetId,
+                    title = suggestion.title,
+                    subtitle = suggestion.subtitle,
+                    artworkUrl = suggestion.artwork?.url,
+                    providerEntityId = suggestion.providerEntityId,
+                )
+            },
             scope = scope,
         )
     }
