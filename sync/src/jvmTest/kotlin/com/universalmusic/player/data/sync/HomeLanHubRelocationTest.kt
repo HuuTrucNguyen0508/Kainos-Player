@@ -3,6 +3,9 @@ package com.universalmusic.player.data.sync
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.ListeningPairingIdentity
+import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
@@ -39,6 +42,8 @@ class HomeLanHubRelocationTest {
         beforeSettingsUpdate: suspend () -> Unit = {},
         afterSettingsUpdate: suspend () -> Unit = {},
         afterSettingsPersist: suspend () -> Unit = {},
+        listening: ListeningExchangeStore? = null,
+        onProbe: () -> Unit = {},
     ) =
         HomeLanSyncService(
             scope = scope,
@@ -72,7 +77,12 @@ class HomeLanHubRelocationTest {
                 clientHosts += hub.lastKnownHost
                 val reachable = FakeVaultClient(ByteArray(0)).also { openClients += it }
                 if (hub.lastKnownHost == liveHost) {
-                    reachable
+                    object : HomeLanSyncClient by reachable {
+                        override suspend fun probeHub(): Result<HomeLanHealthResponse> {
+                            onProbe()
+                            return reachable.probeHub()
+                        }
+                    }
                 } else {
                     object : HomeLanSyncClient by reachable {
                         override suspend fun probeHub(): Result<HomeLanHealthResponse> =
@@ -83,6 +93,7 @@ class HomeLanHubRelocationTest {
             vaultStore = tempVaultStore().second,
             refreshLocalLibrary = {},
             isDesktop = false,
+            listening = listening,
             hubBrowser = {
                 flow {
                     discoveryGate?.await()
@@ -91,6 +102,36 @@ class HomeLanHubRelocationTest {
                 }
             },
         ).also { it.hydrateFromSettings(settings) }
+
+    @Test
+    fun successfulHealthProbeStillSyncsWhenClearingListeningRefusalFails() = runTest {
+        val base = PendingStore(items("a"))
+        base.setRefusedPairing(settings.listeningDeliveryTarget(false, FixedDeviceIdentity("cc".repeat(32)).fingerprint())!!.pairingIdentity)
+        val store = object : ListeningExchangeStore by base {
+            override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) {
+                throw IOException("listening database unavailable")
+            }
+        }
+        val service = service(backgroundScope, "192.168.1.10", listening = store)
+
+        service.syncNow().getOrThrow()
+
+        assertNull(service.status.value.lastError)
+        assertTrue(openClients.all { it.closed })
+    }
+
+    @Test
+    fun addressChangeDuringProbeStillClearsRefusalForTheSamePairing() = runTest {
+        val store = PendingStore(items("a"))
+        store.setRefusedPairing(settings.listeningDeliveryTarget(false, FixedDeviceIdentity("cc".repeat(32)).fingerprint())!!.pairingIdentity)
+        val service = service(backgroundScope, "192.168.1.10", listening = store, onProbe = {
+            settings = settings.copy(homeLanSyncHub = settings.homeLanSyncHub!!.copy(lastKnownHost = "192.168.1.57"))
+        })
+
+        service.syncNow()
+
+        assertNull(store.refusedPairing(), "Address changes must not prevent trust recovery")
+    }
 
     @Test
     fun hubFoundByMdnsAtANewAddressIsStoredAndSynced() = runTest {

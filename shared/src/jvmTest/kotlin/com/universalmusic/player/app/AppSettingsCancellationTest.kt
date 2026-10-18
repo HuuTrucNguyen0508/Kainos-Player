@@ -36,6 +36,31 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppSettingsCancellationTest {
     @Test
+    fun desktopReadyStartsTheHomeSyncHub() = runTest {
+        Fixture(backgroundScope, StandardTestDispatcher(testScheduler), initiallyEnabled = true).use { f ->
+            f.initialize()
+            val foreground = AppForegroundState()
+            foreground.onReady(f.service::onAppForeground)
+            runCurrent()
+            assertTrue(f.hub.isListening, "Desktop readiness must start the enabled hub")
+            assertTrue(f.service.status.value.hubListening)
+            assertTrue(foreground.isVisible)
+        }
+    }
+
+    @Test
+    fun androidReadyWaitsForTheActivityForegroundEvent() {
+        val foreground = AppForegroundState(platform = "Android")
+        var foregroundEvents = 0
+        foreground.onReady { foregroundEvents++ }
+        assertEquals(0, foregroundEvents)
+        assertFalse(foreground.isVisible)
+        foreground.isVisible = true
+        foreground.onReady { foregroundEvents++ }
+        assertEquals(1, foregroundEvents)
+    }
+
+    @Test
     fun committedPreferenceSurvivesCallerCancellationAndAnUnrelatedWrite() = runTest {
         Fixture(backgroundScope, StandardTestDispatcher(testScheduler)).use { f ->
             f.initialize()

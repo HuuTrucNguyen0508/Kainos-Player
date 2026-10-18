@@ -126,8 +126,7 @@ class AppContainer {
     val listeningStore: ListeningStore = createListeningStore()
     private val listeningExchange = createListeningExchangeStore()
 
-    @kotlin.concurrent.Volatile
-    private var appVisible = false
+    private val foreground = AppForegroundState()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -238,8 +237,8 @@ class AppContainer {
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
         hubPort = homeLanHubPort(),
         listening = listeningExchange,
-        retryListeningInProcess = { appVisible || player.nowPlaying.value.isPlaying },
-        isAppForeground = { appVisible },
+        retryListeningInProcess = { foreground.isVisible || player.nowPlaying.value.isPlaying },
+        isAppForeground = { foreground.isVisible },
     )
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
@@ -408,7 +407,7 @@ class AppContainer {
             player.initializePersistence()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
-            if (appVisible) homeLanSync.onAppForeground()
+            foreground.onReady(homeLanSync::onAppForeground)
         }
     }
 
@@ -610,12 +609,12 @@ class AppContainer {
     }
 
     fun onAppForeground() {
-        appVisible = true
+        foreground.isVisible = true
         homeLanSync.onAppForeground()
     }
 
     suspend fun onAppBackground() {
-        appVisible = false
+        foreground.isVisible = false
         flushListeningSession()
         homeLanSync.scheduleListeningDeliveryIfPending()
     }
