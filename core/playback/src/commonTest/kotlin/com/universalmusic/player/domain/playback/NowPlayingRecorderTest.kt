@@ -700,6 +700,41 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun switchingSourceDuringStartupKeepsTheLatestAcceptedTarget() = runTest {
+        assertStartupFallback(engineFailure = false)
+    }
+
+    @Test
+    fun aFailedStartupKeepsTheLatestTargetThroughFallback() = runTest {
+        assertStartupFallback(engineFailure = true)
+    }
+
+    private suspend fun TestScope.assertStartupFallback(engineFailure: Boolean) {
+        val combined = track("Song", "Artist", provider = ProviderId.SPOTIFY).let {
+            it.copy(canonicalId = "yt:mirror", sources = it.sources + yt("mirror").sources)
+        }
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(combined, positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.playReturnGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.seekTo(50_000)
+        runCurrent()
+        if (engineFailure) rig.engine.report(EngineStatus.FAILED) else rig.session.tryAnotherSource()
+        runCurrent()
+        val publication = rig.store.latest
+        checkNotNull(rig.engine.playReturnGate).complete(Unit)
+        settle(rig)
+        assertEquals(ProviderId.YOUTUBE_MUSIC, rig.session.nowPlaying.value.resolved?.source?.provider)
+        assertEquals(listOf(50_000L, 50_000L), rig.engine.seeks)
+        assertEquals(50_000, publication.state.positionMs)
+        assertEquals(50_000, rig.engine.state.value.positionMs)
+        assertEquals(50_000, rig.store.restore.snapshot.positionMs)
+        rig.session.pauseTransport()
+        settle(rig)
+    }
+
+    @Test
     fun aNewSelectionDiscardsTheUnsubmittedResumePositionAndItsOldSamples() = runTest {
         val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
         rig.session.initializePersistence()
