@@ -178,24 +178,28 @@ class HttpListeningHubClient(
     override fun close() = http.close()
 
     override suspend fun report(report: ListeningReport): ListeningReply {
-        val response = http.post("$base$HOME_LAN_SYNC_PATH_V3_LISTENING") {
-            expectSuccess = false
-            contentType(ContentType.Application.Json)
-            setBody(json.encodeToString(report))
+        val response = request {
+            http.post("$base$HOME_LAN_SYNC_PATH_V3_LISTENING") {
+                expectSuccess = false
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(report))
+            }
         }
         return json.decodeFromString(response.checked("Listening report").bodyAsText())
     }
 
     override suspend fun fetchListening(): ListeningReply {
-        val response = http.get("$base$HOME_LAN_SYNC_PATH_V3_LISTENING") { expectSuccess = false }
+        val response = request { http.get("$base$HOME_LAN_SYNC_PATH_V3_LISTENING") { expectSuccess = false } }
         return json.decodeFromString(response.checked("Listening fetch").bodyAsText())
     }
 
     override suspend fun uploadQueue(queue: PortableListeningQueue): Boolean {
-        val response = http.put("$base$HOME_LAN_SYNC_PATH_V3_QUEUE/${queue.hash.hex}") {
-            expectSuccess = false
-            contentType(ContentType.Application.Json)
-            setBody(queue.encodeJson())
+        val response = request {
+            http.put("$base$HOME_LAN_SYNC_PATH_V3_QUEUE/${queue.hash.hex}") {
+                expectSuccess = false
+                contentType(ContentType.Application.Json)
+                setBody(queue.encodeJson())
+            }
         }
         if (response.status == HttpStatusCode.Conflict) return false
         response.checked("Queue upload")
@@ -203,9 +207,17 @@ class HttpListeningHubClient(
     }
 
     override suspend fun fetchQueue(hash: QueueHash): PortableListeningQueue? {
-        val response = http.get("$base$HOME_LAN_SYNC_PATH_V3_QUEUE/${hash.hex}") { expectSuccess = false }
+        val response = request { http.get("$base$HOME_LAN_SYNC_PATH_V3_QUEUE/${hash.hex}") { expectSuccess = false } }
         if (response.status == HttpStatusCode.NotFound) return null
         return PortableListeningQueue.decode(response.checked("Queue fetch").bodyAsText(), hash)
+    }
+
+    private suspend fun request(block: suspend () -> HttpResponse): HttpResponse = try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (err: Exception) {
+        throw trustFailureOf(err)?.let(::ListeningHubRefused) ?: err
     }
 
     private suspend fun HttpResponse.checked(what: String): HttpResponse {
@@ -219,14 +231,12 @@ class HttpListeningHubClient(
 }
 
 suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrowser): ListeningHubClient {
-    var refusal: String? = null
     val resolver = HubEndpointResolver(
         browser = browser,
         probe = { endpoint ->
-            runCatching { http.get("https://${endpoint.authority}$HOME_LAN_SYNC_PATH_HEALTH"); Unit }
+            runCatching { http.get("https://${endpoint.authority}$HOME_LAN_SYNC_PATH_HEALTH") { expectSuccess = false }; Unit }
                 .onFailure { err ->
                     if (err is CancellationException) throw err
-                    trustFailureOf(err)?.let { refusal = it }
                 }
         },
         log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
@@ -242,7 +252,7 @@ suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrow
         is ResolveResult.Resolved -> HttpListeningHubClient(result.endpoint, http)
         is ResolveResult.HubNotFound -> {
             http.close()
-            throw refusal?.let(::ListeningHubRefused) ?: IllegalStateException(result.reason)
+            throw IllegalStateException(result.reason)
         }
     }
 }
@@ -283,6 +293,7 @@ class ListeningDelivery(
     private val connect: suspend (PairedPeer) -> ListeningHubClient,
     private val clock: () -> Long = ::currentTimeMillis,
     private val mutex: Mutex = processDeliveryLock,
+    private val onRefused: () -> Unit = {},
 ) {
     suspend fun canDeliverPending(): Boolean {
         val current = target() ?: return false
@@ -308,30 +319,32 @@ class ListeningDelivery(
     }
 
     private suspend fun pass(exchangeOnForeground: Boolean): DeliveryOutcome {
-        val current = target() ?: return DeliveryOutcome.IDLE
-        val refused = store.refusedPairing()
-        if (refused == current.pairingIdentity) return DeliveryOutcome.REFUSED
-        if (refused != null) store.setRefusedPairing(null)
         return try {
+            val current = target() ?: return DeliveryOutcome.IDLE
+            val refused = store.refusedPairing()
+            if (refused == current.pairingIdentity) {
+                onRefused()
+                return DeliveryOutcome.REFUSED
+            }
+            if (refused != null) store.setRefusedPairing(null)
             val export = if (exchangeOnForeground) store.readLocalExport() else pendingRevision(current.hub)
-            if (export == null && !exchangeOnForeground) DeliveryOutcome.IDLE
-            else connect(current.hub).use { client ->
-                if (export == null) {
-                    receiveReply(client.fetchListening(), current)
-                    DeliveryOutcome.IDLE
-                } else exchange(client, current, export)
+            try {
+                if (export == null && !exchangeOnForeground) DeliveryOutcome.IDLE
+                else connect(current.hub).use { client ->
+                    if (export == null) {
+                        receiveReply(client.fetchListening(), current)
+                        DeliveryOutcome.IDLE
+                    } else exchange(client, current, export)
+                }
+            } catch (refused: ListeningHubRefused) {
+                store.setRefusedPairing(current.pairingIdentity)
+                onRefused()
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery refused: ${refused.message}")
+                DeliveryOutcome.REFUSED
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (refused: ListeningHubRefused) {
-            store.setRefusedPairing(current.pairingIdentity)
-            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery refused: ${refused.message}")
-            DeliveryOutcome.REFUSED
         } catch (err: Exception) {
-            trustFailureOf(err)?.let {
-                store.setRefusedPairing(current.pairingIdentity)
-                return DeliveryOutcome.REFUSED
-            }
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery failed: ${err.message ?: err}")
             DeliveryOutcome.RETRY
         }
@@ -388,13 +401,18 @@ class ListeningDeliveryRunner(
 
     private suspend fun run() {
         var retrying = false
-        var exchangeOnForeground = false
         while (true) {
             if (retrying && retryInProcess()) withTimeoutOrNull(retryMs) { requests.receive() } else requests.receive()
-            exchangeOnForeground = foregroundRequested.getAndUpdate { false } || exchangeOnForeground
-            if (!isAppForeground() && delivery.canDeliverPending()) scheduleBackground()
-            retrying = delivery.deliverPending(exchangeOnForeground) == DeliveryOutcome.RETRY
-            if (!retrying) exchangeOnForeground = false
+            val exchangeOnForeground = foregroundRequested.getAndUpdate { false }
+            retrying = try {
+                if (!isAppForeground() && delivery.canDeliverPending()) scheduleBackground()
+                delivery.deliverPending(exchangeOnForeground) == DeliveryOutcome.RETRY && delivery.canDeliverPending()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening runner failed: ${err.message ?: err}")
+                true
+            }
         }
     }
 }

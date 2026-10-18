@@ -32,6 +32,7 @@ class ListeningDeliveryWorkerTest {
     private val hubPeer = PairedPeer("kainos-pc", "PC", CertFingerprint.parse("aa".repeat(32))!!, "127.0.0.1", 1, 1L)
     private val store = PendingStore(items("a", "b"))
     private var attempts = 0
+    private var deliveryFailure: Exception? = null
     private val hub = FakeHub { if (++attempts == 1) throw IOException("hub is off") }
 
     private var finishGate: CompletableDeferred<Unit>? = null
@@ -43,6 +44,7 @@ class ListeningDeliveryWorkerTest {
         val factory = object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker =
                 ListeningDeliveryWorker(appContext, workerParameters) {
+                    deliveryFailure?.let { throw it }
                     val result = delivery.deliverPending()
                     completedPass?.complete(Unit)
                     finishGate?.await()
@@ -74,6 +76,23 @@ class ListeningDeliveryWorkerTest {
         assertEquals(WorkInfo.State.SUCCEEDED, workManager.getWorkInfoById(queued.id).get()!!.state)
         assertEquals(listOf(1L, 1L), hub.reports)
         assertEquals(PublicationRevision(1), store.delivered)
+    }
+
+    @Test
+    fun anUnexpectedDeliveryExceptionRetriesAndCanRecover() = runBlocking {
+        deliveryFailure = IOException("database temporarily unavailable")
+        val manager = WorkManager.getInstance(context)
+        val driver = WorkManagerTestInitHelper.getTestDriver(context)!!
+        ListeningDeliveryWorker.enqueue(context)
+        val first = manager.getWorkInfosForUniqueWork(ListeningDeliveryWorker.UNIQUE_NAME).get().single()
+        driver.setAllConstraintsMet(first.id)
+        val retried = manager.getWorkInfoById(first.id).get()!!
+        assertEquals(WorkInfo.State.ENQUEUED, retried.state)
+        assertEquals(1, retried.runAttemptCount)
+        deliveryFailure = null
+        attempts = 1
+        driver.setAllConstraintsMet(first.id)
+        assertEquals(WorkInfo.State.SUCCEEDED, manager.getWorkInfoById(first.id).get()!!.state)
     }
 
     @Test

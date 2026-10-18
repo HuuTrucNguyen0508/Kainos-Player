@@ -127,7 +127,7 @@ class AppContainer {
     private val listeningExchange = createListeningExchangeStore()
 
     @kotlin.concurrent.Volatile
-    private var appVisible = true
+    private var appVisible = false
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -408,7 +408,7 @@ class AppContainer {
             player.initializePersistence()
             _ready.value = true
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
-            homeLanSync.onAppForeground()
+            if (appVisible) homeLanSync.onAppForeground()
         }
     }
 

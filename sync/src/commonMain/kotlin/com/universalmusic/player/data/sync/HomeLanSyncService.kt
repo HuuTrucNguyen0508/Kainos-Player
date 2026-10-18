@@ -112,6 +112,7 @@ class HomeLanSyncService(
             target = { if (resetBlocked()) null else settings().listeningDeliveryTarget(isDesktop, identity.fingerprint()) },
             connect = openListeningHub,
             clock = clock,
+            onRefused = { _status.update { it.copy(lastError = HOME_LAN_NOT_TRUSTED) } },
         )
     }
     private val listeningRunner = listeningDelivery?.let {
@@ -313,7 +314,6 @@ class HomeLanSyncService(
                 homeLanSyncLastError = null,
             )
         }
-        listening?.setRefusedPairing(null)
         reconcileTrust()
         _status.update {
             it.copy(enabled = true, role = HomeLanSyncRole.CLIENT, lastError = null, lastDetail = "Paired with ${peer.displayName}")
@@ -389,7 +389,6 @@ class HomeLanSyncService(
                             it.copy(homeLanSyncHub = null, homeLanSyncPeers = emptyList(),
                                 homeLanSyncIdentityResetPending = false, homeLanSyncLastError = null)
                         }
-                        listening?.setRefusedPairing(null)
                         reconcileTrust()
                         _status.update { it.copy(lastError = null, lastDetail = "Created a new identity for this device") }
                     }
@@ -766,7 +765,15 @@ class HomeLanSyncService(
             PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening pending check failed: ${err.message ?: err}")
             true
         }
-        if (pending) scheduleListeningDelivery()
+        if (pending) {
+            try {
+                scheduleListeningDelivery()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (err: Exception) {
+                PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening scheduling failed: ${err.message ?: err}")
+            }
+        }
     }
 
     fun onAppForeground() {
@@ -846,6 +853,7 @@ class HomeLanSyncService(
                 val client = clients[endpoint] ?: acquireClient(target.at(endpoint)).also { clients[endpoint] = it }
                 runCatching {
                     client.probeHub().getOrThrow()
+                    clearListeningRefusal(target)
                 }.map { }.onFailure { err ->
                     if (err is CancellationException) throw err
                     trustFailureOf(err)?.let { trustFailure = it }
@@ -871,6 +879,14 @@ class HomeLanSyncService(
                 Result.success(clients.getValue(result.endpoint) to result)
             }
         }
+    }
+
+    private suspend fun clearListeningRefusal(hub: PairedPeer) {
+        val store = listening ?: return
+        val current = settings().listeningDeliveryTarget(isDesktop, identity.fingerprint()) ?: return
+        if (current.hub != hub || store.refusedPairing() != current.pairingIdentity) return
+        store.setRefusedPairing(null)
+        _status.update { if (it.lastError == HOME_LAN_NOT_TRUSTED) it.copy(lastError = null) else it }
     }
 
     private suspend fun rememberHubAddress(source: ResolutionSource, resolved: ResolveResult.Resolved): Boolean {

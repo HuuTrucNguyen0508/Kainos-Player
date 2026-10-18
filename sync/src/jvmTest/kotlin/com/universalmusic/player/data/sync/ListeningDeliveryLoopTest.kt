@@ -1,10 +1,12 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.session.ListeningPairingIdentity
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.PublicationRevision
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -35,6 +37,97 @@ class ListeningDeliveryLoopTest {
         connect = { hub },
         clock = { 1_000 },
     )
+
+    @Test
+    fun targetFailureBecomesARetry() = runBlocking {
+        val loop = ListeningDelivery(PendingStore(queue), { throw IOException("settings unavailable") }, { FakeHub() })
+        assertEquals(DeliveryOutcome.RETRY, loop.deliverPending())
+    }
+
+    @Test
+    fun refusalReadFailureBecomesARetry() = runBlocking {
+        val store = object : ListeningExchangeStore by PendingStore(queue) {
+            override suspend fun refusedPairing(): ListeningPairingIdentity? = throw IOException("database unavailable")
+        }
+        assertEquals(DeliveryOutcome.RETRY, delivery(store, FakeHub()).deliverPending())
+    }
+
+    @Test
+    fun refusalWriteFailureBecomesARetry() = runBlocking {
+        val store = object : ListeningExchangeStore by PendingStore(queue) {
+            override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) { throw IOException("database unavailable") }
+        }
+        assertEquals(DeliveryOutcome.RETRY, delivery(store, FakeHub { throw ListeningHubRefused("HTTP 401") }).deliverPending())
+    }
+
+    @Test
+    fun clearingAnOldRefusalFailureBecomesARetry() = runBlocking {
+        val base = PendingStore(queue)
+        base.setRefusedPairing(DeliveryTarget(hubPeer, "old-phone", CertFingerprint.parse("bb".repeat(32))!!).pairingIdentity)
+        val store = object : ListeningExchangeStore by base {
+            override suspend fun setRefusedPairing(pairing: ListeningPairingIdentity?) { throw IOException("database unavailable") }
+        }
+        assertEquals(DeliveryOutcome.RETRY, delivery(store, FakeHub()).deliverPending())
+    }
+
+    @Test
+    fun cancellationStillEscapesThePass() = runBlocking {
+        val loop = ListeningDelivery(PendingStore(queue), { throw CancellationException("stopping") }, { FakeHub() })
+        kotlin.test.assertFailsWith<CancellationException> { loop.deliverPending() }
+        Unit
+    }
+
+    @Test
+    fun throwingPendingCheckDoesNotKillTheRunner() = runTest {
+        val base = PendingStore(queue)
+        var unavailable = true
+        val store = object : ListeningExchangeStore by base {
+            override suspend fun refusedPairing(): ListeningPairingIdentity? {
+                if (unavailable) throw IOException("database unavailable")
+                return base.refusedPairing()
+            }
+        }
+        val hub = FakeHub()
+        val runner = ListeningDeliveryRunner(backgroundScope, delivery(store, hub), { true }, {}, isAppForeground = { false })
+        runner.request()
+        runCurrent()
+        unavailable = false
+        advanceTimeBy(LISTENING_RETRY_MS + 1)
+        assertEquals(listOf(1L), hub.reports)
+    }
+
+    @Test
+    fun throwingSchedulerDoesNotKillTheRunnerOrBypassDurableScheduling() = runTest {
+        var attempts = 0
+        val hub = FakeHub()
+        val runner = ListeningDeliveryRunner(backgroundScope, delivery(PendingStore(queue), hub), { true }, {
+            if (++attempts == 1) throw IOException("WorkManager unavailable")
+        }, isAppForeground = { false })
+        runner.request()
+        runCurrent()
+        assertEquals(emptyList(), hub.reports)
+        advanceTimeBy(LISTENING_RETRY_MS + 1)
+        assertEquals(2, attempts)
+        assertEquals(listOf(1L), hub.reports)
+    }
+
+    @Test
+    fun foregroundFetchIsAttemptedOncePerEventWithoutAPendingRevision() = runTest {
+        val store = PendingStore(queue)
+        store.markDelivered(hubPeer.deviceId, PublicationRevision(1))
+        var attempts = 0
+        val loop = ListeningDelivery(store,
+            { DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) },
+            { attempts++; throw IOException("hub is off") })
+        val runner = ListeningDeliveryRunner(backgroundScope, loop, { true }, {}, isAppForeground = { true })
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        advanceTimeBy(10 * LISTENING_RETRY_MS)
+        assertEquals(1, attempts)
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(2, attempts)
+    }
 
     @Test
     fun aLateAnswerForOneRevisionLeavesTheNextPending() = runBlocking {

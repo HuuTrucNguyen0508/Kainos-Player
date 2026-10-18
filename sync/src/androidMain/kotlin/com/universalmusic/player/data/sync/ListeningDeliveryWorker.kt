@@ -10,12 +10,13 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.await
 import com.universalmusic.player.platform.createListeningExchangeStore
 import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.platformDeviceIdentity
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
@@ -27,8 +28,13 @@ class ListeningDeliveryWorker internal constructor(
 ) : CoroutineWorker(context, params) {
     constructor(context: Context, params: WorkerParameters) : this(context, params, { backgroundDelivery(context).deliverPending() })
 
-    override suspend fun doWork(): Result =
+    override suspend fun doWork(): Result = try {
         if (deliver() == DeliveryOutcome.RETRY) Result.retry() else Result.success()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (err: Exception) {
+        Result.retry()
+    }
 
     companion object {
         const val UNIQUE_NAME = "listening-delivery"
@@ -36,18 +42,16 @@ class ListeningDeliveryWorker internal constructor(
         private val scheduling = Mutex()
 
         suspend fun enqueue(context: Context) = scheduling.withLock {
-            withContext(Dispatchers.IO) {
-                val manager = WorkManager.getInstance(context)
-                val waiting = manager.getWorkInfosForUniqueWork(UNIQUE_NAME).get().any {
-                    it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
-                }
-                if (!waiting) {
-                    val request = OneTimeWorkRequestBuilder<ListeningDeliveryWorker>()
-                        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, LISTENING_RETRY_MS, TimeUnit.MILLISECONDS)
-                        .build()
-                    manager.enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.get()
-                }
+            val manager = WorkManager.getInstance(context)
+            val waiting = manager.getWorkInfosForUniqueWorkFlow(UNIQUE_NAME).first().any {
+                it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+            }
+            if (!waiting) {
+                val request = OneTimeWorkRequestBuilder<ListeningDeliveryWorker>()
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, LISTENING_RETRY_MS, TimeUnit.MILLISECONDS)
+                    .build()
+                manager.enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).await()
             }
         }
     }

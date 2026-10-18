@@ -13,6 +13,7 @@ import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.StoredPeerListening
 import com.universalmusic.player.platform.JvmDeviceIdentity
 import com.universalmusic.player.platform.pinnedHomeLanHttpClient
+import kotlinx.coroutines.flow.emptyFlow
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.get
@@ -265,16 +266,89 @@ class ListeningExchangeTest {
         assertEquals(401, status)
     }
 
-    private fun foregroundService(scope: CoroutineScope): HomeLanSyncService {
+    @Test
+    fun aForeignCertificateAtTheStaleAddressAndNoDiscoveryIsRetryable() = runBlocking {
+        hub.start()
+        val pairedHub = hubAsPeer.copy(fingerprint = CertFingerprint.parse("ff".repeat(32))!!)
+        val http = pinnedHomeLanHttpClient(pairedHub.fingerprint, phoneIdentity.keyManagers())
+        val loop = ListeningDelivery(phone.exchange,
+            { DeliveryTarget(pairedHub, "kainos-phone", phoneIdentity.fingerprint) },
+            { openListeningHub(it, http, HubBrowser { emptyFlow() }) }, mutex = Mutex())
+        phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
+        assertEquals(DeliveryOutcome.RETRY, loop.deliverPending())
+        assertNull(phone.exchange.refusedPairing())
+    }
+
+    @Test
+    fun aResolvedHubs401LatchesRefusal() = runBlocking {
+        hub.start()
+        val stranger = JvmDeviceIdentity(directory.resolve("unpaired-id")).material()
+        val http = http(stranger)
+        val loop = ListeningDelivery(phone.exchange,
+            { DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint) },
+            { openListeningHub(it, http, HubBrowser { emptyFlow() }) }, mutex = Mutex())
+        phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
+        assertEquals(DeliveryOutcome.REFUSED, loop.deliverPending())
+        assertEquals(DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint).pairingIdentity, phone.exchange.refusedPairing())
+    }
+
+    @Test
+    fun aSuccessfulSyncClearsRefusalAndThePairAgainStatus() = runTest {
+        phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
+        val service = foregroundService(backgroundScope, listeningClient = { FakeHub { throw ListeningHubRefused("HTTP 401") } },
+            syncClient = { FakeVaultClient(ByteArray(0)) })
+        service.requestListeningDelivery()
+        awaitRefusal(service)
+        assertEquals(HOME_LAN_NOT_TRUSTED, service.status.value.lastError)
+        kotlin.test.assertNotNull(phone.exchange.refusedPairing())
+        withContext(Dispatchers.IO) { service.syncNow().getOrThrow() }
+        assertNull(phone.exchange.refusedPairing())
+        assertNull(service.status.value.lastError)
+    }
+
+    @Test
+    fun aSuccessfulHealthProbeClearsRefusalEvenIfTheMainSyncFails() = runTest {
+        val refusedPairing = DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint).pairingIdentity
+        phone.exchange.setRefusedPairing(refusedPairing)
+        val base = FakeVaultClient(ByteArray(0))
+        val service = foregroundService(backgroundScope, syncClient = { object : HomeLanSyncClient by base {
+            override suspend fun syncHearts() = Result.failure<HeartsSyncDocument>(java.io.IOException("temporary heart failure"))
+        } })
+        kotlin.test.assertTrue(withContext(Dispatchers.IO) { service.syncNow().isFailure })
+        assertNull(phone.exchange.refusedPairing())
+    }
+
+    @Test
+    fun aThrowingBackgroundSchedulerDoesNotEscapeTheService() = runTest {
+        phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
+        var attempts = 0
+        val service = foregroundService(backgroundScope, scheduler = { attempts++; throw java.io.IOException("scheduler unavailable") })
+        service.scheduleListeningDeliveryIfPending()
+        service.scheduleListeningDeliveryIfPending()
+        assertEquals(2, attempts)
+    }
+
+    private suspend fun awaitRefusal(service: HomeLanSyncService) = withContext(Dispatchers.IO) {
+        withTimeout(5_000) {
+            while (service.status.value.lastError != HOME_LAN_NOT_TRUSTED) delay(10)
+        }
+    }
+
+    private fun foregroundService(
+        scope: CoroutineScope,
+        listeningClient: (PairedPeer) -> ListeningHubClient = { client() },
+        syncClient: (PairedPeer) -> HomeLanSyncClient = { error("No library sync needed") },
+        scheduler: suspend () -> Unit = {},
+    ): HomeLanSyncService {
         var settings = AppSettings(homeLanSyncEnabled = true, homeLanSyncRole = HomeLanSyncRole.CLIENT,
             homeLanSyncDeviceId = "kainos-phone", homeLanSyncHub = hubAsPeer)
         return HomeLanSyncService(scope, { settings }, { settings = it(settings) },
             LibraryRepository(), KainosPlaylistRepository(), hubFactory = { error("Phone has no hub") },
-            clientFactory = { error("No library sync needed") }, pairingClientFactory = { _, _ -> error("No pairing needed") },
+            clientFactory = syncClient, pairingClientFactory = { _, _ -> error("No pairing needed") },
             identity = phoneIdentity.let { FixedDeviceIdentity(it.fingerprint.hex) },
             vaultStore = JvmHomeLanVaultStore({ directory.toString() }, directory.resolve("vault.json").toPath()),
             refreshLocalLibrary = {}, isDesktop = false, clock = { HUB_NOW },
-            listening = phone.exchange, openListeningHub = { client() })
+            listening = phone.exchange, openListeningHub = listeningClient, scheduleListeningDelivery = scheduler).also { it.hydrateFromSettings(settings) }
     }
 
     private fun phoneState(current: Int, at: Long, positionMs: Long = 42_000, playing: Boolean = true) =
