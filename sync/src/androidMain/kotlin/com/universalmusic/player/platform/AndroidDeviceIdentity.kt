@@ -18,48 +18,56 @@ import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.SSLEngine
 import javax.security.auth.x500.X500Principal
 
-internal class AndroidDeviceIdentity(private val alias: String = ALIAS) : DeviceIdentity {
+internal class AndroidDeviceIdentity(private val keyAlias: String = ALIAS) : DeviceIdentity {
     private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private var hardwareLogged = false
 
     @Synchronized
     private fun material(): KeyStore.PrivateKeyEntry {
-        if (!store.containsAlias(alias)) {
+        var entry = store.getEntry(keyAlias, null) as? KeyStore.PrivateKeyEntry
+        val needsTlsRepair = entry != null && KeyProperties.DIGEST_NONE !in keyInfo(entry).digests
+        if (entry == null || needsTlsRepair) {
             KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").apply {
-                initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
+                initialize(KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_SIGN)
                     .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256)
                     .setCertificateSubject(X500Principal("CN=Kainos device"))
                     .setCertificateSerialNumber(BigInteger.ONE)
                     .setCertificateNotBefore(Date(0))
                     .setCertificateNotAfter(Date(4_102_444_800_000L))
                     .build())
             }.generateKeyPair()
+            entry = store.getEntry(keyAlias, null) as KeyStore.PrivateKeyEntry
+            hardwareLogged = false
+            if (needsTlsRepair) PlaybackTrace.log("HomeSync", "Replaced unusable SHA-256-only identity with TLS signing key")
         }
-        val entry = store.getEntry(alias, null) as KeyStore.PrivateKeyEntry
+        val material = checkNotNull(entry)
         if (!hardwareLogged) {
-            val info = KeyFactory.getInstance(entry.privateKey.algorithm, "AndroidKeyStore")
-                .getKeySpec(entry.privateKey, KeyInfo::class.java)
-            PlaybackTrace.log("HomeSync", "Keystore isInsideSecureHardware=${info.isInsideSecureHardware}")
+            val info = keyInfo(material)
+            PlaybackTrace.log("HomeSync", "Keystore isInsideSecureHardware=${info.isInsideSecureHardware} digests=${info.digests.joinToString()}")
             hardwareLogged = true
         }
-        return entry
+        return material
     }
+
+    private fun keyInfo(entry: KeyStore.PrivateKeyEntry): KeyInfo =
+        KeyFactory.getInstance(entry.privateKey.algorithm, "AndroidKeyStore")
+            .getKeySpec(entry.privateKey, KeyInfo::class.java)
 
     override fun fingerprint(): CertFingerprint = CertFingerprint.ofCertificate(material().certificate.encoded)
 
     @Synchronized
     override fun reset(): CertFingerprint {
-        val previous = runCatching { store.getEntry(alias, null) as? KeyStore.PrivateKeyEntry }.getOrNull()
+        val previous = runCatching { store.getEntry(keyAlias, null) as? KeyStore.PrivateKeyEntry }.getOrNull()
         var deleted = false
         try {
-            store.deleteEntry(alias)
+            store.deleteEntry(keyAlias)
             deleted = true
             hardwareLogged = false
             return fingerprint()
         } catch (failure: Exception) {
             val preserved = if (deleted || previous == null) null else runCatching {
-                (store.getEntry(alias, null) as? KeyStore.PrivateKeyEntry)?.takeIf {
+                (store.getEntry(keyAlias, null) as? KeyStore.PrivateKeyEntry)?.takeIf {
                     it.certificate.encoded.contentEquals(previous.certificate.encoded)
                 }?.let { CertFingerprint.ofCertificate(it.certificate.encoded) }
             }.getOrNull()
@@ -73,21 +81,24 @@ internal class AndroidDeviceIdentity(private val alias: String = ALIAS) : Device
         PlaybackTrace.log("HomeSync", "TLS key manager ready algorithm=${entry.privateKey.algorithm}")
         return object : X509ExtendedKeyManager() {
             override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? =
-                if (keyType == "EC") arrayOf(this@AndroidDeviceIdentity.alias) else null
+                if (keyType == "EC") arrayOf(keyAlias) else null
             override fun chooseClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, socket: Socket?): String? {
-                val alias = this@AndroidDeviceIdentity.alias.takeIf { keyTypes?.contains("EC") == true }
+                val alias = keyAlias.takeIf { keyTypes?.contains("EC") == true }
                 PlaybackTrace.log("HomeSync", "TLS chooseClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
                 return alias
             }
-            override fun chooseEngineClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?): String? =
-                this@AndroidDeviceIdentity.alias.takeIf { keyTypes?.contains("EC") == true }
+            override fun chooseEngineClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?): String? {
+                val alias = keyAlias.takeIf { keyTypes?.contains("EC") == true }
+                PlaybackTrace.log("HomeSync", "TLS chooseEngineClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
+                return alias
+            }
             override fun getCertificateChain(alias: String?): Array<X509Certificate>? {
-                PlaybackTrace.log("HomeSync", "TLS getCertificateChain matched=${alias == this@AndroidDeviceIdentity.alias}")
-                return if (alias == this@AndroidDeviceIdentity.alias) entry.certificateChain.map { it as X509Certificate }.toTypedArray() else null
+                PlaybackTrace.log("HomeSync", "TLS getCertificateChain matched=${alias == keyAlias}")
+                return if (alias == keyAlias) entry.certificateChain.map { it as X509Certificate }.toTypedArray() else null
             }
             override fun getPrivateKey(alias: String?): PrivateKey? {
-                PlaybackTrace.log("HomeSync", "TLS getPrivateKey matched=${alias == this@AndroidDeviceIdentity.alias}")
-                return if (alias == this@AndroidDeviceIdentity.alias) entry.privateKey else null
+                PlaybackTrace.log("HomeSync", "TLS getPrivateKey matched=${alias == keyAlias}")
+                return if (alias == keyAlias) entry.privateKey else null
             }
             override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null
             override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: Socket?): String? = null

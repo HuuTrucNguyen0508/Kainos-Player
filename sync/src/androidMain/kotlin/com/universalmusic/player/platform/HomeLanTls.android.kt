@@ -50,7 +50,7 @@ actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
             config {
                 sslSocketFactory(sslContext.socketFactory, trustManager)
                 hostnameVerifier { _, _ -> true }
-                eventListenerFactory { HomeLanTlsEvents() }
+                eventListenerFactory { call -> HomeLanTlsEvents(call) }
             }
         }
         // Non-2xx hub replies (401/403/409/416/5xx) fail the call instead of being read as data.
@@ -66,7 +66,9 @@ actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
     }
 }
 
-private class HomeLanTlsEvents : EventListener() {
+private class HomeLanTlsEvents(call: Call) : EventListener() {
+    private val traceRequests = call.request().method == "POST" &&
+        call.request().url.encodedPath.startsWith("/kainos-sync/v3/pair/")
     private val started = System.nanoTime()
 
     private fun trace(message: String) {
@@ -86,11 +88,11 @@ private class HomeLanTlsEvents : EventListener() {
     }
 
     override fun requestHeadersStart(call: Call) {
-        trace("request ${call.request().method} ${call.request().url.encodedPath}")
+        if (traceRequests) trace("request ${call.request().method} ${call.request().url.encodedPath}")
     }
 
     override fun responseHeadersEnd(call: Call, response: Response) {
-        trace("response ${response.code}")
+        if (traceRequests || !response.isSuccessful) trace("response ${response.code}")
     }
 
     override fun callFailed(call: Call, ioe: IOException) {
