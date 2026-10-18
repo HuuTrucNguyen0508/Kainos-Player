@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.reportsTextInputFocus
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -142,6 +143,9 @@ internal fun SearchScreen(
             }
             else -> LazyColumn(state = listState) {
                 val trackList = tracks.orEmpty()
+                item(key = "results-heading") {
+                    SectionRule("Spotify and YouTube", Modifier.padding(horizontal = 20.dp))
+                }
                 itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
                     fun openYouTube() {

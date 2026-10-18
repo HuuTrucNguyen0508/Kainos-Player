@@ -499,3 +499,51 @@ fun AccentToggle(
         Icon(icon, contentDescription = contentDescription)
     }
 }
+
+/**
+ * A screen's title, set large in the display face. [ghost] (a count or a time) sits behind it as an
+ * outlined numeral, the launcher almanac's ghost; [eyebrow] is a short italic line above.
+ */
+@Composable
+fun DisplayHero(
+    title: String,
+    modifier: Modifier = Modifier,
+    eyebrow: String? = null,
+    ghost: String? = null,
+    accent: AccentSlot? = null,
+) {
+    val palette = LocalKainosPalette.current
+    val tokens = LocalSkinTokens.current
+    val typography = MaterialTheme.typography
+    Column(modifier.fillMaxWidth()) {
+        eyebrow?.let {
+            Text(
+                it,
+                style = typography.titleSmall.copy(fontFamily = tokens.display, fontStyle = FontStyle.Italic),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Box(contentAlignment = Alignment.CenterStart) {
+            ghost?.let {
+                Text(
+                    it,
+                    style = typography.displayLarge.copy(
+                        fontFamily = tokens.display,
+                        fontSize = typography.displayLarge.fontSize * 1.5f,
+                        drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
+                    ),
+                    color = accent?.let { slot -> palette.accent(slot, AccentUse.Mark) } ?: palette.rule,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                title,
+                style = typography.displayMedium.copy(fontFamily = tokens.display),
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = if (ghost != null) 12.dp else 0.dp),
+            )
+        }
+    }
+}

@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.DisplayHero
+import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -64,6 +66,13 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 8.dp),
         ) {
+            DisplayHero(
+                title = "Home",
+                eyebrow = if (ui.favoriteCount > 0) "${ui.favoriteCount} hearted songs" else "Your listening",
+                ghost = ui.favoriteCount.takeIf { it > 0 }?.toString(),
+                accent = Accents.home,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp),
+            )
             if (!ui.empty) {
                 ProviderAttentionLine(
                     message = ui.attentionMessage,

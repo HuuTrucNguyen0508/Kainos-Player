@@ -1,5 +1,15 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.ErrorOutline
+import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.library.PersistedHomePin
+import com.universalmusic.player.ui.components.IconTile
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,14 +60,11 @@ internal fun PinnedSection(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "Pinned",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (!homePinsEmpty) {
-            TextButton(onClick = onToggleEditing) {
-                Text(if (editingPins) "Done" else "Edit")
+        SectionRule("Pinned") {
+            if (!homePinsEmpty) {
+                TextButton(onClick = onToggleEditing) {
+                    Text(if (editingPins) "Done" else "Edit")
+                }
             }
         }
     }
@@ -70,6 +77,15 @@ internal fun PinnedSection(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
+        !editingPins -> {
+            FlowRow(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                resolvedPins.forEach { resolved -> PinTile(resolved) { onPlayPin(resolved) } }
+            }
+        }
         else -> {
             resolvedPins.forEachIndexed { index, resolved ->
                 PinRow(
@@ -81,6 +97,54 @@ internal fun PinnedSection(
                     onMoveUp = { onMoveUp(resolved.pin.id) },
                     onMoveDown = { onMoveDown(resolved.pin.id) },
                     onRemove = { onRemove(resolved.pin.id) },
+                )
+            }
+        }
+    }
+}
+
+private val PersistedHomePin.source: SourceKind
+    get() = when (kind) {
+        HomePinKind.KAINOS_PLAYLIST -> SourceKind.Kainos
+        HomePinKind.PROVIDER_PLAYLIST -> if (targetId.startsWith("youtube")) SourceKind.YouTube else SourceKind.Spotify
+        HomePinKind.ALBUM -> SourceKind.Local
+        HomePinKind.LOCAL_FOLDER -> SourceKind.Folder
+    }
+
+private val PersistedHomePin.kindLabel: String
+    get() = when (kind) {
+        HomePinKind.KAINOS_PLAYLIST -> "Kainos playlist"
+        HomePinKind.PROVIDER_PLAYLIST -> if (source == SourceKind.YouTube) "YouTube playlist" else "Spotify playlist"
+        HomePinKind.ALBUM -> "Album"
+        HomePinKind.LOCAL_FOLDER -> "Folder"
+    }
+
+/** A pin as a launcher icon tile: the source's icon on its own hue, the source's underline mark. */
+@Composable
+private fun PinTile(resolved: ResolvedHomePin, onPlay: () -> Unit) {
+    val pin = resolved.pin
+    val source = pin.source
+    val palette = LocalKainosPalette.current
+    val ready = resolved.status == PinStatus.READY
+    IconTile(
+        title = pin.title.ifBlank { pin.targetId },
+        subtitle = if (ready || resolved.status == PinStatus.LOADING) pin.kindLabel else resolved.detail,
+        accent = source.slot,
+        onClick = { if (ready) onPlay() },
+    ) { art ->
+        val fill = palette.accentContainer(source.slot)
+        Box(
+            art.clip(RoundedCornerShape(LocalSkinTokens.current.rounding.normal)).background(fill),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (resolved.status == PinStatus.LOADING) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    if (ready) source.icon else Icons.Default.ErrorOutline,
+                    contentDescription = null,
+                    tint = if (ready) palette.accent(source.slot, AccentUse.Mark, fill) else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp),
                 )
             }
         }
@@ -110,7 +174,7 @@ private fun PinRow(
         Box(
             Modifier
                 .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(LocalSkinTokens.current.rounding.normal))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {

@@ -1,5 +1,10 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,12 +39,7 @@ internal fun ContinueListeningSection(
     onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
     if (tracks.isEmpty()) return
-    Text(
-        "Continue listening",
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 4.dp),
-    )
+    SectionRule("Continue listening", Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 4.dp))
     tracks.forEachIndexed { index, track ->
         LedgerRow(
             track = track,
@@ -54,8 +54,9 @@ private fun LedgerRow(
     onClick: () -> Unit,
 ) {
     val playable = track.playableSources().firstOrNull()
-    val railColor = playable?.provider?.let { providerColor(it.displayName) }
+    val railColor = playable?.provider?.let { LocalKainosPalette.current.accent(SourceKind.of(it).slot, AccentUse.Mark) }
         ?: MaterialTheme.colorScheme.outlineVariant
+    val rounding = LocalSkinTokens.current.rounding
     val sourceLabel = ledgerSourceLabel(track)
     val artistLine = ledgerArtistLine(track)
 
@@ -76,7 +77,7 @@ private fun LedgerRow(
         Surface(
             onClick = onClick,
             color = Color.Transparent,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(rounding.normal),
             modifier = Modifier.weight(1f),
         ) {
             Row(
@@ -88,7 +89,7 @@ private fun LedgerRow(
                     track.title,
                     Modifier.size(44.dp),
                     track.title,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(rounding.small),
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
