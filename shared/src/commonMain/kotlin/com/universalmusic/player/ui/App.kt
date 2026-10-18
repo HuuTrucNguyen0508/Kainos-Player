@@ -112,7 +112,7 @@ private fun AppScaffold(
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
-    var nowPlayingPaneExpanded by rememberSaveable { mutableStateOf(true) }
+    var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer, desktop)
     var nowPlayingPaneWidthDp by rememberSaveable {
         mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
     }
@@ -152,21 +152,6 @@ private fun AppScaffold(
             }
         }
         previousBand = layoutBand
-    }
-
-    // Compact mode prefers the mini bar; expanding remains available via Open Now Playing.
-    var previousCompactPlayer by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(compactPlayer, desktop) {
-        if (!desktop) {
-            previousCompactPlayer = compactPlayer
-            return@LaunchedEffect
-        }
-        val was = previousCompactPlayer
-        previousCompactPlayer = compactPlayer
-        when {
-            // First observation while already compact, or newly enabled.
-            compactPlayer && (was == null || was == false) -> nowPlayingPaneExpanded = false
-        }
     }
 
     // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
