@@ -1,5 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.KainosChip
+import com.universalmusic.player.ui.theme.Accents
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -167,31 +170,19 @@ fun LibraryScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FilterChip(
+            KainosChip(
                 selected = state.localOnly,
                 onClick = presenter::toggleLocalOnly,
-                label = { Text("Local files only") },
-                leadingIcon = if (state.localOnly) {
-                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                } else {
-                    null
-                },
+                label = "Local files only",
+                accent = Accents.local,
+                leadingIcon = Icons.Default.SdStorage,
             )
-            FilterChip(
+            KainosChip(
                 selected = state.favoritesOnly,
                 onClick = presenter::toggleFavoritesOnly,
-                label = { Text("Favorites only") },
-                leadingIcon = if (state.favoritesOnly) {
-                    {
-                        Icon(
-                            Icons.Default.Favorite,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                } else {
-                    null
-                },
+                label = "Favorites only",
+                accent = Accents.heart,
+                leadingIcon = Icons.Default.Favorite,
             )
         }
         TabRow(selectedTabIndex = tab.ordinal) {

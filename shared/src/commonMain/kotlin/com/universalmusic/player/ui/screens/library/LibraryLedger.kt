@@ -1,5 +1,9 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,7 +72,7 @@ internal fun LibraryLedger(
     showActions: Boolean,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
@@ -98,7 +102,7 @@ internal fun LibraryLedger(
                             )
                             else -> {
                                 if (localCount > 0 || localOnly || favoritesOnly) {
-                                    SourceTally(LocalSignal, "$localCount local")
+                                    SourceTally(sourceMark(Accents.local), "$localCount local")
                                 }
                                 if (!localOnly && spotifyConnected) {
                                     Row(
@@ -110,7 +114,7 @@ internal fun LibraryLedger(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     ) {
-                                        SourceDot(SpotifyGreen)
+                                        SourceDot(sourceMark(Accents.spotify))
                                         Text(
                                             if (spotifyLoading) "Spotify loading…" else "$spotifyCount Spotify",
                                             style = MaterialTheme.typography.labelSmall,
@@ -160,7 +164,7 @@ internal fun LibraryLedger(
                     }
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         }
     }
 }
@@ -177,14 +181,15 @@ internal fun LibraryTrackTrailing(favorite: Boolean, track: Track) {
             Icon(
                 Icons.Default.Favorite,
                 contentDescription = "App favorite",
-                tint = MaterialTheme.colorScheme.primary,
+                tint = sourceMark(Accents.heart),
                 modifier = Modifier.size(16.dp),
             )
         }
         track.sources.map { it.provider }.distinct().forEach { provider ->
             val color = when (provider) {
-                ProviderId.LOCAL -> LocalSignal
-                ProviderId.SPOTIFY -> SpotifyGreen
+                ProviderId.LOCAL -> sourceMark(Accents.local)
+                ProviderId.SPOTIFY -> sourceMark(Accents.spotify)
+                ProviderId.YOUTUBE_MUSIC -> sourceMark(Accents.youtube)
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             SourceDot(color, dimmed = provider !in playable && track.requiresNetworkToPlay())
@@ -196,6 +201,9 @@ internal fun LibraryTrackTrailing(favorite: Boolean, track: Track) {
         )
     }
 }
+
+@Composable
+private fun sourceMark(slot: AccentSlot): Color = LocalKainosPalette.current.accent(slot, AccentUse.Mark)
 
 @Composable
 private fun SourceTally(color: Color, label: String) {

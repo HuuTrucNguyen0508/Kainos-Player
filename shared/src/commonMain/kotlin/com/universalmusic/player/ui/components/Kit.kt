@@ -352,6 +352,7 @@ fun KainosChip(
     modifier: Modifier = Modifier,
     accent: AccentSlot? = null,
     leadingIcon: ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
@@ -362,6 +363,7 @@ fun KainosChip(
     FilterChip(
         selected = selected,
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier,
         label = { Text(label, maxLines = 1) },
         shape = if (folio) tokens.rounding.full else MaterialTheme.shapes.small,
@@ -380,7 +382,7 @@ fun KainosChip(
             labelColor = scheme.onSurface,
         ),
         border = FilterChipDefaults.filterChipBorder(
-            enabled = true,
+            enabled = enabled,
             selected = selected,
             borderColor = if (folio) palette.rule else scheme.outline,
             selectedBorderColor = Color.Transparent,

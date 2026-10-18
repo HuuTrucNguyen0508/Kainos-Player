@@ -1,5 +1,16 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.draw.clip
+import com.universalmusic.player.ui.components.KainosChip
+import com.universalmusic.player.ui.components.LedgerRow
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -30,7 +41,94 @@ import com.universalmusic.player.ui.theme.folioPalette
 internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) {
     val settings by presenter.state.collectAsState()
     val following = LocalFollowingCaelestia.current
-    Text("Appearance", style = MaterialTheme.typography.titleMedium)
+    val palette = LocalKainosPalette.current
+    SectionRule("Skin")
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SkinChoice.entries.forEach { skin ->
+            KainosChip(
+                selected = settings.skin == skin,
+                onClick = { presenter.change { it.copy(skin = skin) } },
+                label = when (skin) {
+                    SkinChoice.PLATFORM_DEFAULT -> "Platform default"
+                    SkinChoice.FOLIO -> "Folio"
+                    SkinChoice.CAELESTIA -> "Caelestia"
+                },
+                accent = when (skin) {
+                    SkinChoice.PLATFORM_DEFAULT -> AccentSlot.Gray
+                    SkinChoice.FOLIO -> AccentSlot.Orange
+                    SkinChoice.CAELESTIA -> AccentSlot.Purple
+                },
+            )
+        }
+    }
+    Text(
+        "Folio is the phone's paper almanac. Caelestia matches the desktop shell. Platform default picks Folio on Android and Caelestia on the desktop.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (platformLabel() != "Android") {
+        SettingToggle("Follow Caelestia theme", settings.followCaelestiaScheme) {
+            presenter.change { current -> current.copy(followCaelestiaScheme = it) }
+        }
+    }
+    SectionRule("Light or dark")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        ThemeMode.entries.forEach { mode ->
+            KainosChip(
+                selected = settings.themeMode == mode,
+                onClick = { presenter.change { it.copy(themeMode = mode) } },
+                label = mode.name.lowercase().replaceFirstChar { it.uppercase() },
+                enabled = !following,
+            )
+        }
+    }
+    if (following) {
+        Text("Caelestia decides light or dark", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    SectionRule("Tint") {
+        Text("same set as the launcher", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Text(
+        "Used by Folio, and by Caelestia when the shell theme is unavailable or following is off.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val dark = when (settings.themeMode) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    Column(Modifier.selectableGroup()) {
+        FolioTint.entries.forEach { tint ->
+            val preview = folioPalette(tint, dark)
+            val selected = settings.tint == tint
+            LedgerRow(
+                modifier = Modifier.selectable(selected, role = Role.RadioButton) {
+                    presenter.change { it.copy(tint = tint) }
+                },
+                highlighted = selected,
+            ) {
+                RadioButton(selected, onClick = null)
+                Column(Modifier.weight(1f)) {
+                    Text(tint.title, style = MaterialTheme.typography.bodyLarge)
+                    Text(tint.blurb, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // Paper, accent, ink, then three of the tint's accent hues.
+                listOf(
+                    preview.ground, preview.scheme.primary, preview.scheme.onBackground,
+                    preview.accents.teal, preview.accents.pink, preview.accents.yellow,
+                ).forEach { swatch ->
+                    Box(
+                        Modifier.size(18.dp)
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .background(swatch)
+                            .border(1.dp, palette.hair, MaterialTheme.shapes.extraSmall),
+                    )
+                }
+            }
+        }
+    }
+    SectionRule("Desktop layout")
     SettingToggle("Compact desktop player", settings.compactMode) {
         presenter.change { current -> current.copy(compactMode = it) }
     }
@@ -40,66 +138,26 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    Text("Skin", style = MaterialTheme.typography.labelLarge)
-    SkinChoice.entries.forEach { skin ->
-        AppearanceOption(settings.skin == skin, when (skin) {
-            SkinChoice.PLATFORM_DEFAULT -> "Platform default"
-            SkinChoice.FOLIO -> "Folio"
-            SkinChoice.CAELESTIA -> "Caelestia"
-        }) { presenter.change { it.copy(skin = skin) } }
-    }
-    if (platformLabel() != "Android") {
-        SettingToggle("Follow Caelestia theme", settings.followCaelestiaScheme) {
-            presenter.change { current -> current.copy(followCaelestiaScheme = it) }
-        }
-    }
-    Text("Light or dark", style = MaterialTheme.typography.labelLarge)
-    if (following) Text("Caelestia decides light or dark", style = MaterialTheme.typography.bodySmall)
-    ThemeMode.entries.forEach { mode ->
-        AppearanceOption(settings.themeMode == mode, mode.name.lowercase().replaceFirstChar { it.uppercase() }, !following) {
-            presenter.change { it.copy(themeMode = mode) }
-        }
-    }
-    Text("Tint", style = MaterialTheme.typography.labelLarge)
-    Text("Used by Folio and when the Caelestia theme is unavailable or following is off.",
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    val dark = when (settings.themeMode) {
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-    }
-    FolioTint.entries.forEach { tint ->
-        val preview = folioPalette(tint, dark)
-        val selected = settings.tint == tint
-        Row(
-            Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton) {
-                presenter.change { it.copy(tint = tint) }
-            }.padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            RadioButton(selected, onClick = null)
-            listOf(preview.ground, preview.scheme.primary, preview.accents.teal, preview.accents.pink).forEach { swatch ->
-                Box(Modifier.size(18.dp).background(swatch, MaterialTheme.shapes.extraSmall))
-            }
-            Text(when (tint) {
-                FolioTint.FOLIO -> "Folio"
-                FolioTint.EVERFOREST -> "Everforest"
-                FolioTint.CATPPUCCIN -> "Catppuccin"
-                FolioTint.GRUVBOX -> "Gruvbox"
-                FolioTint.NORD -> "Nord"
-                FolioTint.ROSE_PINE -> "Rosé Pine"
-                FolioTint.TOKYO_NIGHT -> "Tokyo Night"
-            })
-        }
-    }
 }
 
-@Composable
-private fun AppearanceOption(selected: Boolean, label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected, onClick = null, enabled = enabled)
-        Text(label, Modifier.padding(start = 8.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else .38f))
+private val FolioTint.title: String
+    get() = when (this) {
+        FolioTint.FOLIO -> "Folio"
+        FolioTint.EVERFOREST -> "Everforest"
+        FolioTint.CATPPUCCIN -> "Catppuccin"
+        FolioTint.GRUVBOX -> "Gruvbox"
+        FolioTint.NORD -> "Nord"
+        FolioTint.ROSE_PINE -> "Rosé Pine"
+        FolioTint.TOKYO_NIGHT -> "Tokyo Night"
     }
-}
+
+private val FolioTint.blurb: String
+    get() = when (this) {
+        FolioTint.FOLIO -> "The launcher default"
+        FolioTint.EVERFOREST -> "Soft green paper"
+        FolioTint.CATPPUCCIN -> "Cool pastel"
+        FolioTint.GRUVBOX -> "Retro warm"
+        FolioTint.NORD -> "Arctic blue-grey"
+        FolioTint.ROSE_PINE -> "Dusty rose"
+        FolioTint.TOKYO_NIGHT -> "Blue night"
+    }
