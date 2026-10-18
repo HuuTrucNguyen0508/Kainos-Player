@@ -9,7 +9,6 @@ data class PeerListening(
 )
 
 sealed interface PeerListeningState {
-    /** [current] is checked against the queue only once the queue for [queueHash] arrives. */
     data class Available(
         val queueHash: QueueHash,
         val current: PortableListeningEntry?,

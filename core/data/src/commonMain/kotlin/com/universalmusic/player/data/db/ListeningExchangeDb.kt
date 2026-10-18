@@ -16,7 +16,6 @@ import com.universalmusic.player.data.session.StoredPeerListening
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
-/** Peer rows and delivery marks. Each call is one transaction, so a queue never lands without its row. */
 class DbListeningExchangeStore(
     private val storage: KainosStorage,
 ) : ListeningExchangeStore {
@@ -77,7 +76,6 @@ class DbListeningExchangeStore(
     }
 }
 
-/** An unavailable peer state has no queue; this keeps `queue_hash` non-null without matching any real hash. */
 private const val UNAVAILABLE_QUEUE_HASH = ""
 
 @Serializable

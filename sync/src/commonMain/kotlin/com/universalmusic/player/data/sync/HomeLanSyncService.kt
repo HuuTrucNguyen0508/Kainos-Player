@@ -79,8 +79,7 @@ class HomeLanSyncService(
     /** This device's listening rows; null turns the listening exchange off in both directions. */
     private val listening: ListeningExchangeStore? = null,
     private val openListeningHub: suspend (PairedPeer) -> ListeningHubClient = ::openPairedListeningHub,
-    /** Whether the process is visibly in use, so a failed delivery retries in-process. */
-    private val listeningForeground: () -> Boolean = { true },
+    private val retryListeningInProcess: () -> Boolean = { true },
     private val scheduleListeningDelivery: () -> Unit = ::scheduleBackgroundListeningDelivery,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
@@ -115,7 +114,7 @@ class HomeLanSyncService(
         )
     }
     private val listeningRunner = listeningDelivery?.let {
-        ListeningDeliveryRunner(scope, it, listeningForeground, scheduleListeningDelivery)
+        ListeningDeliveryRunner(scope, it, retryListeningInProcess, scheduleListeningDelivery)
     }
 
     private val resolutionLock = Any()
@@ -749,14 +748,22 @@ class HomeLanSyncService(
 
     private class ForegroundResolutionAborted : Exception()
 
-    /** Sends the current listening state to the hub now; a failure retries on its own. */
     fun requestListeningDelivery() {
         listeningRunner?.request()
     }
 
-    /** Hands an undelivered listening state to the platform's background delivery. */
+    /** When the store cannot tell, the worker is scheduled anyway and decides from the store itself. */
     suspend fun scheduleListeningDeliveryIfPending() {
-        if (listeningDelivery?.hasPending() == true) scheduleListeningDelivery()
+        val delivery = listeningDelivery ?: return
+        val pending = try {
+            delivery.hasPending()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (err: Exception) {
+            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening pending check failed: ${err.message ?: err}")
+            true
+        }
+        if (pending) scheduleListeningDelivery()
     }
 
     fun onAppForeground() {

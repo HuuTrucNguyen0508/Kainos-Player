@@ -23,7 +23,6 @@ internal fun items(vararg ids: String) = ids.map { id ->
 internal fun portable(items: List<PersistedQueueItem>): PortableListeningQueue =
     (PortableListeningQueue.project(items) as QueueProjection.Complete).queue
 
-/** Every delivery holds the process lock, so reports and uploads arrive one at a time. */
 internal class FakeHub(
     private val needsQueue: Boolean = false,
     private val onReport: suspend (Long) -> Unit = {},
@@ -49,7 +48,6 @@ internal class FakeHub(
     override fun close() = Unit
 }
 
-/** Holds one undelivered revision without a database, so the runner test can use virtual time. */
 internal class PendingStore(items: List<PersistedQueueItem>) : ListeningExchangeStore {
     private val export = LocalListeningExport.Available(
         LocalListeningPublication(PublicationRevision(1), 100, ListeningState.create(portable(items), items[0].id, 0, 100, false)),

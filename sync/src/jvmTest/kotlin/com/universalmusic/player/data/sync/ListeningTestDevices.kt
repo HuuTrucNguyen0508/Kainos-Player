@@ -18,7 +18,6 @@ import java.io.File
 import java.util.Properties
 import java.util.UUID
 
-/** One device's real database file: [publish] commits like the recorder, [exchange] is what sync reads. */
 internal class ListeningDevice(file: File) : AutoCloseable {
     private val driver = JdbcSqliteDriver(
         "jdbc:sqlite:$file",

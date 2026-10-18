@@ -139,13 +139,13 @@ class DesktopHomeLanSyncHub(
                     post(HOME_LAN_SYNC_PATH_V3_LISTENING) {
                         val peer = call.pairedPeer() ?: return@post
                         touchActivity()
-                        val body = call.receiveBounded(MAX_LISTENING_BODY_BYTES) ?: return@post
+                        val body = call.receiveOrRespondTooLarge(MAX_LISTENING_BODY_BYTES) ?: return@post
                         call.respondAnswer(host.report(peer, body), ContentType.Application.Json)
                     }
                     put("$HOME_LAN_SYNC_PATH_V3_QUEUE/{hash}") {
                         val peer = call.pairedPeer() ?: return@put
                         touchActivity()
-                        val body = call.receiveBounded(MAX_QUEUE_BODY_BYTES) ?: return@put
+                        val body = call.receiveOrRespondTooLarge(MAX_QUEUE_BODY_BYTES) ?: return@put
                         call.respondAnswer(host.uploadQueue(peer, call.parameters["hash"].orEmpty(), body), ContentType.Text.Plain)
                     }
                     get("$HOME_LAN_SYNC_PATH_V3_QUEUE/{hash}") {
@@ -306,8 +306,7 @@ class DesktopHomeLanSyncHub(
             is HubCaller.Paired -> caller.peer.fingerprint
         }
 
-    /** Reads at most [limit] bytes; a larger body is answered with 413 and null. */
-    private suspend fun ApplicationCall.receiveBounded(limit: Long): String? {
+    private suspend fun ApplicationCall.receiveOrRespondTooLarge(limit: Long): String? {
         val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
         val body = if (declared != null && declared > limit) null
             else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
@@ -345,7 +344,6 @@ private const val MAX_PAIRING_BODY_BYTES = 4_096L
 
 private const val MAX_LISTENING_BODY_BYTES = 64L * 1024
 
-/** A whole portable queue; thousands of entries stay well below this. */
 private const val MAX_QUEUE_BODY_BYTES = 16L * 1024 * 1024
 
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()

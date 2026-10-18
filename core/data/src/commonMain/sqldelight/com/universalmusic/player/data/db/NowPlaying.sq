@@ -46,7 +46,6 @@ CREATE TABLE listening_writer_receipt (
     updated_at_ms INTEGER NOT NULL
 );
 
--- The highest local publication revision each hub has acknowledged with its queue.
 CREATE TABLE listening_delivery (
     peer_device_id TEXT NOT NULL PRIMARY KEY,
     delivered_revision INTEGER NOT NULL CHECK (delivered_revision > 0)

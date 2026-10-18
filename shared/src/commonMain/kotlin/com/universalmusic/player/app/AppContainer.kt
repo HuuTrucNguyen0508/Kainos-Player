@@ -126,7 +126,6 @@ class AppContainer {
     val listeningStore: ListeningStore = createListeningStore()
     private val listeningExchange = createListeningExchangeStore()
 
-    /** False between Android's onStop and the next onResume; desktop windows count as always visible. */
     @kotlin.concurrent.Volatile
     private var appVisible = true
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
@@ -239,7 +238,7 @@ class AppContainer {
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
         hubPort = homeLanHubPort(),
         listening = listeningExchange,
-        listeningForeground = { appVisible || player.nowPlaying.value.isPlaying },
+        retryListeningInProcess = { appVisible || player.nowPlaying.value.isPlaying },
     )
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
@@ -609,19 +608,18 @@ class AppContainer {
         }
     }
 
-    /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     fun onAppForeground() {
         appVisible = true
         homeLanSync.onAppForeground()
     }
 
-    /** Persists the session, then leaves any undelivered listening state to background delivery. */
     suspend fun onAppBackground() {
         appVisible = false
         flushListeningSession()
         homeLanSync.scheduleListeningDeliveryIfPending()
     }
 
+    /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     suspend fun flushListeningSession() {
         when (val result = player.flushPersistence()) {
             is FlushResult.Committed -> result.exportUnavailable?.let {
@@ -857,7 +855,6 @@ class AppContainer {
 
 private const val VOLUME_PERSIST_DEBOUNCE_MS = 400L
 
-/** Starts a delivery after each commit that changed this device's published listening state. */
 private class PublicationNotifyingStore(
     private val inner: ListeningStore,
     private val onPublished: () -> Unit,

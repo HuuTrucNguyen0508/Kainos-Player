@@ -14,11 +14,6 @@ import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.initAndroidPlatform
 import java.util.concurrent.TimeUnit
 
-/**
- * Delivers a pending listening state after the app left the foreground, possibly in a fresh
- * process. It builds only the store, settings and pinned client, never the app container, so it
- * cannot start playback or a foreground service.
- */
 class ListeningDeliveryWorker internal constructor(
     context: Context,
     params: WorkerParameters,

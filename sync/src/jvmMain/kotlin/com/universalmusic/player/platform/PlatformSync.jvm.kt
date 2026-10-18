@@ -243,5 +243,4 @@ actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {
     return 0
 }
 
-/** The desktop process stays up while it has anything to deliver, so its in-process retry covers it. */
 actual fun scheduleBackgroundListeningDelivery() = Unit

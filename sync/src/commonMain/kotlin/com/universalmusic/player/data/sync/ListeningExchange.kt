@@ -42,7 +42,6 @@ import kotlinx.serialization.json.Json
 const val HOME_LAN_SYNC_PATH_V3_LISTENING = "/kainos-sync/v3/listening"
 const val HOME_LAN_SYNC_PATH_V3_QUEUE = "/kainos-sync/v3/queue"
 
-/** One device's committed export. Ages replace timestamps so the receiver's clock orders states. */
 @Serializable
 data class ListeningReport(
     val deviceId: String,
@@ -62,7 +61,6 @@ data class ListeningReportState(
     val isPlaying: Boolean,
 )
 
-/** [hub] is the hub's own export, so the phone learns the PC's state on every delivery. */
 @Serializable
 data class ListeningReply(val needQueue: Boolean, val hub: ListeningReport? = null)
 
@@ -107,7 +105,6 @@ private fun ageMs(nowMs: Long, atMs: Long): Long = (nowMs - atMs).coerceAtLeast(
 
 data class HubAnswer(val status: Int, val body: String = "")
 
-/** The hub's half of the listening routes. The caller comes from its certificate, never from the body. */
 class ListeningExchangeHost(
     private val store: ListeningExchangeStore,
     private val hubDeviceId: String,
@@ -208,7 +205,6 @@ class HttpListeningHubClient(
     }
 }
 
-/** Reaches [hub] at its stored address, or by mDNS when that fails, with one pinned client for every call. */
 suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrowser): ListeningHubClient {
     var refusal: String? = null
     val resolver = HubEndpointResolver(
@@ -241,10 +237,8 @@ suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrow
 suspend fun openPairedListeningHub(hub: PairedPeer): ListeningHubClient =
     openListeningHub(hub, createPinnedHomeLanHttpClient(hub.fingerprint), platformHubBrowser())
 
-/** Where this device delivers its listening state, and the id the hub knows it by. */
 data class DeliveryTarget(val hub: PairedPeer, val deviceId: String)
 
-/** A client with a paired hub delivers; a hub, a disabled device, or one mid identity reset does not. */
 fun AppSettings.listeningDeliveryTarget(isDesktop: Boolean): DeliveryTarget? {
     if (!homeLanSyncEnabled || homeLanSyncIdentityResetPending) return null
     val client = when (homeLanSyncRole) {
@@ -266,32 +260,17 @@ enum class DeliveryOutcome {
     REFUSED,
 }
 
-/** Every delivery in a process shares this lock, so a foreground retry and a worker never interleave. */
-private val processDelivery = Mutex()
+private val processDeliveryLock = Mutex()
 
-/**
- * Sends this device's committed export to its hub. Each pass reads the current export, so work
- * scheduled for an older revision delivers the newest one. A revision counts as delivered only
- * when the hub holds it with its queue, and the delivered mark only rises.
- */
 class ListeningDelivery(
     private val store: ListeningExchangeStore,
     private val target: suspend () -> DeliveryTarget?,
     private val connect: suspend (PairedPeer) -> ListeningHubClient,
     private val clock: () -> Long = ::currentTimeMillis,
-    private val mutex: Mutex = processDelivery,
+    private val mutex: Mutex = processDeliveryLock,
 ) {
-    /** False when the store cannot be read; the next publication or foreground retries anyway. */
-    suspend fun hasPending(): Boolean = try {
-        target()?.hub?.let { pendingRevision(it) } != null
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (err: Exception) {
-        PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening pending check failed: ${err.message ?: err}")
-        false
-    }
+    suspend fun hasPending(): Boolean = target()?.hub?.let { pendingRevision(it) } != null
 
-    /** Delivers until nothing is pending; exports committed during a pass get their own pass. */
     suspend fun deliverPending(): DeliveryOutcome = mutex.withLock {
         var outcome = DeliveryOutcome.IDLE
         repeat(MAX_PASSES) {
@@ -352,14 +331,10 @@ private fun LocalListeningExport.revision(): PublicationRevision = when (this) {
     is LocalListeningExport.Unavailable -> revision
 }
 
-/**
- * Runs deliveries in this process: on request, and every [retryMs] after a failure while
- * [foreground] holds. A failure in the background hands the retry to [scheduleBackground].
- */
 class ListeningDeliveryRunner(
     scope: CoroutineScope,
     private val delivery: ListeningDelivery,
-    private val foreground: () -> Boolean,
+    private val retryInProcess: () -> Boolean,
     private val scheduleBackground: () -> Unit,
     private val retryMs: Long = LISTENING_RETRY_MS,
 ) {
@@ -374,9 +349,9 @@ class ListeningDeliveryRunner(
     private suspend fun run() {
         var retrying = false
         while (true) {
-            if (retrying && foreground()) withTimeoutOrNull(retryMs) { requests.receive() } else requests.receive()
+            if (retrying && retryInProcess()) withTimeoutOrNull(retryMs) { requests.receive() } else requests.receive()
             retrying = delivery.deliverPending() == DeliveryOutcome.RETRY
-            if (retrying && !foreground()) scheduleBackground()
+            if (retrying && !retryInProcess()) scheduleBackground()
         }
     }
 }
