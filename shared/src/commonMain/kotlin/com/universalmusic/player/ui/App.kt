@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -112,7 +113,7 @@ private fun AppScaffold(
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
-    var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer, desktop)
+    var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer)
     var nowPlayingPaneWidthDp by rememberSaveable {
         mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
     }
@@ -243,19 +244,20 @@ private fun AppScaffold(
         handleSystemBack()
     }
 
-    LaunchedEffect(container) {
-        container.uiRequests.collect { request ->
-            when (request) {
-                UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
-                UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
-                UiRequest.DISMISS_OVERLAY -> handleSystemBack()
-                UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
-                UiRequest.FOCUS_LIBRARY_SEARCH -> {
-                    showQueue = false
-                    navigateToTab(AppDestination.Library)
-                }
+    val handleUiRequest by rememberUpdatedState<(UiRequest) -> Unit> { request ->
+        when (request) {
+            UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
+            UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
+            UiRequest.DISMISS_OVERLAY -> handleSystemBack()
+            UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
+            UiRequest.FOCUS_LIBRARY_SEARCH -> {
+                showQueue = false
+                navigateToTab(AppDestination.Library)
             }
         }
+    }
+    LaunchedEffect(container) {
+        container.uiRequests.collect { request -> handleUiRequest(request) }
     }
 
     Scaffold(

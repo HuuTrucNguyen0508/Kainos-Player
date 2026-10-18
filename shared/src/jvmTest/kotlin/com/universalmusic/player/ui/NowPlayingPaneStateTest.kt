@@ -18,7 +18,7 @@ class NowPlayingPaneStateTest {
         val compact = mutableStateOf(false)
         lateinit var expanded: MutableState<Boolean>
         val scene = ImageComposeScene(100, 100, coroutineContext = StandardTestDispatcher(scheduler)) {
-            expanded = rememberNowPlayingPaneExpanded(compact.value, desktop = true)
+            expanded = rememberNowPlayingPaneExpanded(compact.value)
         }
         fun recompose() {
             scene.render().close()
@@ -61,7 +61,7 @@ class NowPlayingPaneStateTest {
             val scheduler = TestCoroutineScheduler()
             lateinit var expanded: MutableState<Boolean>
             val scene = ImageComposeScene(100, 100, coroutineContext = StandardTestDispatcher(scheduler)) {
-                expanded = rememberNowPlayingPaneExpanded(compact, desktop = true)
+                expanded = rememberNowPlayingPaneExpanded(compact)
             }
             try {
                 scene.render().close()

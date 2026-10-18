@@ -10,13 +10,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -52,20 +50,10 @@ fun desktopLayoutBand(maxWidth: Dp): DesktopLayoutBand = when {
 }
 
 @Composable
-internal fun rememberNowPlayingPaneExpanded(compactPlayer: Boolean, desktop: Boolean): MutableState<Boolean> {
-    val expanded = rememberSaveable { mutableStateOf(true) }
-    var previousCompactPlayer by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(compactPlayer, desktop) {
-        if (!desktop) {
-            previousCompactPlayer = compactPlayer
-            return@LaunchedEffect
-        }
-        val was = previousCompactPlayer
-        previousCompactPlayer = compactPlayer
-        if (compactPlayer && (was == null || was == false)) expanded.value = false
+internal fun rememberNowPlayingPaneExpanded(compactPlayer: Boolean): MutableState<Boolean> =
+    rememberSaveable(compactPlayer) {
+        mutableStateOf(!compactPlayer)
     }
-    return expanded
-}
 
 @Composable
 fun DesktopResizeHandle(
