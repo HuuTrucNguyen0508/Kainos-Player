@@ -116,6 +116,28 @@ class DatabaseRoundTripTest {
     }
 
     @Test
+    fun migrationFromDeployedSchemaFiveKeepsListeningRowsAndDefaultsShuffleOff() {
+        val directory = Files.createTempDirectory("kainos-v5-v6-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/5.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                driver.execute(null, "INSERT INTO local_listening VALUES (0, 7, 1000, NULL, NULL, 42000, 1000, 0, 'hash')", 0)
+                driver.execute(null, "INSERT INTO local_listening_export VALUES (0, 7, 1000, NULL)", 0)
+                driver.execute(null, "INSERT INTO peer_listening VALUES ('phone', 3, 900, '{}', '', NULL)", 0)
+                KainosDatabase.Schema.migrate(driver, 5, KainosDatabase.Schema.version)
+                assertEquals(listOf(7L, 1000L, 42000L, 0L), driver.row("SELECT revision, last_active_at_ms, position_ms, shuffle FROM local_listening"))
+                assertEquals(listOf(7L, 1000L), driver.row("SELECT revision, last_active_at_ms FROM local_listening_export"))
+                assertEquals(listOf("phone", 3L, 900L), driver.row("SELECT device_id, revision, last_active_at_ms FROM peer_listening"))
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+                assertEquals(0L, driver.row("SELECT count(*) FROM pragma_foreign_key_check").single())
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun migrationFromTheHs5SchemaKeepsListeningRowsAndAddsAnEmptyDeliveryTable() {
         val directory = Files.createTempDirectory("kainos-v3-v4-migration")
         try {

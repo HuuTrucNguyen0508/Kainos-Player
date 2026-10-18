@@ -76,6 +76,37 @@ class ListeningExchangeTest {
     )
 
     @Test
+    fun shuffleFlagRoundTripsBothWaysOverTlsAndUpdatesWithoutAnotherQueue() = runBlocking {
+        hub.start()
+        pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW - 1_000, shuffle = true)
+        phone.publish(phoneItems, current = 1, activeAtMs = HUB_NOW, shuffle = true)
+        assertEquals(DeliveryOutcome.DELIVERED, phoneDelivery(HUB_NOW).deliverPending())
+        val phoneState = pc.exchange.readPeer("kainos-phone")!!.listening.state as PeerListeningState.Available
+        val pcState = phone.exchange.readPeer("kainos-pc")!!.listening.state as PeerListeningState.Available
+        assertEquals(true, phoneState.shuffle)
+        assertEquals(true, pcState.shuffle)
+        val originalQueue = pc.exchange.readPeer("kainos-phone")!!.queue
+
+        phone.publish(phoneItems, current = 1, activeAtMs = HUB_NOW + 1_000, shuffle = false)
+        client().use { hubClient ->
+            val report = phone.exchange.readLocalExport()!!.toReport("kainos-phone", HUB_NOW + 1_000)
+            assertEquals(false, hubClient.report(report).needQueue)
+        }
+        val disabled = pc.exchange.readPeer("kainos-phone")!!
+        assertEquals(false, (disabled.listening.state as PeerListeningState.Available).shuffle)
+        assertEquals(PublicationRevision(2), disabled.listening.revision)
+        assertEquals(originalQueue, disabled.queue)
+    }
+
+    @Test
+    fun legacyReportWithoutShuffleDecodesAsOff() {
+        val old = """{"queueHash":"${portable(phoneItems).hash.hex}","positionMs":0,"positionAgeMs":0,"isPlaying":false}"""
+        val state = Json.decodeFromString<ListeningReportState>(old)
+        assertEquals(false, state.shuffle)
+        assertEquals(false, (ListeningReport("phone", 1, 0, state).toPeer(HUB_NOW)!!.state as PeerListeningState.Available).shuffle)
+    }
+
+    @Test
     fun aPhoneTenMinutesAheadIsOrderedByHowLongAgoItWasActive() = runBlocking {
         hub.start()
         pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW - 60_000, positionMs = 30_000)

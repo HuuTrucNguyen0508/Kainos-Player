@@ -115,6 +115,7 @@ data class ListeningState private constructor(
     val positionAtMs: Long,
     val isPlaying: Boolean,
     val queue: PortableListeningQueue,
+    val shuffle: Boolean,
 ) {
     companion object {
         fun create(
@@ -123,12 +124,13 @@ data class ListeningState private constructor(
             positionMs: Long,
             positionAtMs: Long,
             isPlaying: Boolean,
+            shuffle: Boolean = false,
         ): ListeningState {
             require(positionMs >= 0) { "Negative position" }
             val current = currentItemId?.let { id ->
                 requireNotNull(queue.entries.firstOrNull { it.itemId == id }) { "Current entry $id is not in the queue" }
             }
-            return ListeningState(current, positionMs, positionAtMs, isPlaying, queue)
+            return ListeningState(current, positionMs, positionAtMs, isPlaying, queue, shuffle)
         }
     }
 }

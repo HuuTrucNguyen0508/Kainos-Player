@@ -29,6 +29,59 @@ import kotlinx.coroutines.test.runTest
 
 class ListeningStoreTest {
     @Test
+    fun anEmptyPublicationStillCarriesShuffle() = runTest {
+        memoryDriver().use { driver ->
+            val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val queue = (PortableListeningQueue.project(emptyList()) as QueueProjection.Complete).queue
+            val state = ListeningState.create(queue, null, 0, 1_000, false, shuffle = true)
+            store.commit(ListeningCommit("empty", 1, SessionSnapshot(), PublicationOrigin.LOCAL,
+                LocalListeningUpdate.Publish(1, 1_000, state), 1_000))
+            assertEquals(state, (store.readLocalExport() as LocalListeningExport.Available).publication.state)
+        }
+    }
+
+    @Test
+    fun anOldPeerJsonRowWithoutShuffleDecodesAsOff() = runTest {
+        memoryDriver().use { driver ->
+            val storage = KainosStorage(openDriver = { driver }, clock = { 0 })
+            val exchange = DbListeningExchangeStore(storage)
+            val queue = (PortableListeningQueue.project(items("a")) as QueueProjection.Complete).queue
+            storage.write { db ->
+                db.nowPlayingQueries.upsertPeer("old-phone", 1, 1_000,
+                    """{"positionMs":42000,"positionAtMs":1000,"isPlaying":false}""", queue.hash.hex, queue.encodeJson())
+            }
+            val peer = exchange.readPeer("old-phone")!!.listening.state as com.universalmusic.player.data.session.PeerListeningState.Available
+            assertEquals(false, peer.shuffle)
+            assertEquals(42_000, peer.positionMs)
+        }
+    }
+
+    @Test
+    fun shufflePublicationSurvivesReopenAndPrivateStateDoesNotOverwriteIt() = runTest {
+        val directory = Files.createTempDirectory("kainos-listening-shuffle")
+        val items = items("a", "b")
+        val state = state(items, 1, 42_000, 5_000, false, shuffle = true)
+        try {
+            fileDriver(directory).use { driver ->
+                val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+                store.commit(commit("gui", 1, items, 1, local = LocalListeningUpdate.Publish(1, 5_000, state)))
+                assertEquals(true, (store.readLocalExport() as LocalListeningExport.Available).publication.state.shuffle)
+                store.commit(commit("gui", 2, items, 1, local = null))
+            }
+            fileDriver(directory).use { driver ->
+                val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+                val published = (store.readLocalExport() as LocalListeningExport.Available).publication
+                assertEquals(state, published.state)
+                assertEquals(PublicationRevision(1), published.revision)
+                store.commit(commit("new", 1, items, 1, local = LocalListeningUpdate.Publish(1, 6_000, state(items, 1, 42_000, 5_000, false))))
+                assertEquals(false, (store.readLocalExport() as LocalListeningExport.Available).publication.state.shuffle)
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun publishesTheRowAndItsMatchingQueueInOneCommit() = runTest {
         val driver = memoryDriver()
         val store = DbListeningStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
@@ -249,13 +302,14 @@ private fun items(vararg ids: String) = ids.map { id ->
 private fun snapshot(items: List<PersistedQueueItem>, current: Int) =
     SessionSnapshot(items = items, currentIndex = current, positionMs = 7_000)
 
-private fun state(items: List<PersistedQueueItem>, current: Int, positionMs: Long, at: Long, playing: Boolean) =
+private fun state(items: List<PersistedQueueItem>, current: Int, positionMs: Long, at: Long, playing: Boolean, shuffle: Boolean = false) =
     ListeningState.create(
         (PortableListeningQueue.project(items) as QueueProjection.Complete).queue,
         items[current].id,
         positionMs,
         at,
         playing,
+        shuffle,
     )
 
 private fun publish(

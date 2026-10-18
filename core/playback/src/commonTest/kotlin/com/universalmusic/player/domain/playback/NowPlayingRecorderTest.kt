@@ -43,6 +43,37 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class NowPlayingRecorderTest {
     @Test
+    fun shuffleTogglesPublishNewRevisionsWithoutChangingTheQueueHash() = runTest {
+        val rig = rig()
+        rig.session.initializePersistence()
+        rig.session.play(listOf(yt("a"), yt("b"), yt("c")), startIndex = 1)
+        settle(rig)
+        rig.session.pauseTransport()
+        settle(rig)
+        val initial = rig.store.latest
+        assertFalse(initial.state.shuffle)
+
+        advanceTimeBy(1_000)
+        rig.session.toggleShuffle()
+        settle(rig)
+        val enabled = rig.store.latest
+        assertTrue(enabled.state.shuffle)
+        assertEquals(initial.revision.value + 1, enabled.revision.value)
+        assertEquals(T0 + 1_000, enabled.lastActiveAtMs)
+        assertEquals(initial.state.queue.hash, enabled.state.queue.hash)
+        assertEquals(initial.state.current, enabled.state.current)
+
+        advanceTimeBy(1_000)
+        rig.session.toggleShuffle()
+        settle(rig)
+        val disabled = rig.store.latest
+        assertFalse(disabled.state.shuffle)
+        assertEquals(enabled.revision.value + 1, disabled.revision.value)
+        assertEquals(T0 + 2_000, disabled.lastActiveAtMs)
+        assertEquals(initial.state.queue.hash, disabled.state.queue.hash)
+    }
+
+    @Test
     fun eachTransportAndQueueChangeBecomesTheLatestRow() = runTest {
         val rig = rig()
         val session = rig.session

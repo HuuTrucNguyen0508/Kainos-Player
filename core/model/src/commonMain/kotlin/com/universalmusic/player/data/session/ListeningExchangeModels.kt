@@ -15,6 +15,7 @@ sealed interface PeerListeningState {
         val positionMs: Long,
         val positionAtMs: Long,
         val isPlaying: Boolean,
+        val shuffle: Boolean = false,
     ) : PeerListeningState
 
     data class Unavailable(val reason: ProjectionFailure) : PeerListeningState

@@ -62,6 +62,7 @@ data class ListeningReportState(
     val positionMs: Long,
     val positionAgeMs: Long,
     val isPlaying: Boolean,
+    val shuffle: Boolean = false,
 )
 
 @Serializable

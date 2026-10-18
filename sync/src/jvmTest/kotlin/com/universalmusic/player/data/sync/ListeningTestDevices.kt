@@ -37,8 +37,9 @@ internal class ListeningDevice(file: File) : AutoCloseable {
         positionMs: Long = 0,
         positionAtMs: Long = activeAtMs,
         playing: Boolean = false,
+        shuffle: Boolean = false,
     ) {
-        val state = ListeningState.create(portable(items), items[current].id, positionMs, positionAtMs, playing)
+        val state = ListeningState.create(portable(items), items[current].id, positionMs, positionAtMs, playing, shuffle)
         commit(items, current, LocalListeningUpdate.Publish(++sequence, activeAtMs, state))
     }
 

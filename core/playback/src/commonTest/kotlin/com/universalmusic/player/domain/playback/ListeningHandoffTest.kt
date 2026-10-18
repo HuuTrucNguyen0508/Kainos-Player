@@ -35,6 +35,50 @@ class ListeningHandoffTest {
     private val tablet = HandoffPeer("tablet", "Tablet")
 
     @Test
+    fun peerShuffleBuildsAFreshCurrentFirstOrderAndOffClearsIt() = runTest {
+        val rig = rig()
+        rig.store.peer("phone", revision = 1, activeAtMs = T0 - 1_000, "a", "b", "c", "d", "e", "f")
+        val original = checkNotNull(rig.store.readPeer("phone"))
+        val available = original.listening.state as PeerListeningState.Available
+        val continued = checkNotNull(original.queue).entries.last()
+        rig.store.receivePeer(original.listening.copy(revision = PublicationRevision(2), state = available.copy(
+            current = continued, positionMs = 42_000, shuffle = true,
+        )))
+
+        rig.handoff.run(listOf(phone))
+        assertEquals(HandoffNotice(1, "Poco F7 Ultra"), rig.handoff.notice.value)
+        val enabled = rig.session.queueState.value
+        assertEquals(true, enabled.shuffle)
+        assertEquals(5, enabled.currentIndex)
+        assertEquals(continued.itemId, enabled.current?.id)
+        assertEquals(42_000, rig.session.nowPlaying.value.positionMs)
+        assertEquals(5, enabled.shuffleOrder.first())
+        assertEquals(enabled.items.indices.toSet(), enabled.shuffleOrder.toSet())
+        assertEquals(enabled.items.size, enabled.shuffleOrder.size)
+        assertEquals(enabled.items[enabled.shuffleOrder[1]], enabled.upcoming.first())
+        assertEquals(true, rig.session.canSkipNext())
+        assertEquals(false, rig.session.nowPlaying.value.isPlaying)
+        assertNull(rig.persistence.readLocalExport(), "remote shuffle install never publishes local activity")
+        rig.session.skipToNext()
+        runCurrent()
+        assertEquals(enabled.shuffleOrder[1], rig.session.queueState.value.currentIndex)
+        rig.session.pauseTransport()
+        runCurrent()
+        rig.session.flushPersistence()
+        val publications = rig.persistence.publications.size
+
+        rig.store.receivePeer(original.listening.copy(revision = PublicationRevision(3), lastActiveAtMs = T0 + 1_000,
+            state = available.copy(current = continued, positionMs = 42_000, shuffle = false)))
+        rig.handoff.run(listOf(phone))
+        val disabled = rig.session.queueState.value
+        assertEquals(false, disabled.shuffle)
+        assertEquals(emptyList(), disabled.shuffleOrder)
+        assertEquals(continued.itemId, disabled.current?.id)
+        assertEquals(42_000, rig.session.nowPlaying.value.positionMs)
+        assertEquals(publications, rig.persistence.publications.size)
+    }
+
+    @Test
     fun aLoadShowsTheNoticeUntilItIsDismissed() = runTest {
         val rig = rig()
         rig.store.peer("phone", revision = 4, activeAtMs = T0 - 1_000, "p1", "p2")
@@ -162,7 +206,7 @@ class ListeningHandoffTest {
         assertEquals(mapOf("tablet" to 2L), rig.store.applied)
     }
 
-    private class Rig(val session: PlayerSession, val store: FakeExchange, val handoff: ListeningHandoff)
+    private class Rig(val session: PlayerSession, val store: FakeExchange, val handoff: ListeningHandoff, val persistence: FakeListeningStore)
 
     private suspend fun TestScope.rig(): Rig {
         val clock = { T0 + testScheduler.currentTime }
@@ -171,7 +215,7 @@ class ListeningHandoffTest {
             persistence = NowPlayingRecorder(persistence, backgroundScope, clock = clock), clock = clock)
         session.initializePersistence()
         val store = FakeExchange(persistence::commit)
-        return Rig(session, store, ListeningHandoff(store, session, localTracks = { emptyList() }, clock = clock))
+        return Rig(session, store, ListeningHandoff(store, session, localTracks = { emptyList() }, clock = clock), persistence)
     }
 
     private fun TestScope.playAndPause(rig: Rig, id: String) {
@@ -210,7 +254,11 @@ internal class FakeExchange(private val persist: suspend (ListeningCommit) -> Un
     }
 
     override suspend fun readLocalQueue(hash: QueueHash): PortableListeningQueue? = null
-    override suspend fun receivePeer(peer: PeerListening) = PeerReceipt(stored = false, needsQueue = false)
+    override suspend fun receivePeer(peer: PeerListening): PeerReceipt {
+        val old = peers[peer.deviceId]
+        peers[peer.deviceId] = StoredPeerListening(peer, old?.queue)
+        return PeerReceipt(stored = true, needsQueue = old?.queue == null)
+    }
     override suspend fun attachPeerQueue(deviceId: String, queue: PortableListeningQueue) = false
     override suspend fun readPeer(deviceId: String): StoredPeerListening? = peers[deviceId]
     override suspend fun deliveredRevision(hubDeviceId: String): PublicationRevision? = null
