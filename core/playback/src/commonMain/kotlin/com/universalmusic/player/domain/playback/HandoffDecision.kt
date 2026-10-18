@@ -25,6 +25,7 @@ enum class HandoffSkipReason {
     NOTHING_TO_LOAD,
     INCONSISTENT,
     LOCAL_CHANGED,
+    SESSION_BUSY,
     PEER_CHANGED,
     PERSISTENCE_UNAVAILABLE,
 }

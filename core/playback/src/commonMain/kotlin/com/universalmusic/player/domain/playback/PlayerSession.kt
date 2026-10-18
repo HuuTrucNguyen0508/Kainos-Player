@@ -309,7 +309,7 @@ class PlayerSession(
             }
         }
         if (earlySkip != null) return HandoffDecision.Skip(earlySkip)
-        var decision: HandoffDecision = HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED)
+        var decision: HandoffDecision = HandoffDecision.Skip(HandoffSkipReason.SESSION_BUSY)
         var rollback: (() -> Unit)? = null
         var finalized = false
         try {
@@ -389,7 +389,7 @@ class PlayerSession(
                 result.completeExceptionally(error)
             }
         }
-        val finished = withTimeoutOrNull(500) { result.await(); true } == true
+        val finished = withTimeoutOrNull(HANDOFF_INSTALL_DEADLINE_MS) { result.await(); true } == true
         if (!finished && phase.compareAndSet(InstallDispatch.PENDING, InstallDispatch.ABANDONED)) {
             job.cancel()
             return null
@@ -1114,6 +1114,7 @@ class PlayerSession(
     }
 
     private companion object {
+        const val HANDOFF_INSTALL_DEADLINE_MS = 500L
         const val PRIVATE_CHECKPOINT_MS = 10_000L
         const val HEARTBEAT_MS = 60_000L
     }

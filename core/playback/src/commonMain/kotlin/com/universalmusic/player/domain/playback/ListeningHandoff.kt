@@ -8,6 +8,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +37,11 @@ class ListeningHandoff(
 
     suspend fun run(peers: List<HandoffPeer>): HandoffDecision? = mutex.withLock {
         try {
-            attempt(peers)
+            val first = attempt(peers)
+            if (first == HandoffDecision.Skip(HandoffSkipReason.SESSION_BUSY)) {
+                delay(HANDOFF_BUSY_RETRY_DELAY_MS)
+                attempt(peers)
+            } else first
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -86,3 +91,5 @@ class ListeningHandoff(
 
     private fun trace(message: String) = PlaybackTrace.log("Handoff", message)
 }
+
+private const val HANDOFF_BUSY_RETRY_DELAY_MS = 100L

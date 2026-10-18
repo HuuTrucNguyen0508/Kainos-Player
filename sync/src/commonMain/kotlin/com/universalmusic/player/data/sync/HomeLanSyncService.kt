@@ -82,6 +82,7 @@ class HomeLanSyncService(
     private val retryListeningInProcess: () -> Boolean = { true },
     private val scheduleListeningDelivery: suspend () -> Unit = ::scheduleBackgroundListeningDelivery,
     private val isAppForeground: () -> Boolean = { true },
+    private val onForegroundListeningCompleted: () -> Unit = {},
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -116,7 +117,8 @@ class HomeLanSyncService(
         )
     }
     private val listeningRunner = listeningDelivery?.let {
-        ListeningDeliveryRunner(scope, it, retryListeningInProcess, scheduleListeningDelivery, isAppForeground = isAppForeground)
+        ListeningDeliveryRunner(scope, it, retryListeningInProcess, scheduleListeningDelivery,
+            isAppForeground = isAppForeground, onForegroundExchangeCompleted = onForegroundListeningCompleted)
     }
 
     private val resolutionLock = Any()
@@ -777,7 +779,8 @@ class HomeLanSyncService(
     }
 
     fun onAppForeground() {
-        listeningRunner?.request(exchangeOnForeground = true)
+        if (listeningRunner == null) onForegroundListeningCompleted()
+        else listeningRunner.request(exchangeOnForeground = true)
         scope.launch {
             var source: ResolutionSource? = null
             runCatching {

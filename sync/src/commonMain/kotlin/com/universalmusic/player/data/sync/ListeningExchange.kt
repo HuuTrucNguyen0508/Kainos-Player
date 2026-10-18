@@ -426,6 +426,7 @@ class ListeningDeliveryRunner(
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening runner failed: ${err.message ?: err}")
                 true
             }
+            if (exchangeOnForeground && !foregroundRequested.value) onForegroundExchangeCompleted()
         }
     }
 }

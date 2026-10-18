@@ -131,7 +131,8 @@ class AppContainer {
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
     val listeningStore: ListeningStore = createListeningStore()
-    private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore()) { requestHandoff() }
+    private val foregroundHandoff = ForegroundHandoff { requestHandoff() }
+    private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore(), foregroundHandoff::onPeerChanged)
 
     private val foreground = AppForegroundState()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
@@ -246,6 +247,7 @@ class AppContainer {
         listening = listeningExchange,
         retryListeningInProcess = { foreground.isVisible || player.nowPlaying.value.isPlaying },
         isAppForeground = { foreground.isVisible },
+        onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
     )
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
@@ -310,9 +312,6 @@ class AppContainer {
     )
     val listeningHandoff = ListeningHandoff(listeningExchange, player, localTracks = { local.libraryTracks.value })
     private val handoffRequests = Channel<Unit>(Channel.CONFLATED)
-
-    @kotlin.concurrent.Volatile
-    private var handoffEnabled = false
 
     private val settingsUpdater = AppSettingsUpdater(scope, settingsStore, _settings, { applyProviderSettings(it) }) {
         player.updatePreferences(it.toPlaybackPreferences())
@@ -418,8 +417,11 @@ class AppContainer {
             // Restore listening session paused; never auto-start audio after process death.
             player.initializePersistence()
             _ready.value = true
+            foreground.onReady {
+                foregroundHandoff.onForeground()
+                homeLanSync.onAppForeground()
+            }
             if (spotify.isAuthenticated()) refreshSpotifyLibrary()
-            foreground.onReady(homeLanSync::onAppForeground)
         }
         scope.launch {
             _ready.first { it }
@@ -428,12 +430,11 @@ class AppContainer {
     }
 
     fun enableListeningHandoff() {
-        handoffEnabled = true
-        requestHandoff()
+        foregroundHandoff.enable()
     }
 
     private fun requestHandoff() {
-        if (handoffEnabled && foreground.isVisible) handoffRequests.trySend(Unit)
+        if (foreground.isVisible) handoffRequests.trySend(Unit)
     }
 
     private suspend fun runHandoff() {
@@ -642,12 +643,9 @@ class AppContainer {
     }
 
     fun onAppForeground() {
+        foregroundHandoff.onForeground()
         foreground.isVisible = true
-        homeLanSync.onAppForeground()
-        scope.launch {
-            _ready.first { it }
-            requestHandoff()
-        }
+        if (_ready.value) homeLanSync.onAppForeground()
     }
 
     suspend fun onAppBackground() {
