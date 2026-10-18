@@ -110,6 +110,54 @@ class ListeningHandoffTest {
         assertNull(rig().handoff.run(listOf(phone, tablet)))
     }
 
+    @Test
+    fun aRejectedSessionInstallDoesNotConsumeThePeerRevision() = runTest {
+        val rig = rig()
+        rig.store.peer("phone", 4, T0 - 1_000, "p1")
+        rig.store.beforeClaim = { rig.session.play(listOf(yt("mine")), startIndex = 0) }
+
+        assertEquals(HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED), rig.handoff.run(listOf(phone)))
+        assertNull(rig.store.appliedHandoff("phone"), "a rejected install must remain retryable")
+    }
+
+    @Test
+    fun aPeerSupersededBetweenClaimAndInstallCannotReplaceTheSession() = runTest {
+        val rig = rig()
+        rig.store.peer("phone", 10, T0 - 1_000, "p10")
+        rig.store.afterClaim = {
+            rig.store.peer("phone", 11, T0, "p11")
+            rig.store.applied["phone"] = 11
+        }
+
+        assertEquals(HandoffDecision.Skip(HandoffSkipReason.PEER_CHANGED), rig.handoff.run(listOf(phone)))
+        assertEquals(emptyList(), rig.session.queueState.value.items)
+        assertNull(rig.handoff.notice.value)
+    }
+
+    @Test
+    fun aDelayedOtherGuiPublicationInvalidatesTheObservedLocalGeneration() = runTest {
+        val rig = rig()
+        rig.store.localActiveAtMs = T0 - 10_000
+        rig.store.peer("phone", 4, T0 - 1_000, "p1")
+        rig.store.beforeClaim = { rig.store.localRevision = 2 }
+
+        assertEquals(HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED), rig.handoff.run(listOf(phone)))
+        assertNull(rig.store.appliedHandoff("phone"))
+        assertEquals(emptyList(), rig.session.queueState.value.items)
+    }
+
+    @Test
+    fun anOlderUnappliedPeerCannotReplaceTheNewerRepresentedRemoteSession() = runTest {
+        val rig = rig()
+        rig.store.peer("phone", 4, T0 - 5_000, "p1")
+        rig.store.peer("tablet", 2, T0 - 1_000, "t1")
+        rig.handoff.run(listOf(phone, tablet))
+
+        assertEquals(HandoffDecision.Skip(HandoffSkipReason.NOT_NEWER), rig.handoff.run(listOf(phone)))
+        assertEquals(listOf("yt:t1"), rig.session.queueState.value.items.map { it.track.canonicalId })
+        assertEquals(mapOf("tablet" to 2L), rig.store.applied)
+    }
+
     private class Rig(val session: PlayerSession, val store: FakeExchange, val handoff: ListeningHandoff)
 
     private fun TestScope.rig(): Rig {
@@ -136,6 +184,9 @@ private class FakeExchange : ListeningExchangeStore {
     override suspend fun setRefusedPairing(pairing: com.universalmusic.player.data.session.ListeningPairingIdentity?) = Unit
     private val peers = mutableMapOf<String, StoredPeerListening>()
     val applied = mutableMapOf<String, Long>()
+    var beforeClaim: suspend () -> Unit = {}
+    var afterClaim: suspend () -> Unit = {}
+    var localRevision = 1L
     var claim = HandoffClaim.CLAIMED
     var localActiveAtMs: Long? = null
 
@@ -147,7 +198,7 @@ private class FakeExchange : ListeningExchangeStore {
     }
 
     override suspend fun readLocalExport(): LocalListeningExport? = localActiveAtMs?.let {
-        LocalListeningExport.Unavailable(PublicationRevision(1), it, ProjectionFailure.UNSUPPORTED_TRACK)
+        LocalListeningExport.Unavailable(PublicationRevision(localRevision), it, ProjectionFailure.UNSUPPORTED_TRACK)
     }
 
     override suspend fun readLocalQueue(hash: QueueHash): PortableListeningQueue? = null
@@ -159,7 +210,9 @@ private class FakeExchange : ListeningExchangeStore {
     override suspend fun appliedHandoff(deviceId: String) = applied[deviceId]?.let(::PublicationRevision)
 
     override suspend fun claimHandoff(deviceId: String, revision: PublicationRevision): HandoffClaim {
+        beforeClaim()
         if (claim == HandoffClaim.CLAIMED) applied[deviceId] = revision.value
+        afterClaim()
         return claim
     }
 }
