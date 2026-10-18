@@ -28,3 +28,6 @@ logs/
 
 # Local debug APK drops (publish via GitHub Releases)
 release/
+
+# Local agent audit trails
+.audit/
