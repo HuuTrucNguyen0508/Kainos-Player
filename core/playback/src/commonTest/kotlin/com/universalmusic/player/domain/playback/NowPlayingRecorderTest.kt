@@ -14,6 +14,7 @@ import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import kotlinx.coroutines.CompletableDeferred
@@ -613,6 +614,92 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun aSeekDuringBufferingSurvivesFlushAndPause() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.seekTo(50_000)
+        settle(rig)
+        val flushed = rig.store.restore.snapshot.positionMs
+        val visible = rig.session.nowPlaying.value.positionMs
+        rig.session.pauseTransport()
+        settle(rig)
+        assertEquals(listOf(50_000L, 50_000L, 50_000L, 50_000L),
+            listOf(visible, flushed, rig.store.restore.snapshot.positionMs, rig.store.latest.state.positionMs))
+        assertFalse(rig.store.latest.state.isPlaying)
+    }
+
+    @Test
+    fun aNewerSeekReplacesTheDeferredResumeSeek() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.engine.playReturnGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.seekTo(50_000)
+        runCurrent()
+        checkNotNull(rig.engine.bufferingGate).complete(Unit)
+        runCurrent()
+        val published = rig.store.latest.state.positionMs
+        checkNotNull(rig.engine.playReturnGate).complete(Unit)
+        settle(rig)
+        assertEquals(listOf(50_000L, 50_000L), rig.engine.seeks)
+        assertEquals(50_000, published)
+        assertEquals(50_000, rig.session.nowPlaying.value.positionMs)
+        assertEquals(50_000, rig.store.restore.snapshot.positionMs)
+        rig.engine.report(positionMs = 50_250)
+        runCurrent()
+        assertEquals(50_250, rig.session.nowPlaying.value.positionMs)
+    }
+
+    @Test
+    fun aSeekToZeroReplacesTheDeferredResumeSeek() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.seekTo(0)
+        runCurrent()
+        checkNotNull(rig.engine.bufferingGate).complete(Unit)
+        settle(rig)
+        assertEquals(listOf(0L, 0L), rig.engine.seeks)
+        assertEquals(0, rig.session.nowPlaying.value.positionMs)
+        assertEquals(0, rig.store.restore.snapshot.positionMs)
+        assertEquals(0, rig.store.latest.state.positionMs)
+    }
+
+    @Test
+    fun aFallbackSubmitsThePositionItPublishesDuringStartup() = runTest {
+        val combined = track("Song", "Artist", provider = ProviderId.SPOTIFY).let {
+            it.copy(canonicalId = "yt:mirror", sources = it.sources + yt("mirror").sources)
+        }
+        val rig = rig(
+            store = FakeListeningStore(ListeningRestore(snapshot(combined, positionMs = 12_000), PublicationOrigin.LOCAL)),
+            enrichSource = { _, source ->
+                if (source.provider == ProviderId.SPOTIFY) error("preferred source unavailable")
+                source
+            },
+        )
+        rig.session.initializePersistence()
+        rig.engine.playReturnGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        val publication = rig.store.latest
+        assertEquals(ProviderId.YOUTUBE_MUSIC, rig.session.nowPlaying.value.resolved?.source?.provider)
+        assertTrue(publication.state.isPlaying)
+        checkNotNull(rig.engine.playReturnGate).complete(Unit)
+        settle(rig)
+        assertEquals(listOf(12_000L), rig.engine.seeks, "fallback must submit the published resume target")
+        assertEquals(12_000, publication.state.positionMs)
+        assertEquals(12_000, rig.engine.state.value.positionMs)
+        assertEquals(12_000, rig.store.restore.snapshot.positionMs)
+    }
+
+    @Test
     fun aNewSelectionDiscardsTheUnsubmittedResumePositionAndItsOldSamples() = runTest {
         val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
         rig.session.initializePersistence()
@@ -900,6 +987,7 @@ class NowPlayingRecorderTest {
         workerContext: CoroutineContext = EmptyCoroutineContext,
         recorderScope: CoroutineScope = backgroundScope,
         onQueueExhausted: (suspend (Set<String>) -> List<Track>)? = null,
+        enrichSource: suspend (Track, PlaybackSource) -> PlaybackSource = { _, source -> source },
     ): Rig {
         val engine = ScriptedEngine()
         val clock = { T0 + testScheduler.currentTime }
@@ -908,6 +996,7 @@ class NowPlayingRecorderTest {
             resolver = DefaultSourceResolver(),
             scope = backgroundScope,
             onQueueExhausted = onQueueExhausted,
+            enrichSource = enrichSource,
             persistence = NowPlayingRecorder(store, recorderScope, workerContext, clock),
             clock = clock,
         )
