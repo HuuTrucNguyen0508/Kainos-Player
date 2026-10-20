@@ -18,6 +18,40 @@ class SkinResolutionTest {
         assertEquals(Skin.CAELESTIA, resolveSkin(SkinChoice.CAELESTIA, "Android"))
     }
 
+    @Test fun desktopDefaultFollowsDesktopEnvWhileExplicitChoicesAndAndroidIgnoreIt() {
+        for (desktopEnv in listOf(null, Skin.FOLIO, Skin.CAELESTIA)) {
+            assertEquals(desktopEnv ?: Skin.CAELESTIA, resolveSkin(SkinChoice.PLATFORM_DEFAULT, "Linux", desktopEnv))
+            assertEquals(Skin.FOLIO, resolveSkin(SkinChoice.FOLIO, "Linux", desktopEnv))
+            assertEquals(Skin.CAELESTIA, resolveSkin(SkinChoice.CAELESTIA, "Linux", desktopEnv))
+            assertEquals(Skin.FOLIO, resolveSkin(SkinChoice.PLATFORM_DEFAULT, "Android", desktopEnv))
+        }
+    }
+
+    @Test fun matchDesktopFolioUsesShellColoursOnlyWhileFollowing() {
+        val settings = AppSettings(tint = FolioTint.CATPPUCCIN, themeMode = ThemeMode.LIGHT)
+        val shell = assertNotNull(parseCaelestiaScheme(schemeFixture()))
+        val following = resolveTheme(settings, false, shell, "Linux", Skin.FOLIO)
+        assertEquals(Skin.FOLIO, following.skin)
+        assertEquals(shell.palette, following.palette)
+        assertTrue(following.followsCaelestia)
+        val saved = resolveTheme(settings.copy(followCaelestiaScheme = false), false, shell, "Linux", Skin.FOLIO)
+        assertEquals(Skin.FOLIO, saved.skin)
+        assertFalse(saved.followsCaelestia)
+        assertPaletteEquals(folioPalette(settings.tint, false), saved.palette)
+        val explicit = resolveTheme(settings.copy(skin = SkinChoice.FOLIO), false, shell, "Linux", Skin.FOLIO)
+        assertFalse(explicit.followsCaelestia)
+        assertPaletteEquals(folioPalette(settings.tint, false), explicit.palette)
+    }
+
+    @Test fun folioDesktopBodySharesCaelestiaSans() {
+        val folio = skinTokens(Skin.FOLIO)
+        assertEquals(folioDisplayFontFamily(), folio.display)
+        assertEquals(caelestiaFontFamily(), folio.typography.bodyLarge.fontFamily)
+        assertEquals(folio.display, folio.typography.headlineLarge.fontFamily)
+        assertEquals(GroundStyle.DOTTED_PAPER, folio.ground)
+        assertEquals(SeekStyle.RULED, folio.seek)
+    }
+
     @Test fun validShellSchemeOwnsModeWhileFollowing() {
         val settings = AppSettings(themeMode = ThemeMode.LIGHT)
         val dark = assertNotNull(parseCaelestiaScheme(schemeFixture()))

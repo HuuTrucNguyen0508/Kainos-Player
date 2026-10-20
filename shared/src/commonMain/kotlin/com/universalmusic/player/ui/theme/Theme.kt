@@ -12,6 +12,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.FolioTint
+import com.universalmusic.player.data.settings.SkinChoice
 import com.universalmusic.player.data.settings.ThemeMode
 import com.universalmusic.player.platform.platformLabel
 
@@ -26,9 +27,10 @@ fun resolveTheme(
     systemDark: Boolean,
     scheme: CaelestiaScheme?,
     platform: String = platformLabel(),
+    desktopEnv: Skin? = null,
 ): ResolvedTheme {
-    val skin = resolveSkin(settings.skin, platform)
-    val following = platform != "Android" && skin == Skin.CAELESTIA && settings.followCaelestiaScheme && scheme != null
+    val skin = resolveSkin(settings.skin, platform, desktopEnv)
+    val following = platform != "Android" && settings.skin != SkinChoice.FOLIO && settings.followCaelestiaScheme && scheme != null
     val dark = when (settings.themeMode) {
         ThemeMode.SYSTEM -> systemDark
         ThemeMode.DARK -> true
@@ -42,7 +44,9 @@ fun KainosTheme(settings: AppSettings, content: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     val source = remember(scope) { watchCaelestiaScheme(scope) }
     val scheme by source.collectAsState()
-    val resolved = resolveTheme(settings, isSystemInDarkTheme(), scheme)
+    val desktopSource = remember(scope) { watchDesktopEnv(scope) }
+    val desktopEnv by desktopSource.collectAsState()
+    val resolved = resolveTheme(settings, isSystemInDarkTheme(), scheme, desktopEnv = desktopEnv)
     val tokens = remember(resolved.skin) { skinTokens(resolved.skin) }
     KainosTheme(resolved.palette, tokens, resolved.followsCaelestia, content)
 }

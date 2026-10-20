@@ -40,6 +40,7 @@ import com.universalmusic.player.ui.theme.folioPalette
 @Composable
 internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) {
     val settings by presenter.state.collectAsState()
+    val desktop = platformLabel() != "Android"
     val following = LocalFollowingCaelestia.current
     val palette = LocalKainosPalette.current
     SectionRule("Skin")
@@ -49,7 +50,7 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                 selected = settings.skin == skin,
                 onClick = { presenter.change { it.copy(skin = skin) } },
                 label = when (skin) {
-                    SkinChoice.PLATFORM_DEFAULT -> "Platform default"
+                    SkinChoice.PLATFORM_DEFAULT -> if (desktop) "Match desktop" else "Platform default"
                     SkinChoice.FOLIO -> "Folio"
                     SkinChoice.CAELESTIA -> "Caelestia"
                 },
@@ -62,14 +63,20 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
         }
     }
     Text(
-        "Folio is the phone's paper almanac. Caelestia matches the desktop shell. Platform default picks Folio on Android and Caelestia on the desktop.",
+        if (desktop) "Match desktop follows your Folio or Caelestia choice as it changes."
+        else "Platform default uses Folio. Choose a skin to change the style.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (platformLabel() != "Android") {
-        SettingToggle("Follow Caelestia theme", settings.followCaelestiaScheme) {
+    if (desktop) {
+        SettingToggle("Follow desktop colours", settings.followCaelestiaScheme) {
             presenter.change { current -> current.copy(followCaelestiaScheme = it) }
         }
+        Text(
+            "Applies to Match desktop and Caelestia. Folio uses your saved tint.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
     SectionRule("Light or dark")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -83,13 +90,14 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
         }
     }
     if (following) {
-        Text("Caelestia decides light or dark", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("The desktop decides light or dark", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     SectionRule("Tint") {
         Text("same set as the launcher", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Text(
-        "Used by Folio, and by Caelestia when the shell theme is unavailable or following is off.",
+        if (desktop) "Used with Folio selected, or when desktop colours are off or unavailable."
+        else "Choose the app's colours.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
