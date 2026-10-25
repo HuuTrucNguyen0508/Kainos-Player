@@ -44,6 +44,8 @@ interface HomeLanSyncController {
     suspend fun syncNow(): Result<String>
     suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
     suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
+    suspend fun confirmAllVaultTransfers(): Result<String>
+    suspend fun dismissAllVaultTransfers(): Result<String>
     suspend fun startHubIfNeeded()
     suspend fun stopHub()
     suspend fun tombstoneVaultPath(relPath: String): Result<String>

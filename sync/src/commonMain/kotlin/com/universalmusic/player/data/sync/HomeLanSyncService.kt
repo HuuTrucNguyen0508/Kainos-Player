@@ -587,6 +587,77 @@ class HomeLanSyncService(
         Result.success("Skipped $path")
     }
 
+    /**
+     * Copies every pending transfer over one client. A failed file stays pending and the batch moves
+     * on, but [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the hub is likely
+     * gone) instead of waiting out a timeout per remaining file.
+     */
+    override suspend fun confirmAllVaultTransfers(): Result<String> = mutex.withLock {
+        val target = syncTarget()
+            ?: return Result.failure(IllegalStateException("Not paired"))
+        val batch = _status.value.pendingTransfers
+        if (batch.isEmpty()) return Result.success("No pending transfers")
+        runCatching {
+            require(vaultStore.isConfigured()) { "Vault not configured" }
+            var transferred = 0
+            val failures = mutableListOf<String>()
+            var consecutiveFailures = 0
+            withVaultSyncForeground("Vault transfer") {
+                clientFactory(target).use { client ->
+                    for ((index, transfer) in batch.withIndex()) {
+                        if (consecutiveFailures >= VAULT_BATCH_MAX_CONSECUTIVE_FAILURES) break
+                        try {
+                            executeVaultTransfer(vaultStore, client, transfer) { detail, done, total ->
+                                reportVaultProgress("${index + 1}/${batch.size} · $detail", done, total)
+                            }
+                            transferred++
+                            consecutiveFailures = 0
+                            _status.update {
+                                it.copy(pendingTransfers = it.pendingTransfers.filterNot { t ->
+                                    t.relPath == transfer.relPath && t.direction == transfer.direction
+                                })
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (err: Throwable) {
+                            consecutiveFailures++
+                            failures += "${transfer.relPath}: ${err.message ?: err}"
+                        }
+                    }
+                }
+            }
+            if (transferred > 0) {
+                refreshLocalLibrary()
+                rematchLocalHearts()
+            }
+            val summary = buildString {
+                append("Transferred $transferred of ${batch.size}")
+                if (failures.isNotEmpty()) append(", ${failures.size} failed")
+                val notTried = batch.size - transferred - failures.size
+                if (notTried > 0) append(", $notTried not tried")
+            }
+            _status.update {
+                it.copy(
+                    vaultProgress = null,
+                    bytesTransferred = 0,
+                    bytesTotal = 0,
+                    lastDetail = summary,
+                    lastError = failures.firstOrNull()?.let { first -> "Transfer failed: $first" },
+                )
+            }
+            summary
+        }.onFailure { err ->
+            val message = err.message ?: err.toString()
+            _status.update { it.copy(lastError = message, vaultProgress = null) }
+        }
+    }
+
+    override suspend fun dismissAllVaultTransfers(): Result<String> = mutex.withLock {
+        val count = _status.value.pendingTransfers.size
+        _status.update { it.copy(pendingTransfers = emptyList()) }
+        Result.success("Skipped $count transfers")
+    }
+
     override suspend fun tombstoneVaultPath(relPath: String): Result<String> = mutex.withLock {
         runCatching {
             val path = relPath.normalizeVaultRelPath()
@@ -994,6 +1065,8 @@ internal fun trustFailureOf(err: Throwable): String? {
     val pinMismatch = generateSequence(err) { it.cause }.any { HUB_PIN_MISMATCH in (it.message ?: "") }
     return if (pinMismatch) HOME_LAN_IDENTITY_CHANGED else null
 }
+
+private const val VAULT_BATCH_MAX_CONSECUTIVE_FAILURES = 3
 
 fun ByteArray.toHex(): String =
     joinToString("") { b -> ((b.toInt() and 0xff) + 0x100).toString(16).substring(1) }
