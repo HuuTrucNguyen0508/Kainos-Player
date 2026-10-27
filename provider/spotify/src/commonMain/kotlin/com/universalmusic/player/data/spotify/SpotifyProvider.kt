@@ -23,6 +23,7 @@ import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.encodeUrl
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
+import com.universalmusic.player.platform.fetchLibrespotTrackRadio
 import com.universalmusic.player.platform.secureRandomBytes
 import com.universalmusic.player.platform.sha256Bytes
 import io.ktor.client.HttpClient
@@ -108,72 +109,19 @@ class SpotifyProvider(
     private var premium: Boolean = false
     private var userId: String? = null
     private var activePlaybackDeviceId: String? = null
-    private var recommendationsAccess: SpotifyRecommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
 
     /** Spotify user id for the signed-in account, when known. */
     fun currentUserId(): String? = userId
 
-    /** Cached feasibility of `/v1/recommendations` for this Client ID. */
-    fun recommendationsAccess(): SpotifyRecommendationsAccess = recommendationsAccess
-
     /**
-     * Probe `/v1/recommendations` once (or return cached result).
-     * Does not invent alternatives when the endpoint is forbidden.
+     * Spotify's own radio for [seed] (the "inspired by" mix librespot reads), skipping
+     * [excludeCanonicalIds]. Throws with the reason when the radio cannot be read.
      */
-    suspend fun ensureRecommendationsAccess(): SpotifyRecommendationsAccess {
-        if (recommendationsAccess != SpotifyRecommendationsAccess.UNKNOWN) return recommendationsAccess
-        val token = runCatching { accessToken() }.getOrNull()
-            ?: return SpotifyRecommendationsAccess.UNKNOWN
-        val response = http.get("$API/recommendations") {
-            bearerAuth(token)
-            parameter("seed_tracks", "11dFghVXANMlKmJXsNCbNl") // Spotify sample track id
-            parameter("limit", 1)
+    suspend fun radio(seed: Track, excludeCanonicalIds: Set<String>): List<Track> {
+        val trackId = requireNotNull(seed.sourceFor(ProviderId.SPOTIFY)?.providerTrackId) {
+            "${seed.canonicalId} is not a Spotify track"
         }
-        recommendationsAccess = when (response.status.value) {
-            in 200..299 -> SpotifyRecommendationsAccess.AVAILABLE
-            401 -> SpotifyRecommendationsAccess.UNKNOWN
-            403, 404 -> SpotifyRecommendationsAccess.UNAVAILABLE
-            429 -> SpotifyRecommendationsAccess.UNKNOWN
-            else -> SpotifyRecommendationsAccess.UNAVAILABLE
-        }
-        return recommendationsAccess
-    }
-
-    /**
-     * Seeded recommendations when [ensureRecommendationsAccess] is [SpotifyRecommendationsAccess.AVAILABLE].
-     * Returns failure (not liked-song shuffle) when the endpoint is unavailable.
-     */
-    suspend fun getRecommendations(seedTrackIds: List<String>, limit: Int = 20): Result<List<Track>> {
-        val seeds = seedTrackIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(5)
-        if (seeds.isEmpty()) return Result.success(emptyList())
-        return when (ensureRecommendationsAccess()) {
-            SpotifyRecommendationsAccess.UNAVAILABLE -> Result.failure(
-                IllegalStateException(
-                    "Spotify recommendations/radio is not available for this Client ID. " +
-                        "Kainos will not substitute Liked Songs shuffle.",
-                ),
-            )
-            SpotifyRecommendationsAccess.UNKNOWN -> Result.failure(
-                IllegalStateException("Spotify recommendations availability is unknown. Try again after signing in."),
-            )
-            SpotifyRecommendationsAccess.AVAILABLE -> runCatching {
-                val token = accessToken()
-                val response = http.get("$API/recommendations") {
-                    bearerAuth(token)
-                    parameter("seed_tracks", seeds.joinToString(","))
-                    parameter("limit", limit.coerceIn(1, 50))
-                }
-                if (!response.status.isSuccess()) {
-                    if (response.status.value == 403 || response.status.value == 404) {
-                        recommendationsAccess = SpotifyRecommendationsAccess.UNAVAILABLE
-                    }
-                    response.errorMessage("Spotify recommendations")
-                }
-                response.body<SpotifyRecommendationsResponse>()
-                    .tracks
-                    .mapNotNull { it.toDomainOrNull(premium) }
-            }
-        }
+        return fetchLibrespotTrackRadio(trackId, excludeCanonicalIds)
     }
 
     suspend fun restore() {
@@ -292,7 +240,6 @@ class SpotifyProvider(
         authMutex.withLock { pendingLogin = null }
         premium = false
         userId = null
-        recommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
         activePlaybackDeviceId = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }

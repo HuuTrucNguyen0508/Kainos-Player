@@ -11,7 +11,7 @@ The storage, identity and module redesign is implemented on `main`, merged from 
 | `provider:spotify` | Spotify API/auth, librespot and Web Playback hosts | `core:model`, `core:data` |
 | `provider:youtube` | YouTube search, NewPipe/yt-dlp resolution and audio download | `core:model`, `core:data` |
 | `sync` | LAN coordinator, HTTPS hub/client, certificate pinning, vault I/O and transfers | `core:model`, `core:data`, `provider:local` |
-| `shared` | Compose UI, seven presenters, navigation, AppContainer and provider-dependent SearchContinuationFetcher | All modules above |
+| `shared` | Compose UI, seven presenters, navigation, AppContainer (which wires Search radio to the providers) | All modules above |
 | `androidApp`, `desktopApp` | Platform entry points and packaging | `shared` |
 
 `core:*` has no provider or sync implementation dependency. Sync contracts retain their existing `data.sync` package inside `core:model`, so a package name alone does not identify its Gradle module. Store interfaces and persisted DTOs likewise live in `core:model`; storage implementations live in `core:data`. Local hashing stays in `provider:local` and is reused by vault I/O.

@@ -10,10 +10,12 @@ import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.domain.continuation.QueueContinuation
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackQueue
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
@@ -496,9 +498,9 @@ class NowPlayingRecorderTest {
         settle(repeat)
         assertEquals("yt:a" to 0L, repeat.store.latest.currentAndPosition(), "Repeat All wraps")
 
-        val continuation = rig(onQueueExhausted = { listOf(yt("d")) })
+        val continuation = rig()
         continuation.session.initializePersistence()
-        continuation.session.play(listOf(yt("a")), startIndex = 0)
+        continuation.session.play(listOf(yt("a")), startIndex = 0, continuation = OneBatch(listOf(yt("d"))))
         runCurrent()
         continuation.engine.report(EngineStatus.ENDED)
         settle(continuation)
@@ -1054,7 +1056,6 @@ class NowPlayingRecorderTest {
         store: FakeListeningStore = FakeListeningStore(),
         workerContext: CoroutineContext = EmptyCoroutineContext,
         recorderScope: CoroutineScope = backgroundScope,
-        onQueueExhausted: (suspend (Set<String>) -> List<Track>)? = null,
         enrichSource: suspend (Track, PlaybackSource) -> PlaybackSource = { _, source -> source },
     ): Rig {
         val engine = ScriptedEngine()
@@ -1063,7 +1064,6 @@ class NowPlayingRecorderTest {
             engine = engine,
             resolver = DefaultSourceResolver(),
             scope = backgroundScope,
-            onQueueExhausted = onQueueExhausted,
             enrichSource = enrichSource,
             persistence = NowPlayingRecorder(store, recorderScope, workerContext, clock),
             clock = clock,
@@ -1078,6 +1078,11 @@ class NowPlayingRecorderTest {
 }
 
 private const val T0 = 1_000_000L
+
+private class OneBatch(private var batch: List<Track>) : QueueContinuation {
+    override val lowWater = 0
+    override suspend fun nextBatch(queue: PlaybackQueue): List<Track> = batch.also { batch = emptyList() }
+}
 
 private var remoteRevision = 0L
 

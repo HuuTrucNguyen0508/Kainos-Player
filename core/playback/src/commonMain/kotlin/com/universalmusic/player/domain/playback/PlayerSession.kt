@@ -9,6 +9,7 @@ import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.toPlaybackQueue
+import com.universalmusic.player.domain.continuation.QueueContinuation
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.PlaybackQueue
@@ -71,11 +72,6 @@ class PlayerSession(
     /** Merge hearted audio cache / other offline sources before resolution. */
     private val prepareTrack: (Track) -> Track = { it },
     /**
-     * Natural completion at queue end may request one continuation batch.
-     * Empty / null means stop cleanly; callers must append only at the tail.
-     */
-    private val onQueueExhausted: (suspend (excludeCanonicalIds: Set<String>) -> List<Track>)? = null,
-    /**
      * Single thread that owns every session mutation (UI, MPRIS/D-Bus, Media3 callbacks and
      * engine events all funnel through it). Null keeps the caller's thread, which tests rely on.
      */
@@ -110,6 +106,9 @@ class PlayerSession(
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
     private var playJob: Job? = null
+    /** Refills the tail of the queue it was started with; dropped when other playback replaces it. */
+    private var continuation: QueueContinuation? = null
+    private var continuationJob: Job? = null
     /** Bumped on every play/stop transition so late ENDED/FAILED from a prior track are ignored. */
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
@@ -413,6 +412,7 @@ class PlayerSession(
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
+        dropContinuation()
         val restored = snapshot.toPlaybackQueue()
         failedItemIds.clear()
         lastRecordedPlaying = false
@@ -451,6 +451,7 @@ class PlayerSession(
 
     fun play(track: Track) = onSession {
         beginUserPlay()
+        dropContinuation()
         queue.playNow(track)
         startCurrent(Change.LOCAL_INTENT)
     }
@@ -458,15 +459,19 @@ class PlayerSession(
     suspend fun playAwait(track: Track) {
         val job = withContext(sessionContext) {
             beginUserPlay()
+            dropContinuation()
             queue.playNow(track)
             startCurrent(Change.LOCAL_INTENT)
         }
         job?.join()
     }
 
-    fun play(tracks: List<Track>, startIndex: Int = 0) = onSession {
+    /** [continuation] keeps appending to this queue until other playback replaces it or it is cleared. */
+    fun play(tracks: List<Track>, startIndex: Int = 0, continuation: QueueContinuation? = null) = onSession {
         beginUserPlay()
+        dropContinuation()
         queue.playNow(tracks, startIndex)
+        this.continuation = continuation
         startCurrent(Change.LOCAL_INTENT)
     }
 
@@ -492,6 +497,7 @@ class PlayerSession(
 
     private fun clearQueueNow(recorded: Boolean) {
         trace("clearQueue")
+        dropContinuation()
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -516,6 +522,7 @@ class PlayerSession(
         val currentId = _nowPlaying.value.queueItemId
         when {
             snapshot.items.isEmpty() -> {
+                dropContinuation()
                 beginTransition()
                 playJob?.cancel()
                 playJob = null
@@ -809,11 +816,13 @@ class PlayerSession(
                 "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
         )
         if (next == null) {
-            if (!manual && onQueueExhausted != null) {
+            val refill = if (manual) null else continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            if (refill != null) {
                 val generationAtExhaustion = playGeneration
                 playJob?.cancel()
                 playJob = scope.launch(sessionContext) {
-                    tryQueueContinuation(generationAtExhaustion)
+                    refill.join()
+                    continueAfterRefill(generationAtExhaustion)
                 }
                 return
             }
@@ -825,23 +834,9 @@ class PlayerSession(
         startCurrent(change)
     }
 
-    private suspend fun tryQueueContinuation(generationAtExhaustion: Long) {
+    /** The queue ran out while a refill was pending: play what it appended, or stop. */
+    private fun continueAfterRefill(generationAtExhaustion: Long) {
         if (generationAtExhaustion != playGeneration) return
-        val exclude = queue.queue.value.items.map { it.track.canonicalId }.toSet()
-        val more = try {
-            withContext(workContext) { onQueueExhausted?.invoke(exclude).orEmpty() }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            emptyList()
-        }
-        currentCoroutineContext().ensureActive()
-        if (generationAtExhaustion != playGeneration) return
-        if (more.isEmpty()) {
-            stopAtQueueEnd(Change.AUTOMATIC)
-            return
-        }
-        queue.appendTracks(more)
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
             stopAtQueueEnd(Change.AUTOMATIC)
@@ -849,6 +844,46 @@ class PlayerSession(
         }
         queue.jumpTo(next)
         startCurrent(Change.AUTOMATIC)
+    }
+
+    /** Start a refill once the queue is down to the continuation's low-water mark. Session thread only. */
+    private fun refillIfLow() {
+        val source = continuation ?: return
+        if (continuationJob?.isActive == true) return
+        val snapshot = queue.queue.value
+        if (snapshot.repeat == RepeatMode.ALL || snapshot.upcoming.size > source.lowWater) return
+        refillQueue()
+    }
+
+    /** Ask the continuation for a batch and append it at the tail. Null when there is no continuation. */
+    private fun refillQueue(): Job? {
+        val source = continuation ?: return null
+        val snapshot = queue.queue.value
+        return scope.launch(sessionContext) {
+            val batch = try {
+                withContext(workContext) { source.nextBatch(snapshot) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                trace("continuation failed: ${error.message}")
+                emptyList()
+            }
+            if (continuation !== source) return@launch
+            if (batch.isEmpty()) {
+                trace("continuation finished")
+                continuation = null
+                return@launch
+            }
+            queue.appendTracks(batch)
+            trace("continuation appended ${batch.size}; queue size=${queue.queue.value.items.size}")
+            record(Change.AUTOMATIC)
+        }.also { continuationJob = it }
+    }
+
+    private fun dropContinuation() {
+        continuation = null
+        continuationJob?.cancel()
+        continuationJob = null
     }
 
     private fun stopAtQueueEnd(change: Change) {
@@ -898,6 +933,7 @@ class PlayerSession(
             )
         }
         record(change)
+        refillIfLow()
         playJob = scope.launch(sessionContext) {
             try {
                 playTrack(item.track, item.id, generation, target)
