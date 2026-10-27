@@ -5,12 +5,17 @@ import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.readLocalArtworkBytes
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,6 +85,7 @@ class RemoteLinkClient(
     private val backoffMs: List<Long> = REMOTE_BACKOFF_MS,
     private val repostGapMs: Long = REMOTE_REPOST_GAP_MS,
     private val linkId: String = Random.nextLong().toULong().toString(36),
+    private val monotonicClock: TimeSource = TimeSource.Monotonic,
 ) {
     private val _state = MutableStateFlow(RemoteLinkState())
     val state: StateFlow<RemoteLinkState> = _state.asStateFlow()
@@ -163,9 +169,9 @@ class RemoteLinkClient(
                         transport = null
                     }
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
             } catch (err: Exception) {
+                currentCoroutineContext().ensureActive()
+                if (err is CancellationException && err !is TimeoutCancellationException) throw err
                 val wait = backoffMs[failures.coerceAtMost(backoffMs.lastIndex)]
                 failures++
                 trace("link to ${current.hub.displayName} failed (${err.message ?: err}); retry in $wait ms")
@@ -190,17 +196,17 @@ class RemoteLinkClient(
                     droppedSeqs = dropped.toList(),
                 )
             }
-            val sentAt = clock()
+            val sentAt = monotonicClock.markNow()
             val reply = pollUntilLocalChange(opened, request, sent)
             if (reply == null) {
-                val wait = repostGapMs - (clock() - sentAt)
+                val wait = repostGapMs - sentAt.elapsedNow().inWholeMilliseconds
                 if (wait > 0) delay(wait)
                 continue
             }
             val wasConnected = _state.value.connected
             failures = 0
             if (!reply.superseded) {
-                val transit = (clock() - sentAt - reply.heldMs).coerceAtLeast(0)
+                val transit = (sentAt.elapsedNow().inWholeMilliseconds - reply.heldMs).coerceAtLeast(0)
                 val transfers = execute(reply, transit, request)
                 _state.update {
                     it.copy(
@@ -245,13 +251,14 @@ class RemoteLinkClient(
 
     /**
      * Runs [reply]'s commands in sequence order, each at most once. A command older than the
-     * deadline after its time in transit is skipped and reported as dropped.
+     * deadline after transit and session-thread waiting is skipped and reported as dropped.
      */
     private suspend fun execute(
         reply: RemotePollReply,
         transitMs: Long,
         request: RemotePollRequest,
     ): List<Pair<Long, RemoteTransferReply>> = withContext(NonCancellable) {
+        val receivedAt = monotonicClock.markNow()
         execution.withLock {
             // The hub processed this request, so it has the drops it carried.
             dropped.removeAll(request.droppedSeqs.toSet())
@@ -260,19 +267,20 @@ class RemoteLinkClient(
                 epoch = reply.epoch
                 lastExecuted = 0
                 dropped.clear()
+                uploadedArtworkKey = null
             }
             knownHubVersion = reply.hubVersion
             val transfers = ArrayList<Pair<Long, RemoteTransferReply>>()
             for (envelope in reply.commands.sortedBy { it.seq }) {
                 if (envelope.seq <= lastExecuted) continue
-                if (envelope.ageMs + transitMs > REMOTE_COMMAND_DEADLINE_MS) {
-                    trace("dropped late ${envelope.command::class.simpleName} seq=${envelope.seq} age=${envelope.ageMs + transitMs} ms")
-                    lastExecuted = envelope.seq
+                val deadline = receivedAt + (REMOTE_COMMAND_DEADLINE_MS - envelope.ageMs - transitMs).milliseconds
+                val applied = try {
+                    if (deadline.hasPassedNow()) throw RemoteCommandExpired()
+                    player.apply(envelope.command, deadline)
+                } catch (_: RemoteCommandExpired) {
+                    trace("dropped late ${envelope.command::class.simpleName} seq=${envelope.seq}")
                     dropped += envelope.seq
                     continue
-                }
-                val applied = try {
-                    player.apply(envelope.command)
                 } catch (err: Exception) {
                     trace("command ${envelope.command::class.simpleName} failed: ${err.message ?: err}")
                     null

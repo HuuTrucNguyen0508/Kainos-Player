@@ -106,7 +106,7 @@ class RemoteControl internal constructor(
     private val transferring = MutableStateFlow(false)
     private val message = MutableStateFlow<RemoteMessage?>(null)
     private var messages = 0L
-    private val artworkCache = ArtworkFiles()
+    private val artworkCache = ArtworkFiles(scope)
 
     private val role: StateFlow<RemoteRole> = settings.map { it.remoteRole(isDesktop) }
         .distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, RemoteRole.NONE)
@@ -217,7 +217,7 @@ class RemoteControl internal constructor(
     }
 
     private fun hubDevices(): Flow<List<RemoteDeviceView>> =
-        combine(settings.map { it.homeLanSyncPeers }.distinctUntilChanged(), host.changes, ticker()) { peers, _, _ -> peers }
+        combine(settings.map { it.homeLanSyncPeers }.distinctUntilChanged(), host.changes, ticker(), artworkCache.changes) { peers, _, _, _ -> peers }
             .transformLatest { peers ->
                 emit(peers.map { peer ->
                     val view = host.peer(peer.deviceId)
@@ -236,7 +236,7 @@ class RemoteControl internal constructor(
             }
 
     private fun clientDevices(): Flow<List<RemoteDeviceView>> =
-        combine(settings.map { it.homeLanSyncHub }.distinctUntilChanged(), client.state, ticker()) { hub, link, _ -> hub to link }
+        combine(settings.map { it.homeLanSyncHub }.distinctUntilChanged(), client.state, ticker(), artworkCache.changes) { hub, link, _, _ -> hub to link }
             .transformLatest { (hub, link) ->
                 if (hub == null) {
                     emit(emptyList())
@@ -271,19 +271,29 @@ class RemoteControl internal constructor(
     }
 
     /** Remembers which artwork keys are cached as files, so a key is fetched at most once while it works. */
-    private class ArtworkFiles {
+    private class ArtworkFiles(private val scope: CoroutineScope) {
         private val lock = Mutex()
-        private val uris = LinkedHashMap<String, String?>()
+        private val uris = LinkedHashMap<String, String>()
+        private val fetching = HashSet<String>()
+        val changes = MutableStateFlow(0L)
 
         suspend fun uriFor(key: String, fetch: suspend (String) -> ByteArray?): String? = lock.withLock {
-            if (uris.containsKey(key)) uris[key]?.let { return@withLock it }
-            val uri = fetch(key)?.let { cacheRemoteArtwork(key, it) }
-            // A miss is retried on a later refresh: the bytes may arrive just after the status.
-            if (uri != null) {
-                uris[key] = uri
-                while (uris.size > 16) uris.remove(uris.keys.first())
+            uris[key]?.let { return@withLock it }
+            if (fetching.add(key)) scope.launch {
+                try {
+                    val uri = fetch(key)?.let { cacheRemoteArtwork(key, it) }
+                    if (uri != null) lock.withLock {
+                        uris[key] = uri
+                        while (uris.size > 16) uris.remove(uris.keys.first())
+                        changes.update { it + 1 }
+                    }
+                } finally {
+                    lock.withLock { fetching.remove(key) }
+                }
             }
-            uri
+            // Publish the status with a placeholder while a single independent fetch runs.
+            // A miss is retried on a later refresh, after the hub has received the bytes.
+            null
         }
     }
 

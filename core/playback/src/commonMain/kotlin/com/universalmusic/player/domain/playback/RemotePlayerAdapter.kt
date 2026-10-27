@@ -7,6 +7,7 @@ import com.universalmusic.player.data.session.ProjectionFailure
 import com.universalmusic.player.data.session.QueueProjection
 import com.universalmusic.player.data.sync.REMOTE_QUEUE_CAP
 import com.universalmusic.player.data.sync.RemoteCommand
+import com.universalmusic.player.data.sync.RemoteCommandExpired
 import com.universalmusic.player.data.sync.RemoteCommandReply
 import com.universalmusic.player.data.sync.RemotePlayer
 import com.universalmusic.player.data.sync.RemotePlayerState
@@ -21,6 +22,7 @@ import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.sha256Bytes
+import kotlin.time.TimeMark
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.SharingStarted
@@ -43,8 +45,9 @@ class RemotePlayerAdapter(
             capture(now, queue, volume, session.canSkipNext())
         }.stateIn(scope, SharingStarted.Eagerly, null)
 
-    override suspend fun apply(command: RemoteCommand): RemoteCommandReply = withContext(NonCancellable) {
+    override suspend fun apply(command: RemoteCommand, deadline: TimeMark?): RemoteCommandReply = withContext(NonCancellable) {
         session.onSessionThread {
+            if (deadline?.hasPassedNow() == true) throw RemoteCommandExpired()
             val transfer = applyNow(command)
             val now = session.nowPlaying.value
             val queue = session.queueState.value

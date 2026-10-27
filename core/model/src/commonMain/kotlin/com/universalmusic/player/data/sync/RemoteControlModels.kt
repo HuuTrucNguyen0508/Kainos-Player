@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.session.PersistedQueueItem
+import kotlin.time.TimeMark
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -157,13 +158,18 @@ data class RemoteCommandReply(val status: RemoteStatus? = null, val transfer: Re
  */
 data class RemotePlayerState(val status: RemoteStatus, val capturedAtMs: Long, val localArtwork: String? = null)
 
+class RemoteCommandExpired : IllegalStateException("Remote command expired before application")
+
 /** The player a remote device controls. Only a GUI process exposes one. */
 interface RemotePlayer {
     /** Null while nothing is loaded. */
     val state: StateFlow<RemotePlayerState?>
 
-    /** Applies [command] and captures the resulting status in one session-thread step. */
-    suspend fun apply(command: RemoteCommand): RemoteCommandReply
+    /**
+     * Checks [deadline], applies [command] and captures status in one session-thread step.
+     * Throws [RemoteCommandExpired] if the deadline passed before mutation.
+     */
+    suspend fun apply(command: RemoteCommand, deadline: TimeMark? = null): RemoteCommandReply
 }
 
 /** The status as sent at [nowMs]: its position age grows with time since capture. */

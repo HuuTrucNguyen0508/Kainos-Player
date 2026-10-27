@@ -5,11 +5,13 @@ import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.toDomain
 import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.data.sync.DeliveryTarget
 import com.universalmusic.player.data.sync.CertFingerprint
 import com.universalmusic.player.data.sync.HomeLanSyncRole
 import com.universalmusic.player.data.sync.PairedPeer
 import com.universalmusic.player.data.sync.RemoteCommand
 import com.universalmusic.player.data.sync.RemoteHostReply
+import com.universalmusic.player.data.sync.RemoteLinkTransport
 import com.universalmusic.player.data.sync.RemoteLinkHost
 import com.universalmusic.player.data.sync.RemotePollReply
 import com.universalmusic.player.data.sync.RemotePollRequest
@@ -31,8 +33,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -150,6 +155,39 @@ class RemoteControlTest {
         assertEquals(RemoteRole.NONE, AppSettings(homeLanSyncEnabled = true).remoteRole(isDesktop = false))
     }
 
+    @Test
+    fun slowArtworkDoesNotBlockStatusOrRestartOnEveryTick() = runTest {
+        var fetches = 0
+        val fetched = CompletableDeferred<Unit>()
+        val transport = object : RemoteLinkTransport {
+            override suspend fun poll(request: RemotePollRequest): RemotePollReply {
+                if (request.knownHubVersion >= 1) awaitCancellation()
+                return RemotePollReply("e1", hubStatus = RemoteStatus(title = "Slow cover song", artworkKey = "abcd1234"), hubVersion = 1, hubHasPlayer = true)
+            }
+            override suspend fun command(command: RemoteCommand) = error("unused")
+            override suspend fun postTransfer(epoch: String, seq: Long, reply: RemoteTransferReply) = Unit
+            override suspend fun putArtwork(key: String, bytes: ByteArray) = Unit
+            override suspend fun fetchArtwork(key: String): ByteArray? {
+                fetches++
+                delay(2_500)
+                fetched.complete(Unit)
+                return null
+            }
+            override fun close() = Unit
+        }
+        val rig = hubRig(clientTransport = transport)
+        runCurrent()
+        val first = rig.control.state.value.devices.single()
+        assertTrue(first.connected)
+        assertEquals("Slow cover song", first.status?.title)
+        assertNull(first.artwork)
+        advanceTimeBy(2_501)
+        runCurrent()
+        assertTrue(fetched.isCompleted)
+        assertEquals(1, fetches)
+        assertEquals("Slow cover song", rig.control.state.value.devices.single().status?.title)
+    }
+
     private class Rig(
         val scope: TestScope,
         val control: RemoteControl,
@@ -167,7 +205,7 @@ class RemoteControlTest {
         }
     }
 
-    private suspend fun TestScope.hubRig(guiEnabled: Boolean = true): Rig {
+    private suspend fun TestScope.hubRig(guiEnabled: Boolean = true, clientTransport: RemoteLinkTransport? = null): Rig {
         val clock = { testScheduler.currentTime }
         val session = PlayerSession(PlayingEngine(), DefaultSourceResolver(), backgroundScope, clock = clock)
         val host = RemoteLinkHost(hubName = { "Desk" }, clock = clock, newEpoch = { "e1" })
@@ -175,15 +213,15 @@ class RemoteControlTest {
         val gui = MutableStateFlow(guiEnabled)
         val control = RemoteControl(
             scope = backgroundScope,
-            settings = MutableStateFlow(AppSettings(homeLanSyncEnabled = true, homeLanSyncRole = HomeLanSyncRole.HUB, homeLanSyncPeers = listOf(phone))),
+            settings = MutableStateFlow(AppSettings(homeLanSyncEnabled = true, homeLanSyncRole = if (clientTransport == null) HomeLanSyncRole.HUB else HomeLanSyncRole.CLIENT, homeLanSyncPeers = listOf(phone), homeLanSyncHub = phone)),
             isDesktop = true,
             host = host,
             player = RemotePlayerAdapter(session, backgroundScope, clock),
             handoff = ListeningHandoff(NoExchange, session, localTracks = { emptyList() }, clock = clock),
             guiPlayer = gui,
-            linkWanted = MutableStateFlow(false),
-            clientTarget = { null },
-            openLink = { error("a hub opens no link") },
+            linkWanted = MutableStateFlow(clientTransport != null),
+            clientTarget = { DeliveryTarget(phone, "pc", phone.fingerprint) },
+            openLink = { clientTransport ?: error("a hub opens no link") },
             onLinkConnected = {},
             clock = clock,
         )

@@ -12,6 +12,7 @@ import java.io.File
 import java.net.ServerSocket
 import java.nio.file.Files
 import kotlin.test.AfterTest
+import kotlin.time.TimeMark
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -19,6 +20,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -124,6 +126,7 @@ class RemoteLinkLoopbackTest {
         val applied = assertIs<RemoteClientSend.Applied>(client.send(RemoteCommand.Next))
         assertEquals("PC song", applied.reply.status?.title)
         assertEquals(listOf<RemoteCommand>(RemoteCommand.Next), hubPlayer.applied)
+        assertNotNull(hubPlayer.receivedDeadline)
     }
 
     @Test
@@ -211,8 +214,11 @@ class RemoteLinkLoopbackTest {
     private class RecordingPlayer(title: String) : RemotePlayer {
         override val state = MutableStateFlow<RemotePlayerState?>(RemotePlayerState(RemoteStatus(title = title), System.currentTimeMillis()))
         val applied = mutableListOf<RemoteCommand>()
+        var receivedDeadline: TimeMark? = null
 
-        override suspend fun apply(command: RemoteCommand): RemoteCommandReply {
+        override suspend fun apply(command: RemoteCommand, deadline: TimeMark?): RemoteCommandReply {
+            receivedDeadline = deadline
+            if (deadline?.hasPassedNow() == true) throw RemoteCommandExpired()
             applied += command
             return RemoteCommandReply(state.value?.status)
         }

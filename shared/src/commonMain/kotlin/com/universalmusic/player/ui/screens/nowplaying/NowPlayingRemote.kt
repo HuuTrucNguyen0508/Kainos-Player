@@ -290,7 +290,7 @@ internal fun RemoteQueue(device: RemoteDeviceView, enabled: Boolean, onSend: (Re
     val scheme = MaterialTheme.colorScheme
     Spacer(Modifier.height(16.dp))
     SectionRule("Up next on ${device.name}")
-    upcoming.take(REMOTE_QUEUE_SHOWN).forEachIndexed { index, entry ->
+    upcoming.forEachIndexed { index, entry ->
         LedgerRow(onClick = if (enabled) ({ onSend(RemoteCommand.PlayItem(entry.itemId)) }) else null) {
             Column(Modifier.weight(1f)) {
                 Text(entry.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -309,14 +309,6 @@ internal fun RemoteQueue(device: RemoteDeviceView, enabled: Boolean, onSend: (Re
                 Spacer(Modifier.width(48.dp))
             }
         }
-    }
-    if (upcoming.size > REMOTE_QUEUE_SHOWN) {
-        Text(
-            "${upcoming.size - REMOTE_QUEUE_SHOWN} more on ${device.name}",
-            style = MaterialTheme.typography.bodySmall,
-            color = scheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 8.dp, top = 8.dp),
-        )
     }
 }
 
@@ -493,7 +485,5 @@ private fun RemoteVolume(volume: Float, enabled: Boolean, onCommit: (Float) -> U
         )
     }
 }
-
-private const val REMOTE_QUEUE_SHOWN = 30
 
 private const val DISABLED_ALPHA = 0.45f

@@ -27,6 +27,8 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import io.netty.handler.ssl.SslHandler
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.readByteArray
@@ -168,6 +170,7 @@ class DesktopHomeLanSyncHub(
                         call.respondRemote(host.poll(peer, request)) { json.encodeToString(it) }
                     }
                     post(HOME_LAN_SYNC_PATH_V3_REMOTE_COMMAND) {
+                        val deadline = TimeSource.Monotonic.markNow() + REMOTE_COMMAND_REQUEST_TIMEOUT_MS.milliseconds
                         call.pairedPeer() ?: return@post
                         touchActivity()
                         val player = config.guiPlayer()
@@ -175,7 +178,12 @@ class DesktopHomeLanSyncHub(
                         val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
                         val command = runCatching { json.decodeFromString<RemoteCommand>(body) }.getOrNull()
                             ?: return@post call.respondText("Malformed command", status = HttpStatusCode.BadRequest)
-                        call.respondText(json.encodeToString(player.apply(command)), ContentType.Application.Json)
+                        val reply = try {
+                            player.apply(command, deadline)
+                        } catch (_: RemoteCommandExpired) {
+                            return@post call.respondText("Command expired", status = HttpStatusCode.RequestTimeout)
+                        }
+                        call.respondText(json.encodeToString(reply), ContentType.Application.Json)
                     }
                     post("$HOME_LAN_SYNC_PATH_V3_REMOTE_TRANSFER/{epoch}/{seq}") {
                         val peer = call.pairedPeer() ?: return@post

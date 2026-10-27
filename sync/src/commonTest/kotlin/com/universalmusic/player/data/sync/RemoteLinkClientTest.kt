@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.sync
 
+import kotlin.time.TimeMark
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -208,6 +209,59 @@ class RemoteLinkClientTest {
         assertEquals(listOf("abcd1234"), rig.transport.artworkKeys)
     }
 
+    @Test
+    fun aPollTimeoutBacksOffAndReconnectsWhileStillWanted() = runTest {
+        val rig = rig()
+        rig.reply(epoch = "e1")
+        val held = rig.nextPoll()
+
+        advanceTimeBy(REMOTE_POLL_REQUEST_TIMEOUT_MS)
+        runCurrent()
+        assertTrue(held.cancelled.isCompleted)
+        assertTrue(rig.client.state.value.active)
+        assertTrue(rig.client.state.value.unreachable)
+        assertFalse(rig.client.state.value.connected)
+
+        advanceTimeBy(2_000)
+        rig.reply(epoch = "e1")
+        assertEquals(2, rig.connections)
+        assertTrue(rig.client.state.value.connected)
+
+        val resumed = rig.nextPoll()
+        rig.wanted.value = false
+        runCurrent()
+        assertTrue(resumed.cancelled.isCompleted)
+        advanceTimeBy(REMOTE_POLL_REQUEST_TIMEOUT_MS + 30_000)
+        assertFalse(rig.client.state.value.active)
+        assertTrue(rig.transport.polls.tryReceive().isFailure)
+    }
+
+    @Test
+    fun aCommandThatExpiresBehindAnEarlierCommandIsDroppedAndAcknowledged() = runTest {
+        val rig = rig()
+        val gate = CompletableDeferred<Unit>()
+        rig.player.gate = gate
+        rig.reply("e1", RemoteEnvelope(1, 0, RemoteCommand.Pause), RemoteEnvelope(2, 0, RemoteCommand.Play))
+        advanceTimeBy(6_000)
+        gate.complete(Unit)
+
+        val next = rig.nextPoll()
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), rig.player.applied)
+        assertEquals(2, next.request.ackSeq)
+        assertEquals(listOf(2L), next.request.droppedSeqs)
+    }
+
+    @Test
+    fun aNewHubEpochUploadsTheSameArtworkAgain() = runTest {
+        val rig = rig(artwork = RemoteArtworkReader { byteArrayOf(9, 9) })
+        rig.player.state.value = RemotePlayerState(RemoteStatus(title = "A", artworkKey = "abcd1234"), 0, localArtwork = "file:///a.jpg")
+        rig.reply("e1")
+        rig.nextPoll().reply(rig.replyOf("e2"))
+        rig.nextPoll()
+
+        assertEquals(listOf("abcd1234", "abcd1234"), rig.transport.artworkKeys)
+    }
+
     private class PendingPoll(val request: RemotePollRequest) {
         val result = CompletableDeferred<RemotePollReply>()
         val cancelled = CompletableDeferred<Unit>()
@@ -258,7 +312,8 @@ class RemoteLinkClientTest {
         var gate: CompletableDeferred<Unit>? = null
         val transfer = RemoteTransferReply(failure = RemoteTransferFailure.UNSUPPORTED_TRACK)
 
-        override suspend fun apply(command: RemoteCommand): RemoteCommandReply {
+        override suspend fun apply(command: RemoteCommand, deadline: TimeMark?): RemoteCommandReply {
+            if (deadline?.hasPassedNow() == true) throw RemoteCommandExpired()
             applied += command
             gate?.await()
             return RemoteCommandReply(state.value?.status, transfer.takeIf { command == RemoteCommand.PauseForTransfer })
@@ -306,6 +361,7 @@ class RemoteLinkClientTest {
             artwork = artwork,
             onConnected = { connections++ },
             clock = { testScheduler.currentTime },
+            monotonicClock = testScheduler.timeSource,
         )
         client.run(wanted)
         return Rig(this, client, player, transport, wanted) { connections }

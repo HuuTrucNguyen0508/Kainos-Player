@@ -3,6 +3,7 @@ package com.universalmusic.player.domain.playback
 import com.universalmusic.player.data.library.toPersisted
 import com.universalmusic.player.data.session.PersistedQueueItem
 import com.universalmusic.player.data.sync.RemoteCommand
+import com.universalmusic.player.data.sync.RemoteCommandExpired
 import com.universalmusic.player.data.sync.RemoteRepeat
 import com.universalmusic.player.data.sync.RemoteTransferFailure
 import com.universalmusic.player.data.sync.RemoteTransferSnapshot
@@ -10,13 +11,20 @@ import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.RepeatMode
+import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -211,6 +219,38 @@ class RemotePlayerAdapterTest {
 
         assertEquals(TransferLoad.UNSUPPORTED, handoff.loadTransfer(transfer))
         assertEquals("yt:local", rig.currentId())
+    }
+
+    @Test
+    fun commandsExpireWhileWaitingForTheSessionThread() = runTest {
+        // Both polled commands (4 s) and direct hub commands (5 s) must expire at dispatch.
+        for (lifetimeMs in listOf(4_000L, 5_000L)) {
+            val dispatcher = object : CoroutineDispatcher() {
+                val delegate = StandardTestDispatcher(testScheduler)
+                var held = false
+                val waiting = ArrayList<Pair<CoroutineContext, Runnable>>()
+                override fun dispatch(context: CoroutineContext, block: Runnable) {
+                    if (held) waiting += context to block else delegate.dispatch(context, block)
+                }
+                fun release() {
+                    held = false
+                    waiting.toList().also { waiting.clear() }.forEach { (context, block) -> delegate.dispatch(context, block) }
+                }
+            }
+            val session = PlayerSession(ScriptedEngine(), DefaultSourceResolver(), backgroundScope, confineTo = dispatcher)
+            val adapter = RemotePlayerAdapter(session, backgroundScope)
+            runCurrent()
+            dispatcher.held = true
+            val deadline = testScheduler.timeSource.markNow() + lifetimeMs.milliseconds
+            val pending = backgroundScope.async { runCatching { adapter.apply(RemoteCommand.SetVolume(0.25f), deadline) } }
+            runCurrent()
+            advanceTimeBy(6_000)
+            dispatcher.release()
+            runCurrent()
+
+            assertIs<RemoteCommandExpired>(pending.await().exceptionOrNull())
+            assertEquals(1f, session.volume.value)
+        }
     }
 
     private class Rig(val session: PlayerSession, val adapter: RemotePlayerAdapter, val engine: ScriptedEngine) {
