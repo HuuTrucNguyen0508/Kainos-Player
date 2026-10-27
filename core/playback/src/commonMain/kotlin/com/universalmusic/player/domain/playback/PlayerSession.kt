@@ -285,6 +285,21 @@ class PlayerSession(
         return recorder.awaitCommitted(sequence)
     }
 
+    /** Runs [block] on the session thread; it must use the `*Now` calls, which apply inline. */
+    internal suspend fun <T> onSessionThread(block: () -> T): T = withContext(sessionContext) { block() }
+
+    /**
+     * Installs a queue the user moved here from another device and plays it. Unlike
+     * [loadRemotePaused] it skips the recency, not-playing and applied-handoff checks: the user asked.
+     */
+    internal suspend fun installTransferAndPlay(snapshot: SessionSnapshot): Boolean = withContext(sessionContext) {
+        if (snapshot.items.isEmpty()) return@withContext false
+        trace("installTransferAndPlay items=${snapshot.items.size} index=${snapshot.currentIndex} pos=${snapshot.positionMs}")
+        installPaused(snapshot)
+        playTransportNow()
+        true
+    }
+
     internal class HandoffView(val local: LocalHandoffState, val revision: SessionRevision)
 
     internal suspend fun handoffView(): HandoffView = withContext(sessionContext) {
@@ -460,8 +475,10 @@ class PlayerSession(
      * Under shuffle, starts a fresh random order with that track first so short sessions
      * do not keep walking the same leftover permutation.
      */
-    fun playQueueIndex(index: Int) = onSession {
-        if (index !in queue.queue.value.items.indices) return@onSession
+    fun playQueueIndex(index: Int) = onSession { playQueueIndexNow(index) }
+
+    internal fun playQueueIndexNow(index: Int) {
+        if (index !in queue.queue.value.items.indices) return
         beginUserPlay()
         queue.jumpTo(index, reshuffle = true)
         startCurrent(Change.LOCAL_INTENT)
@@ -554,7 +571,9 @@ class PlayerSession(
 
     fun moveInQueue(from: Int, to: Int) = onSession { editQueue { move(from, to) } }
 
-    fun moveInPlaybackOrder(fromOrderPos: Int, toOrderPos: Int) = onSession {
+    fun moveInPlaybackOrder(fromOrderPos: Int, toOrderPos: Int) = onSession { moveInPlaybackOrderNow(fromOrderPos, toOrderPos) }
+
+    internal fun moveInPlaybackOrderNow(fromOrderPos: Int, toOrderPos: Int) {
         editQueue { moveInPlaybackOrder(fromOrderPos, toOrderPos) }
     }
 
@@ -564,7 +583,9 @@ class PlayerSession(
         if (queue.queue.value !== before) record(Change.LOCAL_INTENT)
     }
 
-    fun togglePlayPause() = onSession {
+    fun togglePlayPause() = onSession { togglePlayPauseNow() }
+
+    internal fun togglePlayPauseNow() {
         val now = _nowPlaying.value
         trace("togglePlayPause buffering=${now.buffering} isPlaying=${now.isPlaying}")
         when {
@@ -575,6 +596,8 @@ class PlayerSession(
 
     /** Idempotent pause; cancels in-flight resolve/buffering. */
     fun pauseTransport() = onSession { pauseTransportNow(Change.USER_PAUSE) }
+
+    internal fun pauseTransportNow() = pauseTransportNow(Change.USER_PAUSE)
 
     internal fun pauseForSleepTimer() = onSession { pauseTransportNow(Change.AUTOMATIC) }
 
@@ -605,7 +628,7 @@ class PlayerSession(
     /** Idempotent play/resume; no-op when already playing or buffering. */
     fun playTransport() = onSession { playTransportNow() }
 
-    private fun playTransportNow() {
+    internal fun playTransportNow() {
         val now = _nowPlaying.value
         trace("playTransport buffering=${now.buffering} isPlaying=${now.isPlaying} engine=${engine.state.value.status}")
         if (now.buffering || now.isPlaying) return
@@ -626,7 +649,7 @@ class PlayerSession(
 
     fun seekTo(positionMs: Long) = onSession { seekNow(positionMs) }
 
-    private fun seekNow(positionMs: Long) {
+    internal fun seekNow(positionMs: Long) {
         val target = positionMs.coerceAtLeast(0L)
         startupTarget?.positionMs = target
         engine.seekTo(positionMs)
@@ -648,20 +671,24 @@ class PlayerSession(
     }
 
     /** Manual next: escapes Repeat One. */
-    fun skipToNext() = onSession {
+    fun skipToNext() = onSession { skipToNextNow() }
+
+    internal fun skipToNextNow() {
         trace("skipToNext")
         failedItemIds.clear()
         advance(manual = true)
     }
 
-    fun skipToPrevious() = onSession {
+    fun skipToPrevious() = onSession { skipToPreviousNow() }
+
+    internal fun skipToPreviousNow() {
         val current = _nowPlaying.value
         trace("skipToPrevious pos=${current.positionMs}")
         if (current.positionMs > 3_000) {
             seekNow(0)
-            return@onSession
+            return
         }
-        val previous = queue.previousIndex() ?: return@onSession
+        val previous = queue.previousIndex() ?: return
         failedItemIds.clear()
         queue.jumpTo(previous)
         startCurrent(Change.LOCAL_INTENT)
@@ -669,9 +696,14 @@ class PlayerSession(
 
     fun canSkipNext(): Boolean = queue.nextIndex(respectRepeatOne = false) != null
 
-    fun toggleShuffle() = onSession {
-        val enabled = !queue.queue.value.shuffle
+    fun toggleShuffle() = onSession { setShuffleNow(!queue.queue.value.shuffle) }
+
+    internal fun setShuffleNow(enabled: Boolean) {
         editQueue { setShuffle(enabled) }
+    }
+
+    internal fun setRepeatNow(mode: RepeatMode) {
+        editQueue { setRepeat(mode) }
     }
 
     fun cycleRepeat() = onSession {
