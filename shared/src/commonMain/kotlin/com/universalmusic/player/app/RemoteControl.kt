@@ -61,6 +61,7 @@ data class RemoteControlState(
     /** Home sync is on and this device is paired with another one. */
     val available: Boolean = false,
     val thisDeviceName: String = "This device",
+    val thisIsDesktop: Boolean = false,
     val devices: List<RemoteDeviceView> = emptyList(),
     /** The device Now Playing shows and controls; null is this one. */
     val selectedId: String? = null,
@@ -124,12 +125,13 @@ class RemoteControl internal constructor(
         RemoteControlState(
             available = side != RemoteRole.NONE && views.isNotEmpty(),
             thisDeviceName = if (isDesktop) "This PC" else "This phone",
+            thisIsDesktop = isDesktop,
             devices = views,
             selectedId = selected?.takeIf { id -> views.any { it.deviceId == id } },
             transferring = moving,
             message = note,
         )
-    }.stateIn(scope, SharingStarted.Eagerly, RemoteControlState(thisDeviceName = if (isDesktop) "This PC" else "This phone"))
+    }.stateIn(scope, SharingStarted.Eagerly, RemoteControlState(thisDeviceName = if (isDesktop) "This PC" else "This phone", thisIsDesktop = isDesktop))
 
     init {
         // Publish this GUI's player to polling devices. A process that never enables the GUI player
