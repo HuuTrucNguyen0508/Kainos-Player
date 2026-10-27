@@ -90,6 +90,22 @@ The listening exchange already carries the full portable queue. "Play here" on d
 
 `/frontend-design` runs before any UI code. Now Playing gets a device chip ("Playing on This PC ▾"). The picker lists this device and the paired device with its connected state. While a remote device is selected, Now Playing shows that device's artwork, title and artist, progress with seek, previous / play-pause / next, shuffle, repeat, volume, its queue (tap to play, "Play next" action), and a prominent "Play here" button. Unreachable shows a banner and disabled controls. Desktop Space, MPRIS and the Android media session keep controlling local playback.
 
+## Revisions after plan review round 1 (Codex Pro `gpt-6.1-sol`)
+
+These override the sections above where they conflict.
+
+1. **At-most-once execution.** HTTP polling and command execution are separate. One serialized executor on the phone applies commands and advances `lastExecuted` atomically with each application, under `NonCancellable`. A status-change repost cancels only the HTTP wait, never execution or bookkeeping. Every poll carries a client generation id. The hub ignores a superseded poll's status and never lets it clear a newer waiter.
+2. **Link epoch.** The hub draws a random `epoch` at start and returns it in every reply. Sequences, acks and `hubVersion` are scoped to the epoch. A phone that sees a new epoch resets `lastExecuted` and `knownHubVersion`. The hub ignores acks for another epoch. A hub restart invalidates every outstanding command. The guarantee is at-most-once within an epoch.
+3. **Receiver-enforced deadline.** Each delivered command carries `ageMs` (hub time since it was queued, at reply time) and the reply carries `heldMs` (how long the hub held the request). The phone bounds transit as `(its own elapsed time from request send to reply) - heldMs`, and drops a command whose `ageMs + transit` exceeds 4 s. The hub reports "didn't respond" when a command expires undelivered, and "didn't confirm" when it was delivered but no ack came. The live status shows the truth either way.
+4. **Play here uses a direct transfer snapshot, not the publication store.** A new command `PauseForTransfer` pauses the source on its session thread and captures a `RemoteTransferSnapshot` there: the portable queue (`PortableListeningQueue.project`), current item id, position and shuffle. A queue that cannot be projected yields a typed failure (the source stays paused).
+   - Phone takes from the PC: `POST /remote/command` with `PauseForTransfer`; the hub replies with the snapshot.
+   - PC takes from the phone: the hub queues `PauseForTransfer`; the phone executes it and `POST`s the snapshot to `/kainos-sync/v3/remote/transfer/{epoch}/{seq}`; the PC waits up to 5 s for it.
+5. **Explicit transfer load.** The destination loads the snapshot through a new explicit path in `ListeningHandoff` (reusing its snapshot and local-track resolution) and a session-thread install. It skips the automatic recency check, the not-playing check and the `handoff_applied` table, then plays. Automatic handoff is unchanged.
+6. **Android eligibility.** The link is wanted while the app is visible, or playback is playing or buffering, or it paused less than 10 minutes ago. The plan does not assume a blanket Doze exemption. Locked-phone behaviour is measured live and reported as a limit if HyperOS cuts it.
+7. **Timeouts and lifecycle.** Polls use a 25 s request deadline, and commands use 5 s. Waiters suspend outside host locks, are removed by identity in `finally`, and are all woken before the hub stops Netty.
+8. **Atomic adapter.** `RemotePlayerAdapter.apply` is a suspend call that resolves item ids, applies the change and captures the resulting status in one block on the session thread, so the ack follows a completed application.
+9. **Hub-only.** The hub config gets an explicit GUI-player capability. Session existence never implies it. A `--hub-only` process advertises no hub status and answers commands with 409.
+
 ## Verification
 
 - JVM tests: `RemoteLinkHost` (immediate reply, hold and wake, ack drop, 4 s expiry, refusal when unreachable, newer poll supersedes, forged deviceId), `RemoteLinkClient` with a fake transport (exactly-once execution, cancel-and-repost on status change, backoff, unreachable flag), `RemotePlayerAdapter` (each command, unknown item id), and a loopback pinned-TLS test against `DesktopHomeLanSyncHub` for poll, command and artwork routes.
