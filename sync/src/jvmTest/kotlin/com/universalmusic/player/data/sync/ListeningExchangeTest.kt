@@ -4,8 +4,16 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
+import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.PeerListening
 import com.universalmusic.player.data.session.PeerListeningState
 import com.universalmusic.player.data.session.ProjectionFailure
@@ -25,6 +33,10 @@ import io.ktor.http.contentType
 import java.io.File
 import java.net.ServerSocket
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -37,6 +49,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ListeningExchangeTest {
@@ -249,7 +263,7 @@ class ListeningExchangeTest {
     }
 
     @Test
-    fun foregroundFetchesANewerHubExportAfterThePhoneRevisionWasDelivered() = runTest {
+    fun foregroundFetchesANewerHubExportAfterThePhoneRevisionWasDelivered() = runExchangeTest {
         hub.start()
         phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
         pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW - 1_000)
@@ -271,7 +285,7 @@ class ListeningExchangeTest {
     }
 
     @Test
-    fun foregroundFetchesTheHubExportBeforeThePhoneHasPublishedAnything() = runTest {
+    fun foregroundFetchesTheHubExportBeforeThePhoneHasPublishedAnything() = runExchangeTest {
         hub.start()
         pc.publish(pcItems, current = 0, activeAtMs = HUB_NOW)
 
@@ -324,7 +338,7 @@ class ListeningExchangeTest {
     }
 
     @Test
-    fun aSuccessfulSyncClearsRefusalAndThePairAgainStatus() = runTest {
+    fun aSuccessfulSyncClearsRefusalAndThePairAgainStatus() = runExchangeTest {
         phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
         val service = foregroundService(backgroundScope, listeningClient = { FakeHub { throw ListeningHubRefused("HTTP 401") } },
             syncClient = { FakeVaultClient(ByteArray(0)) })
@@ -338,7 +352,7 @@ class ListeningExchangeTest {
     }
 
     @Test
-    fun aSuccessfulHealthProbeClearsRefusalEvenIfTheMainSyncFails() = runTest {
+    fun aSuccessfulHealthProbeClearsRefusalEvenIfTheMainSyncFails() = runExchangeTest {
         val refusedPairing = DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint).pairingIdentity
         phone.exchange.setRefusedPairing(refusedPairing)
         val base = FakeVaultClient(ByteArray(0))
@@ -350,13 +364,62 @@ class ListeningExchangeTest {
     }
 
     @Test
-    fun aThrowingBackgroundSchedulerDoesNotEscapeTheService() = runTest {
+    fun aThrowingBackgroundSchedulerDoesNotEscapeTheService() = runExchangeTest {
         phone.publish(phoneItems, current = 0, activeAtMs = HUB_NOW)
         var attempts = 0
         val service = foregroundService(backgroundScope, scheduler = { attempts++; throw java.io.IOException("scheduler unavailable") })
         service.scheduleListeningDeliveryIfPending()
         service.scheduleListeningDeliveryIfPending()
         assertEquals(2, attempts)
+    }
+
+    @Test
+    fun cancellingAnExchangeWaitsForRealIoBeforeTheNextDelivery() {
+        val enteredIo = CountDownLatch(1)
+        val releaseIo = CountDownLatch(1)
+        val cancelling = CountDownLatch(1)
+        val deliveryMutex = Mutex()
+        val executor = Executors.newSingleThreadExecutor()
+        val exchange = executor.submit {
+            runExchangeTest {
+                backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        cancelling.countDown()
+                    }
+                }
+                val store = object : ListeningExchangeStore by PendingStore(phoneItems) {
+                    override suspend fun deliveredRevision(hubDeviceId: String): PublicationRevision? = withContext(Dispatchers.IO) {
+                        enteredIo.countDown()
+                        check(releaseIo.await(5, TimeUnit.SECONDS))
+                        null
+                    }
+                }
+                val delivery = ListeningDelivery(store,
+                    { DeliveryTarget(hubAsPeer, "kainos-phone", phoneIdentity.fingerprint) },
+                    { FakeHub() }, mutex = deliveryMutex)
+                ListeningDeliveryRunner(backgroundScope, delivery, { true }, {}, isAppForeground = { true }).request()
+                runCurrent()
+                withContext(Dispatchers.IO) { assertTrue(enteredIo.await(5, TimeUnit.SECONDS)) }
+            }
+        }
+        try {
+            assertTrue(cancelling.await(5, TimeUnit.SECONDS))
+            assertFailsWith<TimeoutException> { exchange.get(100, TimeUnit.MILLISECONDS) }
+            releaseIo.countDown()
+            exchange.get(5, TimeUnit.SECONDS)
+            runBlocking {
+                withTimeout(1_000) {
+                    val next = ListeningDelivery(PendingStore(phoneItems), { null }, { error("No target") }, mutex = deliveryMutex)
+                    assertEquals(DeliveryOutcome.IDLE, next.deliverPending())
+                }
+            }
+        } finally {
+            releaseIo.countDown()
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+        }
     }
 
     private suspend fun awaitRefusal(service: HomeLanSyncService) = withContext(Dispatchers.IO) {
@@ -390,5 +453,15 @@ class ListeningExchangeTest {
 
     private companion object {
         const val HUB_NOW = 10_000_000L
+    }
+}
+
+private fun runExchangeTest(block: suspend TestScope.() -> Unit) = runTest {
+    try {
+        block()
+    } finally {
+        // Real IO can finish after runTest's automatic background cancellation drains the scheduler.
+        // Join here so its delivery-lock cleanup still has a running scheduler and an open database.
+        withContext(NonCancellable) { backgroundScope.coroutineContext.job.cancelAndJoin() }
     }
 }
