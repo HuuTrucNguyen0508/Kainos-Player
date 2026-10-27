@@ -100,6 +100,11 @@ data class RemoteEnvelope(val seq: Long, val ageMs: Long, val command: RemoteCom
 @Serializable
 data class RemotePollRequest(
     val deviceId: String,
+    /**
+     * Random per client process. A new id means the device restarted: generations start over and
+     * commands the old process may have run are never offered again.
+     */
+    val linkId: String,
     /** Increases with every poll this client process sends; an older one is superseded. */
     val generation: Long,
     /** The epoch [ackSeq] and [knownHubVersion] belong to; null before the first reply. */
@@ -122,6 +127,8 @@ data class RemotePollReply(
     val heldMs: Long = 0,
     /** False for a `--hub-only` process: it has no player to show or control. */
     val hubHasPlayer: Boolean = false,
+    /** A newer poll from the same device, or a stopping hub, ended this one; it carries nothing. */
+    val superseded: Boolean = false,
 )
 
 /** The portable queue a source device hands over for "Play here". */
