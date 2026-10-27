@@ -21,6 +21,14 @@ class HomeLanHubConfig(
     val heartedVaultFileNames: () -> Set<String>?,
     /** Null leaves the listening routes unanswered (404). */
     val listening: ListeningExchangeStore? = null,
+    /** Null leaves the remote control routes unanswered (404). */
+    val remote: com.universalmusic.player.data.sync.RemoteLinkHost? = null,
+    /**
+     * The GUI player remote devices may control. Only a GUI process returns one; a `--hub-only`
+     * process returns null even though it builds a session, so it shows no status and answers
+     * commands with 409.
+     */
+    val guiPlayer: () -> com.universalmusic.player.data.sync.RemotePlayer? = { null },
 )
 
 expect fun createHomeLanSyncHub(config: HomeLanHubConfig): HomeLanSyncHub
