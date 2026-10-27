@@ -130,6 +130,8 @@ class SettingsSyncPresenterTest {
         override suspend fun syncNow() = Result.success("Synced")
         override suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection) = Result.success("Transferred")
         override suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection) = Result.success("Skipped")
+        override suspend fun confirmAllVaultTransfers() = Result.success("Transferred all")
+        override suspend fun dismissAllVaultTransfers() = Result.success("Skipped all")
         override suspend fun startHubIfNeeded() = Unit
         override suspend fun stopHub() = Unit
         override suspend fun tombstoneVaultPath(relPath: String) = Result.success("Removed")

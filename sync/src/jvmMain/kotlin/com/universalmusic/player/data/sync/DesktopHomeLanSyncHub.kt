@@ -27,6 +27,8 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import io.netty.handler.ssl.SslHandler
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.readByteArray
@@ -159,6 +161,52 @@ class DesktopHomeLanSyncHub(
                         call.respondAnswer(host.fetchQueue(call.parameters["hash"].orEmpty()), ContentType.Application.Json)
                     }
                 }
+                config.remote?.let { host ->
+                    post(HOME_LAN_SYNC_PATH_V3_REMOTE_POLL) {
+                        val peer = call.pairedPeer() ?: return@post
+                        val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
+                        val request = runCatching { json.decodeFromString<RemotePollRequest>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed poll", status = HttpStatusCode.BadRequest)
+                        call.respondRemote(host.poll(peer, request)) { json.encodeToString(it) }
+                    }
+                    post(HOME_LAN_SYNC_PATH_V3_REMOTE_COMMAND) {
+                        val deadline = TimeSource.Monotonic.markNow() + REMOTE_COMMAND_REQUEST_TIMEOUT_MS.milliseconds
+                        call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val player = config.guiPlayer()
+                            ?: return@post call.respondText("This hub has no player", status = HttpStatusCode.Conflict)
+                        val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
+                        val command = runCatching { json.decodeFromString<RemoteCommand>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed command", status = HttpStatusCode.BadRequest)
+                        val reply = try {
+                            player.apply(command, deadline)
+                        } catch (_: RemoteCommandExpired) {
+                            return@post call.respondText("Command expired", status = HttpStatusCode.RequestTimeout)
+                        }
+                        call.respondText(json.encodeToString(reply), ContentType.Application.Json)
+                    }
+                    post("$HOME_LAN_SYNC_PATH_V3_REMOTE_TRANSFER/{epoch}/{seq}") {
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val seq = call.parameters["seq"]?.toLongOrNull()
+                            ?: return@post call.respondText("Malformed sequence", status = HttpStatusCode.BadRequest)
+                        val body = call.receiveOrRespondTooLarge(MAX_QUEUE_BODY_BYTES) ?: return@post
+                        val reply = runCatching { json.decodeFromString<RemoteTransferReply>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed transfer", status = HttpStatusCode.BadRequest)
+                        call.respondRemote(host.receiveTransfer(peer, call.parameters["epoch"].orEmpty(), seq, reply)) { "" }
+                    }
+                    put("$HOME_LAN_SYNC_PATH_V3_REMOTE_ARTWORK/{key}") {
+                        val peer = call.pairedPeer() ?: return@put
+                        val bytes = call.receiveBytesOrRespondTooLarge(REMOTE_ARTWORK_MAX_BYTES.toLong()) ?: return@put
+                        call.respondRemote(host.receiveArtwork(peer, call.parameters["key"].orEmpty(), bytes)) { "" }
+                    }
+                    get("$HOME_LAN_SYNC_PATH_V3_REMOTE_ARTWORK/{key}") {
+                        call.pairedPeer() ?: return@get
+                        val bytes = host.hubArtwork(call.parameters["key"].orEmpty())
+                            ?: return@get call.respondText("No artwork", status = HttpStatusCode.NotFound)
+                        call.respondBytes(bytes, ContentType.Application.OctetStream)
+                    }
+                }
                 for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_V2_HEARTS)) {
                     post(path) {
                         call.pairedPeer() ?: return@post
@@ -285,6 +333,7 @@ class DesktopHomeLanSyncHub(
                 }
             }
         }
+        config.remote?.start()
         engine.start(wait = false)
         server = engine
         listening = true
@@ -293,6 +342,8 @@ class DesktopHomeLanSyncHub(
 
     override suspend fun stop() {
         listening = false
+        // Held polls would otherwise keep Netty's grace period busy for their whole hold.
+        config.remote?.stop()
         server?.stop(1_000, 2_000)
         server = null
     }
@@ -317,6 +368,22 @@ class DesktopHomeLanSyncHub(
             else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
         if (body == null) respondText("Request too large", status = HttpStatusCode.PayloadTooLarge)
         return body?.decodeToString()
+    }
+
+    private suspend fun ApplicationCall.receiveBytesOrRespondTooLarge(limit: Long): ByteArray? {
+        val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+        val body = if (declared != null && declared > limit) null
+            else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
+        if (body == null) respondText("Request too large", status = HttpStatusCode.PayloadTooLarge)
+        return body
+    }
+
+    private suspend fun <T> ApplicationCall.respondRemote(reply: RemoteHostReply<T>, encode: (T) -> String) = when (reply) {
+        is RemoteHostReply.Ok -> {
+            val body = encode(reply.value)
+            if (body.isEmpty()) respond(HttpStatusCode.NoContent) else respondText(body, ContentType.Application.Json)
+        }
+        is RemoteHostReply.Refused -> respondText(reply.reason, status = HttpStatusCode.fromValue(reply.status))
     }
 
     private suspend fun ApplicationCall.respondAnswer(answer: HubAnswer, type: ContentType) =
@@ -348,6 +415,8 @@ class DesktopHomeLanSyncHub(
 private const val MAX_PAIRING_BODY_BYTES = 4_096L
 
 private const val MAX_LISTENING_BODY_BYTES = 64L * 1024
+
+private const val MAX_REMOTE_BODY_BYTES = 256L * 1024
 
 private const val MAX_QUEUE_BODY_BYTES = 16L * 1024 * 1024
 

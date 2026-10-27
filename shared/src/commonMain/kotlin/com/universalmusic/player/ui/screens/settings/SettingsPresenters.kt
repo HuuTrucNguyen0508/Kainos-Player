@@ -394,6 +394,9 @@ internal class SettingsSyncPresenter(
         (if (confirm) controller.confirmVaultTransfer(path, direction)
         else controller.dismissVaultTransfer(path, direction)).getOrThrow()
     }
+    fun transferAll(confirm: Boolean) = run {
+        (if (confirm) controller.confirmAllVaultTransfers() else controller.dismissAllVaultTransfers()).getOrThrow()
+    }
     fun resolve(path: String, keepLocal: Boolean) = run {
         (if (keepLocal) controller.resolveConflictKeepLocal(path)
         else controller.resolveConflictKeepRemote(path)).getOrThrow()

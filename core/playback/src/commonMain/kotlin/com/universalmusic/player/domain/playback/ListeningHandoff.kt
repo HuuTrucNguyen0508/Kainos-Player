@@ -2,7 +2,13 @@ package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.ListeningExchangeStore
+import com.universalmusic.player.data.session.ListeningState
 import com.universalmusic.player.data.session.LocalListeningExport
+import com.universalmusic.player.data.session.PortableListeningEntry
+import com.universalmusic.player.data.session.PortableListeningQueue
+import com.universalmusic.player.data.session.PortableListeningTrack
+import com.universalmusic.player.data.session.QueueProjection
+import com.universalmusic.player.data.sync.RemoteTransferSnapshot
 import com.universalmusic.player.data.sync.LocalSyncIdentityIndex
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.PlaybackTrace
@@ -19,6 +25,8 @@ import kotlinx.coroutines.sync.withLock
 data class HandoffPeer(val deviceId: String, val name: String)
 
 data class HandoffNotice(val id: Long, val deviceName: String)
+
+enum class TransferLoad { PLAYING, UNSUPPORTED, EMPTY }
 
 class ListeningHandoff(
     private val store: ListeningExchangeStore,
@@ -48,6 +56,27 @@ class ListeningHandoff(
             trace("failed: ${error.message ?: error}")
             null
         }
+    }
+
+    /**
+     * Loads a queue the user moved here with "Play here" and plays it. It skips the automatic
+     * recency and not-playing checks and the applied-handoff record; automatic handoff is unchanged.
+     */
+    suspend fun loadTransfer(transfer: RemoteTransferSnapshot): TransferLoad = mutex.withLock {
+        val entries = transfer.items.map { item ->
+            val track = PortableListeningTrack.parse(item.track) ?: return@withLock TransferLoad.UNSUPPORTED
+            PortableListeningEntry(item.id, track)
+        }
+        val queue = (PortableListeningQueue.of(entries) as? QueueProjection.Complete)?.queue
+            ?: return@withLock TransferLoad.UNSUPPORTED
+        val now = clock()
+        val state = runCatching {
+            ListeningState.create(queue, transfer.currentItemId, transfer.positionMs.coerceAtLeast(0), now, isPlaying = false, transfer.shuffle)
+        }.getOrNull() ?: return@withLock TransferLoad.UNSUPPORTED
+        val snapshot = state.toSessionSnapshot(LocalSyncIdentityIndex(localTracks()), now, remoteSession = null, transfer.repeat.toRepeatMode())
+        val played = session.installTransferAndPlay(snapshot)
+        trace("transfer ${if (played) "playing" else "empty"} items=${entries.size} track=${state.current?.track?.identity}")
+        if (played) TransferLoad.PLAYING else TransferLoad.EMPTY
     }
 
     private suspend fun attempt(peers: List<HandoffPeer>): HandoffDecision? {

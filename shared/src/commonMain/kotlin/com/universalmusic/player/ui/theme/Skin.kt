@@ -46,18 +46,24 @@ data class SkinTokens(
     val ground: GroundStyle,
 )
 
-fun resolveSkin(choice: SkinChoice, platform: String = platformLabel()): Skin = when (choice) {
+fun resolveSkin(
+    choice: SkinChoice,
+    platform: String = platformLabel(),
+    desktopEnv: Skin? = null,
+): Skin = when (choice) {
     SkinChoice.FOLIO -> Skin.FOLIO
     SkinChoice.CAELESTIA -> Skin.CAELESTIA
-    SkinChoice.PLATFORM_DEFAULT -> if (platform == "Android") Skin.FOLIO else Skin.CAELESTIA
+    SkinChoice.PLATFORM_DEFAULT -> if (platform == "Android") Skin.FOLIO else desktopEnv ?: Skin.CAELESTIA
 }
 
 internal expect fun caelestiaFontFamily(): FontFamily
+internal expect fun folioDisplayFontFamily(): FontFamily
+internal expect fun folioBodyFontFamily(): FontFamily
 
 fun skinTokens(skin: Skin): SkinTokens {
     val folio = skin == Skin.FOLIO
-    val display = if (folio) FontFamily.Serif else caelestiaFontFamily()
-    val body = if (folio) FontFamily.SansSerif else display
+    val display = if (folio) folioDisplayFontFamily() else caelestiaFontFamily()
+    val body = if (folio) folioBodyFontFamily() else display
     fun style(size: Int, family: FontFamily = body, medium: Boolean = false) = TextStyle(
         fontFamily = family, fontSize = size.sp, lineHeight = (size * 1.3f).sp,
         fontWeight = if (medium) FontWeight.Medium else FontWeight.Normal,

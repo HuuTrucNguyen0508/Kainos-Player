@@ -244,3 +244,37 @@ actual suspend fun rematchLocalHeartsAfterVaultSync(): Int {
 }
 
 actual suspend fun scheduleBackgroundListeningDelivery() = Unit
+
+actual suspend fun readLocalArtworkBytes(location: String, maxBytes: Int): ByteArray? =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val path = if (location.startsWith("file:")) Path.of(java.net.URI(location)) else Path.of(location)
+            if (!Files.isRegularFile(path) || Files.size(path) > maxBytes) null else Files.readAllBytes(path)
+        }.getOrNull()
+    }
+
+actual suspend fun cacheRemoteArtwork(key: String, bytes: ByteArray): String? =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching { writeRemoteArtwork(homeLanConfigDir().resolve("meta-cache").resolve("remote-art"), key, bytes) }.getOrNull()
+    }
+
+/** Keeps a handful of recent covers; [key] is a hex hash, so it is a safe file name. */
+internal fun writeRemoteArtwork(dir: Path, key: String, bytes: ByteArray): String? {
+    if (!key.matches(Regex("[0-9a-f]{8,64}"))) return null
+    Files.createDirectories(dir)
+    val target = dir.resolve("$key.img")
+    if (!Files.isRegularFile(target) || Files.size(target) != bytes.size.toLong()) {
+        val tmp = dir.resolve("$key.img.tmp")
+        Files.write(tmp, bytes)
+        Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+    }
+    Files.list(dir).use { files ->
+        files.filter { it != target && it.fileName.toString().endsWith(".img") }
+            .sorted(compareByDescending { Files.getLastModifiedTime(it) })
+            .skip(REMOTE_ART_KEEP.toLong())
+            .forEach { runCatching { Files.delete(it) } }
+    }
+    return target.toUri().toASCIIString()
+}
+
+private const val REMOTE_ART_KEEP = 8

@@ -21,6 +21,14 @@ class HomeLanHubConfig(
     val heartedVaultFileNames: () -> Set<String>?,
     /** Null leaves the listening routes unanswered (404). */
     val listening: ListeningExchangeStore? = null,
+    /** Null leaves the remote control routes unanswered (404). */
+    val remote: com.universalmusic.player.data.sync.RemoteLinkHost? = null,
+    /**
+     * The GUI player remote devices may control. Only a GUI process returns one; a `--hub-only`
+     * process returns null even though it builds a session, so it shows no status and answers
+     * commands with 409.
+     */
+    val guiPlayer: () -> com.universalmusic.player.data.sync.RemotePlayer? = { null },
 )
 
 expect fun createHomeLanSyncHub(config: HomeLanHubConfig): HomeLanSyncHub
@@ -59,3 +67,9 @@ expect suspend fun scheduleBackgroundListeningDelivery()
 /** Rematch local-file hearts whose paths went missing after vault sync. Returns count. */
 
 expect suspend fun rematchLocalHeartsAfterVaultSync(): Int
+
+/** Reads a local cover (file: or content: URI, or a path); null when unreadable or over [maxBytes]. */
+expect suspend fun readLocalArtworkBytes(location: String, maxBytes: Int): ByteArray?
+
+/** Writes another device's cover under this app's cache and returns a URI Coil can load, or null. */
+expect suspend fun cacheRemoteArtwork(key: String, bytes: ByteArray): String?

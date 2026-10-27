@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         ensureAppContainer().apply {
             enableListeningHandoff()
+            enableGuiPlayer()
             onAppForeground()
         }
     }

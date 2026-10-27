@@ -28,7 +28,7 @@ class CaelestiaSchemeWatcherTest {
         val file = dir.resolve("scheme.json")
         val fixture = schemeFixture()
         file.writeText(fixture)
-        val watcher = CaelestiaSchemeWatcher(file, scope)
+        val watcher = StateFileWatcher(file, scope, parse = { it?.let(::parseCaelestiaScheme) })
         try {
             val initial = withTimeout(3_000) { watcher.state.first { it != null } }
             assertTrue(assertNotNull(initial).isDark)
@@ -58,7 +58,7 @@ class CaelestiaSchemeWatcherTest {
         val file = root.resolve("scheme.json")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         file.writeText(schemeFixture())
-        val watcher = CaelestiaSchemeWatcher(file, scope, backstopMs = 50)
+        val watcher = StateFileWatcher(file, scope, parse = { it?.let(::parseCaelestiaScheme) }, backstopMs = 50)
         try {
             val initial = withTimeout(3_000) { watcher.state.first { it != null } }
             delay(200)
@@ -75,7 +75,7 @@ class CaelestiaSchemeWatcherTest {
         val file = root.resolve("scheme.json")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         file.writeText(schemeFixture())
-        val watcher = CaelestiaSchemeWatcher(file, scope, backstopMs = 50,
+        val watcher = StateFileWatcher(file, scope, parse = { it?.let(::parseCaelestiaScheme) }, backstopMs = 50,
             watchServiceFactory = { throw java.io.IOException("inotify unavailable") })
         try {
             withTimeout(3_000) { watcher.state.first { it != null } }
@@ -95,7 +95,7 @@ class CaelestiaSchemeWatcherTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val dir = root.resolve("state/caelestia")
         val file = dir.resolve("scheme.json")
-        val watcher = CaelestiaSchemeWatcher(file, scope, backstopMs = 100)
+        val watcher = StateFileWatcher(file, scope, parse = { it?.let(::parseCaelestiaScheme) }, backstopMs = 100)
         try {
             delay(100)
             assertNull(watcher.state.value)
