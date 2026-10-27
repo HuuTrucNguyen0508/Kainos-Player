@@ -1,6 +1,7 @@
 package com.universalmusic.player.platform
 
 import com.universalmusic.player.domain.playback.SpotifyObservedPlayback
+import kotlinx.coroutines.flow.Flow
 
 expect fun currentTimeMillis(): Long
 
@@ -29,7 +30,22 @@ data class SpotifyPlaybackController(
     val seekTo: suspend (positionMs: Long) -> Unit,
     /** Bounded Connect state read. Null when the platform cannot observe the receiver. */
     val observe: (suspend () -> SpotifyObservedPlayback?)? = null,
+    val receiverEvents: SpotifyReceiverEvents? = null,
 )
+
+/** Events from the receiver owned by this app, rather than Spotify's delayed Connect snapshot. */
+interface SpotifyReceiverEvents {
+    val events: Flow<SpotifyReceiverEvent>
+    val isAvailable: Boolean
+}
+
+data class SpotifyReceiverEvent(
+    val kind: Kind,
+    val trackId: String,
+    val positionMs: Long? = null,
+) {
+    enum class Kind { PLAYING, PAUSED, SEEKED, POSITION_CORRECTION, END_OF_TRACK, STOPPED, UNAVAILABLE }
+}
 
 expect fun openUrl(url: String)
 
