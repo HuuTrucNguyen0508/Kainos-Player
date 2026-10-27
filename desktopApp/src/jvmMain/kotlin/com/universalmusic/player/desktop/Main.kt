@@ -73,7 +73,10 @@ private fun runGui(onContainer: (AppContainer) -> Unit) {
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
         val container = ensureAppContainer().also(onContainer)
-        LaunchedEffect(container) { container.enableListeningHandoff() }
+        LaunchedEffect(container) {
+            container.enableListeningHandoff()
+            container.enableGuiPlayer()
+        }
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
             onCloseRequest = {

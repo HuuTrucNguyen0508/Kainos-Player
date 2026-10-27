@@ -68,6 +68,10 @@ import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.playback.FlushResult
 import com.universalmusic.player.domain.playback.HandoffPeer
 import com.universalmusic.player.domain.playback.ListeningHandoff
+import com.universalmusic.player.domain.playback.RemotePlayerAdapter
+import com.universalmusic.player.data.sync.RemoteLinkHost
+import com.universalmusic.player.data.sync.listeningDeliveryTarget
+import com.universalmusic.player.data.sync.openPairedRemoteLink
 import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.playback.SleepTimerController
 import com.universalmusic.player.domain.provider.MusicProvider
@@ -79,6 +83,8 @@ import com.universalmusic.player.platform.createHomeLanSyncHub
 import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.platformDeviceIdentity
+import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.PlaybackTrace
@@ -230,6 +236,8 @@ class AppContainer {
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
                 listening = config.listening,
+                remote = remoteHost,
+                guiPlayer = { remotePlayer.takeIf { guiPlayerEnabled.value } },
             ))
         },
         clientFactory = { peer ->
@@ -311,6 +319,30 @@ class AppContainer {
         scope = scope,
     )
     val listeningHandoff = ListeningHandoff(listeningExchange, player, localTracks = { local.libraryTracks.value })
+
+    /** Set only by a GUI entry point; a `--hub-only` process never lets remote devices see or drive its player. */
+    private val guiPlayerEnabled = MutableStateFlow(false)
+    private val remotePlayer = RemotePlayerAdapter(player, scope)
+    private val remoteHost = RemoteLinkHost(hubName = ::homeLanDeviceName)
+    val remoteControl = RemoteControl(
+        scope = scope,
+        settings = settings,
+        isDesktop = platformLabel() == "Linux",
+        host = remoteHost,
+        player = remotePlayer,
+        handoff = listeningHandoff,
+        guiPlayer = guiPlayerEnabled,
+        linkWanted = remoteLinkWanted(
+            visible = foreground.visible,
+            active = player.nowPlaying.map { it.isPlaying || it.buffering }.distinctUntilChanged(),
+        ),
+        clientTarget = {
+            _settings.value.takeIf { _ready.value }
+                ?.listeningDeliveryTarget(platformLabel() == "Linux", platformDeviceIdentity().fingerprint())
+        },
+        openLink = ::openPairedRemoteLink,
+        onLinkConnected = { homeLanSync.requestListeningDelivery() },
+    )
     private val handoffRequests = Channel<Unit>(Channel.CONFLATED)
 
     private val settingsUpdater = AppSettingsUpdater(scope, settingsStore, _settings, { applyProviderSettings(it) }) {
@@ -431,6 +463,11 @@ class AppContainer {
 
     fun enableListeningHandoff() {
         foregroundHandoff.enable()
+    }
+
+    /** Lets paired devices show and control this process's player; only GUI entry points call it. */
+    fun enableGuiPlayer() {
+        guiPlayerEnabled.value = true
     }
 
     private fun requestHandoff() {
