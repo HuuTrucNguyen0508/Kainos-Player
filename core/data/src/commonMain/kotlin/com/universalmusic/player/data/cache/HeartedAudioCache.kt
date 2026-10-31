@@ -35,6 +35,7 @@ data class HeartedAudioCacheIndex(
     val failures: Map<String, HeartedCacheFailure> = emptyMap(),
     /** Recent budget/manual evictions for the Downloads UI (newest last, capped). */
     val recentEvictions: List<CacheEvictionRecord> = emptyList(),
+    val budgetEvictedIds: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -91,6 +92,7 @@ interface HeartedAudioCache {
     suspend fun clearFailure(ownerCanonicalId: String)
     suspend fun failure(ownerCanonicalId: String): HeartedCacheFailure?
 
+    suspend fun isBudgetEvicted(id: String): Boolean = recentEvictions().any { it.ownerCanonicalId == id && it.reason == "storage budget" }
     suspend fun recentEvictions(): List<CacheEvictionRecord>
     suspend fun allEntries(): List<HeartedAudioCacheEntry>
     suspend fun allPinnedIds(): Set<String>
@@ -156,6 +158,7 @@ class DefaultHeartedAudioCache(
         val current = ensureIndex()
         val next = current.copy(
             entries = current.entries + (entry.ownerCanonicalId to entry),
+            budgetEvictedIds = current.budgetEvictedIds - entry.ownerCanonicalId,
             failures = current.failures - entry.ownerCanonicalId,
         )
         commit(next)
@@ -198,6 +201,7 @@ class DefaultHeartedAudioCache(
             current.copy(
                 entries = nextEntries,
                 recentEvictions = history,
+                budgetEvictedIds = if (reason == "storage budget") current.budgetEvictedIds + ownerCanonicalId else current.budgetEvictedIds,
                 failures = current.failures - ownerCanonicalId,
             ),
         )
@@ -265,6 +269,8 @@ class DefaultHeartedAudioCache(
 
     override suspend fun failure(ownerCanonicalId: String): HeartedCacheFailure? =
         mutex.withLock { ensureIndex().failures[ownerCanonicalId] }
+
+    override suspend fun isBudgetEvicted(id: String): Boolean = mutex.withLock { id in ensureIndex().budgetEvictedIds || ensureIndex().recentEvictions.any { it.ownerCanonicalId == id && it.reason == "storage budget" } }
 
     override suspend fun recentEvictions(): List<CacheEvictionRecord> =
         mutex.withLock { ensureIndex().recentEvictions }

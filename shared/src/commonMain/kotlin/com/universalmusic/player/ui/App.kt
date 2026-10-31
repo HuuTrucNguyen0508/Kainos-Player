@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,11 +33,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +46,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -63,22 +63,41 @@ import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.HandoffNotice
 import com.universalmusic.player.domain.playback.NowPlayingState
+import com.universalmusic.player.ui.components.KainosRail
+import com.universalmusic.player.ui.components.KainosTabBar
 import com.universalmusic.player.ui.components.MiniPlayerBar
+import com.universalmusic.player.ui.components.skinGround
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Color
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
+import com.universalmusic.player.ui.screens.LibraryPresenter
 import com.universalmusic.player.ui.screens.LibraryScreen
 import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
-import com.universalmusic.player.ui.theme.UniversalMusicTheme
+import com.universalmusic.player.ui.theme.KainosTheme
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import coil3.compose.LocalPlatformContext
+import com.universalmusic.player.ui.components.warmQueueArtwork
+import com.universalmusic.player.domain.model.ProviderId
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
     val settings by container.settings.collectAsState()
-    UniversalMusicTheme(settings.themeMode, settings.colorScheme) {
+    KainosTheme(settings) {
         CompositionLocalProvider(LocalTextInputFocus provides container::setTextInputFocused) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 AppScaffold(
@@ -104,7 +123,7 @@ private fun AppScaffold(
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
-    var nowPlayingPaneExpanded by rememberSaveable { mutableStateOf(true) }
+    var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer)
     var nowPlayingPaneWidthDp by rememberSaveable {
         mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
     }
@@ -114,8 +133,28 @@ private fun AppScaffold(
     val tabStateHolder = rememberSaveableStateHolder()
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
-    val now by container.player.nowPlaying.collectAsState()
+    val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
+    val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
+    val imageContext = LocalPlatformContext.current
+    LaunchedEffect(queue, imageContext) {
+        container.player.nowPlaying.map { it.isPlaying }.distinctUntilChanged().collectLatest { playing ->
+            if (!playing) return@collectLatest
+            delay(1_200)
+            val neighbours = listOfNotNull(queue.history.lastOrNull(), queue.upcoming.firstOrNull())
+            for (item in neighbours) {
+                if (item.track.sources.any { it.provider != ProviderId.LOCAL && it.provider != ProviderId.YOUTUBE_MUSIC }) continue
+                try {
+                    val art = item.track.artwork ?: container.local.resolveEmbeddedArtwork(item.track)
+                    if (art != null) warmQueueArtwork(imageContext, art)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // A cover failure must not affect transport; normal display can retry later.
+                }
+            }
+        }
+    }
     val canSkipNext = run {
         queue.shuffle
         queue.repeat
@@ -146,27 +185,12 @@ private fun AppScaffold(
         previousBand = layoutBand
     }
 
-    // Compact mode prefers the mini bar; expanding remains available via Open Now Playing.
-    var previousCompactPlayer by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(compactPlayer, desktop) {
-        if (!desktop) {
-            previousCompactPlayer = compactPlayer
-            return@LaunchedEffect
-        }
-        val was = previousCompactPlayer
-        previousCompactPlayer = compactPlayer
-        when {
-            // First observation while already compact, or newly enabled.
-            compactPlayer && (was == null || was == false) -> nowPlayingPaneExpanded = false
-        }
-    }
-
     // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
     val showWideQueueColumn = desktop && showQueue && wide
     val queueReplacesSidePane = desktop && showQueue && !wide
     val showSideNowPlaying = desktop && nowPlayingPaneExpanded && !queueReplacesSidePane
     val showDesktopMiniBar = desktop &&
-        now.track != null &&
+        currentTrack != null &&
         !showSideNowPlaying &&
         !queueReplacesSidePane
 
@@ -192,14 +216,14 @@ private fun AppScaffold(
             showNowPlaying = false
             showQueue = false
         }
-        if (next == destination) return
+        if (next.name == destinationName) return
         if (next == AppDestination.Home) {
             // Home is the root: clear history so the next back can leave the app.
             tabBackStackNames = emptyList()
             destinationName = AppDestination.Home.name
             return
         }
-        tabBackStackNames = tabBackStackNames + destination.name
+        tabBackStackNames = tabBackStackNames + destinationName
         destinationName = next.name
     }
 
@@ -232,11 +256,11 @@ private fun AppScaffold(
         openNowPlaying()
     }
 
-    fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0, query: String) {
+    fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
-        container.playSearchResults(tracks, startIndex = index, query = query)
+        container.playSearchResults(tracks, startIndex = index)
         openNowPlaying()
     }
 
@@ -250,92 +274,64 @@ private fun AppScaffold(
         handleSystemBack()
     }
 
-    LaunchedEffect(container) {
-        container.uiRequests.collect { request ->
-            when (request) {
-                UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
-                UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
-                UiRequest.DISMISS_OVERLAY -> handleSystemBack()
-                UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
-                UiRequest.FOCUS_LIBRARY_SEARCH -> {
-                    showQueue = false
-                    navigateToTab(AppDestination.Library)
-                }
+    val handleUiRequest by rememberUpdatedState<(UiRequest) -> Unit> { request ->
+        when (request) {
+            UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
+            UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
+            UiRequest.DISMISS_OVERLAY -> handleSystemBack()
+            UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
+            UiRequest.FOCUS_LIBRARY_SEARCH -> {
+                showQueue = false
+                navigateToTab(AppDestination.Library)
             }
         }
     }
+    LaunchedEffect(container) {
+        container.uiRequests.collect { request -> handleUiRequest(request) }
+    }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        modifier = Modifier.skinGround(),
+        containerColor = Color.Transparent,
+        // A transparent container has no content colour of its own; text must still get the ink.
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        contentWindowInsets = if (!desktop && showNowPlaying && !showQueue) {
+            WindowInsets(0, 0, 0, 0)
+        } else {
+            ScaffoldDefaults.contentWindowInsets
+        },
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
                     }
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        tonalElevation = 3.dp,
-                    ) {
-                        AppDestination.entries.forEach { item ->
-                            NavigationBarItem(
-                                selected = destination == item,
-                                onClick = { navigateToTab(item) },
-                                icon = { Icon(item.icon(), contentDescription = item.label) },
-                                label = { Text(item.label) },
-                            )
-                        }
-                    }
+                    KainosTabBar(destination, ::navigateToTab)
                 }
             }
         },
     ) { padding ->
-        Row(Modifier.fillMaxSize().padding(padding)) {
+        Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             if (desktop) {
-                NavigationRail(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(88.dp),
-                    header = {
-                        Column(
-                            Modifier.padding(top = 20.dp, bottom = 12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                "Kainos",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                KainosRail(
+                    selected = destination,
+                    onSelect = ::navigateToTab,
+                    footer = {
+                        if (!nowPlayingPaneExpanded) {
+                            IconButton(onClick = { openNowPlaying() }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    contentDescription = "Show now playing",
+                                )
+                            }
                         }
                     },
-                ) {
-                    AppDestination.entries.forEach { item ->
-                        NavigationRailItem(
-                            selected = destination == item,
-                            onClick = { navigateToTab(item) },
-                            icon = { Icon(item.icon(), contentDescription = item.label) },
-                            label = { Text(item.label) },
-                        )
-                    }
-                    if (!nowPlayingPaneExpanded) {
-                        IconButton(
-                            onClick = { openNowPlaying() },
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "Show now playing",
-                            )
-                        }
-                    }
-                }
+                )
                 Box(
                     Modifier
                         .fillMaxHeight()
@@ -346,6 +342,12 @@ private fun AppScaffold(
 
             // Main content column: tabs stay composed across resize so Library scroll survives.
             Column(Modifier.weight(1f).fillMaxSize()) {
+                val storageError by container.storageError.collectAsState()
+                storageError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
+                }
                 HandoffNoticeBar(container)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxSize()) {
@@ -364,17 +366,16 @@ private fun AppScaffold(
                                         onOpenNowPlaying = { openNowPlaying() },
                                         onOpenSettings = { navigateToTab(AppDestination.Settings) },
                                         onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                        onOpenLibrary = { navigateToTab(AppDestination.Library) },
                                         // The side pane already shows the session, so Home skips its session card.
                                         playerPaneVisible = showSideNowPlaying,
                                     )
                                     AppDestination.Search -> SearchScreen(
                                         presenter = searchPresenter,
-                                        onPlayTrackInList = { tracks, index, query ->
-                                            playSearchTracks(tracks, index, query)
-                                        },
+                                        onPlayTrackInList = ::playSearchTracks,
                                         requestFocus = true,
                                     )
-                                    AppDestination.Library -> LibraryScreen(container, ::playTracks)
+                                    AppDestination.Library -> LibraryScreen(container, libraryPresenter, ::playTracks)
                                     AppDestination.Settings -> SettingsScreen(container)
                                 }
                             }
@@ -402,11 +403,10 @@ private fun AppScaffold(
                 }
 
                 if (showDesktopMiniBar) {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
@@ -430,7 +430,7 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
@@ -455,7 +455,7 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
@@ -526,8 +526,9 @@ private fun HandoffNoticeBar(container: AppContainer) {
 @Composable
 internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
     Surface(
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = LocalSkinTokens.current.rounding.full,
         color = MaterialTheme.colorScheme.secondaryContainer,
+        border = BorderStroke(1.dp, LocalKainosPalette.current.hair),
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         shadowElevation = 2.dp,
         modifier = Modifier
@@ -538,7 +539,12 @@ internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
             Modifier.padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Devices, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(
+                Icons.Default.Devices,
+                contentDescription = null,
+                tint = LocalKainosPalette.current.accent(AccentSlot.Blue, AccentUse.Mark, MaterialTheme.colorScheme.secondaryContainer),
+                modifier = Modifier.size(20.dp),
+            )
             Text(
                 "Continued from $deviceName",
                 style = MaterialTheme.typography.labelLarge,
@@ -562,10 +568,10 @@ private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private fun DesktopMiniPlayer(
     container: AppContainer,
     track: Track,
-    now: NowPlayingState,
     canSkipNext: Boolean,
     onOpen: () -> Unit,
 ) {
+    val now by container.player.nowPlaying.collectAsState()
     val durationMs = now.durationMs?.takeIf { it > 0 }
         ?: track.durationMs?.takeIf { it > 0 }
     val miniProgress = if (durationMs != null) {
@@ -582,15 +588,15 @@ private fun DesktopMiniPlayer(
         canSkipNext = canSkipNext,
         progress = miniProgress,
         buffering = now.buffering,
+        durationMs = durationMs,
         onOpen = onOpen,
         onToggle = { container.player.togglePlayPause() },
         onNext = { container.player.skipToNext() },
     )
 }
 
-private fun AppDestination.icon() = when (this) {
-    AppDestination.Home -> Icons.Default.Home
-    AppDestination.Search -> Icons.Default.Search
-    AppDestination.Library -> Icons.Default.LibraryMusic
-    AppDestination.Settings -> Icons.Default.Settings
-}
+/** The app chrome only depends on track identity/metadata, never transport position. */
+@Composable
+internal fun playbackChromeTrack(nowPlaying: StateFlow<NowPlayingState>): State<Track?> =
+    remember(nowPlaying) { nowPlaying.map { it.track }.distinctUntilChanged() }
+        .collectAsState(initial = nowPlaying.value.track)

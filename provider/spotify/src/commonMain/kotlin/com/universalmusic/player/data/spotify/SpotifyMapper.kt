@@ -37,19 +37,13 @@ internal fun SpotifyTrack.toDomainOrNull(premium: Boolean): Track? {
 }
 
 internal fun SpotifyTrack.toSource(premium: Boolean): PlaybackSource {
-    // Web API does not report per-track source format. Do not label Connect output as lossless.
-    // 16-bit / 44.1 kHz is kept only as a typical decode note, with confidence UNKNOWN.
+    // Web API does not report per-track source format; label the assumed decode format.
     @Suppress("UNUSED_PARAMETER")
     val unusedPremium = premium
     return PlaybackSource(
         provider = ProviderId.SPOTIFY,
         providerTrackId = id,
-        quality = AudioQuality(
-            tier = QualityTier.STANDARD,
-            sampleRateHz = 44_100,
-            bitDepth = 16,
-            confidence = QualityConfidence.UNKNOWN,
-        ),
+        quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality,
         isPlayable = is_playable ?: true,
         handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, id, durationMs = duration_ms?.takeIf { it > 0 }),
     )

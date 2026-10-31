@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -45,6 +48,12 @@ fun desktopLayoutBand(maxWidth: Dp): DesktopLayoutBand = when {
     maxWidth >= DesktopWideMinWidth -> DesktopLayoutBand.Wide
     else -> DesktopLayoutBand.Standard
 }
+
+@Composable
+internal fun rememberNowPlayingPaneExpanded(compactPlayer: Boolean): MutableState<Boolean> =
+    rememberSaveable(compactPlayer) {
+        mutableStateOf(!compactPlayer)
+    }
 
 @Composable
 fun DesktopResizeHandle(

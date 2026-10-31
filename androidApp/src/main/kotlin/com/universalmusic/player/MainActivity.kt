@@ -11,6 +11,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
@@ -19,6 +24,7 @@ import com.universalmusic.player.platform.MusicFolderPickerRelay
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
 import com.universalmusic.player.ui.UniversalMusicApp
+import com.universalmusic.player.ui.theme.resolveTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -52,6 +58,14 @@ class MainActivity : ComponentActivity() {
         launchMusicFolderPicker = { openMusicFolder.launch(null) }
         val container = ensureAppContainer()
         setContent {
+            val settings by container.settings.collectAsState()
+            val dark = resolveTheme(settings, isSystemInDarkTheme(), null, platform = "Android").palette.isDark
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
             UniversalMusicApp(container)
         }
         requestLocalMediaPermission()
@@ -62,6 +76,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         ensureAppContainer().apply {
             enableListeningHandoff()
+            enableGuiPlayer()
             onAppForeground()
         }
     }

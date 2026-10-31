@@ -9,15 +9,15 @@ import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
-internal fun KainosDatabase.readLocalScan(configKey: String): List<LocalTrack>? {
+internal fun KainosDatabase.readLocalScan(configKey: String, strict: Boolean = false): List<LocalTrack>? {
     if (!localLibraryQueries.hasScan(configKey).executeAsOne()) return null
     return localLibraryQueries.selectTracks().executeAsList().mapNotNull { row ->
-        storageJson.decodeFromString<StoredLocalTrack>(row.track_json).toLocalTrackOrNull()
+        readStorageRow(strict) { storageJson.decodeFromString<StoredLocalTrack>(row.track_json).toLocalTrackOrNull() }
     }
 }
 
 internal fun KainosDatabase.writeLocalScan(configKey: String, tracks: List<LocalTrack>, nowMs: Long) {
-    val previous = readLocalScan(configKey)
+    val previous = readLocalScan(configKey, strict = true)
     if (previous == null) localLibraryQueries.clearTracks()
     localLibraryQueries.clearScans()
     localLibraryQueries.insertScan(configKey, nowMs)

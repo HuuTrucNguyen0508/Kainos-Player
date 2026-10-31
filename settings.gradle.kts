@@ -45,3 +45,5 @@ include(":provider:local")
 include(":provider:spotify")
 include(":provider:youtube")
 include(":sync")
+
+include(":androidMacrobenchmark")

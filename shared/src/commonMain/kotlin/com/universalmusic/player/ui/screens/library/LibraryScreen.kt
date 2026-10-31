@@ -1,5 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.KainosChip
+import com.universalmusic.player.ui.theme.Accents
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,8 +48,9 @@ internal enum class LibraryTab { Songs, Albums, Artists, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(
+internal fun LibraryScreen(
     container: AppContainer,
+    presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
@@ -66,9 +70,8 @@ fun LibraryScreen(
     val artistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val scope = rememberCoroutineScope()
-    val presenter = remember(container) { LibraryPresenter.from(container, scope) }
     val emitted by presenter.state.collectAsState()
-    val state = emitted.withQuery(query)
+    val state = remember(emitted, query) { emitted.withQuery(query) }
     SideEffect { presenter.setQuery(query) }
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
@@ -99,18 +102,24 @@ fun LibraryScreen(
     }
 
     // Desktop type-to-search: keys typed with nothing focused land here (see Main.kt).
-    val pendingTypeAhead by container.libraryTypeAhead.collectAsState()
-    LaunchedEffect(pendingTypeAhead) {
-        if (pendingTypeAhead.isEmpty()) return@LaunchedEffect
-        val typed = container.consumeLibraryTypeAhead()
-        if (typed.isEmpty()) return@LaunchedEffect
-        val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
-        queryField = TextFieldValue(next, selection = TextRange(next.length))
-        typeAheadActive = true
-        tabName = LibraryTab.Songs.name
-        scrollBehavior.state.heightOffset = 0f
-        withFrameNanos { } // let the re-expanded header compose before focusing it
-        runCatching { searchFocusRequester.requestFocus() }
+    LaunchedEffect(container) {
+        container.libraryTypeAhead.collect { pending ->
+            if (pending.isEmpty()) return@collect
+            while (true) {
+                val typed = container.consumeLibraryTypeAhead()
+                if (typed.isEmpty()) break
+                val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
+                queryField = TextFieldValue(next, selection = TextRange(next.length))
+                typeAheadActive = true
+                tabName = LibraryTab.Songs.name
+                scrollBehavior.state.heightOffset = 0f
+                // Frame callbacks run before composition. Let the field receive its new value
+                // before handing it subsequent keystrokes, including any queued during that frame.
+                withFrameNanos { }
+                withFrameNanos { }
+            }
+            searchFocusRequester.requestFocus()
+        }
     }
 
     // Skip the first run so returning to Library keeps scroll; later filter/sort changes
@@ -167,31 +176,19 @@ fun LibraryScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FilterChip(
+            KainosChip(
                 selected = state.localOnly,
                 onClick = presenter::toggleLocalOnly,
-                label = { Text("Local files only") },
-                leadingIcon = if (state.localOnly) {
-                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                } else {
-                    null
-                },
+                label = "Local files only",
+                accent = Accents.local,
+                leadingIcon = Icons.Default.SdStorage,
             )
-            FilterChip(
+            KainosChip(
                 selected = state.favoritesOnly,
                 onClick = presenter::toggleFavoritesOnly,
-                label = { Text("Favorites only") },
-                leadingIcon = if (state.favoritesOnly) {
-                    {
-                        Icon(
-                            Icons.Default.Favorite,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                } else {
-                    null
-                },
+                label = "Favorites only",
+                accent = Accents.heart,
+                leadingIcon = Icons.Default.Favorite,
             )
         }
         TabRow(selectedTabIndex = tab.ordinal) {

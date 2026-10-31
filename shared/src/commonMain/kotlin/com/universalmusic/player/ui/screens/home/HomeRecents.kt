@@ -1,6 +1,7 @@
 package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -26,25 +27,42 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.ArtworkImage
-import com.universalmusic.player.ui.theme.providerColor
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 
+/** Recents as a ledger that fills the width: [columns] rows side by side, each with its source rail. */
 @Composable
 internal fun ContinueListeningSection(
     tracks: List<Track>,
+    columns: Int,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (tracks.isEmpty()) return
-    Text(
-        "Continue listening",
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 4.dp),
-    )
-    tracks.forEachIndexed { index, track ->
-        LedgerRow(
-            track = track,
-            onClick = { onPlayTracks(tracks, index) },
-        )
+    Column(modifier) {
+        SectionRule("Continue listening", Modifier.padding(bottom = 4.dp), accent = Accents.home) {
+            Text(
+                "${tracks.size} recent",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        tracks.chunked(columns).forEach { rowTracks ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                rowTracks.forEach { track ->
+                    LedgerRow(
+                        track = track,
+                        onClick = { onPlayTracks(tracks, tracks.indexOf(track)) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(columns - rowTracks.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
     }
 }
 
@@ -52,18 +70,18 @@ internal fun ContinueListeningSection(
 private fun LedgerRow(
     track: Track,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val playable = track.playableSources().firstOrNull()
-    val railColor = playable?.provider?.let { providerColor(it.displayName) }
+    val railColor = playable?.provider?.let { LocalKainosPalette.current.accent(SourceKind.of(it).slot, AccentUse.Mark) }
         ?: MaterialTheme.colorScheme.outlineVariant
+    val rounding = LocalSkinTokens.current.rounding
     val sourceLabel = ledgerSourceLabel(track)
     val artistLine = ledgerArtistLine(track)
 
     Row(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .height(IntrinsicSize.Min)
-            .padding(start = 20.dp)
             .semantics { contentDescription = "${track.title}. $artistLine. $sourceLabel" },
     ) {
         Box(
@@ -76,11 +94,11 @@ private fun LedgerRow(
         Surface(
             onClick = onClick,
             color = Color.Transparent,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(rounding.normal),
             modifier = Modifier.weight(1f),
         ) {
             Row(
-                Modifier.padding(top = 6.dp, bottom = 6.dp, end = 16.dp),
+                Modifier.padding(top = 6.dp, bottom = 6.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ArtworkImage(
@@ -88,7 +106,7 @@ private fun LedgerRow(
                     track.title,
                     Modifier.size(44.dp),
                     track.title,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(rounding.small),
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {

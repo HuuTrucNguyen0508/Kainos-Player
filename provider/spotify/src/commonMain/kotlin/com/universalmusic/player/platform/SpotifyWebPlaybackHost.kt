@@ -50,6 +50,9 @@ fun interface SpotifyTokenSupplier {
 /** Connect receiver display name shared by Linux librespot and Android librespot-java. */
 const val KAINOS_SPOTIFY_DEVICE_NAME = "Kainos Player"
 
+/** Connect targets are matched by name, so two receivers sharing one would steal each other's playback. */
+const val KAINOS_SPOTIFY_ANDROID_DEVICE_NAME = "Kainos Player Android"
+
 /** User-facing hint when librespot cannot open a TCP session to a Spotify access point. */
 fun describeLibrespotConnectionFailure(detail: String?): String? {
     if (detail.isNullOrBlank()) return null
@@ -83,10 +86,12 @@ internal fun isRetryableLibrespotConnectFailure(failure: Throwable): Boolean {
 
 interface SpotifyWebPlaybackHost {
     val state: StateFlow<SpotifyWebPlaybackState>
+    val receiverEvents: SpotifyReceiverEvents? get() = null
     val requiresStreamingScope: Boolean get() = true
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()
+    suspend fun setVolume(volume: Float): Boolean = false
     suspend fun shutdown()
 }
 

@@ -1,5 +1,18 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import com.universalmusic.player.ui.components.LedgerRow
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,13 +34,9 @@ import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 
 @Composable
 internal fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, modifier = Modifier.weight(1f).padding(end = 12.dp))
-        Switch(checked = checked, onCheckedChange = onChange)
+    LedgerRow(modifier = Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -45,7 +54,18 @@ internal fun ProviderAccountRow(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (connected) "●" else "○", color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+            val hue = LocalKainosPalette.current.accent(
+                when (name) {
+                    "Spotify" -> Accents.spotify
+                    "YouTube Music", "YouTube" -> Accents.youtube
+                    else -> Accents.local
+                },
+                AccentUse.Mark,
+            )
+            Box(
+                Modifier.size(10.dp).clip(CircleShape)
+                    .then(if (connected) Modifier.background(hue) else Modifier.border(1.5.dp, hue, CircleShape)),
+            )
             Text("  $name", style = MaterialTheme.typography.titleSmall)
             Text(
                 "  ${state.name.lowercase().replace('_', ' ')}",
@@ -82,13 +102,13 @@ internal fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): 
     else -> "Spotify receiver setup failed. Try setup again."
 }
 
-internal enum class SettingsSection(val label: String) {
-    Playback("Playback"),
-    Appearance("Appearance"),
-    Sources("Music sources"),
-    Devices("Devices and sync"),
-    Downloads("Downloads"),
-    Advanced("Advanced"),
+internal enum class SettingsSection(val label: String, val accent: AccentSlot) {
+    Playback("Playback", AccentSlot.Orange),
+    Appearance("Appearance", AccentSlot.Pink),
+    Sources("Music sources", AccentSlot.Green),
+    Devices("Devices and sync", AccentSlot.Blue),
+    Downloads("Downloads", AccentSlot.Teal),
+    Advanced("Advanced", AccentSlot.Gray),
 }
 
 internal fun SourceSelectionMode.label(): String = when (this) {

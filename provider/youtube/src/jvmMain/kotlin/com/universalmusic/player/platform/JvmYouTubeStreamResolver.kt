@@ -54,6 +54,29 @@ class JvmYouTubeStreamResolver(
         ResolvedYouTubeAudio(url = url, quality = info.toAudioQuality())
     }
 
+    override suspend fun mix(videoId: String): List<YouTubeMixEntry> = withContext(Dispatchers.IO) {
+        val id = videoId.trim()
+        require(id.isNotEmpty() && id.none { it.isWhitespace() || it == '"' || it == '\'' || it == '&' }) {
+            "unsafe video id"
+        }
+        val binary = binaryLocator() ?: error("yt-dlp not found")
+        val process = ProcessBuilder(
+            binary.toAbsolutePath().toString(),
+            "--flat-playlist",
+            "-J",
+            "--playlist-end", MIX_LENGTH.toString(),
+            "--no-warnings",
+            "https://www.youtube.com/watch?v=$id&list=RD$id",
+        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        if (!process.waitFor(90, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            error("yt-dlp timed out reading the Mix")
+        }
+        check(process.exitValue() == 0) { "yt-dlp exited ${process.exitValue()} reading the Mix" }
+        parseYtDlpMix(output)
+    }
+
     @Serializable
     private data class YtDlpInfo(
         val url: String? = null,
@@ -84,6 +107,34 @@ class JvmYouTubeStreamResolver(
         )
     }
 }
+
+private const val MIX_LENGTH = 50
+
+private val mixJson = Json { ignoreUnknownKeys = true }
+
+@Serializable
+private data class YtDlpPlaylist(val entries: List<YtDlpEntry?> = emptyList())
+
+@Serializable
+private data class YtDlpEntry(
+    val id: String? = null,
+    val title: String? = null,
+    val channel: String? = null,
+    val uploader: String? = null,
+    val duration: Double? = null,
+)
+
+/** Videos of a `yt-dlp --flat-playlist -J` playlist dump, in order. */
+internal fun parseYtDlpMix(output: String): List<YouTubeMixEntry> =
+    mixJson.decodeFromString(YtDlpPlaylist.serializer(), output).entries.mapNotNull { entry ->
+        val id = entry?.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        YouTubeMixEntry(
+            videoId = id,
+            title = entry.title.orEmpty(),
+            channel = entry.channel ?: entry.uploader,
+            durationSeconds = entry.duration?.toLong(),
+        )
+    }
 
 internal fun findYtDlpBinary(): Path? {
     System.getenv("KAINOS_YT_DLP")?.trim()?.takeIf { it.isNotEmpty() }?.let { env ->

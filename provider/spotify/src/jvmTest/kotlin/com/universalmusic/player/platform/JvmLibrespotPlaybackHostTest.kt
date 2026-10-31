@@ -3,13 +3,83 @@ package com.universalmusic.player.platform
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
+import kotlin.test.assertNotNull
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JvmLibrespotPlaybackHostTest {
+    @Test
+    fun firstPlayAfterReceiverCrashRestartsWithCachedCredentials() = runBlocking {
+        fixture(cached = true) { host, runtime, _ ->
+            assertNotNull(host.ensureDeviceReady())
+            runtime.child.isAlive = false
+            assertNotNull(host.ensureDeviceReady())
+            assertEquals(2, runtime.starts.size)
+        }
+    }
+
+    @Test
+    fun eventProgramDeliversOrderedReceiverEventsAndShutdownRemovesIt() = runBlocking {
+        fixture(cached = true) { host, runtime, _ ->
+            assertFalse(host.receiverEvents.isAvailable)
+            host.ensureDeviceReady()
+            assertTrue(host.receiverEvents.isAvailable)
+            val args = runtime.starts.single()
+            val program = Path.of(args[args.indexOf("--onevent") + 1])
+            val received = Channel<SpotifyReceiverEvent>(Channel.UNLIMITED)
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                host.receiverEvents.events.collect { received.send(it) }
+            }
+            try {
+                val track = "69MiXsrEJYwMGZzisvSjV7"
+                for (kind in listOf("playing", "end_of_track", "stopped")) {
+                    val child = ProcessBuilder(program.toString()).apply {
+                        environment()["PLAYER_EVENT"] = kind
+                        environment()["TRACK_ID"] = track
+                        environment()["POSITION_MS"] = "201"
+                    }.start()
+                    assertTrue(child.waitFor(2, java.util.concurrent.TimeUnit.SECONDS))
+                    assertEquals(0, child.exitValue())
+                }
+                val events = withTimeout(2_000) { List(3) { received.receive() } }
+                assertEquals(
+                    listOf(SpotifyReceiverEvent.Kind.PLAYING, SpotifyReceiverEvent.Kind.END_OF_TRACK,
+                        SpotifyReceiverEvent.Kind.STOPPED),
+                    events.map { it.kind },
+                )
+                assertTrue(events.all { it.trackId == track })
+                assertEquals(201, events.first().positionMs)
+                val permissions = Files.getPosixFilePermissions(program.parent)
+                assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"), permissions)
+                host.shutdown()
+                assertFalse(host.receiverEvents.isAvailable)
+                assertFalse(Files.exists(program.parent))
+            } finally {
+                collector.cancel()
+            }
+        }
+    }
+
+    @Test
+    fun malformedAndNonPlayerEventsCannotChangePlayback() {
+        assertNull(parseLibrespotEvent("sink\t69MiXsrEJYwMGZzisvSjV7\t0"))
+        assertNull(parseLibrespotEvent("end_of_track\twrong\t"))
+        assertNull(parseLibrespotEvent("playing\t69MiXsrEJYwMGZzisvSjV7\t-1"))
+        assertNull(parseLibrespotEvent("paused\t69MiXsrEJYwMGZzisvSjV7\t"))
+        assertEquals(
+            SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK, "69MiXsrEJYwMGZzisvSjV7"),
+            parseLibrespotEvent("end_of_track\t69MiXsrEJYwMGZzisvSjV7\t"),
+        )
+    }
+
     @Test
     fun playbackWithoutCredentialsDoesNotOpenBrowserOrStartProcess() = runBlocking {
         fixture { host, runtime, _ ->
@@ -156,14 +226,16 @@ class JvmLibrespotPlaybackHostTest {
 
     private class FakeRuntime(alive: Boolean, private val installed: Boolean) : LibrespotRuntime {
         val starts = mutableListOf<List<String>>()
-        val child = object : LibrespotProcess {
+        class Child(alive: Boolean) : LibrespotProcess {
             override var isAlive = alive
             override val exitCode: Int? get() = if (isAlive) null else 0
             override fun stop() { isAlive = false }
         }
+        val child = Child(alive)
         override fun findExecutable(): Path? = if (installed) Path.of("/fake/librespot") else null
         override fun start(executable: Path, arguments: List<String>, logFile: Path): LibrespotProcess {
             starts += arguments
+            if (starts.size > 1) child.isAlive = true
             return child
         }
     }

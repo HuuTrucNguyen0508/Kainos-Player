@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.skinGround
+import com.universalmusic.player.ui.components.skinAlbumLight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -8,7 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -38,11 +40,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.friendlyPlaybackMessage
 import com.universalmusic.player.ui.components.albumLight
-import com.universalmusic.player.ui.components.isDark
 import com.universalmusic.player.ui.components.rememberAlbumLight
 
 @Composable
@@ -55,6 +57,8 @@ fun NowPlayingScreen(
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { NowPlayingPresenter.from(container, scope) }
     val ui by presenter.state.collectAsState()
+    val remote by container.remoteControl.state.collectAsState()
+    val remoteDevice = remote.selected
     val track = ui.now.track
     // Identity stays fixed across metadata/artwork refresh for the same queue entry.
     val trackIdentity = ui.trackIdentity
@@ -64,7 +68,7 @@ fun NowPlayingScreen(
     var showErrorDiagnostics by remember(ui.now.error) { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
     // Signature: the cover's own color glows behind the artwork (scheme accent when there is none).
-    val albumLight by rememberAlbumLight(track?.artwork?.url)
+    val albumLight by rememberAlbumLight(if (remoteDevice != null) remoteDevice.artwork?.url else track?.artwork?.url)
     // The glow is centred on wherever the cover actually sits (phone, desktop pane, scrolled details).
     var screenBounds by remember { mutableStateOf<Rect?>(null) }
     var artBounds by remember { mutableStateOf<Rect?>(null) }
@@ -75,10 +79,10 @@ fun NowPlayingScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .skinGround()
             .onGloballyPositioned { screenBounds = it.boundsInRoot() }
-            .albumLight(albumLight, darkScheme = scheme.isDark, centerX = lightCenter.x, centerY = lightCenter.y)
-            .navigationBarsPadding(),
+            .skinAlbumLight(albumLight, lightCenter.x, lightCenter.y)
+            .safeDrawingPadding(),
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val shortScreen = maxHeight < 640.dp
@@ -130,152 +134,190 @@ fun NowPlayingScreen(
                         Spacer(Modifier.height(12.dp))
                     }
 
-                    key(trackIdentity) {
-                        NowPlayingArtwork(
-                            title = track?.title,
-                            artwork = track?.artwork,
-                            artMax = artMax,
-                            expand = pinControls,
-                            compact = compact,
-                            onPositioned = { artBounds = it },
+                    if (remote.available) {
+                        NowPlayingDeviceChip(
+                            remote = remote,
+                            onSelect = container.remoteControl::select,
+                            modifier = Modifier.padding(bottom = 12.dp),
                         )
                     }
+                    remote.message?.let { note ->
+                        RemoteMessageLine(note.text, onDismiss = { container.remoteControl.dismissMessage(note.id) })
+                        Spacer(Modifier.height(12.dp))
+                    }
 
-                    Spacer(Modifier.height(if (compact) 12.dp else 16.dp))
+                    if (remoteDevice != null) {
+                        key(remoteDevice.deviceId, remoteDevice.status?.currentItemId) {
+                            RemoteNowPlaying(
+                                device = remoteDevice,
+                                transferring = remote.transferring,
+                                artMax = artMax,
+                                expand = pinControls,
+                                compact = compact,
+                                light = albumLight,
+                                onArtPositioned = { artBounds = it },
+                                onSend = container.remoteControl::send,
+                                onPlayHere = container.remoteControl::playHere,
+                            )
+                        }
+                    } else {
+                        key(trackIdentity) {
+                            NowPlayingArtwork(
+                                title = track?.title,
+                                artwork = track?.artwork,
+                                artMax = artMax,
+                                expand = pinControls,
+                                compact = compact,
+                                light = albumLight,
+                                onPositioned = { artBounds = it },
+                            )
+                        }
 
-                    Text(
-                        track?.title ?: "Nothing playing",
-                        style = MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        track?.artistLine ?: "Pick a track from Home, Search, or Library",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = scheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 2.dp),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    if (ui.now.buffering) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(if (compact) 18.dp else 24.dp))
+
                         Text(
-                            "Loading audio…",
-                            style = MaterialTheme.typography.labelSmall,
+                            track?.title ?: "Nothing playing",
+                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            track?.artistLine ?: "Pick a track from Home, Search, or Library",
+                            style = MaterialTheme.typography.bodyLarge,
                             color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        if (ui.now.buffering) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(
+                                "Loading audio…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                        NowPlayingProgress(
+                            nowPlaying = presenter.nowPlaying,
+                            onSeek = presenter::seekTo,
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        NowPlayingTransport(
+                            track = track,
+                            isPlaying = ui.now.isPlaying,
+                            buffering = ui.now.buffering,
+                            favorite = ui.now.favorite,
+                            queue = ui.queue,
+                            repeat = ui.repeat,
+                            shuffle = ui.shuffle,
+                            sleepActive = ui.sleepTimer.active,
+                            sleepRemainingLabel = ui.sleepRemainingLabel,
+                            scheme = scheme,
+                            onPrevious = presenter::skipToPrevious,
+                            onTogglePlayPause = presenter::togglePlayPause,
+                            onNext = presenter::skipToNext,
+                            canSkipNext = presenter::canSkipNext,
+                            onToggleFavorite = { track?.let(presenter::toggleFavorite) },
+                            onCycleRepeat = presenter::cycleRepeat,
+                            onToggleShuffle = presenter::toggleShuffle,
+                            onOpenQueue = onOpenQueue,
+                            onOpenSleepTimer = { showSleepTimerDialog = true },
+                        )
+
+                        Spacer(Modifier.height(4.dp))
+                        NowPlayingVolume(
+                            volume = presenter.volume,
+                            scheme = scheme,
+                            onDragVolume = presenter::setVolume,
+                            onCommitVolume = presenter::setPlaybackVolume,
+                        )
+
+                        ProviderQualityRow(
+                            // Before a restored track resolves, name its own source instead of nothing.
+                            providerName = ui.providerName,
+                            qualityLabel = ui.qualityLabel,
+                            qualityClass = ui.qualityClass,
+                            syncWarning = ui.now.syncWarning,
+                            hasDetails = ui.detailLines.isNotEmpty(),
+                            detailsExpanded = showAudioDetails,
+                            onToggleDetails = { showAudioDetails = !showAudioDetails },
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        ui.actualSourceLabel?.let { label ->
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+
+                        ui.now.error?.let { raw ->
+                            NowPlayingErrorBlock(
+                                message = friendlyPlaybackMessage(raw),
+                                showDiagnostics = showErrorDiagnostics,
+                                hasFallbacks = !ui.now.resolved?.fallbacks.isNullOrEmpty(),
+                                scheme = scheme,
+                                onRetry = presenter::retryPlayback,
+                                onTryAnother = presenter::tryAnotherSource,
+                                onToggleDiagnostics = { showErrorDiagnostics = !showErrorDiagnostics },
+                            )
+                        }
+                    }
+                }
+
+                if (remoteDevice != null) {
+                    RemoteQueue(
+                        device = remoteDevice,
+                        enabled = remoteDevice.connected && remoteDevice.hasPlayer && !remote.transferring,
+                        onSend = container.remoteControl::send,
+                    )
+                } else {
+                    availability?.let { info ->
+                        NowPlayingAvailabilityLine(
+                            info = info,
+                            scheme = scheme,
+                            modifier = Modifier.padding(top = 2.dp),
                         )
                     }
-                    NowPlayingProgress(
-                        nowPlaying = presenter.nowPlaying,
-                        onSeek = presenter::seekTo,
-                    )
+                    if (ui.canCorrectMatch && track != null) {
+                        TextButton(
+                            onClick = { showMatchCorrectionDialog = true },
+                            modifier = Modifier.padding(top = 2.dp),
+                        ) {
+                            Text("Change YouTube match")
+                        }
+                    }
 
-                    Spacer(Modifier.height(8.dp))
-                    NowPlayingTransport(
-                        track = track,
-                        isPlaying = ui.now.isPlaying,
-                        buffering = ui.now.buffering,
-                        favorite = ui.now.favorite,
-                        queue = ui.queue,
-                        repeat = ui.repeat,
-                        shuffle = ui.shuffle,
-                        sleepActive = ui.sleepTimer.active,
-                        sleepRemainingLabel = ui.sleepRemainingLabel,
-                        scheme = scheme,
-                        onPrevious = presenter::skipToPrevious,
-                        onTogglePlayPause = presenter::togglePlayPause,
-                        onNext = presenter::skipToNext,
-                        canSkipNext = presenter::canSkipNext,
-                        onToggleFavorite = { track?.let(presenter::toggleFavorite) },
-                        onCycleRepeat = presenter::cycleRepeat,
-                        onToggleShuffle = presenter::toggleShuffle,
-                        onOpenQueue = onOpenQueue,
-                        onOpenSleepTimer = { showSleepTimerDialog = true },
-                    )
+                    if (showAudioDetails && ui.detailLines.isNotEmpty()) {
+                        NowPlayingDetailLines(ui.detailLines, scheme)
+                    }
 
-                    Spacer(Modifier.height(4.dp))
-                    NowPlayingVolume(
-                        volume = presenter.volume,
-                        scheme = scheme,
-                        onDragVolume = presenter::setVolume,
-                        onCommitVolume = presenter::setPlaybackVolume,
-                    )
-
-                    ProviderQualityRow(
-                        // Before a restored track resolves, name its own source instead of nothing.
-                        providerName = ui.providerName,
-                        qualityLabel = ui.qualityLabel,
-                        syncWarning = ui.now.syncWarning,
-                        hasDetails = ui.detailLines.isNotEmpty(),
-                        detailsExpanded = showAudioDetails,
-                        onToggleDetails = { showAudioDetails = !showAudioDetails },
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    ui.actualSourceLabel?.let { label ->
+                    if (ui.now.error != null && showErrorDiagnostics) {
                         Text(
-                            label,
+                            ui.now.error.orEmpty(),
                             style = MaterialTheme.typography.bodySmall,
                             color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
+                            modifier = Modifier.padding(top = 8.dp),
                         )
                     }
 
-                    ui.now.error?.let { raw ->
-                        NowPlayingErrorBlock(
-                            message = friendlyPlaybackMessage(raw),
-                            showDiagnostics = showErrorDiagnostics,
-                            hasFallbacks = !ui.now.resolved?.fallbacks.isNullOrEmpty(),
-                            scheme = scheme,
-                            onRetry = presenter::retryPlayback,
-                            onTryAnother = presenter::tryAnotherSource,
-                            onToggleDiagnostics = { showErrorDiagnostics = !showErrorDiagnostics },
-                        )
-                    }
-                }
-
-                availability?.let { info ->
-                    NowPlayingAvailabilityLine(
-                        info = info,
+                    NowPlayingSpotifyOutput(
+                        visible = ui.showSpotifyOutput,
+                        scope = scope,
+                        settings = presenter.settings,
                         scheme = scheme,
-                        modifier = Modifier.padding(top = 2.dp),
+                        getConnectDevices = container.spotify::getConnectDevices,
+                        updateSettings = container::updateSettings,
                     )
                 }
-                if (ui.canCorrectMatch && track != null) {
-                    TextButton(
-                        onClick = { showMatchCorrectionDialog = true },
-                        modifier = Modifier.padding(top = 2.dp),
-                    ) {
-                        Text("Change YouTube match")
-                    }
-                }
-
-                if (showAudioDetails && ui.detailLines.isNotEmpty()) {
-                    NowPlayingDetailLines(ui.detailLines, scheme)
-                }
-
-                if (ui.now.error != null && showErrorDiagnostics) {
-                    Text(
-                        ui.now.error.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-
-                NowPlayingSpotifyOutput(
-                    visible = ui.showSpotifyOutput,
-                    scope = scope,
-                    settings = presenter.settings,
-                    scheme = scheme,
-                    getConnectDevices = container.spotify::getConnectDevices,
-                    updateSettings = container::updateSettings,
-                )
 
                 Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
             }

@@ -31,3 +31,23 @@ release/
 
 # Local agent audit trails
 .audit/
+tools/kainos-spotify-rootlist/target/
+
+# Desktop performance raw captures stay in /tmp.
+/scripts/perf/desktop-results/*
+!/scripts/perf/desktop-results/history.tsv
+!/scripts/perf/desktop-results/startup-path-summary.json
+!/scripts/perf/desktop-results/verification.json
+!/scripts/perf/desktop-results/engine-jars.json
+/scripts/perf/__pycache__/
+# Remote fault harness raw trials are local; retain compact summaries only.
+scripts/perf/remote-results/*.tsv
+!scripts/perf/remote-results/*-summary.tsv
+# Raw library benchmark output; commit compact summaries instead.
+scripts/perf/library-*.log
+# Gapless probes regenerate captures locally; retain compact summaries only.
+/scripts/perf/gapless-results/*
+!/scripts/perf/gapless-results/*-summary.json
+!/scripts/perf/gapless-results/verification.json
+!/scripts/perf/gapless-results/*-pcm-results.json
+!/scripts/perf/gapless-results/rejected-forced-resampling-results.json

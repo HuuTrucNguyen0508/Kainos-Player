@@ -1,0 +1,11 @@
+arm	scenario	n	correct	median_ms	p90_ms	min_ms	max_ms	applications
+baseline	ambiguous-reply	10	0	44.20	44.92	43.69	45.77	10
+baseline	double-delivery	10	0	77.68	78.50	77.15	78.79	30
+baseline	mixed-version	10	0	44.00	44.85	43.13	46.77	10
+baseline	reordered-request	10	0	201.35	201.39	201.18	201.61	20
+baseline	stale-display	10	0	46.39	48.20	45.59	58.96	10
+head	ambiguous-reply	10	10	177.71	178.75	176.28	178.85	20
+head	double-delivery	10	10	77.85	79.14	77.39	79.75	20
+head	mixed-version	10	10	547.56	548.25	545.79	548.78	20
+head	reordered-request	10	10	74.10	75.41	73.52	76.07	10
+head	stale-display	10	10	46.66	48.04	45.72	60.76	10

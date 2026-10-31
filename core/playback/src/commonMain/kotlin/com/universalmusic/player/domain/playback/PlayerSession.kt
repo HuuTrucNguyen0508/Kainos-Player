@@ -1,5 +1,7 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.model.PlaybackHandle
+
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -9,6 +11,7 @@ import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.toPlaybackQueue
+import com.universalmusic.player.domain.continuation.QueueContinuation
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackPreferences
 import com.universalmusic.player.domain.model.PlaybackQueue
@@ -37,6 +40,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,11 +74,6 @@ class PlayerSession(
     private val isFavorite: (canonicalId: String) -> Boolean = { false },
     /** Merge hearted audio cache / other offline sources before resolution. */
     private val prepareTrack: (Track) -> Track = { it },
-    /**
-     * Natural completion at queue end may request one continuation batch.
-     * Empty / null means stop cleanly; callers must append only at the tail.
-     */
-    private val onQueueExhausted: (suspend (excludeCanonicalIds: Set<String>) -> List<Track>)? = null,
     /**
      * Single thread that owns every session mutation (UI, MPRIS/D-Bus, Media3 callbacks and
      * engine events all funnel through it). Null keeps the caller's thread, which tests rely on.
@@ -110,10 +109,37 @@ class PlayerSession(
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
     private var playJob: Job? = null
+    private var prefetchJob: Job? = null
+    private var seamlessNext: Pair<PrefetchTarget, ResolvedPlayback>? = null
+    private data class Prefetched(
+        val itemId: String,
+        val track: Track,
+        val preferences: PlaybackPreferences,
+        val resolved: ResolvedPlayback,
+        val validUntil: Long,
+    )
+    private data class PrefetchTarget(val itemId: String, val track: Track)
+    private var prefetchTarget: PrefetchTarget? = null
+
+    // Presentation metadata cannot change which audio we resolve.
+    private fun resolutionTrack(track: Track): Track = track.copy(durationMs = null, artwork = null)
+
+    private fun nextPrefetchTarget(): PrefetchTarget? {
+        val next = queue.nextIndex()?.let { queueState.value.items.getOrNull(it) } ?: return null
+        return PrefetchTarget(next.id, resolutionTrack(next.track))
+    }
+
+    private var prefetched: Prefetched? = null
+    private var prefetchedStartGeneration: Long? = null
+
+    /** Refills the tail of the queue it was started with; dropped when other playback replaces it. */
+    private var continuation: QueueContinuation? = null
+    private var continuationJob: Job? = null
     /** Bumped on every play/stop transition so late ENDED/FAILED from a prior track are ignored. */
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
     private var completionArmed: Boolean = false
+    private var truncatedRetryItemId: String? = null
     /** Last engine status seen by the collector; trace only on change, never per position tick. */
     private var lastTracedStatus: EngineStatus? = null
     /**
@@ -159,8 +185,39 @@ class PlayerSession(
 
     init {
         scope.launch(sessionContext) {
+            queueState.collect {
+                if (nextPrefetchTarget() != prefetchTarget) schedulePrefetch(playGeneration)
+            }
+        }
+        scope.launch(sessionContext) {
             engine.state.collectLatest { engineState ->
                 val eventGeneration = engineState.playGeneration
+                if (engineState.previousGeneration == playGeneration && eventGeneration == playGeneration + 1) {
+                    val ready = seamlessNext
+                    if (ready != null && ready.first == nextPrefetchTarget() &&
+                        ready.first.itemId == engineState.seamlessItemId && completionArmed) {
+                        val wrap = queueState.value.shuffle && queue.isWrapToStart(respectRepeatOne = true)
+                        val next = queue.nextIndex() ?: return@collectLatest
+                        seamlessNext = null
+                        playGeneration = eventGeneration
+                        queue.jumpTo(next, reshuffle = wrap)
+                        val item = queueState.value.current ?: return@collectLatest
+                        val resolved = ready.second.copy(track = ready.second.track.copy(durationMs = engineState.durationMs))
+                        _nowPlaying.update { it.copy(track = resolved.track, queueItemId = item.id,
+                            resolved = resolved, positionMs = engineState.positionMs, durationMs = engineState.durationMs,
+                            isPlaying = engineState.status == EngineStatus.PLAYING, buffering = false,
+                            error = null, fallback = null, favorite = isFavorite(item.track.canonicalId)) }
+                        record(Change.AUTOMATIC)
+                        refillIfLow()
+                        schedulePrefetch(playGeneration)
+                    } else {
+                        // The queue changed after mpv crossed the boundary but before this event
+                        // reached the session. Restart the newly selected successor normally.
+                        trace("seamless target superseded at boundary")
+                        handleNaturalCompletion(playGeneration)
+                        return@collectLatest
+                    }
+                }
                 if (engineState.status != lastTracedStatus) {
                     lastTracedStatus = engineState.status
                     trace(
@@ -232,6 +289,14 @@ class PlayerSession(
                             trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
                             return@collectLatest
                         }
+                        val retryAt = engineState.retryAtPositionMs
+                        val currentItemId = queue.queue.value.current?.id
+                        if (retryAt != null && currentItemId != truncatedRetryItemId) {
+                            truncatedRetryItemId = currentItemId
+                            pendingResumePositionMs = retryAt
+                            startCurrent(Change.AUTOMATIC, applyResumePosition = true)
+                            return@collectLatest
+                        }
                         completionArmed = false
                         val current = _nowPlaying.value.resolved ?: return@collectLatest
                         val reason = engineState.error
@@ -245,7 +310,11 @@ class PlayerSession(
     }
 
     fun updatePreferences(preferences: PlaybackPreferences) {
-        _preferences.value = preferences
+        onSession {
+            _preferences.value = preferences
+            engine.configureGapless(preferences.gapless && _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL)
+            schedulePrefetch(playGeneration)
+        }
     }
 
     /**
@@ -283,6 +352,21 @@ class PlayerSession(
         val sequence = withContext(sessionContext) { if (persistenceReady) offerCapture(local = false) else null }
             ?: return FlushResult.Failed(IllegalStateException("Listening persistence has not initialized"))
         return recorder.awaitCommitted(sequence)
+    }
+
+    /** Runs [block] on the session thread; it must use the `*Now` calls, which apply inline. */
+    internal suspend fun <T> onSessionThread(block: () -> T): T = withContext(sessionContext) { block() }
+
+    /**
+     * Installs a queue the user moved here from another device and plays it. Unlike
+     * [loadRemotePaused] it skips the recency, not-playing and applied-handoff checks: the user asked.
+     */
+    internal suspend fun installTransferAndPlay(snapshot: SessionSnapshot): Boolean = withContext(sessionContext) {
+        if (snapshot.items.isEmpty()) return@withContext false
+        trace("installTransferAndPlay items=${snapshot.items.size} index=${snapshot.currentIndex} pos=${snapshot.positionMs}")
+        installPaused(snapshot)
+        playTransportNow()
+        true
     }
 
     internal class HandoffView(val local: LocalHandoffState, val revision: SessionRevision)
@@ -398,6 +482,7 @@ class PlayerSession(
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
+        dropContinuation()
         val restored = snapshot.toPlaybackQueue()
         failedItemIds.clear()
         lastRecordedPlaying = false
@@ -436,6 +521,7 @@ class PlayerSession(
 
     fun play(track: Track) = onSession {
         beginUserPlay()
+        dropContinuation()
         queue.playNow(track)
         startCurrent(Change.LOCAL_INTENT)
     }
@@ -443,15 +529,19 @@ class PlayerSession(
     suspend fun playAwait(track: Track) {
         val job = withContext(sessionContext) {
             beginUserPlay()
+            dropContinuation()
             queue.playNow(track)
             startCurrent(Change.LOCAL_INTENT)
         }
         job?.join()
     }
 
-    fun play(tracks: List<Track>, startIndex: Int = 0) = onSession {
+    /** [continuation] keeps appending to this queue until other playback replaces it or it is cleared. */
+    fun play(tracks: List<Track>, startIndex: Int = 0, continuation: QueueContinuation? = null) = onSession {
         beginUserPlay()
+        dropContinuation()
         queue.playNow(tracks, startIndex)
+        this.continuation = continuation
         startCurrent(Change.LOCAL_INTENT)
     }
 
@@ -460,8 +550,10 @@ class PlayerSession(
      * Under shuffle, starts a fresh random order with that track first so short sessions
      * do not keep walking the same leftover permutation.
      */
-    fun playQueueIndex(index: Int) = onSession {
-        if (index !in queue.queue.value.items.indices) return@onSession
+    fun playQueueIndex(index: Int) = onSession { playQueueIndexNow(index) }
+
+    internal fun playQueueIndexNow(index: Int) {
+        if (index !in queue.queue.value.items.indices) return
         beginUserPlay()
         queue.jumpTo(index, reshuffle = true)
         startCurrent(Change.LOCAL_INTENT)
@@ -471,10 +563,22 @@ class PlayerSession(
 
     fun playNext(track: Track) = onSession { editQueue { playNext(track) } }
 
+    fun stopTransport() = onSession {
+        val position = startupTarget?.positionMs ?: _nowPlaying.value.positionMs
+        beginTransition()
+        playJob?.cancel()
+        playJob = null
+        pendingResumePositionMs = position
+        engine.stop()
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false, positionMs = position) }
+        record(Change.USER_PAUSE, playing = false)
+    }
+
     fun clearQueue() = onSession { clearQueueNow(recorded = queue.queue.value.items.isNotEmpty()) }
 
     private fun clearQueueNow(recorded: Boolean) {
         trace("clearQueue")
+        dropContinuation()
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -499,6 +603,7 @@ class PlayerSession(
         val currentId = _nowPlaying.value.queueItemId
         when {
             snapshot.items.isEmpty() -> {
+                dropContinuation()
                 beginTransition()
                 playJob?.cancel()
                 playJob = null
@@ -554,7 +659,9 @@ class PlayerSession(
 
     fun moveInQueue(from: Int, to: Int) = onSession { editQueue { move(from, to) } }
 
-    fun moveInPlaybackOrder(fromOrderPos: Int, toOrderPos: Int) = onSession {
+    fun moveInPlaybackOrder(fromOrderPos: Int, toOrderPos: Int) = onSession { moveInPlaybackOrderNow(fromOrderPos, toOrderPos) }
+
+    internal fun moveInPlaybackOrderNow(fromOrderPos: Int, toOrderPos: Int) {
         editQueue { moveInPlaybackOrder(fromOrderPos, toOrderPos) }
     }
 
@@ -564,7 +671,9 @@ class PlayerSession(
         if (queue.queue.value !== before) record(Change.LOCAL_INTENT)
     }
 
-    fun togglePlayPause() = onSession {
+    fun togglePlayPause() = onSession { togglePlayPauseNow() }
+
+    internal fun togglePlayPauseNow() {
         val now = _nowPlaying.value
         trace("togglePlayPause buffering=${now.buffering} isPlaying=${now.isPlaying}")
         when {
@@ -576,17 +685,20 @@ class PlayerSession(
     /** Idempotent pause; cancels in-flight resolve/buffering. */
     fun pauseTransport() = onSession { pauseTransportNow(Change.USER_PAUSE) }
 
+    internal fun pauseTransportNow() = pauseTransportNow(Change.USER_PAUSE)
+
     internal fun pauseForSleepTimer() = onSession { pauseTransportNow(Change.AUTOMATIC) }
 
     private fun pauseTransportNow(change: Change) {
         val now = _nowPlaying.value
         if (!now.buffering && !now.isPlaying && !lastRecordedPlaying) return
         val engineStatus = engine.state.value.status
-        if (_nowPlaying.value.buffering) {
+        if (now.buffering && !(now.resolved != null && completionArmed)) {
             trace(
                 "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.label()} " +
                     "(engine=$engineStatus gen=$playGeneration)",
             )
+            pendingResumePositionMs = startupTarget?.positionMs ?: now.positionMs.takeIf { it > 0 }
             beginTransition()
             playJob?.cancel()
             playJob = null
@@ -597,7 +709,7 @@ class PlayerSession(
         }
         trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
         pausePending = true
-        _nowPlaying.update { it.copy(isPlaying = false) }
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false) }
         engine.pause()
         record(change, playing = false)
     }
@@ -605,7 +717,7 @@ class PlayerSession(
     /** Idempotent play/resume; no-op when already playing or buffering. */
     fun playTransport() = onSession { playTransportNow() }
 
-    private fun playTransportNow() {
+    internal fun playTransportNow() {
         val now = _nowPlaying.value
         trace("playTransport buffering=${now.buffering} isPlaying=${now.isPlaying} engine=${engine.state.value.status}")
         if (now.buffering || now.isPlaying) return
@@ -626,7 +738,7 @@ class PlayerSession(
 
     fun seekTo(positionMs: Long) = onSession { seekNow(positionMs) }
 
-    private fun seekNow(positionMs: Long) {
+    internal fun seekNow(positionMs: Long) {
         val target = positionMs.coerceAtLeast(0L)
         startupTarget?.positionMs = target
         engine.seekTo(positionMs)
@@ -648,20 +760,24 @@ class PlayerSession(
     }
 
     /** Manual next: escapes Repeat One. */
-    fun skipToNext() = onSession {
+    fun skipToNext() = onSession { skipToNextNow() }
+
+    internal fun skipToNextNow() {
         trace("skipToNext")
         failedItemIds.clear()
         advance(manual = true)
     }
 
-    fun skipToPrevious() = onSession {
+    fun skipToPrevious() = onSession { skipToPreviousNow() }
+
+    internal fun skipToPreviousNow() {
         val current = _nowPlaying.value
         trace("skipToPrevious pos=${current.positionMs}")
         if (current.positionMs > 3_000) {
             seekNow(0)
-            return@onSession
+            return
         }
-        val previous = queue.previousIndex() ?: return@onSession
+        val previous = queue.previousIndex() ?: return
         failedItemIds.clear()
         queue.jumpTo(previous)
         startCurrent(Change.LOCAL_INTENT)
@@ -669,9 +785,14 @@ class PlayerSession(
 
     fun canSkipNext(): Boolean = queue.nextIndex(respectRepeatOne = false) != null
 
-    fun toggleShuffle() = onSession {
-        val enabled = !queue.queue.value.shuffle
+    fun toggleShuffle() = onSession { setShuffleNow(!queue.queue.value.shuffle) }
+
+    internal fun setShuffleNow(enabled: Boolean) {
         editQueue { setShuffle(enabled) }
+    }
+
+    internal fun setRepeatNow(mode: RepeatMode) {
+        editQueue { setRepeat(mode) }
     }
 
     fun cycleRepeat() = onSession {
@@ -706,7 +827,10 @@ class PlayerSession(
      * freezes at the ended item instead of advancing. Pass null to clear.
      */
     fun setNaturalCompletionGate(gate: (() -> Boolean)?) {
-        naturalCompletionGate = gate
+        onSession {
+            naturalCompletionGate = gate
+            schedulePrefetch(playGeneration)
+        }
     }
 
     /**
@@ -777,11 +901,13 @@ class PlayerSession(
                 "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
         )
         if (next == null) {
-            if (!manual && onQueueExhausted != null) {
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            if (refill != null) {
                 val generationAtExhaustion = playGeneration
                 playJob?.cancel()
                 playJob = scope.launch(sessionContext) {
-                    tryQueueContinuation(generationAtExhaustion)
+                    refill.join()
+                    continueAfterRefill(generationAtExhaustion)
                 }
                 return
             }
@@ -793,23 +919,9 @@ class PlayerSession(
         startCurrent(change)
     }
 
-    private suspend fun tryQueueContinuation(generationAtExhaustion: Long) {
+    /** The queue ran out while a refill was pending: play what it appended, or stop. */
+    private fun continueAfterRefill(generationAtExhaustion: Long) {
         if (generationAtExhaustion != playGeneration) return
-        val exclude = queue.queue.value.items.map { it.track.canonicalId }.toSet()
-        val more = try {
-            withContext(workContext) { onQueueExhausted?.invoke(exclude).orEmpty() }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            emptyList()
-        }
-        currentCoroutineContext().ensureActive()
-        if (generationAtExhaustion != playGeneration) return
-        if (more.isEmpty()) {
-            stopAtQueueEnd(Change.AUTOMATIC)
-            return
-        }
-        queue.appendTracks(more)
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
             stopAtQueueEnd(Change.AUTOMATIC)
@@ -817,6 +929,46 @@ class PlayerSession(
         }
         queue.jumpTo(next)
         startCurrent(Change.AUTOMATIC)
+    }
+
+    /** Start a refill once the queue is down to the continuation's low-water mark. Session thread only. */
+    private fun refillIfLow() {
+        val source = continuation ?: return
+        if (continuationJob?.isActive == true) return
+        val snapshot = queue.queue.value
+        if (snapshot.repeat == RepeatMode.ALL || snapshot.upcoming.size > source.lowWater) return
+        refillQueue()
+    }
+
+    /** Ask the continuation for a batch and append it at the tail. Null when there is no continuation. */
+    private fun refillQueue(): Job? {
+        val source = continuation ?: return null
+        val snapshot = queue.queue.value
+        return scope.launch(sessionContext) {
+            val batch = try {
+                withContext(workContext) { source.nextBatch(snapshot) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                trace("continuation failed: ${error.message}")
+                return@launch
+            }
+            if (continuation !== source) return@launch
+            if (batch.isEmpty()) {
+                trace("continuation finished")
+                continuation = null
+                return@launch
+            }
+            queue.appendTracks(batch)
+            trace("continuation appended ${batch.size}; queue size=${queue.queue.value.items.size}")
+            record(Change.AUTOMATIC)
+        }.also { continuationJob = it }
+    }
+
+    private fun dropContinuation() {
+        continuation = null
+        continuationJob?.cancel()
+        continuationJob = null
     }
 
     private fun stopAtQueueEnd(change: Change) {
@@ -832,7 +984,13 @@ class PlayerSession(
     }
 
     private fun beginTransition() {
+        seamlessNext = null
+        engine.prepareNext(null)
+        prefetchJob?.cancel()
+        prefetched = null
+        prefetchTarget = null
         playGeneration++
+        prefetchedStartGeneration = null
         completionArmed = false
         startupTarget = null
         pausedSeekTargetMs = null
@@ -843,10 +1001,19 @@ class PlayerSession(
         val item = queue.queue.value.current ?: return null
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
+        val ready = prefetched?.takeIf {
+            it.itemId == item.id && resolutionTrack(it.track) == resolutionTrack(item.track) &&
+                it.preferences == _preferences.value && clock() < it.validUntil
+        }?.resolved?.let { resolved ->
+            resolved.copy(track = resolved.track.copy(durationMs = item.track.durationMs, artwork = item.track.artwork))
+        }
+        prefetched = null
+        prefetchJob?.cancel()
         beginTransition()
         val target = StartupTarget(resumeAt)
         startupTarget = target
         val generation = playGeneration
+        if (ready != null) prefetchedStartGeneration = generation
         trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
         engine.stopForTransition()
@@ -866,9 +1033,10 @@ class PlayerSession(
             )
         }
         record(change)
+        refillIfLow()
         playJob = scope.launch(sessionContext) {
             try {
-                playTrack(item.track, item.id, generation, target)
+                playTrack(item.track, item.id, generation, target, ready)
             } finally {
                 if (startupTarget === target) startupTarget = null
             }
@@ -881,9 +1049,14 @@ class PlayerSession(
         queueItemId: String,
         generation: Long,
         target: StartupTarget,
+        ready: ResolvedPlayback? = null,
     ) {
         currentCoroutineContext().ensureActive()
         if (generation != playGeneration) return
+        if (ready != null) {
+            startResolved(ready, fallback = null, generation = generation, target = target, alreadyEnriched = true)
+            return
+        }
         val playable = withContext(workContext) { prepareTrack(track) }
         if (generation != playGeneration) return
         _nowPlaying.update {
@@ -922,10 +1095,11 @@ class PlayerSession(
         fallback: SourceFallbackEvent?,
         generation: Long,
         target: StartupTarget?,
+        alreadyEnriched: Boolean = false,
     ) {
         if (generation != playGeneration) return
         currentCoroutineContext().ensureActive()
-        val enrichedSource = runCatching { withContext(workContext) { enrichSource(resolved.track, resolved.source) } }
+        val enrichedSource = runCatching { withContext(workContext) { if (alreadyEnriched) resolved.source else enrichSource(resolved.track, resolved.source) } }
             .getOrElse { error ->
                 if (error is CancellationException) throw error
                 if (generation != playGeneration) return
@@ -954,15 +1128,16 @@ class PlayerSession(
         trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
         runCatching {
             withContext(workContext) {
-                engine.play(playable.source.handle, playable.source.quality, playGeneration = generation)
+                val handle = playable.source.handle.let { handle ->
+                    if (handle is PlaybackHandle.Url)
+                        handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
+                }
+                engine.configureGapless(_preferences.value.gapless && playable.source.provider == ProviderId.LOCAL)
+                engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == playGeneration) {
                 engine.setVolume(_volume.value)
-                val seekTo = target?.positionMs
-                if (seekTo != null) {
-                    trace("seek after restore resumeAt=$seekTo gen=$generation")
-                    engine.seekTo(seekTo)
-                }
+                target?.positionMs?.let(engine::seekTo)
                 if (startupTarget === target) startupTarget = null
             }
         }.onFailure { error ->
@@ -982,6 +1157,66 @@ class PlayerSession(
         }
         completionArmed = true
         trace("engine.play ok gen=$generation; completion armed")
+        schedulePrefetch(generation)
+
+    }
+
+    /** One short-lived YouTube result only; no Spotify traffic and no persisted URLs. */
+    private fun schedulePrefetch(generation: Long) {
+        prefetchJob?.cancel()
+        prefetched = null
+        seamlessNext = null
+        engine.prepareNext(null)
+        val target = nextPrefetchTarget()
+        prefetchTarget = target
+        val next = target?.let { key -> queueState.value.items.firstOrNull { it.id == key.itemId } } ?: return
+        val preferences = _preferences.value
+        if (engine.supportsGapless && preferences.gapless && naturalCompletionGate == null && completionArmed &&
+            _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL &&
+            next.track.sources.any { it.provider == ProviderId.LOCAL }) {
+            prefetchJob = scope.launch(sessionContext) {
+                try {
+                    val resolved = withContext(workContext) {
+                        val result = resolver.resolve(prepareTrack(next.track), preferences)
+                        result.copy(source = enrichSource(result.track, result.source))
+                    }
+                    val handle = resolved.source.handle as? PlaybackHandle.Url ?: return@launch
+                    if (resolved.source.provider != ProviderId.LOCAL || generation != playGeneration ||
+                        nextPrefetchTarget() != target || preferences != _preferences.value || naturalCompletionGate != null) return@launch
+                    seamlessNext = target to resolved
+                    engine.prepareNext(PreparedPlayback(next.id, handle, resolved.source.quality, generation))
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    trace("local successor unavailable: ${error.message}")
+                }
+            }
+            return
+        }
+        if (next.track.sources.isEmpty() || next.track.sources.any { it.provider != ProviderId.YOUTUBE_MUSIC }) return
+        prefetchJob = scope.launch(sessionContext) {
+            delay(1_000)
+            if (generation != playGeneration || !_nowPlaying.value.isPlaying) return@launch
+            try {
+                val resolved = withContext(workContext) {
+                    val track = prepareTrack(next.track)
+                    val result = resolver.resolve(track, preferences)
+                    if (result.source.provider != ProviderId.YOUTUBE_MUSIC) return@withContext null
+                    result.copy(source = enrichSource(result.track, result.source))
+                } ?: return@launch
+                currentCoroutineContext().ensureActive()
+                if (generation != playGeneration || nextPrefetchTarget() != target || preferences != _preferences.value) return@launch
+                val url = (resolved.source.handle as? PlaybackHandle.Url)?.url ?: return@launch
+                // YouTube signed URLs normally carry epoch-seconds expiry. Leave a safety margin.
+                val expires = url.substringAfter('?', "").split('&')
+                    .firstOrNull { it.startsWith("expire=") }?.substringAfter('=')?.toLongOrNull()
+                    ?.let { it * 1_000 - 30_000 }
+                val validUntil = expires ?: (clock() + 30_000)
+                if (validUntil > clock()) prefetched = Prefetched(next.id, next.track, preferences, resolved, validUntil)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                trace("prefetch unavailable: ${error.message}")
+            }
+        }
     }
 
     private fun startFallback(current: ResolvedPlayback, reason: String?, generation: Long) {
@@ -1004,6 +1239,13 @@ class PlayerSession(
         target: StartupTarget?,
     ) {
         if (generation != playGeneration) return
+        if (prefetchedStartGeneration == generation) {
+            // A speculative URL can be rejected early. Resolve this same entry normally once.
+            prefetchedStartGeneration = null
+            pendingResumePositionMs = target?.positionMs ?: _nowPlaying.value.positionMs.takeIf { it > 0 }
+            startCurrent(Change.AUTOMATIC, applyResumePosition = true)
+            return
+        }
         trace(
             "tryFallback from ${current.source.provider} reason=$reason remaining=" +
                 current.fallbacks.map { it.provider },
@@ -1040,7 +1282,18 @@ class PlayerSession(
         // Ignore Repeat One here: re-queuing the same dead item would never reach a healthy one.
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            if (refill != null) {
+                engine.stop()
+                playJob = scope.launch(sessionContext) {
+                    refill.join()
+                    continueAfterRefill(generation)
+                }
+                return
+            }
             failedItemIds.clear()
+            beginTransition()
+            engine.stop()
             return
         }
         val snapshot = queue.queue.value

@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.Slip
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,11 +63,7 @@ internal fun SessionCard(
 
     BoxWithConstraints(modifier) {
         val artSize = if (maxWidth >= 600.dp) 88.dp else 72.dp
-        Surface(
-            onClick = onCardClick,
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
+        Slip(onClick = onCardClick) {
             Row(
                 Modifier.padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,

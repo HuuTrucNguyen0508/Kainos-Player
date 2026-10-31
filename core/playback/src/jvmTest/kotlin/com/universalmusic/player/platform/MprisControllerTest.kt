@@ -32,6 +32,24 @@ class MprisControllerTest {
     private val busName = mprisBusName("test${ProcessHandle.current().pid()}")
     private val playerName = busName.removePrefix("org.mpris.MediaPlayer2.")
     @Test
+    fun stopKeepsQueueAndPositionForResume() = runTest {
+        val engine = RecordingEngineForMpris()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("One", "A", provider = ProviderId.SAMPLE))
+        runCurrent()
+        session.seekTo(4200)
+        runCurrent()
+        MprisFacade(session) {}.Stop()
+        runCurrent()
+        assertEquals(1, session.queueState.value.items.size)
+        assertEquals(4200, session.nowPlaying.value.positionMs)
+        assertEquals(EngineStatus.IDLE, engine.state.value.status)
+        session.playTransport()
+        runCurrent()
+        assertEquals(4200, session.nowPlaying.value.positionMs)
+    }
+
+    @Test
     fun instanceSuffixesTheBusName() {
         assertEquals("org.mpris.MediaPlayer2.kainosplayer", mprisBusName(null))
         assertEquals("org.mpris.MediaPlayer2.kainosplayer.instance2", mprisBusName("2"))

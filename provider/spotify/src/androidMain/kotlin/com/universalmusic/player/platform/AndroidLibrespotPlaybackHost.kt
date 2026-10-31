@@ -8,6 +8,7 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,7 +25,6 @@ import xyz.gianlu.librespot.core.Session.SpotifyAuthenticationException
 import xyz.gianlu.librespot.metadata.PlayableId
 import xyz.gianlu.librespot.player.Player
 import xyz.gianlu.librespot.player.PlayerConfiguration
-import xyz.gianlu.librespot.player.decoders.AndroidNativeDecoder
 
 /**
  * In-process librespot-java Connect receiver for Android. Audio decodes on-device via
@@ -38,6 +38,15 @@ internal class AndroidLibrespotPlaybackHost(
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
 
+    private val receiverFlow = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
+    override val receiverEvents = object : SpotifyReceiverEvents {
+        override val events = receiverFlow
+        override val isAvailable get() = player != null
+    }
+    @Volatile private var receiverTrackId = ""
+    private fun receiverEvent(kind: SpotifyReceiverEvent.Kind, position: Long? = null) {
+        receiverFlow.tryEmit(SpotifyReceiverEvent(kind, receiverTrackId, position))
+    }
     private var session: Session? = null
     private var player: Player? = null
     private val credentialsDir = File(filesDir, "librespot")
@@ -120,7 +129,7 @@ internal class AndroidLibrespotPlaybackHost(
                 session = createdSession
                 player = createdPlayer
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
-                Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_DEVICE_NAME")
+                Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_ANDROID_DEVICE_NAME")
                 namedDevice()
             } catch (cancelled: CancellationException) {
                 Log.w(TAG, "session start cancelled")
@@ -150,6 +159,12 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
+    override suspend fun setVolume(volume: Float): Boolean = mutex.withLock {
+        val receiver = player ?: return@withLock false
+        receiver.setVolume((volume.coerceIn(0f, 1f) * Player.VOLUME_MAX).toInt())
+        true
+    }
+
     override suspend fun shutdown() = mutex.withLock {
         shutdownLocked()
         _state.value = SpotifyWebPlaybackState.Stopped
@@ -165,7 +180,7 @@ internal class AndroidLibrespotPlaybackHost(
         session = null
     }
 
-    private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_DEVICE_NAME)
+    private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
 
     private fun hasCachedCredentials(): Boolean =
         credentialsFile.isFile && credentialsFile.length() > 0L
@@ -184,7 +199,7 @@ internal class AndroidLibrespotPlaybackHost(
                 val builder = Session.Builder(conf)
                     .setPreferredLocale(Locale.getDefault().language)
                     .setDeviceType(Connect.DeviceType.SMARTPHONE)
-                    .setDeviceName(KAINOS_SPOTIFY_DEVICE_NAME)
+                    .setDeviceName(KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
                 when {
                     oauthCredentials != null -> builder.credentials(oauthCredentials)
                     hasCachedCredentials() -> builder.stored()
@@ -199,7 +214,7 @@ internal class AndroidLibrespotPlaybackHost(
                 val createdSession = builder.create()
                 Log.i(TAG, "AP connected")
                 val createdPlayer = Player(playerConf, createdSession)
-                createdPlayer.addEventsListener(LibrespotEventsTrace)
+                createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -221,7 +236,7 @@ internal class AndroidLibrespotPlaybackHost(
      * Web API, so a pause here that no Engine line asked for came from Spotify's side
      * (another Connect device, a halt while buffering, an inactive session).
      */
-    private object LibrespotEventsTrace : Player.EventsListener {
+    private inner class LibrespotEventsTrace : Player.EventsListener {
         private fun trace(message: String) = PlaybackTrace.log("Librespot", message)
 
         override fun onContextChanged(player: Player, newUri: String) = trace("context=$newUri")
@@ -232,19 +247,35 @@ internal class AndroidLibrespotPlaybackHost(
             metadata: MetadataWrapper?,
             userInitiated: Boolean,
         ) {
+            receiverTrackId = id.toSpotifyUri().removePrefix("spotify:track:")
             lastHalted = null
             trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
         }
 
-        override fun onPlaybackEnded(player: Player) = trace("playbackEnded")
+        override fun onPlaybackEnded(player: Player) {
+            trace("playbackEnded")
+            receiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK)
+        }
 
-        override fun onPlaybackPaused(player: Player, trackTime: Long) = trace("paused at $trackTime")
+        override fun onPlaybackPaused(player: Player, trackTime: Long) {
+            trace("paused at $trackTime")
+            receiverEvent(SpotifyReceiverEvent.Kind.PAUSED, trackTime)
+        }
 
-        override fun onPlaybackResumed(player: Player, trackTime: Long) = trace("resumed at $trackTime")
+        override fun onPlaybackResumed(player: Player, trackTime: Long) {
+            trace("resumed at $trackTime")
+            receiverEvent(SpotifyReceiverEvent.Kind.PLAYING, trackTime)
+        }
 
-        override fun onPlaybackFailed(player: Player, e: Exception) = trace("playbackFailed: $e")
+        override fun onPlaybackFailed(player: Player, e: Exception) {
+            trace("playbackFailed: $e")
+            receiverEvent(SpotifyReceiverEvent.Kind.UNAVAILABLE)
+        }
 
-        override fun onTrackSeeked(player: Player, trackTime: Long) = trace("seeked to $trackTime")
+        override fun onTrackSeeked(player: Player, trackTime: Long) {
+            trace("seeked to $trackTime")
+            receiverEvent(SpotifyReceiverEvent.Kind.SEEKED, trackTime)
+        }
 
         override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
 
@@ -254,18 +285,32 @@ internal class AndroidLibrespotPlaybackHost(
         override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
             if (halted == lastHalted) return
             lastHalted = halted
+            receiverEvent(when {
+                player.stateWrapper.state.isPaused -> SpotifyReceiverEvent.Kind.PAUSED
+                halted -> SpotifyReceiverEvent.Kind.BUFFERING
+                else -> SpotifyReceiverEvent.Kind.PLAYING
+            }, trackTime)
             trace("halted=$halted at $trackTime (true = buffer ran dry)")
         }
 
-        override fun onInactiveSession(player: Player, timeout: Boolean) = trace("inactiveSession timeout=$timeout")
+        override fun onInactiveSession(player: Player, timeout: Boolean) {
+            trace("inactiveSession timeout=$timeout")
+            receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
+        }
 
         override fun onVolumeChanged(player: Player, volume: Float) = Unit
 
-        override fun onPanicState(player: Player) = trace("PANIC state")
+        override fun onPanicState(player: Player) {
+            trace("PANIC state")
+            receiverEvent(SpotifyReceiverEvent.Kind.UNAVAILABLE)
+        }
 
         override fun onStartedLoading(player: Player) = trace("startedLoading")
 
-        override fun onFinishedLoading(player: Player) = trace("finishedLoading")
+        override fun onFinishedLoading(player: Player) {
+            trace("finishedLoading")
+            receiverEvent(if (player.stateWrapper.state.isPaused) SpotifyReceiverEvent.Kind.PAUSED else SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
+        }
     }
 
     private companion object {
@@ -283,8 +328,8 @@ internal class AndroidLibrespotPlaybackHost(
             if (decodersRegistered) return
             synchronized(this) {
                 if (decodersRegistered) return
-                Decoders.registerDecoder(SuperAudioFormat.VORBIS, 0, AndroidNativeDecoder::class.java)
-                Decoders.registerDecoder(SuperAudioFormat.MP3, 0, AndroidNativeDecoder::class.java)
+                Decoders.registerDecoder(SuperAudioFormat.VORBIS, 0, EndSafeNativeDecoder::class.java)
+                Decoders.registerDecoder(SuperAudioFormat.MP3, 0, EndSafeNativeDecoder::class.java)
                 decodersRegistered = true
             }
         }

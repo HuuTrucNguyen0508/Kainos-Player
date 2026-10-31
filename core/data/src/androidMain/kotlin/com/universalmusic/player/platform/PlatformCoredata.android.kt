@@ -27,7 +27,7 @@ import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
-import com.universalmusic.player.data.settings.withoutLegacyHomeLanPairing
+import com.universalmusic.player.data.settings.decodeAppSettings
 import com.universalmusic.player.domain.model.ProviderId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -94,7 +94,10 @@ actual fun createHeartedAudioCache(): HeartedAudioCache =
     DefaultHeartedAudioCache(AndroidHeartedAudioCacheDisk(androidContext))
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
-    java.net.URI(url).toURL().openStream().use { it.readBytes() }
+    java.net.URI(url).toURL().openConnection().apply {
+        connectTimeout = 10_000
+        readTimeout = 15_000
+    }.getInputStream().use { it.readBytes() }
 }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? =
@@ -132,7 +135,7 @@ private class PrefsSettingsStore(context: Context) : SettingsStore {
 
     override suspend fun read(): AppSettings {
         val raw = prefs.getString("settings", null) ?: return AppSettings()
-        return json.decodeFromString<AppSettings>(raw).withoutLegacyHomeLanPairing()
+        return decodeAppSettings(raw)
     }
 
     override suspend fun write(settings: AppSettings) {

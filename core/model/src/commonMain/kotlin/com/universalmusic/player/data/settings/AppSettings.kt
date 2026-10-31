@@ -17,18 +17,10 @@ enum class ThemeMode {
 }
 
 @Serializable
-enum class AppColorScheme(val label: String, val description: String) {
-    OLIVE("Olive Grove", "Your current Caelestia dynamic olive"),
-    CAELESTIA("Caelestia Teal", "Default Caelestia shell teal"),
-    CATPPUCCIN("Catppuccin", "Mocha / Latte"),
-    NORD("Nord", "Arctic blues"),
-    GRUVBOX("Gruvbox", "Warm retro"),
-    ROSE_PINE("Rosé Pine", "Soft purple / dawn"),
-    TOKYO_NIGHT("Tokyo Night", "Neon city blue"),
-    DRACULA("Dracula", "Classic purple dark"),
-    EVERFOREST("Everforest", "Muted forest green"),
-    ONE_DARK("One Dark", "Atom-style"),
-}
+enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA }
+
+@Serializable
+enum class FolioTint { FOLIO, EVERFOREST, CATPPUCCIN, GRUVBOX, NORD, ROSE_PINE, TOKYO_NIGHT }
 
 @Serializable
 data class AppSettings(
@@ -42,8 +34,9 @@ data class AppSettings(
     val spotifyDiscoverWeeklyPlaylistId: String? = null,
     val youtubeDataApiKey: String? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val colorScheme: AppColorScheme = AppColorScheme.OLIVE,
-    val dynamicColor: Boolean = true,
+    val skin: SkinChoice = SkinChoice.PLATFORM_DEFAULT,
+    val tint: FolioTint = FolioTint.FOLIO,
+    val followCaelestiaScheme: Boolean = true,
     val compactMode: Boolean = false,
     val sourceSelection: SourceSelectionMode = SourceSelectionMode.AUTOMATIC,
     val crossfadeMs: Int = 0,
@@ -67,10 +60,11 @@ data class AppSettings(
     /** When true, Library Songs (and related album views) show only app-hearted tracks. */
     val libraryFavoritesOnly: Boolean = false,
     /**
-     * When true, a Search-started queue may append one continuation batch after the last track.
-     * Default is off so playback stops at the end of the Search results unless the user opts in.
+     * When true, tapping a Spotify or YouTube Search result plays that track followed by its own
+     * source's radio (Spotify radio / YouTube Mix). When false, only the same-source results follow.
+     * Replaces the old opt-in `searchAutoplayEnabled`, which stored settings still carry and is ignored.
      */
-    val searchAutoplayEnabled: Boolean = false,
+    val searchRadioEnabled: Boolean = true,
     /** In-app playback gain 0–1 (desktop mpv / Android ExoPlayer). Default full. */
     val playbackVolume: Float = 1f,
     /** Home LAN hearts sync (phone client ↔ desktop hub). */

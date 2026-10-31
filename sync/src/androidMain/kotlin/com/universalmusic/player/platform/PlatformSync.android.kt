@@ -31,3 +31,43 @@ actual suspend fun rematchLocalHeartsAfterVaultSync(): Int = 0
 
 actual suspend fun scheduleBackgroundListeningDelivery() =
     com.universalmusic.player.data.sync.ListeningDeliveryWorker.enqueue(androidContext)
+
+actual suspend fun readLocalArtworkBytes(location: String, maxBytes: Int): ByteArray? =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val uri = if (location.startsWith("/")) android.net.Uri.fromFile(java.io.File(location)) else android.net.Uri.parse(location)
+            androidContext.contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(16 * 1024)
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                    if (buffer.size() > maxBytes) return@use null
+                }
+                buffer.toByteArray()
+            }
+        }.getOrNull()
+    }
+
+actual suspend fun cacheRemoteArtwork(key: String, bytes: ByteArray): String? =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            if (!key.matches(Regex("[0-9a-f]{8,64}"))) return@runCatching null
+            val dir = java.io.File(androidContext.cacheDir, "remote-art").apply { mkdirs() }
+            val target = java.io.File(dir, "$key.img")
+            if (!target.isFile || target.length() != bytes.size.toLong()) {
+                val tmp = java.io.File(dir, "$key.img.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            }
+            dir.listFiles { file -> file != target && file.name.endsWith(".img") }
+                ?.sortedByDescending { it.lastModified() }
+                ?.drop(8)
+                ?.forEach { it.delete() }
+            target.toURI().toASCIIString()
+        }.getOrNull()
+    }

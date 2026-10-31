@@ -7,6 +7,7 @@ import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -52,10 +53,18 @@ internal class JvmLibrespotPlaybackHost(
     private val _state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
-    private var process: LibrespotProcess? = null
+    @Volatile private var process: LibrespotProcess? = null
+    @Volatile private var eventBridge: LibrespotEventBridge? = null
+    private val playerEvents = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
+    override val receiverEvents: SpotifyReceiverEvents = object : SpotifyReceiverEvents {
+        override val events = playerEvents
+        override val isAvailable: Boolean
+            get() = process?.isAlive == true && eventBridge?.isOpen == true
+    }
 
     private val shutdownHook = if (runtime === SystemLibrespotRuntime) {
-        Thread({ process?.stop() }, "kainos-librespot-shutdown").also(Runtime.getRuntime()::addShutdownHook)
+        Thread({ process?.stop(); eventBridge?.close() }, "kainos-librespot-shutdown")
+            .also(Runtime.getRuntime()::addShutdownHook)
     } else {
         null
     }
@@ -72,6 +81,8 @@ internal class JvmLibrespotPlaybackHost(
         }
         process?.stop()
         process = null
+        eventBridge?.close()
+        eventBridge = null
         val rejectedCredentials = (_state.value as? SpotifyWebPlaybackState.Failed)
             ?.reason
             .let { it as? SpotifyWebPlaybackFailure.LibrespotExited }
@@ -93,7 +104,9 @@ internal class JvmLibrespotPlaybackHost(
                 return namedDevice()
             }
             process = null
-            if (!interactive) {
+            eventBridge?.close()
+            eventBridge = null
+            if (!interactive && !hasCachedCredentials()) {
                 _state.value = SpotifyWebPlaybackState.Failed(
                     SpotifyWebPlaybackFailure.LibrespotExited(classifyExit(existing.exitCode)),
                 )
@@ -112,6 +125,9 @@ internal class JvmLibrespotPlaybackHost(
         }
 
         _state.value = SpotifyWebPlaybackState.StartingHost
+        eventBridge?.close()
+        val bridge = LibrespotEventBridge { playerEvents.emit(it) }
+        eventBridge = bridge
         val arguments = buildList {
             addAll(
                 listOf(
@@ -128,12 +144,15 @@ internal class JvmLibrespotPlaybackHost(
                     // Match Spotify's Loud volume normalisation (+3 dB pregain).
                     "--enable-volume-normalisation",
                     "--normalisation-pregain", SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB,
+                    "--onevent", bridge.program.toString(),
                 ),
             )
             if (interactive) add("--enable-oauth")
         }
         val started = runCatching { runtime.start(executable, arguments, paths.logFile) }
             .getOrElse { failure ->
+                bridge.close()
+                eventBridge = null
                 _state.value = SpotifyWebPlaybackState.Failed(
                     SpotifyWebPlaybackFailure.LibrespotExited(
                         failure.message?.takeIf { it.isNotBlank() } ?: "could not start the process",
@@ -144,6 +163,8 @@ internal class JvmLibrespotPlaybackHost(
         process = started
         wait(startupDelayMillis)
         if (!started.isAlive) {
+            bridge.close()
+            eventBridge = null
             process = null
             _state.value = SpotifyWebPlaybackState.Failed(
                 SpotifyWebPlaybackFailure.LibrespotExited(classifyExit(started.exitCode)),
@@ -157,6 +178,8 @@ internal class JvmLibrespotPlaybackHost(
     override suspend fun shutdown() = mutex.withLock {
         process?.stop()
         process = null
+        eventBridge?.close()
+        eventBridge = null
         secureCredentialFile()
         _state.value = SpotifyWebPlaybackState.Stopped
     }

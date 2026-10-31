@@ -22,12 +22,22 @@ data class EngineState(
     val playGeneration: Long = 0L,
     /** Non-fatal note when receiver state cannot be confirmed. */
     val syncWarning: String? = null,
+    val retryAtPositionMs: Long? = null,
+    val seamlessItemId: String? = null,
+    val previousGeneration: Long? = null,
 )
 
 interface PlaybackEngine {
     val state: StateFlow<EngineState>
 
     suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long = 0L)
+    val supportsGapless: Boolean get() = false
+
+    fun configureGapless(enabled: Boolean) = Unit
+
+    /** Replace or cancel the single local successor. Generation identifies its owning track. */
+    fun prepareNext(next: PreparedPlayback?) = Unit
+
     fun pause()
     fun resume()
     fun seekTo(positionMs: Long)
@@ -46,3 +56,11 @@ interface PlaybackEngine {
 class UnsupportedPlaybackException(
     override val message: String,
 ) : IllegalStateException(message)
+
+/** A resolved local file only; engines must decline other handles. */
+data class PreparedPlayback(
+    val itemId: String,
+    val handle: PlaybackHandle.Url,
+    val quality: AudioQuality?,
+    val generation: Long,
+)

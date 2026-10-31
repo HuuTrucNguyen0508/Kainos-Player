@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
+export ANDROID_SERIAL=emulator-5554
+mode=${1:-measure}
+variant=${2:-optimized}
+case "$mode" in
+  seed) klass=com.universalmusic.player.benchmark.SeedLibrary; lock=-s ;;
+  profile) klass=com.universalmusic.player.benchmark.ProfileGenerator; variant=profile; lock=-x ;;
+  network) klass=com.universalmusic.player.benchmark.YouTubeSearchSmoke; lock=-s ;;
+  smoke) klass=com.universalmusic.player.benchmark.RuntimeSmoke; lock=-s ;;
+  measure) klass=com.universalmusic.player.benchmark.RuntimeBenchmarks; lock=-x ;;
+  *) echo 'Usage: android-runtime seed|profile|measure|smoke|network [debug|optimized]' >&2; exit 2 ;;
+esac
+if [[ -n "${3:-}" ]]; then klass="$klass#$3"; fi
+# Only this AVD may be targeted; physical phones are never selected.
+[[ "$($ANDROID_HOME/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+flock "$lock" /tmp/kainos-perf.lock bash -c '
+  uptime
+  nproc
+  ./gradlew :androidMacrobenchmark:connectedBenchmarkAndroidTest \
+    -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
+    -PbenchmarkTarget="$1" \
+    -Pandroid.testInstrumentationRunnerArguments.class="$2" --console=plain
+' _ "$variant" "$klass"

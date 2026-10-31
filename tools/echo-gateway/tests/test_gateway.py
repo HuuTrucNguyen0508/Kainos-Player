@@ -31,7 +31,7 @@ def make_settings(**overrides) -> Settings:
         aac_sample_rate=44100,
         aac_channels=2,
         public_stream_token="test-public-token-not-for-funnel",
-        public_base_url="https://example.test",
+        public_base_url="http://127.0.0.1:8787",
         allow_open_test_stream=True,
         alexa_skill_id="amzn1.ask.skill.test",
         skip_alexa_signature_verify=True,
@@ -396,3 +396,46 @@ async def _wait_until(predicate, timeout: float) -> None:
 
         await asyncio.sleep(0.05)
     raise AssertionError("condition not met before timeout")
+
+@pytest.mark.asyncio
+async def test_alexa_missing_auth_does_not_read_body():
+    app = create_app(make_settings(skip_alexa_signature_verify=False))
+    async def body():
+        raise AssertionError("Unauthenticated body was read")
+        yield b""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/alexa", content=body())
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_alexa_caps_chunked_body(client):
+    async def body():
+        for _ in range(17):
+            yield b"x" * 65536
+    response = await client.post("/alexa", content=body())
+    assert response.status_code == 413
+
+
+def test_public_gateway_requires_skill_id():
+    with pytest.raises(ValueError, match="Set ALEXA_SKILL_ID=amzn1.ask.skill"):
+        create_app(make_settings(alexa_skill_id="", skip_alexa_signature_verify=False))
+
+
+def test_signature_bypass_requires_loopback_public_url():
+    with pytest.raises(ValueError, match="local"):
+        create_app(make_settings(skip_alexa_signature_verify=True, public_base_url="https://public.example"))
+
+
+def test_stream_access_log_redacts_token():
+    import logging
+    from echo_gateway.main import configure_logging
+    configure_logging()
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/stream/t/secret-bearer/track?x=1", "1.1", 200), None)
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(record)
+    assert "secret-bearer" not in record.getMessage()
+    assert "/stream/t/[redacted]/track" in record.getMessage()
+    assert "200" in record.getMessage()

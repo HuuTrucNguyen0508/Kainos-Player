@@ -229,6 +229,11 @@ class KainosForwardingPlayer(
         overlayDurationMs = durationMs?.takeIf { it > 0 } ?: overlayDurationMs
     }
 
+    fun useSpotifyAudioFocus(active: Boolean) {
+        exo.setAudioAttributes(exo.audioAttributes, !active)
+        if (active) exo.pause()
+    }
+
     fun setSpotifyActive(active: Boolean) {
         if (active != spotifyActive) trace("setSpotifyActive($active)")
         val prevPlaying = overlayPlaying

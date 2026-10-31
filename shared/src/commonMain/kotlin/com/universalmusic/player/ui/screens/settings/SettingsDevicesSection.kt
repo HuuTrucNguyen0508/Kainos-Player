@@ -194,11 +194,27 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
         }
     }
     if (syncStatus.pendingTransfers.isNotEmpty()) {
+        val pendingCount = syncStatus.pendingTransfers.size
+        val pendingMiB = syncStatus.pendingTransfers.sumOf { it.sizeBytes } / (1024 * 1024)
         Text(
-            "Transfers (${syncStatus.pendingTransfers.size}) confirm to copy missing hearted files",
+            "$pendingCount ${if (pendingCount == 1) "file" else "files"} to copy" +
+                (if (pendingMiB > 0) " ($pendingMiB MiB)" else "") +
+                ". Confirm to copy missing hearted files.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
         )
+        if (pendingCount > 1) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = !syncBusy,
+                    onClick = { syncPresenter.transferAll(true) },
+                ) { Text("Transfer all") }
+                OutlinedButton(
+                    enabled = !syncBusy,
+                    onClick = { syncPresenter.transferAll(false) },
+                ) { Text("Skip all") }
+            }
+        }
         syncStatus.pendingTransfers.take(8).forEach { transfer ->
             Text(
                 transfer.label + if (transfer.sizeBytes > 0) {
@@ -222,6 +238,13 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
                     },
                 ) { Text("Skip") }
             }
+        }
+        if (pendingCount > 8) {
+            Text(
+                "${pendingCount - 8} more not shown",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
     if (syncStatus.pendingConflicts.isNotEmpty()) {

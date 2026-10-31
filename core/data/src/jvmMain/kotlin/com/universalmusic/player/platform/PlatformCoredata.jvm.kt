@@ -24,7 +24,7 @@ import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
-import com.universalmusic.player.data.settings.withoutLegacyHomeLanPairing
+import com.universalmusic.player.data.settings.decodeAppSettings
 import com.universalmusic.player.domain.model.ProviderId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.ktor.client.HttpClient
@@ -111,7 +111,10 @@ actual fun createHeartedAudioCache(): HeartedAudioCache =
     ))
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
-    URI(url).toURL().openStream().use { input ->
+    URI(url).toURL().openConnection().apply {
+        connectTimeout = 10_000
+        readTimeout = 15_000
+    }.getInputStream().use { input ->
         input.readBytes()
     }
 }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
@@ -178,7 +181,7 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
 
     override suspend fun read(): AppSettings = mutex.withLock {
         if (!path.exists()) return@withLock AppSettings()
-        (readOrQuarantine(path) { json.decodeFromString<AppSettings>(it) } ?: AppSettings()).withoutLegacyHomeLanPairing()
+        readOrQuarantine(path, ::decodeAppSettings) ?: AppSettings()
     }
 
     override suspend fun write(settings: AppSettings) = mutex.withLock {

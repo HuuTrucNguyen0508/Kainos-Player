@@ -32,6 +32,20 @@ class FileStoresTest {
     }
 
     @Test
+    fun legacyAppearanceMigratesAndWritesTheNewFields() = runBlocking {
+        val path = dir.resolve("settings.json")
+        path.writeText("""{"colorScheme":"CATPPUCCIN","dynamicColor":true,"compactMode":true}""")
+        val store = FileSettingsStore(path)
+        val migrated = store.read()
+        assertEquals(com.universalmusic.player.data.settings.FolioTint.CATPPUCCIN, migrated.tint)
+        assertTrue(migrated.compactMode)
+        store.write(migrated)
+        assertFalse(path.readText().contains("colorScheme"))
+        assertFalse(path.readText().contains("dynamicColor"))
+        assertEquals(migrated, store.read())
+    }
+
+    @Test
     fun corruptSettingsAreQuarantinedAndDefaultsReturned() = runBlocking {
         val path = dir.resolve("settings.json")
         path.writeText("""{"spotifyClientId":"abc","""")
