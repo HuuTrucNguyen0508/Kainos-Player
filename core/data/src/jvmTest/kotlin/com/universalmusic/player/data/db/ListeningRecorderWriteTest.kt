@@ -22,7 +22,12 @@ import kotlinx.coroutines.test.runTest
 class ListeningRecorderWriteTest {
     @Test
     fun firstPlaySkipsAcrossNullDurationSafTracksOnlyUpdateTheLearnedRowAndState() = runTest {
-        val driver = TracingDriver(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { KainosDatabase.Schema.create(it) })
+        // In-memory JDBC shares one connection across IO workers. Use the production-style
+        // file driver so concurrent recorder transactions get separate connections.
+        val directory = java.nio.file.Files.createTempDirectory("listening-recorder")
+        val driver = TracingDriver(JdbcSqliteDriver("jdbc:sqlite:${directory.resolve("test.db")}",
+            java.util.Properties().apply { put("journal_mode", "WAL") })
+            .also { KainosDatabase.Schema.create(it) })
         try {
             val storage = KainosStorage(openDriver = { driver }, clock = { 0 })
             PrivateSnapshotWriter(storage, "earlier-run").write(PlaybackQueue(items = (0 until 8).map(::safItem)).toSessionSnapshot(0, 0))
@@ -43,12 +48,18 @@ class ListeningRecorderWriteTest {
             }
         } finally {
             driver.close()
+            directory.toFile().deleteRecursively()
         }
     }
 
     @Test
     fun skipsAfterLearningWriteNoQueueRowsAndRestoreKeepsDurations() = runTest {
-        val driver = TracingDriver(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also { KainosDatabase.Schema.create(it) })
+        // In-memory JDBC shares one connection across IO workers. Use the production-style
+        // file driver so concurrent recorder transactions get separate connections.
+        val directory = java.nio.file.Files.createTempDirectory("listening-recorder")
+        val driver = TracingDriver(JdbcSqliteDriver("jdbc:sqlite:${directory.resolve("test.db")}",
+            java.util.Properties().apply { put("journal_mode", "WAL") })
+            .also { KainosDatabase.Schema.create(it) })
         try {
             val storage = KainosStorage(openDriver = { driver }, clock = { 0 })
             PrivateSnapshotWriter(storage, "earlier-run").write(PlaybackQueue(items = listOf(safItem(0), safItem(1))).toSessionSnapshot(0, 0))
@@ -77,6 +88,7 @@ class ListeningRecorderWriteTest {
             assertFalse(restored.nowPlaying.value.isPlaying)
         } finally {
             driver.close()
+            directory.toFile().deleteRecursively()
         }
     }
 

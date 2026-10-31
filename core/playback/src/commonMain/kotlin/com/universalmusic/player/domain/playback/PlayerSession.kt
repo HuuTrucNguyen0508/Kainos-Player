@@ -110,6 +110,7 @@ class PlayerSession(
 
     private var playJob: Job? = null
     private var prefetchJob: Job? = null
+    private var seamlessNext: Pair<PrefetchTarget, ResolvedPlayback>? = null
     private data class Prefetched(
         val itemId: String,
         val track: Track,
@@ -191,6 +192,32 @@ class PlayerSession(
         scope.launch(sessionContext) {
             engine.state.collectLatest { engineState ->
                 val eventGeneration = engineState.playGeneration
+                if (engineState.previousGeneration == playGeneration && eventGeneration == playGeneration + 1) {
+                    val ready = seamlessNext
+                    if (ready != null && ready.first == nextPrefetchTarget() &&
+                        ready.first.itemId == engineState.seamlessItemId && completionArmed) {
+                        val wrap = queueState.value.shuffle && queue.isWrapToStart(respectRepeatOne = true)
+                        val next = queue.nextIndex() ?: return@collectLatest
+                        seamlessNext = null
+                        playGeneration = eventGeneration
+                        queue.jumpTo(next, reshuffle = wrap)
+                        val item = queueState.value.current ?: return@collectLatest
+                        val resolved = ready.second.copy(track = ready.second.track.copy(durationMs = engineState.durationMs))
+                        _nowPlaying.update { it.copy(track = resolved.track, queueItemId = item.id,
+                            resolved = resolved, positionMs = engineState.positionMs, durationMs = engineState.durationMs,
+                            isPlaying = engineState.status == EngineStatus.PLAYING, buffering = false,
+                            error = null, fallback = null, favorite = isFavorite(item.track.canonicalId)) }
+                        record(Change.AUTOMATIC)
+                        refillIfLow()
+                        schedulePrefetch(playGeneration)
+                    } else {
+                        // The queue changed after mpv crossed the boundary but before this event
+                        // reached the session. Restart the newly selected successor normally.
+                        trace("seamless target superseded at boundary")
+                        handleNaturalCompletion(playGeneration)
+                        return@collectLatest
+                    }
+                }
                 if (engineState.status != lastTracedStatus) {
                     lastTracedStatus = engineState.status
                     trace(
@@ -283,7 +310,11 @@ class PlayerSession(
     }
 
     fun updatePreferences(preferences: PlaybackPreferences) {
-        _preferences.value = preferences
+        onSession {
+            _preferences.value = preferences
+            engine.configureGapless(preferences.gapless && _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL)
+            schedulePrefetch(playGeneration)
+        }
     }
 
     /**
@@ -796,7 +827,10 @@ class PlayerSession(
      * freezes at the ended item instead of advancing. Pass null to clear.
      */
     fun setNaturalCompletionGate(gate: (() -> Boolean)?) {
-        naturalCompletionGate = gate
+        onSession {
+            naturalCompletionGate = gate
+            schedulePrefetch(playGeneration)
+        }
     }
 
     /**
@@ -950,6 +984,8 @@ class PlayerSession(
     }
 
     private fun beginTransition() {
+        seamlessNext = null
+        engine.prepareNext(null)
         prefetchJob?.cancel()
         prefetched = null
         prefetchTarget = null
@@ -1096,6 +1132,7 @@ class PlayerSession(
                     if (handle is PlaybackHandle.Url)
                         handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
                 }
+                engine.configureGapless(_preferences.value.gapless && playable.source.provider == ProviderId.LOCAL)
                 engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == playGeneration) {
@@ -1128,11 +1165,34 @@ class PlayerSession(
     private fun schedulePrefetch(generation: Long) {
         prefetchJob?.cancel()
         prefetched = null
+        seamlessNext = null
+        engine.prepareNext(null)
         val target = nextPrefetchTarget()
         prefetchTarget = target
         val next = target?.let { key -> queueState.value.items.firstOrNull { it.id == key.itemId } } ?: return
-        if (next.track.sources.isEmpty() || next.track.sources.any { it.provider != ProviderId.YOUTUBE_MUSIC }) return
         val preferences = _preferences.value
+        if (engine.supportsGapless && preferences.gapless && naturalCompletionGate == null && completionArmed &&
+            _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL &&
+            next.track.sources.any { it.provider == ProviderId.LOCAL }) {
+            prefetchJob = scope.launch(sessionContext) {
+                try {
+                    val resolved = withContext(workContext) {
+                        val result = resolver.resolve(prepareTrack(next.track), preferences)
+                        result.copy(source = enrichSource(result.track, result.source))
+                    }
+                    val handle = resolved.source.handle as? PlaybackHandle.Url ?: return@launch
+                    if (resolved.source.provider != ProviderId.LOCAL || generation != playGeneration ||
+                        nextPrefetchTarget() != target || preferences != _preferences.value || naturalCompletionGate != null) return@launch
+                    seamlessNext = target to resolved
+                    engine.prepareNext(PreparedPlayback(next.id, handle, resolved.source.quality, generation))
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    trace("local successor unavailable: ${error.message}")
+                }
+            }
+            return
+        }
+        if (next.track.sources.isEmpty() || next.track.sources.any { it.provider != ProviderId.YOUTUBE_MUSIC }) return
         prefetchJob = scope.launch(sessionContext) {
             delay(1_000)
             if (generation != playGeneration || !_nowPlaying.value.isPlaying) return@launch
