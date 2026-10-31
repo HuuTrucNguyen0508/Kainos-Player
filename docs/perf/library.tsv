@@ -13,5 +13,6 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	mock-press-to-engine-ms	cold 40ms extractor versus already ready mock	40.843	0.309	40.886	0.343	10	opportunity only; no prefetch implemented; not sound	cf301db
 
 2026-10-31	chrome-recompositions-per-second	track-only scaffold flow at 4Hz positions	4	0	4	0	10	accepted; progress scope remains 4; render fixture not full App	1e50bde
-2026-10-31	first-query-20k-ms	background index after hydration; synchronous query	24.098	2.600	25.287	3.279	10	accepted; repeat 24.186 to 1.904; excludes prewarm work	SELF
-2026-10-31	first-query-100k-ms	background index after hydration; synchronous query	137.390	11.235	142.126	13.323	10	accepted; repeat 141.674 to 9.677; JVM only	SELF
+2026-10-31	first-query-20k-ms	background index after hydration; synchronous query	24.098	2.600	25.287	3.279	10	accepted; repeat 24.186 to 1.904; excludes prewarm work	7e5a2fc
+2026-10-31	first-query-100k-ms	background index after hydration; synchronous query	137.390	11.235	142.126	13.323	10	accepted; repeat 141.674 to 9.677; JVM only	7e5a2fc
+2026-10-31	mock-next-press-to-engine-ms	one ready YouTube prefetch versus immediate skip	41.348	0.624	41.649	0.726	10	accepted; repeat 41.099 to 0.545; 40ms mock extractor not sound	SELF

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,6 +109,16 @@ class PlayerSession(
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
     private var playJob: Job? = null
+    private var prefetchJob: Job? = null
+    private data class Prefetched(
+        val itemId: String,
+        val track: Track,
+        val preferences: PlaybackPreferences,
+        val resolved: ResolvedPlayback,
+        val validUntil: Long,
+    )
+    private var prefetched: Prefetched? = null
+
     /** Refills the tail of the queue it was started with; dropped when other playback replaces it. */
     private var continuation: QueueContinuation? = null
     private var continuationJob: Job? = null
@@ -160,6 +171,12 @@ class PlayerSession(
         if (this == null) "<none>" else "'$title' [${sources.firstOrNull()?.provider}] $canonicalId"
 
     init {
+        scope.launch(sessionContext) {
+            queueState.collect {
+                prefetchJob?.cancel()
+                prefetched = null
+            }
+        }
         scope.launch(sessionContext) {
             engine.state.collectLatest { engineState ->
                 val eventGeneration = engineState.playGeneration
@@ -922,6 +939,8 @@ class PlayerSession(
     }
 
     private fun beginTransition() {
+        prefetchJob?.cancel()
+        prefetched = null
         playGeneration++
         completionArmed = false
         startupTarget = null
@@ -933,6 +952,12 @@ class PlayerSession(
         val item = queue.queue.value.current ?: return null
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
+        val ready = prefetched?.takeIf {
+            it.itemId == item.id && it.track == item.track &&
+                it.preferences == _preferences.value && clock() < it.validUntil
+        }?.resolved
+        prefetched = null
+        prefetchJob?.cancel()
         beginTransition()
         val target = StartupTarget(resumeAt)
         startupTarget = target
@@ -959,7 +984,7 @@ class PlayerSession(
         refillIfLow()
         playJob = scope.launch(sessionContext) {
             try {
-                playTrack(item.track, item.id, generation, target)
+                playTrack(item.track, item.id, generation, target, ready)
             } finally {
                 if (startupTarget === target) startupTarget = null
             }
@@ -972,9 +997,14 @@ class PlayerSession(
         queueItemId: String,
         generation: Long,
         target: StartupTarget,
+        ready: ResolvedPlayback? = null,
     ) {
         currentCoroutineContext().ensureActive()
         if (generation != playGeneration) return
+        if (ready != null) {
+            startResolved(ready, fallback = null, generation = generation, target = target, alreadyEnriched = true)
+            return
+        }
         val playable = withContext(workContext) { prepareTrack(track) }
         if (generation != playGeneration) return
         _nowPlaying.update {
@@ -1013,10 +1043,11 @@ class PlayerSession(
         fallback: SourceFallbackEvent?,
         generation: Long,
         target: StartupTarget?,
+        alreadyEnriched: Boolean = false,
     ) {
         if (generation != playGeneration) return
         currentCoroutineContext().ensureActive()
-        val enrichedSource = runCatching { withContext(workContext) { enrichSource(resolved.track, resolved.source) } }
+        val enrichedSource = runCatching { withContext(workContext) { if (alreadyEnriched) resolved.source else enrichSource(resolved.track, resolved.source) } }
             .getOrElse { error ->
                 if (error is CancellationException) throw error
                 if (generation != playGeneration) return
@@ -1073,6 +1104,41 @@ class PlayerSession(
         }
         completionArmed = true
         trace("engine.play ok gen=$generation; completion armed")
+        schedulePrefetch(generation)
+
+    }
+
+    /** One short-lived YouTube result only; no Spotify traffic and no persisted URLs. */
+    private fun schedulePrefetch(generation: Long) {
+        prefetchJob?.cancel()
+        val snapshot = queueState.value
+        val next = snapshot.upcoming.firstOrNull() ?: return
+        if (next.track.sources.isEmpty() || next.track.sources.any { it.provider != ProviderId.YOUTUBE_MUSIC }) return
+        val preferences = _preferences.value
+        prefetchJob = scope.launch(sessionContext) {
+            delay(1_000)
+            if (generation != playGeneration || !_nowPlaying.value.isPlaying) return@launch
+            try {
+                val resolved = withContext(workContext) {
+                    val track = prepareTrack(next.track)
+                    val result = resolver.resolve(track, preferences)
+                    if (result.source.provider != ProviderId.YOUTUBE_MUSIC) return@withContext null
+                    result.copy(source = enrichSource(result.track, result.source))
+                } ?: return@launch
+                currentCoroutineContext().ensureActive()
+                if (generation != playGeneration || queueState.value !== snapshot || preferences != _preferences.value) return@launch
+                val url = (resolved.source.handle as? PlaybackHandle.Url)?.url ?: return@launch
+                // YouTube signed URLs normally carry epoch-seconds expiry. Leave a safety margin.
+                val expires = url.substringAfter('?', "").split('&')
+                    .firstOrNull { it.startsWith("expire=") }?.substringAfter('=')?.toLongOrNull()
+                    ?.let { it * 1_000 - 30_000 } ?: Long.MAX_VALUE
+                val validUntil = minOf(clock() + 30_000, expires)
+                if (validUntil > clock()) prefetched = Prefetched(next.id, next.track, preferences, resolved, validUntil)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                trace("prefetch unavailable: ${error.message}")
+            }
+        }
     }
 
     private fun startFallback(current: ResolvedPlayback, reason: String?, generation: Long) {
