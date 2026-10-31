@@ -27,6 +27,7 @@ internal class SpotifyAudioFocus(private val context: Context) {
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> SpotifyFocusPolicy.Change.DUCK
                 else -> SpotifyFocusPolicy.Change.GAIN
             }
+            if (event == SpotifyFocusPolicy.Change.LOSS) held = false
             when (policy.change(event, playing)) {
                 SpotifyFocusPolicy.Action.PAUSE -> { focusPause = true; AndroidMediaControls.pause() }
                 SpotifyFocusPolicy.Action.RESUME -> AndroidMediaControls.play()
@@ -41,7 +42,8 @@ internal class SpotifyAudioFocus(private val context: Context) {
             }
         }
     }
-    fun play(): Boolean {
+    /** A refusal must not fail the track: HyperOS can refuse a re-request, and nothing here can retry it. */
+    fun play() {
         policy.activate()
         if (!registered) {
             if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -52,8 +54,8 @@ internal class SpotifyAudioFocus(private val context: Context) {
             registered = true
         }
         if (!held) held = manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        playing = held
-        return held
+        if (!held) PlaybackTrace.log("Engine", "Spotify audio focus refused")
+        playing = true
     }
     fun pause() {
         playing = false

@@ -286,7 +286,7 @@ class AndroidPlaybackEngine(
                 // cancels buffering Spotify startup.
                 runMediaCommand {
                     AndroidMediaControls.forwardingPlayer?.useSpotifyAudioFocus(true)
-                    check(spotifyFocus.play()) { "Spotify audio focus was refused" }
+                    spotifyFocus.play()
                     activeBackend = ActiveBackend.SPOTIFY
                     ticker?.cancel()
                     val track = AndroidMediaControls.currentTrack()
@@ -318,8 +318,18 @@ class AndroidPlaybackEngine(
                 receiverJob = spotify.receiverEvents?.let { receiver ->
                     scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
                         receiver.events.collect { event ->
-                            if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation ||
-                                event.trackId != handle.trackId.removePrefix("spotify:track:")) return@collect
+                            if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation) return@collect
+                            val status = _state.value.status
+                            if (status == EngineStatus.ENDED || status == EngineStatus.FAILED) return@collect
+                            val sameTrack = event.trackId == handle.trackId.removePrefix("spotify:track:")
+                            val finished = com.universalmusic.player.domain.playback.spotifyTrackFinished(
+                                event.kind, sameTrack, receiverConfirmed, _state.value.positionMs, _state.value.durationMs,
+                            )
+                            if (finished) {
+                                finishSpotifyTrack(rolledOver = !sameTrack)
+                                return@collect
+                            }
+                            if (!sameTrack || event.kind == SpotifyReceiverEvent.Kind.END_OF_TRACK) return@collect
                             receiverConfirmed = true
                             spotifyOffset = event.positionMs ?: _state.value.positionMs
                             spotifyStartedAt = System.currentTimeMillis()
@@ -373,8 +383,26 @@ class AndroidPlaybackEngine(
                     )
                 }
                 if (_state.value.status == EngineStatus.PLAYING) startTicker()
+                else scope.launch {
+                    // Without receiver events the clock is all we have; never sit in buffering.
+                    delay(RECEIVER_CONFIRM_TIMEOUT_MS)
+                    if (activeBackend == ActiveBackend.SPOTIFY && activePlayGeneration == generation && !receiverConfirmed) {
+                        trace("no receiver event after ${RECEIVER_CONFIRM_TIMEOUT_MS}ms -> wall clock")
+                        spotifyStartedAt = System.currentTimeMillis()
+                        _state.update { it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs) }
+                        startTicker()
+                    }
+                }
             }
         }
+    }
+
+    private fun finishSpotifyTrack(rolledOver: Boolean) {
+        trace("Spotify track finished rolledOver=$rolledOver")
+        ticker?.cancel()
+        // The receiver is now playing something Kainos never queued; silence it.
+        if (rolledOver) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
+        _state.update { it.copy(status = EngineStatus.ENDED, positionMs = it.durationMs ?: it.positionMs) }
     }
 
     override fun pause() {
@@ -400,8 +428,8 @@ class AndroidPlaybackEngine(
             _state.update { current -> current.copy(status = EngineStatus.PLAYING) }
             startTicker()
             launchMediaCommand {
-                if (spotifyFocus.play()) enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
-                else AndroidMediaControls.pause()
+                spotifyFocus.play()
+                enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
             }
             return
         }
@@ -629,10 +657,12 @@ class AndroidPlaybackEngine(
                 } else {
                     position
                 }
+                // A confirmed receiver ends its own track; the clock only backstops a lost event.
+                val graceMs = if (receiverConfirmed) RECEIVER_END_GRACE_MS else 0L
                 if (
                     activeBackend == ActiveBackend.SPOTIFY &&
                     duration != null &&
-                    position >= duration && !receiverConfirmed && spotify.receiverEvents?.isAvailable != true
+                    position >= duration + graceMs
                 ) {
                     trace("Spotify ticker reached duration=$duration -> synthetic ENDED")
                     ticker?.cancel()
@@ -715,6 +745,8 @@ class AndroidPlaybackEngine(
 
     private companion object {
         const val TICK_MS = 400L
+        const val RECEIVER_CONFIRM_TIMEOUT_MS = 10_000L
+        const val RECEIVER_END_GRACE_MS = 5_000L
         /** ~2 s of frozen position while PLAYING before the ticker writes a stall line. */
         const val STALL_TICKS_BEFORE_TRACE = 5
         const val FOCUS_RETRY_WINDOW_MS = 1_500L

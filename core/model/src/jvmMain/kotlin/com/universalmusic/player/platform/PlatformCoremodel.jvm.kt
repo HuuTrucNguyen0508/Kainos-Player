@@ -9,10 +9,12 @@ import java.security.SecureRandom
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
 actual fun isNetworkAvailable(): Boolean = runCatching {
-    java.net.NetworkInterface.getNetworkInterfaces().toList().any { network ->
-        network.isUp && !network.isLoopback && network.inetAddresses.toList().any { !it.isLinkLocalAddress && !it.isLoopbackAddress }
-    }
+    hasDefaultRoute(java.io.File("/proc/net/route").readText())
 }.getOrDefault(true)
+
+/** A default route, unlike an interface list, is not faked by Docker bridges or Tailscale. */
+internal fun hasDefaultRoute(routeTable: String): Boolean =
+    routeTable.lineSequence().drop(1).any { it.trim().split(Regex("\\s+")).getOrNull(1) == "00000000" }
 
 actual fun monotonicElapsedRealtimeMs(): Long = System.nanoTime() / 1_000_000L
 
