@@ -25,7 +25,6 @@ import xyz.gianlu.librespot.core.Session.SpotifyAuthenticationException
 import xyz.gianlu.librespot.metadata.PlayableId
 import xyz.gianlu.librespot.player.Player
 import xyz.gianlu.librespot.player.PlayerConfiguration
-import xyz.gianlu.librespot.player.decoders.AndroidNativeDecoder
 
 /**
  * In-process librespot-java Connect receiver for Android. Audio decodes on-device via
@@ -329,8 +328,8 @@ internal class AndroidLibrespotPlaybackHost(
             if (decodersRegistered) return
             synchronized(this) {
                 if (decodersRegistered) return
-                Decoders.registerDecoder(SuperAudioFormat.VORBIS, 0, AndroidNativeDecoder::class.java)
-                Decoders.registerDecoder(SuperAudioFormat.MP3, 0, AndroidNativeDecoder::class.java)
+                Decoders.registerDecoder(SuperAudioFormat.VORBIS, 0, EndSafeNativeDecoder::class.java)
+                Decoders.registerDecoder(SuperAudioFormat.MP3, 0, EndSafeNativeDecoder::class.java)
                 decodersRegistered = true
             }
         }
