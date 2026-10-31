@@ -421,7 +421,9 @@ class DesktopPlaybackEngine internal constructor(
             if (handle !is PlaybackHandle.Url) return
             val epoch = ++mpvEpoch
             val active = activeProcess
-            if (active?.crossing != null) {
+            // mpv may switch its decoder before start-file reaches our FIFO. There is no
+            // atomic conditional seek in JSON IPC, so reload the owning local entry.
+            if (active?.gapless == true) {
                 seekRestartLocked(handle, current)?.let(::launchRestart)
                 return
             }

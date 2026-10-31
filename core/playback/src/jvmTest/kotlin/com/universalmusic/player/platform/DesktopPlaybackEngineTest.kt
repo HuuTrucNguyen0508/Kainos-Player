@@ -30,6 +30,26 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun queuedSeekCannotLandOnDecodedSuccessor() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            val gate = runtime.blockNextIpc { it.contains("volume") }
+            engine.setVolume(0.5f)
+            assertTrue(gate.entered.await(2, TimeUnit.SECONDS))
+            engine.seekTo(400)
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":2}""")
+            gate.release.countDown()
+            withTimeout(2_000) { while (runtime.commands.size < 2 && runtime.sentIpc.none { it.contains("time-pos") }) delay(10) }
+            assertTrue(runtime.sentIpc.none { it.contains("time-pos") }, "A seek must not reach B")
+            assertEquals(2, runtime.commands.size)
+            assertEquals(1, engine.state.value.playGeneration)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun delayedLoadedEventCannotIdentifyReplacedSuccessor() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
@@ -81,7 +101,7 @@ class DesktopPlaybackEngineTest {
             assertEquals(1, runtime.commands.size)
             engine.pause()
             engine.seekTo(12_000)
-            assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+            withTimeout(2_000) { while (engine.state.value.status != EngineStatus.PAUSED) delay(10) }
             engine.resume()
             engine.setVolume(0.4f)
             withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("volume\",40") }) delay(10) }
@@ -89,7 +109,7 @@ class DesktopPlaybackEngineTest {
             withTimeout(2_000) { while (engine.state.value.status != EngineStatus.FAILED) delay(10) }
             assertTrue(requireNotNull(engine.state.value.retryAtPositionMs) >= 12_000)
             engine.play(PlaybackHandle.Url("/second.flac", startPositionMs = 12_000), null, 12)
-            assertEquals(2, runtime.commands.size)
+            assertEquals(3, runtime.commands.size)
             assertEquals(12, engine.state.value.playGeneration)
         } finally { engine.stop(); runtime.destroyAll() }
     }
@@ -131,6 +151,11 @@ class DesktopPlaybackEngineTest {
             assertEquals(EngineStatus.PLAYING, engine.state.value.status)
             runtime.properties = { _, name -> if (name == "time-pos") "59.9" else null }
             engine.seekTo(59_900)
+            withTimeout(2_000) { while (runtime.commands.size < 2 || engine.state.value.status != EngineStatus.PLAYING) delay(10) }
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "missing", PlaybackHandle.Url("/missing.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.count { it.contains("append") } < 2) delay(10) }
             runtime.events.put("""{"event":"end-file","reason":"eof"}""")
             runtime.events.put("""{"event":"end-file","reason":"error"}""")
             delay(30)
