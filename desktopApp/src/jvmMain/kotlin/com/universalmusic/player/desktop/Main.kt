@@ -1,6 +1,11 @@
 package com.universalmusic.player.desktop
 
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -36,6 +41,12 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == "--perf-playback") {
+        require(DesktopIsolation.current.isIsolated) { "Performance runs require an isolated instance" }
+        runPlaybackProbe(args.drop(1))
+        return
+    }
+
     val isolation = try {
         DesktopIsolation.current
     } catch (e: IllegalArgumentException) {
@@ -78,7 +89,10 @@ fun main(args: Array<String>) {
 private fun runGui(onContainer: (AppContainer) -> Unit) {
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
+        if (System.getenv("KAINOS_PERF_MARKERS") == "1") println("PERF\tcontainer_begin\t${System.nanoTime()}")
         val container = ensureAppContainer().also(onContainer)
+        if (System.getenv("KAINOS_PERF_MARKERS") == "1") println("PERF\tcontainer_end\t${System.nanoTime()}")
+        val firstDraw = androidx.compose.runtime.remember { AtomicBoolean(false) }
         LaunchedEffect(container) {
             container.enableListeningHandoff()
             container.enableGuiPlayer()
@@ -136,7 +150,12 @@ private fun runGui(onContainer: (AppContainer) -> Unit) {
                 false
             },
         ) {
-            UniversalMusicApp(container)
+            if (System.getenv("KAINOS_PERF_MARKERS") == "1") {
+                Box(Modifier.fillMaxSize().drawWithContent {
+                    drawContent()
+                    if (firstDraw.compareAndSet(false, true)) println("PERF\tfirst_draw\t${System.nanoTime()}")
+                }) { UniversalMusicApp(container) }
+            } else UniversalMusicApp(container)
         }
     }
 }
