@@ -7,6 +7,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,6 +20,42 @@ import kotlinx.coroutines.test.runTest
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteLinkClientTest {
+    @Test
+    fun aPressWakesBackoffAndOnlyLatestWaitingIntentIsSent() = runTest {
+        var available = false
+        val transport = FakeTransport()
+        val attempts = mutableListOf<Long>()
+        val rig = rig(connect = {
+            attempts += testScheduler.currentTime
+            if (!available) error("offline")
+            transport
+        })
+        runCurrent()
+        advanceTimeBy(250)
+        available = true
+        val play = async { rig.client.send(RemoteCommand.Play) }
+        val pause = async { rig.client.send(RemoteCommand.Pause) }
+        runCurrent()
+        assertEquals(250L, attempts.last())
+        val poll = transport.polls.tryReceive().getOrThrow()
+        poll.reply(rig.replyOf("e1"))
+        runCurrent()
+        assertEquals(RemoteClientSend.Unreachable, play.await())
+        assertIs<RemoteClientSend.Applied>(pause.await())
+        assertEquals(listOf(RemoteCommand.Pause), transport.commands)
+    }
+
+    @Test
+    fun anOfflineIntentFailsAtFourSecondsAndNeverRunsAfterReconnect() = runTest {
+        val rig = rig(connect = { error("offline") })
+        runCurrent()
+        val result = async { rig.client.send(RemoteCommand.Play) }
+        runCurrent()
+        advanceTimeBy(4_001)
+        assertEquals(RemoteClientSend.Unreachable, result.await())
+        assertTrue(rig.transport.commands.isEmpty())
+    }
+
     @Test
     fun eachCommandRunsOnceEvenWhenTheHubOffersItAgain() = runTest {
         val rig = rig()

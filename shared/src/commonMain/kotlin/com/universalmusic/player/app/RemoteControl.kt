@@ -35,11 +35,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -174,15 +176,29 @@ class RemoteControl internal constructor(
                 intentJob?.cancel()
                 intentJob = scope.launch {
                     delay(4_000)
-                    if (intent.compareAndSet(it, null)) report("${target.name} didn't confirm")
+                    val current = intent.value
+                    if (current?.pressedAtMs == it.pressedAtMs && current.deviceId == it.deviceId && current.playing == it.playing && intent.compareAndSet(current, null)) report("${target.name} didn't confirm")
                 }
             }
         } else null
         scope.launch {
             val problem = when (role.value) {
-                RemoteRole.HUB -> host.send(target.deviceId, command).problem(target.name)
+                RemoteRole.HUB -> {
+                    if (pending != null && !host.peer(target.deviceId).connected) {
+                        withTimeoutOrNull(4_000) { host.changes.first { host.peer(target.deviceId).connected } }
+                        if (intent.value != pending) return@launch
+                    }
+                    host.send(target.deviceId, command, pending?.let { (clock() - it.pressedAtMs).coerceAtLeast(0) } ?: 0).problem(target.name)
+                }
                 RemoteRole.CLIENT -> client.send(command).problem(target.name)
                 RemoteRole.NONE -> null
+            }
+            if (pending != null && problem == null) {
+                intent.update { current ->
+                    if (current != pending) current else pending.copy(accepted = true).takeUnless { accepted ->
+                        devices.value.firstOrNull { it.deviceId == accepted.deviceId }?.let(accepted::reconciles) == true
+                    }
+                }
             }
             if (problem != null && (pending == null || intent.compareAndSet(pending, null))) report(problem)
         }
@@ -374,8 +390,8 @@ internal fun remoteLinkWanted(visible: Flow<Boolean>, active: Flow<Boolean>, gra
 internal const val REMOTE_LINK_GRACE_MS = 10L * 60 * 1000
 
 /** One pending explicit button intent. A disagreeing old snapshot cannot undo a press. */
-internal data class RemotePlayIntent(val deviceId: String, val playing: Boolean, val pressedAtMs: Long) {
-    fun reconciles(view: RemoteDeviceView): Boolean = view.deviceId == deviceId &&
+internal data class RemotePlayIntent(val deviceId: String, val playing: Boolean, val pressedAtMs: Long, val accepted: Boolean = false) {
+    fun reconciles(view: RemoteDeviceView): Boolean = accepted && view.deviceId == deviceId &&
         view.statusAtMs > pressedAtMs && view.status?.let { (it.isPlaying || it.buffering) == playing } == true
 
     fun display(view: RemoteDeviceView): RemoteDeviceView = if (view.deviceId != deviceId) view else

@@ -50,6 +50,35 @@ class RemoteControlTest {
     private val phone = PairedPeer("phone", "Poco", CertFingerprint.parse("ab".repeat(32))!!, pairedAtMs = 1)
 
     @Test
+    fun lateDisagreeingStatusDoesNotUndoOptimisticPress() {
+        val pending = RemotePlayIntent("phone", false, 100, accepted = true)
+        val old = RemoteDeviceView("phone", "Phone", true, true, RemoteStatus(isPlaying = true), 90, null)
+        assertFalse(pending.reconciles(old))
+        assertFalse(pending.reconciles(old.copy(statusAtMs = 120)))
+        assertFalse(pending.display(old).status!!.isPlaying)
+        assertTrue(pending.reconciles(old.copy(status = RemoteStatus(isPlaying = false), statusAtMs = 120)))
+        assertFalse(pending.reconciles(old.copy(status = RemoteStatus(isPlaying = false), statusAtMs = 90)))
+    }
+
+    @Test
+    fun doublePressUsesTheIntendedStateAndTimeoutFallsBack() = runTest {
+        val rig = hubRig()
+        rig.phonePolls(RemoteStatus(isPlaying = true))
+        rig.control.select("phone")
+        runCurrent()
+        rig.control.send(RemoteCommand.Pause)
+        runCurrent()
+        assertFalse(rig.control.state.value.selected!!.status!!.isPlaying)
+        rig.control.send(RemoteCommand.Play)
+        runCurrent()
+        assertTrue(rig.control.state.value.selected!!.status!!.isPlaying)
+        advanceTimeBy(4_001)
+        runCurrent()
+        assertTrue(rig.control.state.value.selected!!.status!!.isPlaying)
+        assertEquals("Poco didn't confirm", rig.control.state.value.message?.text)
+    }
+
+    @Test
     fun theLinkIsWantedWhileVisibleOrPlayingAndTenMinutesAfter() = runTest {
         val visible = MutableStateFlow(false)
         val active = MutableStateFlow(false)
