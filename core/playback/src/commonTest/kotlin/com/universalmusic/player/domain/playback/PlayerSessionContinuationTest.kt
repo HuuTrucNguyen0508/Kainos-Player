@@ -18,6 +18,20 @@ import kotlin.test.assertFalse
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionContinuationTest {
     @Test
+    fun terminalTailFailureWaitsForThePendingBatch() = runTest {
+        val (engine, session) = rig()
+        val gate = CompletableDeferred<Unit>()
+        session.play(listOf(t("seed")), continuation = ScriptedContinuation(2, listOf(t("next")), gate = gate))
+        runCurrent()
+        engine.state.value = engine.state.value.copy(status = EngineStatus.FAILED, error = "broken stream")
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals("next", session.nowPlaying.value.track?.title)
+        assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+    }
+
+    @Test
     fun manualNextWaitsForThePendingBatch() = runTest {
         val (engine, session) = rig()
         val gate = CompletableDeferred<Unit>()

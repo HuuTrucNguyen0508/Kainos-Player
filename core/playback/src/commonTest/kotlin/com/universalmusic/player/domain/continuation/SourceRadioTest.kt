@@ -12,6 +12,17 @@ import kotlin.test.assertTrue
 
 class SourceRadioTest {
     @Test
+    fun transientFetchFailureRetriesTheSameSourceBeforeReturningItsBatch() = runTest {
+        var calls = 0
+        val radio = SourceRadio(ProviderId.SPOTIFY, fetch = { _, _ ->
+            if (++calls < 3) error("network timeout")
+            listOf(sp("next"))
+        }, trace = {})
+        assertEquals(listOf("spotify:next"), radio.nextBatch(queueOf(sp("seed"))).ids())
+        assertEquals(3, calls)
+    }
+
+    @Test
     fun keepsOnlyTheSeedProvidersTracks() = runTest {
         val radio = SourceRadio(ProviderId.SPOTIFY, fetch = { _, _ ->
             listOf(sp("a"), yt("b"), local("c"), sp("d"))
