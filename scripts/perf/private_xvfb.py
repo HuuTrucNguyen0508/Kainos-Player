@@ -17,13 +17,20 @@ def free_display(first=90):
 
 
 def start(binary, size='1280x800x24', **popen):
-    number = free_display()
-    server = subprocess.Popen([binary, f':{number}', '-screen', '0', size, '-nolisten', 'tcp'], **popen)
-    socket = pathlib.Path(f'/tmp/.X11-unix/X{number}')
-    deadline = time.monotonic() + 10
-    while not socket.exists():
-        if server.poll() is not None or time.monotonic() > deadline:
-            server.terminate()
-            raise RuntimeError(f'Xvfb did not start on :{number}')
-        time.sleep(0.02)
-    return server, f':{number}'
+    # A server that loses a race for its display exits at once, so wait for our own socket
+    # and confirm our process survived before trusting it.
+    first = 90
+    for _ in range(8):
+        number = free_display(first)
+        server = subprocess.Popen([binary, f':{number}', '-screen', '0', size, '-nolisten', 'tcp'], **popen)
+        socket = pathlib.Path(f'/tmp/.X11-unix/X{number}')
+        deadline = time.monotonic() + 10
+        while not socket.exists() and server.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.15)
+        if server.poll() is None and socket.exists():
+            return server, f':{number}'
+        server.terminate()
+        server.wait(timeout=5)
+        first = number + 1
+    raise RuntimeError('Xvfb did not start on a private display')

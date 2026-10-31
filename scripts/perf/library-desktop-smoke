@@ -38,7 +38,7 @@ xvfb = app = None
 try:
     import private_xvfb
     log = (out/'xvfb.log').open('w')
-    xvfb, display = private_xvfb.start(str(pathlib.Path.home()/'.local/share/kainos-player/Xvfb'), size='1600x1000x24', stdout=log, stderr=log)
+    xvfb, display = private_xvfb.start(str(Path.home()/'.local/share/kainos-player/Xvfb'), size='1600x1000x24', stdout=log, stderr=log)
     env = dict(os.environ, DISPLAY=display, KAINOS_INSTANCE='librarysmoke', KAINOS_DATA_DIR=str(out/'data'), KAINOS_HUB_PORT='44983', KAINOS_MUSIC_DIRS=str(out/'music'), PATH=str(out/'bin')+':'+os.environ['PATH'], SKIKO_RENDER_API='SOFTWARE', XDG_CURRENT_DESKTOP='KainosPerf')
     env.pop('WAYLAND_DISPLAY', None)
     appdir = root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'

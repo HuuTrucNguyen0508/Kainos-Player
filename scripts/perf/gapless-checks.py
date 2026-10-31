@@ -5,7 +5,6 @@ root=pathlib.Path(__file__).resolve().parents[2]
 import private_xvfb
 x,display=private_xvfb.start(str(pathlib.Path.home()/'.local/share/kainos-player/Xvfb'),stdout=S.DEVNULL)
 try:
-    os.close(r)
     result=S.run(['flock','-s','/tmp/kainos-perf.lock','./gradlew','jvmTest',
         ':core:data:verifyCommonMainKainosDatabaseMigration',':androidApp:assembleDebug',
         ':desktopApp:createDistributable','--console=plain'],cwd=root,
