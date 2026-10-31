@@ -21,6 +21,22 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun pauseDuringRebufferKeepsTheLoadedTrackAndPosition() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.playAwait(track("Song", "Artist", provider = ProviderId.SAMPLE))
+        engine.state.value = engine.state.value.copy(status = EngineStatus.BUFFERING, positionMs = 420)
+        runCurrent()
+        session.pauseTransport()
+        runCurrent()
+        assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+        assertEquals(420, engine.state.value.positionMs)
+        session.playTransport()
+        runCurrent()
+        assertEquals(420, engine.state.value.positionMs)
+    }
+
+    @Test
     fun pauseWhileResolvingCancelsPendingPlayback() = runTest {
         var resolutions = 0
         val resolver = object : SourceResolver {

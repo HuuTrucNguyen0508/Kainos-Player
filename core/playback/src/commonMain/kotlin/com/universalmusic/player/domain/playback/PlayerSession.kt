@@ -612,11 +612,12 @@ class PlayerSession(
         val now = _nowPlaying.value
         if (!now.buffering && !now.isPlaying && !lastRecordedPlaying) return
         val engineStatus = engine.state.value.status
-        if (_nowPlaying.value.buffering) {
+        if (now.buffering && !(now.resolved != null && completionArmed)) {
             trace(
                 "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.label()} " +
                     "(engine=$engineStatus gen=$playGeneration)",
             )
+            pendingResumePositionMs = startupTarget?.positionMs ?: now.positionMs.takeIf { it > 0 }
             beginTransition()
             playJob?.cancel()
             playJob = null
@@ -627,7 +628,7 @@ class PlayerSession(
         }
         trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
         pausePending = true
-        _nowPlaying.update { it.copy(isPlaying = false) }
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false) }
         engine.pause()
         record(change, playing = false)
     }
