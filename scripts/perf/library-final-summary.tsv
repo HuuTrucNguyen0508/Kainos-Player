@@ -1,0 +1,7 @@
+file	size	metric	n	p50_ms	p90_ms	p99_ms	min_ms	max_ms
+session2-final	1	chromeRecompositions:wholeState	10	4.000	4.000	4.000	4.000	4.000
+session2-final	1	chromeRecompositions:trackFlow	10	0.000	0.000	0.000	0.000	0.000
+session2-final	1024	artworkDecode:prefetched	10	0.064	0.074	0.075	0.056	0.075
+session2-final	1024	artworkDecode:cold	10	5.050	5.359	5.363	4.890	5.363
+session2-final	2	prefetchSkip:cold	10	41.038	41.280	41.360	40.688	41.360
+session2-final	2	prefetchSkip:ready	10	0.572	0.741	0.744	0.464	0.744

@@ -11,6 +11,10 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,6 +39,7 @@ internal class LibraryPresenter(
     private val spotifyState: StateFlow<ProviderState>,
     private val downloads: StateFlow<Map<String, DownloadItemState>>,
     private val scope: CoroutineScope,
+    private val catalogContext: CoroutineContext = EmptyCoroutineContext,
     private val refreshLocalLibrary: () -> Unit = {},
     private val refreshSpotifyLibrary: suspend () -> Unit = {},
     private val onPinHome: (
@@ -94,9 +99,10 @@ internal class LibraryPresenter(
             ::SpotifySlice,
         ),
         combine(kainosPlaylistRows, homePins, downloads, ::PinsSlice),
-        queryText,
-    ) { catalog, spotify, pins, query ->
-        derive(catalog, spotify, pins, query)
+    ) { catalog, spotify, pins ->
+        derive(catalog, spotify, pins, "").also { it.searchIndex.warm() }
+    }.flowOn(catalogContext).combine(queryText) { catalog, query ->
+        catalog.withQuery(query)
     }.stateIn(scope, SharingStarted.Eagerly, initialState())
 
     fun setQuery(value: String) {
@@ -224,6 +230,7 @@ internal class LibraryPresenter(
             spotifyState = container.spotify.state,
             downloads = container.heartedAudio.downloads,
             scope = scope,
+            catalogContext = Dispatchers.Default,
             refreshLocalLibrary = container::refreshLocalLibrary,
             refreshSpotifyLibrary = container::refreshSpotifyLibrary,
             onPinHome = { kind, targetId, title, subtitle, artworkUrl, providerEntityId, provider ->

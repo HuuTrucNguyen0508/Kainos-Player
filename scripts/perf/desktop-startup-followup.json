@@ -1,0 +1,342 @@
+{
+  "sqlite_native": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 529.1144025000001,
+        "p90": 539.260091,
+        "min": 522.96465,
+        "max": 554.781387
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 714.958875,
+        "p90": 725.753063,
+        "min": 704.954333,
+        "max": 734.428962
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 545.540518,
+        "p90": 560.129789,
+        "min": 539.175615,
+        "max": 572.515887
+      }
+    },
+    "native": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 535.3166405,
+        "p90": 541.758555,
+        "min": 526.873395,
+        "max": 548.297976
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 714.9099685,
+        "p90": 730.03484,
+        "min": 705.588109,
+        "max": 740.197333
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 550.7854434999999,
+        "p90": 560.522743,
+        "min": 539.775571,
+        "max": 570.283336
+      }
+    },
+    "errors": 0
+  },
+  "sqlite_tmpdir": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 548.1314110000001,
+        "p90": 574.497132,
+        "min": 539.937343,
+        "max": 578.024102
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 735.335419,
+        "p90": 760.366474,
+        "min": 721.115451,
+        "max": 771.185994
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 564.7557485,
+        "p90": 591.608417,
+        "min": 559.38205,
+        "max": 592.168399
+      }
+    },
+    "tmpdir": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 537.810249,
+        "p90": 544.297145,
+        "min": 527.709584,
+        "max": 555.659103
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 721.112237,
+        "p90": 731.418259,
+        "min": 714.167502,
+        "max": 751.738542
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 555.089656,
+        "p90": 562.114326,
+        "min": 540.111006,
+        "max": 571.032853
+      }
+    },
+    "errors": 0
+  },
+  "http_trial": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 541.2724885,
+        "p90": 545.440523,
+        "min": 529.916432,
+        "max": 549.749022
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 727.307019,
+        "p90": 733.738754,
+        "min": 710.484496,
+        "max": 733.881791
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 559.4543575,
+        "p90": 561.611082,
+        "min": 550.458899,
+        "max": 568.977581
+      }
+    },
+    "prewarm": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 506.93023949999997,
+        "p90": 515.233152,
+        "min": 499.051313,
+        "max": 515.937535
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 692.1517425,
+        "p90": 700.984401,
+        "min": 679.077611,
+        "max": 703.577402
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 521.1423225000001,
+        "p90": 530.722273,
+        "min": 519.475385,
+        "max": 531.995135
+      }
+    },
+    "errors": 0
+  },
+  "http_final": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 542.9662539999999,
+        "p90": 551.215169,
+        "min": 531.023426,
+        "max": 556.016039
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 731.416924,
+        "p90": 735.619209,
+        "min": 709.980776,
+        "max": 749.351001
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 560.9862965,
+        "p90": 570.024794,
+        "min": 549.671498,
+        "max": 571.301656
+      }
+    },
+    "prewarm": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 512.2483085,
+        "p90": 518.45679,
+        "min": 502.15864,
+        "max": 522.236463
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 699.531744,
+        "p90": 708.899936,
+        "min": 682.11163,
+        "max": 709.162414
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 529.6804635000001,
+        "p90": 538.869033,
+        "min": 521.006522,
+        "max": 539.15951
+      }
+    },
+    "errors": 0
+  },
+  "mpris_rejected": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 507.92838500000005,
+        "p90": 524.626629,
+        "min": 498.156183,
+        "max": 528.712302
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 691.591368,
+        "p90": 710.405922,
+        "min": 681.485409,
+        "max": 713.73235
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 525.3221329999999,
+        "p90": 539.803425,
+        "min": 509.853151,
+        "max": 549.769642
+      }
+    },
+    "defer": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 486.2021675,
+        "p90": 504.136705,
+        "min": 480.683389,
+        "max": 511.957137
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 669.852308,
+        "p90": 694.964341,
+        "min": 661.225005,
+        "max": 697.006723
+      },
+      "mapped_ms": {
+        "n": 10,
+        "median": 499.991798,
+        "p90": 519.946283,
+        "min": 498.575298,
+        "max": 529.380388
+      }
+    },
+    "errors": 0
+  },
+  "storage_spans": {
+    "baseline": {
+      "sqlite_initialize_ms": {
+        "median": 39.9536765,
+        "p90": 40.852168,
+        "min": 39.353734,
+        "max": 41.44451,
+        "n": 10
+      },
+      "database_first_read_ms": {
+        "median": 26.998972000000002,
+        "p90": 28.638146,
+        "min": 25.917339,
+        "max": 29.736209,
+        "n": 10
+      },
+      "database_second_read_ms": {
+        "median": 0.680642,
+        "p90": 0.715462,
+        "min": 0.648232,
+        "max": 0.726412,
+        "n": 10
+      }
+    },
+    "native": {
+      "sqlite_initialize_ms": {
+        "median": 9.2915145,
+        "p90": 9.937947,
+        "min": 8.688654,
+        "max": 11.13803,
+        "n": 10
+      },
+      "database_first_read_ms": {
+        "median": 28.856596500000002,
+        "p90": 31.346613,
+        "min": 27.449073,
+        "max": 32.469996,
+        "n": 10
+      },
+      "database_second_read_ms": {
+        "median": 0.735082,
+        "p90": 0.777922,
+        "min": 0.681572,
+        "max": 0.787942,
+        "n": 10
+      }
+    },
+    "tmpdir": {
+      "sqlite_initialize_ms": {
+        "median": 37.255819,
+        "p90": 37.985271,
+        "min": 36.110076,
+        "max": 38.062601,
+        "n": 10
+      },
+      "database_first_read_ms": {
+        "median": 26.9273165,
+        "p90": 27.995714,
+        "min": 25.619829,
+        "max": 28.106085,
+        "n": 10
+      },
+      "database_second_read_ms": {
+        "median": 0.6698569999999999,
+        "p90": 0.715582,
+        "min": 0.635661,
+        "max": 0.750912,
+        "n": 10
+      }
+    },
+    "errors": 0
+  },
+  "conditions": {
+    "page_cache_dropped": false,
+    "gui": "private Xvfb, software rendering",
+    "fixture": "empty isolated Library",
+    "runs_per_arm": 10,
+    "accepted_code": "043dff3",
+    "raw_directories": "/tmp/kainos-* as listed in desktop-README.md"
+  },
+  "verification": {
+    "gradle_exit": 0,
+    "xml_tests": 927,
+    "xml_failures": 0,
+    "xml_errors": 0,
+    "xml_skips": 3,
+    "unchanged_tasks": "up-to-date",
+    "launcher_tests": [
+      6,
+      9
+    ],
+    "launcher_e2e": "passed; null audio",
+    "native_extract_helper": "passed; separate diagnostic, excluded from timing",
+    "schema_changed": false
+  }
+}
