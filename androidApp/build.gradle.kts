@@ -7,6 +7,7 @@ plugins {
 
 dependencies {
     implementation(projects.shared)
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation(libs.androidx.activity.compose)
     implementation(libs.compose.uiToolingPreview)
     implementation(libs.compose.foundation)
@@ -35,6 +36,7 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    testBuildType = providers.gradleProperty("androidTestTarget").getOrElse("debug")
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -54,7 +56,16 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (providers.gradleProperty("androidTestTarget").orNull == "optimized") {
+                proguardFiles("optimized-test-rules.pro")
+            }
         }
+    }
+    buildTypes.create("profile") {
+        initWith(buildTypes.getByName("optimized"))
+        isMinifyEnabled = false
+        isShrinkResources = false
+        matchingFallbacks += listOf("release")
     }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true

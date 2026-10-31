@@ -1,139 +1,128 @@
 # Android optimized candidate
 
-Keep debug available. The new `optimized` variant is a personal-use candidate,
-not yet cleared for shipping. It enables R8 full mode (the AGP 9.1 default),
-integrated resource shrinking and the optimizing default ProGuard configuration.
-Reflection boundaries in NewPipe/Rhino and librespot/protobuf are kept conservatively.
-The application ID, version code and database schema are unchanged. It uses the
-same Gradle debug signing configuration as debug, not a new release certificate.
-There is no release signing configuration in this checkout. A different machine's
-debug keystore may differ; compare certificate SHA-256 before any phone update.
+Recommend `optimized` for the next personal-use APK after the phone checks below.
+On the emulator it starts faster and uses less idle RSS than debug; it is 80.10%
+smaller. Keep debug as rollback. No release or physical-phone install was made.
+The application ID, versionCode, database schema and debug signing identity are
+unchanged. Compare certificates before installing an APK built on another machine.
 
-Build without publishing a release:
+## Measured results, 2026-10-31
+
+Pixel_10_Pro, API 37, x86_64, SwiftShader, 120 generated silent WAV tracks.
+Each state has 15 successful cold launches and complete asserted journeys.
+Values are median / p90. Frame values summarize each whole journey, not scroll alone.
+
+| State | Initial display ms | Frame CPU ms | Idle RSS KiB |
+| --- | ---: | ---: | ---: |
+| Debug, None | 1023.25 / 1045.78 | 51.54 / 52.28 | 169616 / 208384 |
+| Optimized, None | 691.87 / 720.50 | 51.19 / 51.46 | 153804 / 162012 |
+| Optimized, Partial | 655.25 / 675.97 | 51.20 / 52.12 | 151644 / 152584 |
+
+Optimized None is 0.676 times debug startup and 0.907 times debug idle RSS.
+Partial is 0.947 times optimized None startup. The profile increment is modest,
+with overlapping ranges and non-interleaved state batches. Frame ranges overlap:
+no meaningful frame-time improvement was established. A retained debug trace
+averages 25.6 ms in RenderThread EGL swap and 16.8 ms in main-thread postAndWait.
+No service/engine startup deferral was made without a measured safe change.
+
+`None` resets compilation and skips profile installation. `Partial` requires the
+packaged baseline profile with zero warmup iterations. Debug ran with the
+DEBUGGABLE suppression; every state used EMULATOR suppression. Guest shader and
+kernel page caches were cleared by Macrobenchmark COLD. The host disk-image page
+cache was not cleared. CPU frequency was not locked. Host load at run start was
+1.87 for debug and 2.51 for optimized on 24 cores. These are emulator ratios,
+not predictions for the Poco or physical storage.
+
+[Summary with ranges](runtime-benchmark-summary.json) and
+[comparison chart](runtime-benchmark.png) record the samples' statistics.
+Raw traces, JSON, XML and logcats remain in `logs/perf-android-runtime/`, outside Git.
+The lane ledger is `docs/perf/android.tsv`; `self` means the commit adding the row.
+
+## Profiles and runtime proof
+
+The generated baseline has 35,501 rules including startup rules. Startup has
+23,730 rules, with 3,288 Kainos entries in AGP's merged startup input. Sources are
+`src/main/baseline-prof.txt` and `src/main/baselineProfiles/startup-prof.txt`.
+Collection covers Home, Library fast scroll, local Now Playing and Search typing.
+The non-minified `profile` target is profileable; optimized is profileable too.
+BaselineProfileRule generates the files; no profile rules were invented.
+
+The normal APK is 6,328,389 bytes versus debug's 31,795,904. It contains
+`assets/dexopt/baseline.prof` at 16,760 bytes and `.profm` at 1,111 bytes.
+Its SHA-256 is `eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28`.
+After app-module tests, rebuilding the normal APK reproduced this measured hash.
+[APK inspection](optimized-apk-check.json) confirms matching signing identity and version.
+
+The original optimized startup crashed before Activity creation. R8's usage file
+showed Room's `WorkDatabase_Impl` no-argument constructor removed. A focused
+production keep rule fixed that crash. Normal-APK Gradle-run UiAutomator tests
+passed launch, Library, advancing local playback, pause, seek, next, Settings,
+Devices and sync, and retained-heart verification after debug → optimized → debug.
+All installs used `-r`; no uninstall, data clear or schema change was used.
+Retention proves the app heart and usable synthetic library, not SAF permissions,
+all settings, playlists or every stored row.
+
+App-module tests passed the real Spotify login WebView and live NewPipe resolution,
+playback position advance and pause. They need instrumentation-only keeps for
+precompiled runner dependencies, mocks and public test-facing contracts after R8
+inlines production callers. Those keeps are enabled only by
+`-PandroidTestTarget=optimized`; that APK is not the measured or delivery artifact.
+Normal-APK YouTube Search was attempted but blocked by absent provider credentials:
+its screen said “Connect a provider” and requested a Data API key. Direct NewPipe
+playback needs no key and passed. Spotify account playback remains a phone check.
+
+## Rerun
+
+Use the emulator-only [runtime harness](../androidMacrobenchmark/README.md).
+It documents boot/shutdown, synthetic data, profile collection, all compilation
+states, retention methods and optional network tests. Every Gradle command must
+inherit `ANDROID_SERIAL=emulator-5554`. No interactive device tools are needed
+for these Gradle-run tests. A physical phone must never be substituted.
 
 ```bash
 export JAVA_HOME="$HOME/.jdks/temurin-17"
 export ANDROID_HOME="$HOME/Android/Sdk"
-flock -s /tmp/kainos-perf.lock ./gradlew :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug
-python3 scripts/perf/android-apk-check.py \
-  androidApp/build/outputs/apk/debug/androidApp-debug.apk \
-  androidApp/build/outputs/apk/optimized/androidApp-optimized.apk \
-  --build-tools "$ANDROID_HOME/build-tools/36.0.0"
+export ANDROID_SERIAL=emulator-5554
+scripts/perf/android-runtime seed profile
+scripts/perf/android-runtime profile
+scripts/perf/android-copy-profiles.py
+# Use an owned private Xvfb DISPLAY for JVM UI tests, not the user's desktop.
+flock -s /tmp/kainos-perf.lock ./gradlew :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable --continue --console=plain
+scripts/perf/android-runtime measure debug none
+scripts/perf/android-runtime measure optimized
+python3 scripts/perf/android-apk-check.py androidApp/build/outputs/apk/debug/androidApp-debug.apk androidApp/build/outputs/apk/optimized/androidApp-optimized.apk --build-tools "$ANDROID_HOME/build-tools/36.0.0"
 ```
 
-The candidate APK is `androidApp/build/outputs/apk/optimized/androidApp-optimized.apk`.
-Keep `androidApp/build/outputs/mapping/optimized/` with it for crash retracing.
-The checker inspects actual DEX class definitions, manifest flags, versions and
-verified signing certificates. It does not prove runtime reflection or data retention.
+All listed checks passed on the final normal build. JVM XML totals are 927 tests,
+zero failures, zero errors and three skips; cache/up-to-date results were reused.
+The first JVM attempt failed on an unavailable X display and passed with private
+Xvfb. Initial driver attempts had stale nodes and coordinate misses after flings;
+the successful harness resolves accessibility actions and asserts playback advance.
 
-## Required emulator gate
+## Phone acceptance and shipping
 
-Open the emulator with T3 `device_list` then `device_open`. Use the returned
-`agent-device` command for app launches, taps and screenshots. Never use a physical
-phone for this lane. Every install, log and test-runner adb command must select
-an explicit `emulator-NNNN` serial. Do not uninstall or clear the app.
+A plain `adb install -r` immediately gives R8 shrinking and startup DEX layout.
+It does not establish profile-guided AOT compilation. ProfileInstaller supplies
+profile data after launch; ART compilation timing depends on the device. Compare
+first launch after sideload separately from later idle-compiled launches. See
+[Android's profile guidance](https://developer.android.com/topic/performance/baselineprofiles/create-baselineprofile).
 
-1. Install debug with `adb -s emulator-NNNN install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
-2. Open via agent-device. Seed two generated audio files, pick their folder using
-   the app's SAF picker, heart one track, change an appearance setting and play
-   a track. Preserve a copy of the playback log. Record database rows, settings,
-   persisted URI permissions and log contents before updating.
-3. Install optimized with `adb -s emulator-NNNN install -r androidApp/build/outputs/apk/optimized/androidApp-optimized.apk`.
-4. Verify the same setting, folder and heart remain, and the previous log still
-   exists. Exercise Library scroll, local play/pause/seek/next, Now Playing,
-   YouTube search and playback, Settings, Home sync and the Spotify login screen.
-   Capture logcat and check for reflection, serialization and verifier failures.
-5. Reinstall debug using the first command, with no uninstall, then verify the
-   same state again. Never use `-d` or clear data to disguise a version mismatch.
+Only when explicitly asked to use the phone:
 
-No emulator runtime proof exists yet: T3 `device_open` failed twice because its
-avdmanager process used Java 1.8.0_503 and requires JDK 17. No fallback emulator
-launcher or phone was used. Fix the device host Java environment outside this
-lane, then rerun this gate.
+- Back up and compare the installed certificate. Update with `install -r`.
+  Verify hearts, SAF folders, playlists, settings, logs and paused-session restore.
+- Play SAF audio, pause, seek and skip. Check notification, lock-screen, Bluetooth
+  and HyperOS island controls through several transitions.
+- Use the real Spotify account for login, librespot playback and local/Spotify
+  transitions. A WebView opening does not prove account playback.
+- Configure YouTube search and play two results. Recheck library scroll and typing
+  with real artwork and the user's actual library size.
+- Test actual phone/PC sync only when both are available at home. Opening the
+  Devices and sync screen is not an interoperability test.
+- Roll back with the retained matching debug APK using `install -r` if necessary.
+  Verify the same data. Never uninstall or use version-downgrade flags to hide failure.
 
-## Profiles and measurement
-
-AGP merges dependency-provided baseline profiles into optimized's APK. Inspect
-`assets/dexopt/baseline.prof` and `.profm` with the APK checker. These are upstream
-library profiles, not a generated Kainos journey profile. No app profile or
-startup profile was invented. Device startup failed before rootless profile
-collection could be evaluated. Once the device service works, use a dedicated
-Macrobenchmark/BaselineProfileRule test module to cover cold start, Library
-scroll, Now Playing and Search, then collect on API 33+ and commit the generated
-profile. The baselineprofile plugin/module was not added without a runnable gate.
-
-Cold-process timing must use at least 15 successful runs per arm, force-stop
-between runs, the same seeded data, and an exclusive `/tmp/kainos-perf.lock`.
-Record the host load inside the lock. The requested `am start -W` collection needs
-a device test runner or an explicitly authorized shell benchmark environment;
-T3 interactive launches must use agent-device. OS page cache is not dropped.
-Compare verify-only and speed compilation separately; for speed-profile, reset
-compilation first, install the packaged profile, compile with speed-profile,
-and record the actual ART state rather than assuming a reset preserves profiles.
-Do not mix compilation states in one median. After identical agent-device Library
-scroll journeys, capture `adb -s emulator-NNNN shell dumpsys gfxinfo com.universalmusic.player framestats`
-and idle `dumpsys meminfo`. Keep all samples and report failures, median, p90 and
-range. Emulator ratios cannot predict phone latency.
-
-## Phone checklist and future shipping
-
-Phone testing is deferred to the user after the emulator gate. First confirm
-certificate equality with the installed APK and take the usual app-data backup.
-Use `adb -t <fresh-phone-transport-id> install -r <candidate>` only when explicitly
-asked. Check retained hearts, SAF folders, settings and logs first; then local
-playback/notification controls, YouTube, real Spotify login/playback/transitions,
-Home sync and a process restart that restores paused. Spotify playback has no
-runtime coverage on the emulator and needs this real-device test.
-
-Rollback with `adb -t <fresh-phone-transport-id> install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
-The checker establishes matching version/signature eligibility; actual rollback
-data survival still requires the emulator gate. Do not uninstall.
-
-Only when explicitly asked to ship and after acceptance, copy the chosen APK to
-repo-root `release/kainos-player-optimized-<version>.apk` (or keep the existing
-`kainos-player-debug-<version>.apk` if debug is selected). Publish an official
-GitHub Release marked Latest with both the selected Android APK and
-`kainos-player-linux-*.tar.gz`. No release was built or published by this lane.
-Root README/CI and AGENTS shipping wording are outside this lane's ownership;
-the controller should link these instructions and decide whether to promote the
-candidate once runtime gates pass. Existing debug commands remain valid.
-
-Sources: [Android optimization defaults](https://developer.android.com/topic/performance/app-optimization/enable-app-optimization),
-[NewPipe's Android Rhino rules](https://github.com/TeamNewPipe/NewPipe/blob/dev/app/proguard-rules.pro).
-
-## Recorded results, 2026-10-31
-
-Base `5087402`, same application sources and version for both APKs. The APK check
-result is committed as `androidApp/optimized-apk-check.json`; reproduce it with
-the command above. Debug is 31,795,904 bytes; optimized is 6,131,683 bytes, 80.715%
-smaller. This is one deterministic artifact observation per build, not a latency
-benchmark with repeated samples. Both verified APKs have certificate SHA-256
-`780b3387b1f828858b3e3c27e59117a5ab24f171bc27db17055f2d3a93961895`, application ID
-`com.universalmusic.player` and versionCode 1. Debug is debuggable; optimized is
-not. Required decoder, sink, librespot Session, protobuf GeneratedMessageV3,
-Spotify LoginCredentials, NewPipe and Rhino Context class definitions exist in
-both DEX sets. Optimized includes dependency baseline.prof and baseline.profm;
-its merged source profile has 6,331 lines. No application-generated profile exists.
-
-Successful combined check, JDK 17 / Android SDK, under the shared build lock:
-
-```bash
-./gradlew :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable --console=plain
-```
-
-JVM XML reports total 927 tests, 0 failures, 0 errors, 3 skipped. Tasks used
-Gradle cache/up-to-date results; they were not forced to rerun. Desktop packaging
-was executed successfully in the first check. Local logs remain in
-`logs/perf-android/{baseline-build,checks,checks-2}.log`. The first R8 attempt
-failed on optional desktop API references; the scoped rules fixed that build.
-No broad `-ignorewarnings` was added. The lane ledger is `docs/perf/android.tsv`.
-Its `self` commit value denotes the commit that added the row.
-
-Startup audit found no custom Application.onCreate in the manifest. MainActivity
-initializes the platform and container before composition. AndroidPlaybackEngine
-connects its MediaController during initialization; the service builds ExoPlayer,
-its MediaSession and a silence file onCreate. All remain unchanged because there
-is no timing evidence to justify moving them. Shared AppContainer is outside
-this lane. Runtime serialization, NewPipe playback, service/media-session
-behavior, Home sync, Spotify login, in-place retention and rollback retention are
-unverified. Do not infer those from successful compilation or DEX class presence.
+When explicitly asked to ship, build without `androidTestTarget`, retain mapping
+files, copy the chosen APK to repo-root `release/`, and publish an official GitHub
+Release marked Latest with both the Android APK and Linux tarball. Keep debug
+available until phone acceptance. This lane neither copied a release nor published one.

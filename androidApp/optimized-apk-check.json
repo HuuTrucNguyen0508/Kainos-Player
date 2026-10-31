@@ -18,8 +18,8 @@
     ]
   },
   "optimized": {
-    "bytes": 6131683,
-    "classes": 9719,
+    "bytes": 6328389,
+    "classes": 9996,
     "certificate_sha256": "780b3387b1f828858b3e3c27e59117a5ab24f171bc27db17055f2d3a93961895",
     "application_id": "com.universalmusic.player",
     "version_code": 1,
