@@ -111,6 +111,7 @@ class RemoteLinkClient(
     private var latestIntent = 0L
     private var forcePollStatus = false
     private var directLease: String? = null
+    private var directLeaseAt: TimeMark? = null
     private data class StatusIntent(val playing: Boolean, val started: TimeMark)
     private var statusIntent: StatusIntent? = null
 
@@ -141,7 +142,7 @@ class RemoteLinkClient(
         val explicit = command == RemoteCommand.Play || command == RemoteCommand.Pause
         val intent = if (explicit) ++latestIntent else 0L
         // Capture before the press is dispatched: a later-issued lease could extend its deadline.
-        val lease = directLease
+        val lease = directLease?.takeIf { directLeaseAt?.elapsedNow()?.inWholeMilliseconds?.let { age -> age < REMOTE_DIRECT_LEASE_FRESH_MS } == true }
         val started = monotonicClock.markNow()
         if (explicit) statusIntent = StatusIntent(command == RemoteCommand.Play, started)
         return try {
@@ -169,7 +170,7 @@ class RemoteLinkClient(
                     error("unreachable")
                 }
             }
-            if (reply == null) return RemoteClientSend.Unreachable
+            if (reply == null || reply.leaseRejected) return RemoteClientSend.Unreachable
             if (!explicit || intent == latestIntent) reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
             RemoteClientSend.Applied(reply)
         } catch (cancelled: CancellationException) {
@@ -267,6 +268,7 @@ class RemoteLinkClient(
             }
             if (request.knownHubVersion == -1L && observingIntent == latestIntent) forcePollStatus = false
             directLease = reply.directIntentLease
+            directLeaseAt = monotonicClock.markNow()
             val wasConnected = _state.value.connected
             failures = 0
             if (!reply.superseded) {
@@ -310,7 +312,8 @@ class RemoteLinkClient(
             player.state.first { next -> sent?.status.isMaterialChange(next?.status, elapsedSince(sent, next)) }
         }
         // Only a poll the hub answers renews the lease, so the repost must ask for an immediate reply.
-        val refresh = async { if (directLease != null && pressable()) delay(2_000) else awaitCancellation() }
+        val refreshing = directLease != null && pressable() && request.knownHubVersion != -1L
+        val refresh = async { if (refreshing) delay(REMOTE_DIRECT_LEASE_REFRESH_MS) else awaitCancellation() }
         val wake = async { reconnect.receive() }
         select<RemotePollReply?> {
             call.onAwait { reply -> change.cancel(); refresh.cancel(); wake.cancel(); reply }
@@ -452,6 +455,10 @@ const val REMOTE_COMMAND_REQUEST_TIMEOUT_MS = 5_000L
 const val REMOTE_ARTWORK_REQUEST_TIMEOUT_MS = 10_000L
 
 const val REMOTE_REPOST_GAP_MS = 250L
+const val REMOTE_DIRECT_LEASE_REFRESH_MS = 2_000L
+
+/** Leases last 4 s from issue. Past this age a press goes plain: the reply's transit also spent lease time. */
+const val REMOTE_DIRECT_LEASE_FRESH_MS = 3_000L
 
 // A single fast reconnect recovers a brief LAN failure inside the command deadline.
 // Sustained failures still back off to 30 seconds. Poll seq/epoch dedupe is unchanged.

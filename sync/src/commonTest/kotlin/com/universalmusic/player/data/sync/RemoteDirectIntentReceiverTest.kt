@@ -26,8 +26,8 @@ class RemoteDirectIntentReceiverTest {
         val play = RemoteDirectIntent(RemoteCommand.Play, "sender", 1, 0, lease)
         val pause = play.copy(command = RemoteCommand.Pause, seq = 2)
         receiver.apply("phone", pause, player)
-        receiver.apply("phone", play, player)
-        receiver.apply("phone", pause, player)
+        assertFalse(receiver.apply("phone", play, player).leaseRejected)
+        assertFalse(receiver.apply("phone", pause, player).leaseRejected)
         assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), player.commands)
         assertFalse(player.state.value.status.isPlaying)
     }
@@ -37,8 +37,9 @@ class RemoteDirectIntentReceiverTest {
         val lease = receiver.lease("phone")
         val player = Player()
         time += 4_001.milliseconds
-        receiver.apply("phone", RemoteDirectIntent(RemoteCommand.Play, "sender", 1, 0, lease), player)
+        val reply = receiver.apply("phone", RemoteDirectIntent(RemoteCommand.Play, "sender", 1, 0, lease), player)
         assertTrue(player.commands.isEmpty())
+        assertTrue(reply.leaseRejected)
     }
     @Test fun wrongPeerExpiredAgeAndToggleAreRejected() = runTest {
         val receiver = RemoteDirectIntentReceiver()

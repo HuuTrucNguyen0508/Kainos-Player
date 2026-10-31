@@ -30,9 +30,11 @@ internal class RemoteDirectIntentReceiver(private val clock: TimeSource = TimeSo
         val key = peer to intent.senderId
         val previous = newest[key] ?: 0L
         if (lease == null || lease.deadline.hasPassedNow() || intent.ageMs !in 0 until REMOTE_COMMAND_DEADLINE_MS ||
-            intent.seq <= previous || (intent.command != RemoteCommand.Play && intent.command != RemoteCommand.Pause)) {
-            return@withLock RemoteCommandReply(player.state.value?.status)
+            (intent.command != RemoteCommand.Play && intent.command != RemoteCommand.Pause)) {
+            return@withLock RemoteCommandReply(player.state.value?.status, leaseRejected = true)
         }
+        // A retry of an applied intent, or one a newer press replaced: already the right outcome.
+        if (intent.seq <= previous) return@withLock RemoteCommandReply(player.state.value?.status)
         // Reserve before suspension. A failed application must never replay after a newer intent.
         newest[key] = intent.seq
         val ageDeadline = clock.markNow() + (REMOTE_COMMAND_DEADLINE_MS - intent.ageMs).milliseconds

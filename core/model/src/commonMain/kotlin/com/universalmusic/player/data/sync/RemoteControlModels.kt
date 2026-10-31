@@ -152,7 +152,12 @@ enum class RemoteTransferFailure { EMPTY, UNSUPPORTED_TRACK, INVALID_ID, DUPLICA
 data class RemoteTransferReply(val snapshot: RemoteTransferSnapshot? = null, val failure: RemoteTransferFailure? = null)
 
 @Serializable
-data class RemoteCommandReply(val status: RemoteStatus? = null, val transfer: RemoteTransferReply? = null)
+data class RemoteCommandReply(
+    val status: RemoteStatus? = null,
+    val transfer: RemoteTransferReply? = null,
+    /** The hub dropped a direct intent unapplied because its lease or age was invalid. */
+    val leaseRejected: Boolean = false,
+)
 
 /**
  * A player's state for the remote link. [status] has a zero position age as of [capturedAtMs];

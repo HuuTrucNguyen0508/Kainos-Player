@@ -34,9 +34,54 @@ class RemoteLinkClientTest {
 
         visible = true
         rig.client.reconnectNow()
+        val forced = rig.nextPoll()
+        assertEquals(-1L, forced.request.knownHubVersion)
+        forced.reply(rig.replyOf("e1").copy(directIntentLease = "fresh"))
+        runCurrent()
         rig.nextPoll()
         advanceTimeBy(2_001)
+        assertEquals(-1L, rig.nextPoll().request.knownHubVersion)
+    }
+
+    @Test
+    fun aPressHoldingAStaleLeaseIsSentPlainlySoTheHubStillAppliesIt() = runTest {
+        val rig = rig(pressable = { false })
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
         rig.nextPoll()
+        advanceTimeBy(REMOTE_DIRECT_LEASE_FRESH_MS + 1)
+
+        assertIs<RemoteClientSend.Applied>(rig.client.send(RemoteCommand.Play))
+
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Play), rig.transport.commands)
+        assertTrue(rig.transport.intents.isEmpty())
+    }
+
+    @Test
+    fun aHubRejectedLeaseIsNotReportedAsApplied() = runTest {
+        val rig = rig()
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        runCurrent()
+        rig.transport.intentReply = RemoteCommandReply(RemoteStatus(title = "PC song"), leaseRejected = true)
+
+        assertEquals(RemoteClientSend.Unreachable, rig.client.send(RemoteCommand.Play))
+    }
+
+    @Test
+    fun aSlowForcedRefreshIsNotCancelledByTheNextRefresh() = runTest {
+        val rig = rig()
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
+        rig.nextPoll()
+        advanceTimeBy(2_001)
+        val forced = rig.nextPoll()
+        assertEquals(-1L, forced.request.knownHubVersion)
+
+        advanceTimeBy(3_000)
+        runCurrent()
+
+        assertNull(rig.transport.polls.tryReceive().getOrNull())
+        assertFalse(forced.cancelled.isCompleted)
     }
 
     @Test
@@ -345,6 +390,8 @@ class RemoteLinkClientTest {
     private class FakeTransport : RemoteLinkTransport {
         val polls = Channel<PendingPoll>(Channel.UNLIMITED)
         val commands = mutableListOf<RemoteCommand>()
+        val intents = mutableListOf<RemoteDirectIntent>()
+        var intentReply: RemoteCommandReply? = null
         var commandError: Exception? = null
         val transfers = mutableListOf<Triple<String, Long, RemoteTransferReply>>()
         val artworkKeys = mutableListOf<String>()
@@ -365,6 +412,11 @@ class RemoteLinkClientTest {
             commandError?.let { throw it }
             commands += command
             return RemoteCommandReply(RemoteStatus(title = "PC song", isPlaying = false))
+        }
+
+        override suspend fun intent(intent: RemoteDirectIntent): RemoteCommandReply {
+            intents += intent
+            return intentReply ?: command(intent.command)
         }
 
         override suspend fun postTransfer(epoch: String, seq: Long, reply: RemoteTransferReply) {
