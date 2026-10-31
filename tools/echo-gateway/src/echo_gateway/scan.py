@@ -26,6 +26,7 @@ RESCAN_INTERVAL_S = 60 * 60.0
 MEASUREMENT_FLOOR_LUFS = -70.0
 TRUE_PEAK_CEILING_DB = -1.0
 UNKNOWN_ARTIST = "Artiste inconnu"
+NICE_EXEC_FAILED = {125, 126, 127}
 
 _DOWNLOADER_PREFIX = re.compile(r"^y2mate\.[a-z]+\s*-\s*", re.IGNORECASE)
 _DOWNLOADER_SUFFIX = re.compile(r"(?:_[A-Za-z0-9_-]{11})?_\d+kbps$", re.IGNORECASE)
@@ -187,12 +188,9 @@ class LibraryScan:
 
     def progress(self) -> tuple[int, int]:
         tracks = self._library.tracks
-        with self._lock:
-            scanned = sum(
-                1
-                for track in tracks
-                if (entry := self._entries.get(track.relative_path)) and entry.measured
-            )
+        scanned = sum(
+            1 for track in tracks if (entry := self._valid_entry(track)) and entry.measured
+        )
         return scanned, len(tracks)
 
     def gain_for(self, track: LibraryTrack) -> float:
@@ -258,6 +256,10 @@ class LibraryScan:
             )
         except OSError:
             logger.error("scan_tool_failed category=spawn track=%s", track.track_id[:8])
+            return None
+        if measured is not None and (measured[0] < 0 or measured[0] in NICE_EXEC_FAILED):
+            # The tool never ran or was killed: says nothing about the file, so retry next pass.
+            logger.error("scan_tool_failed category=exit track=%s", track.track_id[:8])
             return None
 
         metadata = (

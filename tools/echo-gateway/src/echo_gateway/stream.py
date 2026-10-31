@@ -89,6 +89,7 @@ class StreamTranscoder:
         self._settings = settings
         self._slots = settings.max_concurrent_streams
         self._active: list[asyncio.subprocess.Process] = []
+        self._reapers: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
 
     @property
@@ -100,7 +101,7 @@ class StreamTranscoder:
             processes = list(self._active)
             self._active.clear()
         for proc in processes:
-            await self._terminate(proc, reason="shutdown")
+            _kill(proc)
 
     async def stream(
         self,
@@ -113,7 +114,8 @@ class StreamTranscoder:
         command = build_ffmpeg_command(self._settings, source, start_ms=start_ms, gain_db=gain_db)
         async with self._lock:
             while len(self._active) >= self._slots:
-                await self._evict_oldest(request_id)
+                logger.info("transcode_evict request_id=%s category=slot_reclaimed", request_id)
+                _kill(self._active.pop(0))
             logger.info(
                 "transcode_start request_id=%s category=start max_concurrent=%s start_ms=%s gain_db=%s",
                 request_id,
@@ -163,12 +165,7 @@ class StreamTranscoder:
                     request_id,
                     bytes_sent,
                 )
-        except asyncio.CancelledError:
-            await self._terminate(proc, reason="client_disconnect")
-            if not stderr_task.done():
-                stderr_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await stderr_task
+        except (asyncio.CancelledError, GeneratorExit):
             logger.info(
                 "transcode_cancel request_id=%s category=client_disconnect bytes_sent=%s",
                 request_id,
@@ -176,25 +173,14 @@ class StreamTranscoder:
             )
             raise
         finally:
-            if proc.returncode is None:
-                await self._terminate(proc, reason="cleanup")
-            async with self._lock:
-                if proc in self._active:
-                    self._active.remove(proc)
-            if not stderr_task.done():
-                stderr_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await stderr_task
-
-    async def _evict_oldest(self, request_id: str) -> None:
-        proc = self._active.pop(0)
-        logger.info("transcode_evict request_id=%s category=slot_reclaimed", request_id)
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except TimeoutError:
-            logger.error("ffmpeg_reap_timeout reason=evict pid=%s", proc.pid)
+            # Synchronous, then a separate task: a client disconnect cancels this
+            # generator's scope again on every await, so awaiting here could leak the slot.
+            _kill(proc)
+            if proc in self._active:
+                self._active.remove(proc)
+            reaper = asyncio.create_task(self._reap(proc, stderr_task))
+            self._reapers.add(reaper)
+            reaper.add_done_callback(self._reapers.discard)
 
     async def _wait_failed_start(
         self,
@@ -205,7 +191,7 @@ class StreamTranscoder:
         try:
             exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
         except TimeoutError:
-            await self._terminate(proc, reason="empty_stdout")
+            _kill(proc)
             exit_code = proc.returncode
         stderr_text = ""
         try:
@@ -232,9 +218,8 @@ class StreamTranscoder:
                 data = await proc.stderr.read(4096)
                 if not data:
                     break
-                chunks.append(data)
-                if sum(len(c) for c in chunks) > 16_384:
-                    break
+                if sum(len(c) for c in chunks) <= 16_384:
+                    chunks.append(data)
         except Exception:
             logger.exception("stderr_drain_error request_id=%s", request_id)
         text = b"".join(chunks).decode("utf-8", errors="replace").strip()
@@ -246,32 +231,21 @@ class StreamTranscoder:
             )
         return text
 
-    async def _terminate(self, proc: asyncio.subprocess.Process, reason: str) -> None:
-        if proc.returncode is not None:
-            return
+    async def _reap(self, proc: asyncio.subprocess.Process, stderr_task: asyncio.Task[str]) -> None:
+        """Collect a killed encoder. asyncio's wait() cannot finish until stdout is drained."""
+        assert proc.stdout is not None
         try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except OSError:
-            proc.terminate()
-
-        try:
+            await asyncio.wait_for(proc.stdout.read(), timeout=2.0)
             await asyncio.wait_for(proc.wait(), timeout=2.0)
-            return
+            await asyncio.wait_for(stderr_task, timeout=2.0)
         except TimeoutError:
-            pass
+            logger.error("ffmpeg_reap_timeout pid=%s", proc.pid)
 
-        try:
+
+def _kill(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        except OSError:
-            proc.kill()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except TimeoutError:
-            logger.error("ffmpeg_reap_timeout reason=%s pid=%s", reason, proc.pid)
 
 
 def _sanitize_stderr(text: str) -> str:

@@ -6,14 +6,16 @@ import hmac
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
 from echo_gateway.alexa import Player, handle_alexa_envelope
 from echo_gateway.alexa_verify import (
@@ -44,6 +46,22 @@ def configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+
+class EncoderResponse(StreamingResponse):
+    """Closes the encoder when the response ends. On a client disconnect Starlette
+    only abandons the body iterator, which would keep FFmpeg alive until a GC pass.
+    """
+
+    def __init__(self, encoder: AsyncGenerator[bytes, None], *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._encoder = encoder
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._encoder.aclose()
 
 
 def create_app(settings: Settings | None = None) -> Starlette:
@@ -203,13 +221,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
                 status_code=416,
             )
 
-        async def body() -> AsyncIterator[bytes]:
-            async for chunk in transcoder.stream(
-                source, request_id=request_id, start_ms=start_ms, gain_db=gain_db
-            ):
-                yield chunk
-
-        agen = body()
+        agen = transcoder.stream(source, request_id=request_id, start_ms=start_ms, gain_db=gain_db)
         try:
             first = await agen.__anext__()
         except StopAsyncIteration:
@@ -242,10 +254,9 @@ def create_app(settings: Settings | None = None) -> Starlette:
                     "stream_midflight_error request_id=%s category=ffmpeg_after_headers",
                     request_id,
                 )
-            finally:
-                await agen.aclose()
 
-        return StreamingResponse(
+        return EncoderResponse(
+            agen,
             remaining(),
             media_type=CONTENT_TYPE_ADTS_AAC,
             headers={
