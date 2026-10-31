@@ -1,5 +1,13 @@
 package com.universalmusic.player.data.sync
 
+/** Stores that can validate a completed stage before replacing the destination. */
+interface CheckedVaultStore : HomeLanVaultStore {
+    suspend fun writeCheckedRange(
+        relPath: String, offset: Long, data: ByteArray, totalSize: Long,
+        expectedHash: String, beforePublish: suspend () -> Unit,
+    ): Boolean
+}
+
 /**
  * Exchange vault indexes with the hub, apply tombstones, and return planned blob copies
  * as [PendingVaultTransfer] for manual confirm (hearts / missing-file transfers).
@@ -67,8 +75,8 @@ suspend fun planVaultTransfers(
  * requested size: an empty or short chunk (peer file changed, truncated read, bad response) fails
  * the transfer instead of silently reporting success.
  *
- * [replaceExisting] is for conflict resolution: it skips the "same size already present" shortcut
- * and restarts staging from zero instead of resuming a partial of possibly different content.
+ * Downloads always restart because legacy peers lack immutable range tokens.
+ * [replaceExisting] is retained for callers confirming a conflict replacement.
  */
 suspend fun executeVaultTransfer(
     store: HomeLanVaultStore,
@@ -82,26 +90,47 @@ suspend fun executeVaultTransfer(
     val total = size.coerceAtLeast(1L)
     when (transfer.direction) {
         VaultCopyDirection.TO_LOCAL -> {
-            if (!replaceExisting && size > 0L && store.localSize(transfer.relPath) == size) {
-                onProgress("Skip ${transfer.relPath}", total, total)
-                return
+            // Old peers have no immutable range token. Never reuse bytes from an earlier attempt.
+            store.discardStaged(transfer.relPath)
+            var sourceIdentity: VaultFileEntry? = null
+            suspend fun checkSource() {
+                val entry = client.fetchRemoteVaultIndex(VaultIndexDocument("transfer-check"))
+                    .getOrThrow().entries.firstOrNull { it.relPath == transfer.relPath }
+                check(entry != null) { "Source ${transfer.relPath} is no longer advertised; sync again" }
+                if (sourceIdentity == null) sourceIdentity = entry
+                check(sourceIdentity == entry) { "Source ${transfer.relPath} changed; sync again" }
+                if (entry != null) check(entry.sizeBytes == size &&
+                    (transfer.mtimeMs == 0L || entry.mtimeMs == transfer.mtimeMs) &&
+                    (transfer.contentHash.isBlank() || entry.contentHash.isBlank() || entry.contentHash == transfer.contentHash)
+                ) { "Source ${transfer.relPath} changed; sync again" }
+            }
+            checkSource()
+            suspend fun write(offset: Long, chunk: ByteArray): Boolean {
+                val checked = store as? CheckedVaultStore
+                if (checked != null) return checked.writeCheckedRange(
+                    transfer.relPath, offset, chunk, size, transfer.contentHash, ::checkSource,
+                )
+                check(transfer.contentHash.isBlank()) { "Vault store cannot verify content hash" }
+                checkSource()
+                return store.writeRange(transfer.relPath, offset, chunk, size)
             }
             if (size == 0L) {
-                store.writeRange(transfer.relPath, 0L, ByteArray(0), 0L)
+                check(write(0L, ByteArray(0)))
                 onProgress("Downloading ${transfer.relPath}", total, total)
                 return
             }
-            val staged = if (replaceExisting) 0L else store.stagedSize(transfer.relPath) ?: 0L
-            var offset = if (staged in 1 until size) staged else 0L
+            var offset = 0L
             var published = false
             while (offset < size) {
                 val chunkLen = minOf(VAULT_BLOB_CHUNK_BYTES.toLong(), size - offset).toInt()
+                checkSource()
                 val chunk = client.downloadBlob(transfer.relPath, offset, chunkLen).getOrThrow()
                 if (chunk.isEmpty()) error("Empty chunk for ${transfer.relPath} at $offset")
                 if (chunk.size != chunkLen) {
                     error("Short chunk for ${transfer.relPath} at $offset (${chunk.size} of $chunkLen bytes)")
                 }
-                published = store.writeRange(transfer.relPath, offset, chunk, size)
+                checkSource()
+                published = write(offset, chunk)
                 offset += chunk.size
                 onProgress("Downloading ${transfer.relPath}", offset, total)
             }

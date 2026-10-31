@@ -16,7 +16,6 @@ import io.ktor.server.engine.sslConnector
 import io.ktor.server.netty.Netty
 import io.ktor.server.request.header
 import io.ktor.server.request.receiveChannel
-import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -211,7 +210,7 @@ class DesktopHomeLanSyncHub(
                     post(path) {
                         call.pairedPeer() ?: return@post
                         touchActivity()
-                        val body = call.receiveText()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
                         val remote = json.decodeFromString<HeartsSyncDocument>(body)
                         val localAfter = config.onHearts(remote)
                         call.respondText(
@@ -224,7 +223,7 @@ class DesktopHomeLanSyncHub(
                     post(path) {
                         call.pairedPeer() ?: return@post
                         touchActivity()
-                        val body = call.receiveText()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
                         val remote = json.decodeFromString<PlaylistsSyncDocument>(body)
                         val localAfter = config.onPlaylists(remote)
                         call.respondText(
@@ -242,7 +241,8 @@ class DesktopHomeLanSyncHub(
                             call.respondText("Vault not configured", status = HttpStatusCode.BadRequest)
                             return@post
                         }
-                        val remote = json.decodeFromString<VaultIndexDocument>(call.receiveText())
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        val remote = json.decodeFromString<VaultIndexDocument>(body)
                         vaultMutex.withLock {
                             val mergedTombs = mergeTombstones(store.loadTombstones(), remote.tombstones)
                             store.saveTombstones(mergedTombs)
@@ -267,7 +267,7 @@ class DesktopHomeLanSyncHub(
                         return@get
                     }
                     val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
-                    if (rel.isBlank()) {
+                    if (rel.isBlank() || rel.substringAfterLast('.', "").lowercase() !in VAULT_AUDIO_EXTENSIONS) {
                         call.respondText("Missing path", status = HttpStatusCode.BadRequest)
                         return@get
                     }
@@ -302,7 +302,7 @@ class DesktopHomeLanSyncHub(
                     val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
                     val offset = call.request.queryParameters["offset"]?.toLongOrNull()
                     val total = call.request.queryParameters["total"]?.toLongOrNull()
-                    if (rel.isBlank() || offset == null || total == null ||
+                    if (rel.isBlank() || rel.substringAfterLast('.', "").lowercase() !in VAULT_AUDIO_EXTENSIONS || offset == null || total == null ||
                         total !in 0L..VAULT_MAX_FILE_BYTES || offset !in 0L..total
                     ) {
                         call.respondText("Missing or invalid path/offset/total", status = HttpStatusCode.BadRequest)
@@ -441,3 +441,6 @@ internal fun parseHubBlobRange(header: String?, size: Long): LongRange? {
     if (start < 0L || start >= size || end < start) return null
     return start..minOf(end, maxEnd(start))
 }
+
+// Room for large libraries while bounding authenticated document buffering.
+private const val MAX_LIBRARY_BODY_BYTES = 64L * 1024 * 1024
