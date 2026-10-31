@@ -22,18 +22,28 @@ class FfmpegCommand:
     content_type: str = CONTENT_TYPE_ADTS_AAC
 
 
-def build_ffmpeg_command(settings: Settings, source: Path) -> FfmpegCommand:
+def build_ffmpeg_command(
+    settings: Settings,
+    source: Path,
+    *,
+    start_ms: int = 0,
+    gain_db: float = 0.0,
+) -> FfmpegCommand:
     """Build a pipe-friendly ADTS AAC encode for Alexa-style progressive streaming.
 
     Ordinary MP4 is unsuitable for an unfinished stdout pipe. ADTS AAC with
-    Content-Type audio/aac is the Phase 1/2 candidate format.
+    Content-Type audio/aac is the Phase 1/2 candidate format. -ss before -i
+    seeks in the source, so the stream starts at start_ms with timestamps at 0.
     """
+    seek = ["-ss", f"{start_ms / 1000:.3f}"] if start_ms else []
+    gain = ["-af", f"volume={gain_db:.2f}dB"] if gain_db else []
     argv = [
         settings.ffmpeg_bin,
         "-hide_banner",
         "-loglevel",
         "error",
         "-nostdin",
+        *seek,
         "-i",
         str(source),
         "-vn",
@@ -41,6 +51,7 @@ def build_ffmpeg_command(settings: Settings, source: Path) -> FfmpegCommand:
         "-dn",
         "-map_metadata",
         "-1",
+        *gain,
         "-c:a",
         "aac",
         "-profile:a",
@@ -58,10 +69,6 @@ def build_ffmpeg_command(settings: Settings, source: Path) -> FfmpegCommand:
     return FfmpegCommand(argv=argv)
 
 
-class TranscodeBusy(Exception):
-    pass
-
-
 class TranscodeStartError(Exception):
     def __init__(self, category: str, message: str, exit_code: int | None = None) -> None:
         super().__init__(message)
@@ -71,106 +78,123 @@ class TranscodeStartError(Exception):
 
 
 class StreamTranscoder:
+    """Runs at most max_concurrent_streams encoders.
+
+    A paused Echo may keep its connection open, so a finished listener can hold
+    a slot for a long time. The newest request always wins: when full, the
+    oldest encoder is killed instead of refusing the stream.
+    """
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._slots = settings.max_concurrent_streams
-        self._in_use = 0
-        self._active: set[asyncio.subprocess.Process] = set()
+        self._active: list[asyncio.subprocess.Process] = []
         self._lock = asyncio.Lock()
 
     @property
     def active_count(self) -> int:
-        return self._in_use
+        return len(self._active)
 
     async def shutdown(self) -> None:
         async with self._lock:
             processes = list(self._active)
+            self._active.clear()
         for proc in processes:
             await self._terminate(proc, reason="shutdown")
 
-    async def stream(self, source: Path, request_id: str) -> AsyncIterator[bytes]:
+    async def stream(
+        self,
+        source: Path,
+        request_id: str,
+        *,
+        start_ms: int = 0,
+        gain_db: float = 0.0,
+    ) -> AsyncIterator[bytes]:
+        command = build_ffmpeg_command(self._settings, source, start_ms=start_ms, gain_db=gain_db)
         async with self._lock:
-            if self._in_use >= self._slots:
-                raise TranscodeBusy("Too many concurrent streams")
-            self._in_use += 1
-            acquired = True
-
-        try:
-            command = build_ffmpeg_command(self._settings, source)
+            while len(self._active) >= self._slots:
+                await self._evict_oldest(request_id)
             logger.info(
-                "transcode_start request_id=%s category=start max_concurrent=%s",
+                "transcode_start request_id=%s category=start max_concurrent=%s start_ms=%s gain_db=%s",
                 request_id,
-                self._settings.max_concurrent_streams,
+                self._slots,
+                start_ms,
+                gain_db,
             )
-
             proc = await asyncio.create_subprocess_exec(
                 *command.argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-            async with self._lock:
-                self._active.add(proc)
+            self._active.append(proc)
 
-            assert proc.stdout is not None
-            assert proc.stderr is not None
+        assert proc.stdout is not None
+        assert proc.stderr is not None
 
-            stderr_task = asyncio.create_task(self._drain_stderr(proc, request_id))
-            bytes_sent = 0
-            try:
-                first = await proc.stdout.read(64 * 1024)
-                if not first:
-                    await self._wait_failed_start(proc, stderr_task, request_id)
-                yield first
-                bytes_sent += len(first)
+        stderr_task = asyncio.create_task(self._drain_stderr(proc, request_id))
+        bytes_sent = 0
+        try:
+            first = await proc.stdout.read(64 * 1024)
+            if not first:
+                await self._wait_failed_start(proc, stderr_task, request_id)
+            yield first
+            bytes_sent += len(first)
 
-                while True:
-                    chunk = await proc.stdout.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-                    bytes_sent += len(chunk)
+            while True:
+                chunk = await proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+                bytes_sent += len(chunk)
 
-                exit_code = await proc.wait()
-                await stderr_task
-                if exit_code != 0:
-                    logger.warning(
-                        "transcode_exit request_id=%s category=ffmpeg_error exit_code=%s bytes_sent=%s",
-                        request_id,
-                        exit_code,
-                        bytes_sent,
-                    )
-                else:
-                    logger.info(
-                        "transcode_done request_id=%s category=ok exit_code=0 bytes_sent=%s",
-                        request_id,
-                        bytes_sent,
-                    )
-            except asyncio.CancelledError:
-                await self._terminate(proc, reason="client_disconnect")
-                if not stderr_task.done():
-                    stderr_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await stderr_task
+            exit_code = await proc.wait()
+            await stderr_task
+            if exit_code != 0:
+                logger.warning(
+                    "transcode_exit request_id=%s category=ffmpeg_error exit_code=%s bytes_sent=%s",
+                    request_id,
+                    exit_code,
+                    bytes_sent,
+                )
+            else:
                 logger.info(
-                    "transcode_cancel request_id=%s category=client_disconnect bytes_sent=%s",
+                    "transcode_done request_id=%s category=ok exit_code=0 bytes_sent=%s",
                     request_id,
                     bytes_sent,
                 )
-                raise
-            finally:
-                if proc.returncode is None:
-                    await self._terminate(proc, reason="cleanup")
-                async with self._lock:
-                    self._active.discard(proc)
-                if not stderr_task.done():
-                    stderr_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await stderr_task
+        except asyncio.CancelledError:
+            await self._terminate(proc, reason="client_disconnect")
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stderr_task
+            logger.info(
+                "transcode_cancel request_id=%s category=client_disconnect bytes_sent=%s",
+                request_id,
+                bytes_sent,
+            )
+            raise
         finally:
-            if acquired:
-                async with self._lock:
-                    self._in_use = max(0, self._in_use - 1)
+            if proc.returncode is None:
+                await self._terminate(proc, reason="cleanup")
+            async with self._lock:
+                if proc in self._active:
+                    self._active.remove(proc)
+            if not stderr_task.done():
+                stderr_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stderr_task
+
+    async def _evict_oldest(self, request_id: str) -> None:
+        proc = self._active.pop(0)
+        logger.info("transcode_evict request_id=%s category=slot_reclaimed", request_id)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        except TimeoutError:
+            logger.error("ffmpeg_reap_timeout reason=evict pid=%s", proc.pid)
 
     async def _wait_failed_start(
         self,

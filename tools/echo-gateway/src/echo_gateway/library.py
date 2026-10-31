@@ -53,5 +53,31 @@ def scan_library(music_root: Path) -> list[LibraryTrack]:
     return tracks
 
 
-def index_by_id(tracks: list[LibraryTrack]) -> dict[str, LibraryTrack]:
-    return {track.track_id: track for track in tracks}
+class Library:
+    """Current snapshot of MUSIC_ROOT, in sorted path order."""
+
+    def __init__(self, music_root: Path) -> None:
+        self._music_root = music_root
+        self._tracks: tuple[LibraryTrack, ...] = ()
+        self._by_id: dict[str, LibraryTrack] = {}
+        self.refresh()
+
+    def refresh(self) -> int:
+        tracks = tuple(scan_library(self._music_root))
+        self._by_id = {track.track_id: track for track in tracks}
+        self._tracks = tracks
+        return len(tracks)
+
+    @property
+    def tracks(self) -> tuple[LibraryTrack, ...]:
+        return self._tracks
+
+    @property
+    def track_count(self) -> int:
+        return len(self._tracks)
+
+    def ids(self) -> list[str]:
+        return [track.track_id for track in self._tracks]
+
+    def get(self, track_id: str) -> LibraryTrack | None:
+        return self._by_id.get(track_id)

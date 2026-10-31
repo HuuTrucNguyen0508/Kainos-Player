@@ -20,6 +20,9 @@ class Settings:
     music_root: Path
     test_track: Path
     ffmpeg_bin: str
+    ffprobe_bin: str
+    state_dir: Path
+    target_lufs: float
     max_concurrent_streams: int
     aac_bitrate: str
     aac_sample_rate: int
@@ -58,7 +61,10 @@ class Settings:
             music_root=music_root,
             test_track=test_track,
             ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
-            max_concurrent_streams=max(1, int(os.environ.get("MAX_CONCURRENT_STREAMS", "2"))),
+            ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
+            state_dir=Path(os.environ.get("STATE_DIR", "/state")).expanduser(),
+            target_lufs=float(os.environ.get("TARGET_LUFS", "-11")),
+            max_concurrent_streams=max(1, int(os.environ.get("MAX_CONCURRENT_STREAMS", "4"))),
             aac_bitrate=os.environ.get("AAC_BITRATE", "256k"),
             aac_sample_rate=int(os.environ.get("AAC_SAMPLE_RATE", "44100")),
             aac_channels=int(os.environ.get("AAC_CHANNELS", "2")),
