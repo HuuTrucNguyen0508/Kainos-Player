@@ -465,8 +465,15 @@ class DesktopPlaybackEngine internal constructor(
     ) {
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
-        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) }
-            ?: (lastHandle as? PlaybackHandle.Url)?.durationMs
+        val suppliedDuration = synchronized(lifecycleLock) {
+            if (token != requestToken) return
+            (lastHandle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
+        }
+        // Local scans already measured this file. Avoid launching ffprobe on every play/skip;
+        // streams still probe independently because their resolved media can differ from metadata.
+        val durationMs = suppliedDuration?.takeIf {
+            it > 0 && (url.startsWith("/") || url.startsWith("file:"))
+        } ?: withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val socket = runtime.createIpcPath()
