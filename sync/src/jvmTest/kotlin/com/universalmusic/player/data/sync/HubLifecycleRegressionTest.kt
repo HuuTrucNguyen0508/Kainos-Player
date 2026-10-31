@@ -242,21 +242,26 @@ class HubLifecycleRegressionTest {
         fixture { f ->
             f.service.configure(true)
             val ready = f.config.resolve("child-ready")
+            val childOutput = f.config.resolve("child-output.log")
             val process = ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-cp", System.getProperty("java.class.path"), HubLockChild::class.java.name,
                 f.isolation.dataDir.toString(), "0", ready.toString(),
-            ).redirectErrorStream(true).start()
+            ).redirectErrorStream(true).redirectOutput(childOutput.toFile()).start()
             val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
             try {
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!Files.exists(ready) && process.isAlive && System.nanoTime() < deadline) Thread.sleep(10)
-                assertTrue(Files.exists(ready), "Child service must own the real hub lock")
+                assertTrue(Files.exists(ready),
+                    "Child service must own the real hub lock; alive=${process.isAlive}; " +
+                        "output=${Files.readString(childOutput)}")
                 f.onStop = {
-                    process.destroy()
-                    assertTrue(process.waitFor(30, TimeUnit.SECONDS))
+                    // Process.destroy() also closes stdin, letting HubLockChild exit 0 on EOF
+                    // before Java handles SIGTERM. systemctl sends a signal without closing pipes.
+                    assertTrue(process.toHandle().destroy(), "Child must accept SIGTERM")
+                    assertTrue(process.waitFor(30, TimeUnit.SECONDS), "Child must exit after SIGTERM")
                 }
-                assertTrue(owner.acquire())
+                assertTrue(owner.acquire(), "GUI must acquire the stopped child's hub lock")
                 assertEquals(143, process.exitValue(), "Java exits with 128 plus SIGTERM")
                 val unit = Files.readString(f.config.resolve("systemd/user/kainos-hub.service"))
                 val success = unit.lineSequence().filter { it.startsWith("SuccessExitStatus=") }.toList()
