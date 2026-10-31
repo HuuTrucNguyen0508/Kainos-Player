@@ -553,8 +553,6 @@ async def test_alexa_body_is_size_limited(music: Path):
     assert response.status_code == 413
 
 
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind', ['AudioPlayer.PlaybackStopped', 'System.ExceptionEncountered'])
 async def test_one_way_alexa_events_get_an_empty_envelope(kind):
