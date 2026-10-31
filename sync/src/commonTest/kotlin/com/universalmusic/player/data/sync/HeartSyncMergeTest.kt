@@ -133,6 +133,7 @@ class HeartSyncMergeTest {
             deviceIdProvider = { "pc" },
             onFavoriteChanged = { track, fav -> deltas += track.canonicalId to fav },
         )
+        library.load(null)
         library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = null))
         library.toggleFavorite(ytTrack("yt:keep"))
         advanceUntilIdle()
@@ -201,6 +202,7 @@ class HeartSyncMergeTest {
             clock = { 5_000L },
             deviceIdProvider = { "phone" },
         )
+        library.load(null)
         library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = null))
         val local = Track(
             canonicalId = "local:abc",
@@ -232,6 +234,7 @@ class HeartSyncMergeTest {
             clock = { 5_000L },
             deviceIdProvider = { "pc" },
         )
+        library.load(null)
         library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = null))
         library.mergeAndPersistSyncState(
             HeartsSyncDocument(
@@ -274,6 +277,7 @@ class HeartSyncMergeTest {
             clock = { 5_000L },
             deviceIdProvider = { "phone" },
         )
+        library.load(null)
         library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = "user-a"))
         val local = Track(
             canonicalId = "local:abc",
@@ -303,6 +307,7 @@ class HeartSyncMergeTest {
             clock = { 5_000L },
             deviceIdProvider = { "pc" },
         )
+        library.load(null)
         library.applySnapshot(UserLibrarySnapshot(spotifyAccountId = "user-a"))
         library.mergeAndPersistSyncState(
             HeartsSyncDocument(
