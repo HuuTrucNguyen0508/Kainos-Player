@@ -1,2 +1,3 @@
 date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
-2026-10-31	artwork-blocked send-to-apply ms	independent bounded artwork worker	1046.89	251.47	1048.61	251.95	10 per side	accept; 10/10 delivered each; no duplicate or late application	see git log
+2026-10-31	artwork-blocked send-to-apply ms	independent bounded artwork worker	1046.89	251.47	1048.61	251.95	10 per side	accept; 10/10 delivered each; no duplicate or late application	b42baed
+2026-10-31	2s outage send-to-apply ms	one 200ms poll reconnect before existing backoff	3951.93	2155.19	3952.53	2156.03	10 per side	accept; 10/10 delivered each; four-second deadline unchanged	see git log

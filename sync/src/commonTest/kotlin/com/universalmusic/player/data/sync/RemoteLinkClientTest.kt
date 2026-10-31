@@ -106,12 +106,12 @@ class RemoteLinkClientTest {
     }
 
     @Test
-    fun aFailingHubBacksOffTwoFiveTenTwentyThenThirtySeconds() = runTest {
+    fun aFailingHubRetriesOnceQuicklyThenBacksOffToThirtySeconds() = runTest {
         val attempts = mutableListOf<Long>()
         val rig = rig(connect = { attempts += testScheduler.currentTime; error("no route to host") })
-        advanceTimeBy(2_000 + 5_000 + 10_000 + 20_000 + 30_000 + 30_000 + 1)
+        advanceTimeBy(200 + 2_000 + 5_000 + 10_000 + 20_000 + 30_000 + 30_000 + 1)
 
-        assertEquals(listOf(0L, 2_000, 7_000, 17_000, 37_000, 67_000, 97_000), attempts)
+        assertEquals(listOf(0L, 200, 2_200, 7_200, 17_200, 37_200, 67_200, 97_200), attempts)
         assertTrue(rig.client.state.value.unreachable)
         assertFalse(rig.client.state.value.connected)
     }

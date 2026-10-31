@@ -393,6 +393,8 @@ const val REMOTE_ARTWORK_REQUEST_TIMEOUT_MS = 10_000L
 
 const val REMOTE_REPOST_GAP_MS = 250L
 
-val REMOTE_BACKOFF_MS = listOf(2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
+// A single fast reconnect recovers a brief LAN failure inside the command deadline.
+// Sustained failures still back off to 30 seconds. Poll seq/epoch dedupe is unchanged.
+val REMOTE_BACKOFF_MS = listOf(200L, 2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
 
 internal const val REMOTE_TRACE_TAG = "Remote"
