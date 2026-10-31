@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import uuid
+from urllib.parse import urlsplit
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -45,6 +46,13 @@ def configure_logging() -> None:
 def create_app(settings: Settings | None = None) -> Starlette:
     configure_logging()
     cfg = settings or Settings.from_env()
+    local_only = cfg.host in {"127.0.0.1", "::1", "localhost"} and urlsplit(cfg.public_base_url).hostname in {
+        "127.0.0.1", "::1", "localhost",
+    }
+    if cfg.skip_alexa_signature_verify and not local_only:
+        raise ValueError("SKIP_ALEXA_SIGNATURE_VERIFY=true requires a local loopback HOST and PUBLIC_BASE_URL")
+    if not cfg.alexa_skill_id and not (cfg.skip_alexa_signature_verify and local_only):
+        raise ValueError("Set ALEXA_SKILL_ID=amzn1.ask.skill.<your-skill-id> in .env, then recreate the gateway container")
     transcoder = StreamTranscoder(cfg)
     playlist = PlaylistController(cfg)
 

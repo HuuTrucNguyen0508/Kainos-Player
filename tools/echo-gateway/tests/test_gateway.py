@@ -31,7 +31,7 @@ def make_settings(**overrides) -> Settings:
         aac_sample_rate=44100,
         aac_channels=2,
         public_stream_token="test-public-token-not-for-funnel",
-        public_base_url="https://example.test",
+        public_base_url="http://127.0.0.1:8787",
         allow_open_test_stream=True,
         alexa_skill_id="amzn1.ask.skill.test",
         skip_alexa_signature_verify=True,
@@ -415,3 +415,13 @@ async def test_alexa_caps_chunked_body(client):
             yield b"x" * 65536
     response = await client.post("/alexa", content=body())
     assert response.status_code == 413
+
+
+def test_public_gateway_requires_skill_id():
+    with pytest.raises(ValueError, match="Set ALEXA_SKILL_ID=amzn1.ask.skill"):
+        create_app(make_settings(alexa_skill_id="", skip_alexa_signature_verify=False))
+
+
+def test_signature_bypass_requires_loopback_public_url():
+    with pytest.raises(ValueError, match="local"):
+        create_app(make_settings(skip_alexa_signature_verify=True, public_base_url="https://public.example"))

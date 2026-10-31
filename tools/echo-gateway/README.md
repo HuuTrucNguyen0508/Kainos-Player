@@ -76,7 +76,9 @@ Flow:
 2. “Alexa, open Kainos test” → LaunchRequest → `AudioPlayer.Play` with the token HTTPS URL.
 3. Echo pulls AAC from Funnel → gateway → FFmpeg.
 
-After creating the skill, put `ALEXA_SKILL_ID` in `.env` and recreate the container.
+After creating the skill, set `ALEXA_SKILL_ID=amzn1.ask.skill.<your-skill-id>` in `.env` and recreate the container. Use the application ID shown in the Alexa developer console for your skill. Startup refuses an empty skill ID.
+
+For local development only, `SKIP_ALEXA_SIGNATURE_VERIFY=true` permits an empty skill ID. Both `HOST` and the hostname in `PUBLIC_BASE_URL` must be loopback addresses. Never expose this mode through Funnel or another proxy. Public deployments must keep signature verification enabled.
 
 ## Encoding
 
