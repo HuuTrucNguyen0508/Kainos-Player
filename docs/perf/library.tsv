@@ -11,3 +11,5 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	cold-query-100k-ms	lazy index construction observation	NA	196.196	NA	205.355	10	first query misses frame target; follow-up required	cf301db
 2026-10-31	scroll-20k-ten-frames-ms	headless TrackRow and shared generated Coil cover	NA	50.153	NA	59.789	10	fixture only; not GPU/full Library	cf301db
 2026-10-31	mock-press-to-engine-ms	cold 40ms extractor versus already ready mock	40.843	0.309	40.886	0.343	10	opportunity only; no prefetch implemented; not sound	cf301db
+
+2026-10-31	chrome-recompositions-per-second	track-only scaffold flow at 4Hz positions	4	0	4	0	10	accepted; progress scope remains 4; render fixture not full App	SELF

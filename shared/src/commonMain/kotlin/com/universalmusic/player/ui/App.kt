@@ -82,6 +82,10 @@ import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.KainosTheme
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
 
 @Composable
@@ -123,7 +127,7 @@ private fun AppScaffold(
     val tabStateHolder = rememberSaveableStateHolder()
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
-    val now by container.player.nowPlaying.collectAsState()
+    val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
     val canSkipNext = run {
         queue.shuffle
@@ -160,7 +164,7 @@ private fun AppScaffold(
     val queueReplacesSidePane = desktop && showQueue && !wide
     val showSideNowPlaying = desktop && nowPlayingPaneExpanded && !queueReplacesSidePane
     val showDesktopMiniBar = desktop &&
-        now.track != null &&
+        currentTrack != null &&
         !showSideNowPlaying &&
         !queueReplacesSidePane
 
@@ -273,11 +277,10 @@ private fun AppScaffold(
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
@@ -374,11 +377,10 @@ private fun AppScaffold(
                 }
 
                 if (showDesktopMiniBar) {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
@@ -540,10 +542,10 @@ private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private fun DesktopMiniPlayer(
     container: AppContainer,
     track: Track,
-    now: NowPlayingState,
     canSkipNext: Boolean,
     onOpen: () -> Unit,
 ) {
+    val now by container.player.nowPlaying.collectAsState()
     val durationMs = now.durationMs?.takeIf { it > 0 }
         ?: track.durationMs?.takeIf { it > 0 }
     val miniProgress = if (durationMs != null) {
@@ -566,3 +568,9 @@ private fun DesktopMiniPlayer(
         onNext = { container.player.skipToNext() },
     )
 }
+
+/** The app chrome only depends on track identity/metadata, never transport position. */
+@Composable
+internal fun playbackChromeTrack(nowPlaying: StateFlow<NowPlayingState>): State<Track?> =
+    remember(nowPlaying) { nowPlaying.map { it.track }.distinctUntilChanged() }
+        .collectAsState(initial = nowPlaying.value.track)
