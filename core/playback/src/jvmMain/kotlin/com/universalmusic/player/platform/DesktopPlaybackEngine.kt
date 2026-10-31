@@ -34,6 +34,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.completeWith
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -474,6 +475,7 @@ class DesktopPlaybackEngine internal constructor(
         val durationMs = suppliedDuration?.takeIf {
             it > 0 && (url.startsWith("/") || url.startsWith("file:"))
         } ?: withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val socket = runtime.createIpcPath()
