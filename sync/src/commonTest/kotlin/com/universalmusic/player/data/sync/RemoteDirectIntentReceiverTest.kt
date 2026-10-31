@@ -31,6 +31,14 @@ class RemoteDirectIntentReceiverTest {
         assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), player.commands)
         assertFalse(player.state.value.status.isPlaying)
     }
+    @Test fun aDelayedLeasedPlayCannotUndoANewerPauseSentWithoutALease() = runTest {
+        val receiver = RemoteDirectIntentReceiver()
+        val lease = receiver.lease("phone")
+        val player = Player()
+        receiver.apply("phone", RemoteDirectIntent(RemoteCommand.Pause, "sender", 2, 0), player)
+        receiver.apply("phone", RemoteDirectIntent(RemoteCommand.Play, "sender", 1, 0, lease), player)
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), player.commands)
+    }
     @Test fun receiverLeaseExpiresEvenWhenPacketAgeLiesAboutTransit() = runTest {
         val time = TestTimeSource()
         val receiver = RemoteDirectIntentReceiver(time)

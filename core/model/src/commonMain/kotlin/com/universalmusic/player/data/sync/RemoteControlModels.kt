@@ -207,5 +207,6 @@ data class RemoteDirectIntent(
     val senderId: String,
     val seq: Long,
     val ageMs: Long,
-    val lease: String,
+    /** Null for a single unretried attempt: ordered by [seq], with no transit bound to allow a retry. */
+    val lease: String? = null,
 )

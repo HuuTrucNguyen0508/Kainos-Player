@@ -44,7 +44,7 @@ class RemoteLinkClientTest {
     }
 
     @Test
-    fun aPressHoldingAStaleLeaseIsSentPlainlySoTheHubStillAppliesIt() = runTest {
+    fun aPressHoldingAStaleLeaseGoesOutOnceAndStaysOrdered() = runTest {
         val rig = rig(pressable = { false })
         rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
         advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
@@ -54,7 +54,7 @@ class RemoteLinkClientTest {
         assertIs<RemoteClientSend.Applied>(rig.client.send(RemoteCommand.Play))
 
         assertEquals(listOf<RemoteCommand>(RemoteCommand.Play), rig.transport.commands)
-        assertTrue(rig.transport.intents.isEmpty())
+        assertNull(rig.transport.intents.single().lease)
     }
 
     @Test

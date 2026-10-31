@@ -142,6 +142,7 @@ class RemoteLinkClient(
         val explicit = command == RemoteCommand.Play || command == RemoteCommand.Pause
         val intent = if (explicit) ++latestIntent else 0L
         // Capture before the press is dispatched: a later-issued lease could extend its deadline.
+        val hubOrdersIntents = directLease != null
         val lease = directLease?.takeIf { directLeaseAt?.elapsedNow()?.inWholeMilliseconds?.let { age -> age < REMOTE_DIRECT_LEASE_FRESH_MS } == true }
         val started = monotonicClock.markNow()
         if (explicit) statusIntent = StatusIntent(command == RemoteCommand.Play, started)
@@ -154,7 +155,9 @@ class RemoteLinkClient(
                 }
                 if (explicit && intent != latestIntent) return@withTimeout null
                 val current = transport?.takeIf { _state.value.connected } ?: return@withTimeout null
-                if (!explicit || lease == null) current.command(command) else {
+                if (!explicit || !hubOrdersIntents) current.command(command)
+                else if (lease == null) current.intent(RemoteDirectIntent(command, linkId, intent, started.elapsedNow().inWholeMilliseconds))
+                else {
                     while (true) {
                         if (intent != latestIntent) return@withTimeout null
                         try {

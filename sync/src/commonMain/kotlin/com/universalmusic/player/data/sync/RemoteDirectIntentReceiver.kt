@@ -26,10 +26,11 @@ internal class RemoteDirectIntentReceiver(private val clock: TimeSource = TimeSo
     }
 
     suspend fun apply(peer: String, intent: RemoteDirectIntent, player: RemotePlayer): RemoteCommandReply = lock.withLock {
-        val lease = leases[intent.lease]?.takeIf { it.peer == peer }
+        val lease = intent.lease?.let { token -> leases[token]?.takeIf { it.peer == peer } }
         val key = peer to intent.senderId
         val previous = newest[key] ?: 0L
-        if (lease == null || lease.deadline.hasPassedNow() || intent.ageMs !in 0 until REMOTE_COMMAND_DEADLINE_MS ||
+        val leaseInvalid = intent.lease != null && (lease == null || lease.deadline.hasPassedNow())
+        if (leaseInvalid || intent.ageMs !in 0 until REMOTE_COMMAND_DEADLINE_MS ||
             (intent.command != RemoteCommand.Play && intent.command != RemoteCommand.Pause)) {
             return@withLock RemoteCommandReply(player.state.value?.status, leaseRejected = true)
         }
@@ -38,7 +39,7 @@ internal class RemoteDirectIntentReceiver(private val clock: TimeSource = TimeSo
         // Reserve before suspension. A failed application must never replay after a newer intent.
         newest[key] = intent.seq
         val ageDeadline = clock.markNow() + (REMOTE_COMMAND_DEADLINE_MS - intent.ageMs).milliseconds
-        val deadline = if (lease.deadline.elapsedNow() > ageDeadline.elapsedNow()) lease.deadline else ageDeadline
+        val deadline = if (lease != null && lease.deadline.elapsedNow() > ageDeadline.elapsedNow()) lease.deadline else ageDeadline
         try { player.apply(intent.command, deadline) }
         catch (_: RemoteCommandExpired) { RemoteCommandReply(player.state.value?.status) }
     }
