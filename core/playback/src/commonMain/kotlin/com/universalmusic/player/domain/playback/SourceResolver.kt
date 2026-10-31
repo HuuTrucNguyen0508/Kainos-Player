@@ -39,7 +39,13 @@ class DefaultSourceResolver(private val networkAvailable: () -> Boolean = { com.
             )
         }
 
-        val ranked = playable.sortedWith(qualityThenPreference(preferences))
+        val ranked = playable.sortedWith(
+            compareBy<PlaybackSource> {
+                // A matched YouTube download is a fallback for the original Spotify recording.
+                if (playable.any { it.provider == ProviderId.SPOTIFY } &&
+                    it.provider == ProviderId.LOCAL && it.providerTrackId.startsWith("hearted-yt:")) 1 else 0
+            }.then(qualityThenPreference(preferences)),
+        )
         val selected = ranked.first()
         return ResolvedPlayback(
             track = track,
