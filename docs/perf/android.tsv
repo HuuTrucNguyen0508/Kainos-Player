@@ -1,0 +1,8 @@
+date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
+2026-10-31	apk_bytes	R8_full_mode_resource_shrink	31795904	6131683	31795904	6131683	1	retain_opt_in_candidate_80.715_percent_smaller_runtime_pending	self
+2026-10-31	cold_TotalTime_ms	optimized_verify_and_speed	NA	NA	NA	NA	0	blocked_device_open_Java8_requires17_no_speedup_claim	self
+2026-10-31	Library_scroll_frame_ms	optimized	NA	NA	NA	NA	0	blocked_emulator_no_runtime_journey	self
+2026-10-31	idle_RSS_KiB	optimized	NA	NA	NA	NA	0	blocked_emulator	self
+2026-10-31	profile_after_install_TotalTime_ms	dependency_baseline_profile	NA	NA	NA	NA	0	packaged_upstream_profile_only_not_collected_app_profile	self
+2026-10-31	startup_cost_ms	defer_service_or_engine_init	NA	NA	NA	NA	0	rejected_without_measurement_no_source_change	self
+2026-10-31	R8_build	conservative_keep_rules_without_optional_JDK_exceptions	NA	NA	NA	NA	1	rejected_missing_JDK_script_dynalink_beans_and_CLI_log4j	self

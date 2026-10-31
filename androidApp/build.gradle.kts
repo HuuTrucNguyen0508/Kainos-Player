@@ -44,6 +44,17 @@ android {
         getByName("release") {
             isMinifyEnabled = false
         }
+        // Personal-use candidate. Match debug certificate/id/version to permit
+        // install -r and rollback without uninstalling. Verify retention on-device.
+        create("optimized") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true

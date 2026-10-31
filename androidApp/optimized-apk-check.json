@@ -1,0 +1,41 @@
+{
+  "debug": {
+    "bytes": 31795904,
+    "classes": 45954,
+    "certificate_sha256": "780b3387b1f828858b3e3c27e59117a5ab24f171bc27db17055f2d3a93961895",
+    "application_id": "com.universalmusic.player",
+    "version_code": 1,
+    "debuggable": true,
+    "packaged_profiles": [],
+    "required_classes_present": [
+      "Lcom/universalmusic/player/platform/EndSafeNativeDecoder;",
+      "Lxyz/gianlu/librespot/core/Session;",
+      "Lxyz/gianlu/librespot/android/sink/AndroidSinkOutput;",
+      "Lcom/google/protobuf/GeneratedMessageV3;",
+      "Lcom/spotify/Authentication$LoginCredentials;",
+      "Lorg/schabi/newpipe/extractor/NewPipe;",
+      "Lorg/mozilla/javascript/Context;"
+    ]
+  },
+  "optimized": {
+    "bytes": 6131683,
+    "classes": 9719,
+    "certificate_sha256": "780b3387b1f828858b3e3c27e59117a5ab24f171bc27db17055f2d3a93961895",
+    "application_id": "com.universalmusic.player",
+    "version_code": 1,
+    "debuggable": false,
+    "packaged_profiles": [
+      "assets/dexopt/baseline.prof",
+      "assets/dexopt/baseline.profm"
+    ],
+    "required_classes_present": [
+      "Lcom/universalmusic/player/platform/EndSafeNativeDecoder;",
+      "Lxyz/gianlu/librespot/core/Session;",
+      "Lxyz/gianlu/librespot/android/sink/AndroidSinkOutput;",
+      "Lcom/google/protobuf/GeneratedMessageV3;",
+      "Lcom/spotify/Authentication$LoginCredentials;",
+      "Lorg/schabi/newpipe/extractor/NewPipe;",
+      "Lorg/mozilla/javascript/Context;"
+    ]
+  }
+}
