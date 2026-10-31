@@ -435,6 +435,16 @@ def test_loop_off_stops_at_end_of_list(echo: Echo):
     assert start_ms_of(resumed) is None
 
 
+def test_mode_change_that_keeps_the_queued_track_sends_no_directive(echo: Echo):
+    token = echo.start()
+    echo.play(audio_event("PlaybackNearlyFinished", token))
+    queued = echo.session().queued_token
+    response = echo.send(intent("AMAZON.LoopOffIntent"))
+    assert "directives" not in response
+    assert response["outputSpeech"]["text"] == "Répétition désactivée."
+    assert echo.session().queued_token == queued
+
+
 def test_loop_on_after_end_of_list_near_finished_queues_the_wrap(echo: Echo):
     token = echo.start()
     echo.send(intent("AMAZON.LoopOffIntent"))

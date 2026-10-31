@@ -1,7 +1,8 @@
 # Kainos Echo Gateway
 
-Standalone service that transcodes one local FLAC to Alexa-compatible AAC and
-hosts a minimal Alexa custom-skill endpoint.
+Standalone service that plays a local music folder on Amazon Echo through a
+private Alexa custom skill. It transcodes to Alexa-compatible AAC and behaves as
+close to Spotify on Echo as a custom skill allows, for local files only.
 
 Separate from Kainos `PlayerSession`, Home Sync, and the main app UI.
 
@@ -12,17 +13,85 @@ Separate from Kainos `PlayerSession`, Home Sync, and the main app UI.
 | 1–2 Container + `/stream/test` FLAC→AAC-LC ADTS | Done |
 | 3 Tailscale Funnel (host-side) | Scripts + docs |
 | 4 Minimal Alexa skill (`POST /alexa`) | Done (dev skill setup manual) |
+| Player parity: exact resume, shuffle, repeat, per-Echo sessions | Done, physical Echo test pending |
+| Now-playing metadata and art, even volume | Done, physical Echo test pending |
+
+## Voice and button controls
+
+| Say or press | Result |
+| --- | --- |
+| "Alexa, lance test", or open the skill | Fresh shuffle of the whole folder |
+| "Alexa, stop", pause button | Stop and save the exact position |
+| "Alexa, reprends", play button | Same track, same position, same queue. Fresh shuffle if there is no session |
+| "Alexa, suivant", "précédent", buttons | Walk the queue. Clears repeat-one |
+| "Alexa, recommence" | Current track from 0 |
+| "Alexa, active l'aléatoire" | Reorder the tracks after the current one. Playback continues |
+| "Alexa, désactive l'aléatoire" | Continue in sorted library order from the current track |
+| "Alexa, répète" | Current track from 0, then repeat it |
+| Loop on | Repeat the list. This is the default, reshuffling at each wrap |
+| Loop off | Stop at the end of the list, and clear repeat-one |
+
+Amazon owns the built-in phrases, so the exact French wording may differ.
+
+Amazon delivers Next, Previous, Shuffle, Loop, Repeat, StartOver and Cancel to a
+skill that is playing even if they are missing from the deployed model. They are
+in `fr-FR.json` anyway. Pause and Resume have no such exception.
+
+## Sessions and resume
+
+Each Echo has its own session, keyed by a hash of `deviceId`, in
+`STATE_DIR/sessions/`. A session stores the track order, position, absolute
+offset, shuffle and repeat state. Writes are atomic and sessions survive
+container restarts. Tracks that left the library are dropped on load.
+
+Resume uses a URL seek, not pre-transcoded files. `GET /stream/t/{token}/{id}?start_ms=N`
+adds `-ss` before `-i`, and the Play directive keeps `offsetInMilliseconds: 0`.
+Alexa then reports offsets relative to that stream, so the stream token carries
+the base: `<track_id>.<base_ms>.<nonce>`. Absolute position is base + offset. The
+nonce keeps ENQUEUE of the same track valid under repeat-one.
 
 ## Security for public exposure
 
 Codex review required an unguessable token before Funnel:
 
-- Public stream: `GET /stream/t/{PUBLIC_STREAM_TOKEN}` (constant-time compare)
+- Public stream: `GET /stream/t/{PUBLIC_STREAM_TOKEN}/{track_id}` (constant-time compare)
+- Public art: `GET /art/t/{PUBLIC_STREAM_TOKEN}/{track_id}.jpg`, same check, known tracks only
 - `/stream/test` disabled when `ALLOW_OPEN_TEST_STREAM=false` (Funnel default)
 - `POST /alexa` verifies Alexa `Signature-256` + cert URL + timestamp (+ optional skill ID)
+- `POST /alexa` bodies are limited to 256 KiB
 - Compose still binds **loopback only**; Funnel runs on the host
+- The access log is off because request lines contain the token. Info logs hold no token, device id or file path
 
 Never Funnel Home Sync (`43822`).
+
+The container does not mount `~/.universal-music-player`, which holds tokens.
+
+## Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `STATE_DIR` | `/state` | Sessions, `scan.json`, art cache. If unwritable, playback still works without persistence |
+| `ECHO_STATE_DIR` | `./state` | Host folder bound to `/state` by Compose |
+| `TARGET_LUFS` | `-11` | Loudness target. -11 matches Spotify Loud |
+| `MAX_CONCURRENT_STREAMS` | `4` | Encoder cap. When full, the oldest encoder is killed instead of refusing the stream |
+
+The `state-init` service makes the state folder writable for container uid 10001
+on a fresh checkout.
+
+## Autostart
+
+`docker.service` is not enabled on this machine, but `docker.socket` is. Boot
+alone therefore starts no containers, even with `restart: unless-stopped`. A
+systemd user unit runs `docker compose up -d`, which activates the socket:
+
+```bash
+./scripts/install-autostart.sh
+systemctl --user start kainos-echo-gateway.service
+```
+
+The installer writes the unit with this checkout's absolute path and enables
+linger, so the unit runs at boot without a login. Run it from the checkout that
+holds `.env`.
 
 ## Quick start (local only)
 
@@ -48,7 +117,7 @@ Verify from a network outside the tailnet (phone cellular is ideal):
 ```bash
 curl -sS "$PUBLIC_BASE_URL/health"
 curl -sS -o /tmp/kainos-echo-test.aac \
-  "$PUBLIC_BASE_URL/stream/t/$PUBLIC_STREAM_TOKEN"
+  "$PUBLIC_BASE_URL/stream/t/$PUBLIC_STREAM_TOKEN"   # plays TEST_TRACK
 ffprobe -hide_banner /tmp/kainos-echo-test.aac
 ```
 
@@ -73,7 +142,7 @@ See [`alexa-skill/README.md`](alexa-skill/README.md).
 Flow:
 
 1. Funnel exposes `https://<host>/alexa` and the token stream.
-2. “Alexa, open Kainos test” → LaunchRequest → `AudioPlayer.Play` with the token HTTPS URL.
+2. “Alexa, lance test” → LaunchRequest → `AudioPlayer.Play` with the token HTTPS URL.
 3. Echo pulls AAC from Funnel → gateway → FFmpeg.
 
 After creating the skill, put `ALEXA_SKILL_ID` in `.env` and recreate the container.
@@ -81,11 +150,43 @@ After creating the skill, put `ALEXA_SKILL_ID` in `.env` and recreate the contai
 ## Encoding
 
 ```text
-ffmpeg … -c:a aac -profile:a aac_low -b:a 256k -ac 2 -ar 44100 -f adts pipe:1
+ffmpeg [-ss S] -i … [-af volume=GdB] -c:a aac -profile:a aac_low -b:a 256k -ac 2 -ar 44100 -f adts pipe:1
 Content-Type: audio/aac
 ```
 
-HTTP Range is rejected (`416`). Resume currently restarts from offset 0.
+`Range: bytes=0-` returns the whole stream. Any other `Range` returns `416`.
+
+A paused Echo may not close its connection, so a stopped stream can hold an
+encoder for a long time. The newest request always gets a stream: at the cap the
+oldest encoder is killed. A resume can never get a `503`.
+
+## Metadata and art
+
+Every Play directive sends title, subtitle (artist), art and background image.
+
+- Text comes from ffprobe tags. A missing field comes from the filename: it strips
+  `y2mate.com - ` and `_<id>_320kbps`, then splits `Artist - Title`. There is no
+  dependency on `kainos.db`.
+- A track the scan has not reached is probed on the spot for at most 1 second, then
+  falls back to the filename, because Alexa has a tight response deadline.
+- Art is the embedded picture, centre-cropped to 512×512 JPEG and cached in
+  `STATE_DIR/art`. Tracks without art get `assets/default-art.jpg`.
+
+## Even volume
+
+A background task measures each track with FFmpeg `ebur128`, one at a time at
+`nice 19`, and stores the result in `STATE_DIR/scan.json`, keyed by relative path,
+size and mtime. It repeats hourly and reads only new or changed files, so new music
+appears without a restart.
+
+```text
+gain_db = min(TARGET_LUFS - measured_I, -1.0 - measured_true_peak)
+```
+
+Tracks not yet scanned play at 0 dB. There is no limiter, so a track with little
+headroom stays quieter than the target instead of clipping.
+
+`GET /health` reports `scan.scanned`, `scan.total` and `sessions`.
 
 ## Tests
 

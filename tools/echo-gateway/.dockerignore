@@ -4,6 +4,7 @@ __pycache__
 *.pyc
 .git
 fixtures/long.flac
+state
 *.aac
 README.md
 tests

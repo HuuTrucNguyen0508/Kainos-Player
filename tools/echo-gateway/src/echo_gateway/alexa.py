@@ -178,7 +178,10 @@ def _after_mode_change(session: Session, speak: str) -> Reply:
     """Before PlaybackNearlyFinished nothing is queued, and the next one sees the new order."""
     if not session.near_end:
         return Reply(speak=speak)
+    queued_before = session.queued_token
     reply = _enqueue_successor(session)
+    if session.queued_token == queued_before:
+        return Reply(speak=speak)
     return Reply(play=reply.play, control=reply.control, speak=speak)
 
 
