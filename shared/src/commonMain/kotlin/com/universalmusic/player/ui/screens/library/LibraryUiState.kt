@@ -34,6 +34,7 @@ internal data class LibraryUiState(
     val spotifyLoading: Boolean,
     val spotifyError: String?,
     val downloads: Map<String, DownloadItemState>,
+    val searchIndex: LibrarySearchIndex = LibrarySearchIndex(queueSongs, albums, artists),
 )
 
 internal fun LibraryUiState.withQuery(query: String): LibraryUiState {
@@ -42,9 +43,9 @@ internal fun LibraryUiState.withQuery(query: String): LibraryUiState {
     return copy(
         query = query,
         needle = needle,
-        songs = libraryDisplaySongs(queueSongs, needle),
-        albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, favorites), needle),
-        artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, favorites), needle),
+        songs = searchIndex.songs(needle),
+        albums = searchIndex.albums(needle),
+        artists = searchIndex.artists(needle),
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),
         spotifyPlaylists = libraryFilteredSpotifyPlaylists(
             spotifyPlaylistCatalog,
@@ -71,7 +72,7 @@ internal fun deriveLibraryUiState(
     downloads: Map<String, DownloadItemState>,
     query: String,
 ): LibraryUiState {
-    val needle = libraryNeedle(query)
+    val needle = ""
     val localOnly = settings.libraryLocalOnly
     val favoritesOnly = settings.libraryFavoritesOnly
     val queueSongs = libraryQueueSongs(
@@ -88,7 +89,7 @@ internal fun deriveLibraryUiState(
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
         favorites = favorites,
-        query = query,
+        query = "",
         needle = needle,
         queueSongs = queueSongs,
         songs = libraryDisplaySongs(queueSongs, needle),
@@ -107,5 +108,5 @@ internal fun deriveLibraryUiState(
         spotifyLoading = spotifyLoading,
         spotifyError = spotifyError,
         downloads = downloads,
-    )
+    ).withQuery(query)
 }

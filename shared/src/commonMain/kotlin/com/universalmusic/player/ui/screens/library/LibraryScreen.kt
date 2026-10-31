@@ -71,7 +71,7 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { LibraryPresenter.from(container, scope) }
     val emitted by presenter.state.collectAsState()
-    val state = emitted.withQuery(query)
+    val state = remember(emitted, query) { emitted.withQuery(query) }
     SideEffect { presenter.setQuery(query) }
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }

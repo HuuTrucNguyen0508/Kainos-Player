@@ -169,3 +169,35 @@ private fun Playlist.matchesLibraryQuery(needle: String): Boolean {
     val text = TrackNormalizer.fold(listOfNotNull(title, ownerName, description).joinToString(" "))
     return FuzzyMatcher.matches(needle, text)
 }
+
+/** One index per catalog/filter/sort snapshot; query changes reuse folded metadata. */
+internal data class LibrarySearchIndex(
+    private val songs: List<Track>,
+    private val albums: List<Album>,
+    private val artists: List<LibraryArtistEntry>,
+) {
+    private val songKeys by lazy { songs.map { it.librarySearchKey() } }
+    private val keysById by lazy { songs.indices.associate { songs[it].canonicalId to songKeys[it] } }
+    private val albumKeys by lazy {
+        albums.map { TrackNormalizer.fold(listOf(it.title, it.artists.joinToString(" ") { a -> a.name }).joinToString(" ")) }
+    }
+    private val artistKeys by lazy { artists.map { TrackNormalizer.fold(it.artist.name) } }
+
+    fun songs(needle: String): List<Track> {
+        if (needle.isEmpty()) return songs
+        return songs.indices
+            .mapNotNull { i -> songKeys[i].score(needle)?.let { i to it } }
+            .sortedByDescending { it.second }
+            .map { songs[it.first] }
+    }
+
+    fun albums(needle: String): List<Album> = if (needle.isEmpty()) albums else albums.filterIndexed { i, album ->
+        FuzzyMatcher.matches(needle, albumKeys[i]) || album.tracks.any {
+            (keysById[it.canonicalId] ?: it.librarySearchKey()).score(needle) != null
+        }
+    }
+
+    fun artists(needle: String): List<LibraryArtistEntry> = if (needle.isEmpty()) artists else artists.filterIndexed { i, _ ->
+        FuzzyMatcher.matches(needle, artistKeys[i])
+    }
+}

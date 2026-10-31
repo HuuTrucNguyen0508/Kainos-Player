@@ -94,9 +94,10 @@ internal class LibraryPresenter(
             ::SpotifySlice,
         ),
         combine(kainosPlaylistRows, homePins, downloads, ::PinsSlice),
-        queryText,
-    ) { catalog, spotify, pins, query ->
-        derive(catalog, spotify, pins, query)
+    ) { catalog, spotify, pins ->
+        derive(catalog, spotify, pins, "")
+    }.combine(queryText) { catalog, query ->
+        catalog.withQuery(query)
     }.stateIn(scope, SharingStarted.Eagerly, initialState())
 
     fun setQuery(value: String) {
