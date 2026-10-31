@@ -30,6 +30,32 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun editingSuccessorDuringOutputWaitCannotPublishOldSuccessor() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "b", PlaybackHandle.Url("/b.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append") }) delay(10) }
+            val queried = AtomicBoolean(false)
+            runtime.properties = { _, name -> if (name == "audio-pts") { queried.set(true); "-0.4" } else null }
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":2}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"playback-restart"}""")
+            withTimeout(2_000) { while (!queried.get()) delay(10) }
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "c", PlaybackHandle.Url("/c.flac"), null, 1))
+            runtime.properties = { _, name -> if (name == "audio-pts") "0" else null }
+            delay(100)
+            assertNull(engine.state.value.seamlessItemId)
+            assertEquals(1, engine.state.value.playGeneration)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun unavailableOutputClockWaitsForDrainAndNeverStallsForever() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)

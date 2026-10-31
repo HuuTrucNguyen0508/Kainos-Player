@@ -87,6 +87,12 @@ class DesktopPlaybackEngine internal constructor(
             val active = activeProcess ?: return
             if (!active.gapless) return
             val candidate = next?.takeIf { gaplessEnabled && it.generation == activePlayGeneration && localFile(it.handle.url) }
+            if (active.crossing != null && candidate !== active.crossing) {
+                val handle = lastHandle as? PlaybackHandle.Url ?: return
+                elapsedOffset = _state.value.positionMs
+                seekRestartLocked(handle, _state.value)?.let(::launchRestart)
+                return
+            }
             preparedNext = candidate
             enqueueIpcLocked {
                 if (!isActiveProcess(active)) return@enqueueIpcLocked
