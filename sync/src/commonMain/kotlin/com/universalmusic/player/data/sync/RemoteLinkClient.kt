@@ -309,13 +309,13 @@ class RemoteLinkClient(
         val change = async {
             player.state.first { next -> sent?.status.isMaterialChange(next?.status, elapsedSince(sent, next)) }
         }
-        // Refresh a receiver lease before it expires, even when neither player changes.
+        // Only a poll the hub answers renews the lease, so the repost must ask for an immediate reply.
         val refresh = async { if (directLease != null && pressable()) delay(2_000) else awaitCancellation() }
         val wake = async { reconnect.receive() }
         select<RemotePollReply?> {
             call.onAwait { reply -> change.cancel(); refresh.cancel(); wake.cancel(); reply }
             change.onAwait { call.cancel(); refresh.cancel(); wake.cancel(); null }
-            refresh.onAwait { call.cancel(); change.cancel(); wake.cancel(); null }
+            refresh.onAwait { forcePollStatus = true; call.cancel(); change.cancel(); wake.cancel(); null }
             wake.onAwait { call.cancel(); change.cancel(); refresh.cancel(); null }
         }
     }
