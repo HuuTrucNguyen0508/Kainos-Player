@@ -86,8 +86,13 @@ import com.universalmusic.player.ui.theme.KainosTheme
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import coil3.compose.LocalPlatformContext
+import com.universalmusic.player.ui.components.warmQueueArtwork
+import com.universalmusic.player.domain.model.ProviderId
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
@@ -131,6 +136,25 @@ private fun AppScaffold(
     val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
+    val imageContext = LocalPlatformContext.current
+    LaunchedEffect(queue, imageContext) {
+        container.player.nowPlaying.map { it.isPlaying }.distinctUntilChanged().collectLatest { playing ->
+            if (!playing) return@collectLatest
+            delay(1_200)
+            val neighbours = listOfNotNull(queue.history.lastOrNull(), queue.upcoming.firstOrNull())
+            for (item in neighbours) {
+                if (item.track.sources.any { it.provider != ProviderId.LOCAL && it.provider != ProviderId.YOUTUBE_MUSIC }) continue
+                try {
+                    val art = item.track.artwork ?: container.local.resolveEmbeddedArtwork(item.track)
+                    if (art != null) warmQueueArtwork(imageContext, art)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // A cover failure must not affect transport; normal display can retry later.
+                }
+            }
+        }
+    }
     val canSkipNext = run {
         queue.shuffle
         queue.repeat
