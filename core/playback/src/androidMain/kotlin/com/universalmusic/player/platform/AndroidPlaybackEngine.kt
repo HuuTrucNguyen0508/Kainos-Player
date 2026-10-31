@@ -224,6 +224,19 @@ class AndroidPlaybackEngine(
     }
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        try {
+            playInternal(handle, quality, playGeneration)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (activePlayGeneration == playGeneration) {
+                publishState(_state.value.copy(status = EngineStatus.FAILED, error = failure.message))
+            }
+            throw failure
+        }
+    }
+
+    private suspend fun playInternal(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         val previousBackend = activeBackend
         activePlayGeneration = playGeneration
         when (handle) {

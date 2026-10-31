@@ -21,6 +21,19 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun playRetriesAfterFailureOnLastItem() = runTest {
+        var calls = 0
+        val engine = RecordingEngine { if (++calls == 1) error("start failed") }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("Last", "Artist", provider = ProviderId.SAMPLE))
+        runCurrent()
+        session.playTransport()
+        runCurrent()
+        assertEquals(2, calls)
+        assertTrue(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
     fun pauseDuringRebufferKeepsTheLoadedTrackAndPosition() = runTest {
         val engine = RecordingEngine {}
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
@@ -296,6 +309,7 @@ private class RecordingEngine(
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         activePlayGeneration = playGeneration
+        state.value = EngineState(status = EngineStatus.BUFFERING, playGeneration = playGeneration)
         onPlay(handle)
         state.value = EngineState(
             status = EngineStatus.PLAYING,

@@ -1110,6 +1110,8 @@ class PlayerSession(
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
             failedItemIds.clear()
+            beginTransition()
+            engine.stop()
             return
         }
         val snapshot = queue.queue.value
