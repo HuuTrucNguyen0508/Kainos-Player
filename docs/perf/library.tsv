@@ -21,3 +21,4 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	neighbour-artwork-512px-decode-ms	prime shared Coil loader for adjacent local/YouTube covers	5.050	0.064	5.359	0.074	10	accepted; repeat 5.461 to 0.093; generated local PNG decode not full painted frame	30e885e
 2026-10-31	fast-skip-db-write-ms	reject added coalescing; existing delta writes	NA	0.692	NA	NA	200	rejected; trace proves only 2 metadata writes and zero queue table writes	inspection
 2026-10-31	stability-annotations	reject blanket Stable/Immutable	NA	NA	NA	NA	0	rejected; compiler reports already skippable via strong skipping	inspection
+2026-10-31	natural-transition-after-30s	use signed URL expiry; PlayerSessionPrefetchTest virtual-clock mock at 180001ms	cold	ready	NA	NA	1	accepted; next-track resolutions at transition 2 to 1, no second extraction	S1

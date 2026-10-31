@@ -1131,8 +1131,8 @@ class PlayerSession(
                 // YouTube signed URLs normally carry epoch-seconds expiry. Leave a safety margin.
                 val expires = url.substringAfter('?', "").split('&')
                     .firstOrNull { it.startsWith("expire=") }?.substringAfter('=')?.toLongOrNull()
-                    ?.let { it * 1_000 - 30_000 } ?: Long.MAX_VALUE
-                val validUntil = minOf(clock() + 30_000, expires)
+                    ?.let { it * 1_000 - 30_000 }
+                val validUntil = expires ?: (clock() + 30_000)
                 if (validUntil > clock()) prefetched = Prefetched(next.id, next.track, preferences, resolved, validUntil)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
