@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import uuid
+import re
 from urllib.parse import urlsplit
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,7 +37,21 @@ from echo_gateway.stream import (
 logger = logging.getLogger("echo_gateway")
 
 
+class StreamTokenFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn keeps the request target in args; also handle preformatted records.
+        redact = lambda value: re.sub(r"(/stream/t/)[^/?\s]+", r"\1[redacted]", value)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact(arg) if isinstance(arg, str) else arg for arg in record.args)
+        if isinstance(record.msg, str):
+            record.msg = redact(record.msg)
+        return True
+
+
 def configure_logging() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, StreamTokenFilter) for item in access.filters):
+        access.addFilter(StreamTokenFilter())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",

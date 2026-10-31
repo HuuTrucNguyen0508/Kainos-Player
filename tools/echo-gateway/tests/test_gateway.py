@@ -425,3 +425,17 @@ def test_public_gateway_requires_skill_id():
 def test_signature_bypass_requires_loopback_public_url():
     with pytest.raises(ValueError, match="local"):
         create_app(make_settings(skip_alexa_signature_verify=True, public_base_url="https://public.example"))
+
+
+def test_stream_access_log_redacts_token():
+    import logging
+    from echo_gateway.main import configure_logging
+    configure_logging()
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/stream/t/secret-bearer/track?x=1", "1.1", 200), None)
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(record)
+    assert "secret-bearer" not in record.getMessage()
+    assert "/stream/t/[redacted]/track" in record.getMessage()
+    assert "200" in record.getMessage()
