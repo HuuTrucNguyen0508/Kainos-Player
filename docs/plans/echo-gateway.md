@@ -71,7 +71,7 @@ Done in `tools/echo-gateway/`:
 
 Two findings changed the design:
 
-- Before this work a disconnected stream could hold its slot until a garbage-collection pass, or lose it permanently, because Starlette abandons the body iterator and cancels cleanup awaits. The response now closes the encoder itself and releases the slot synchronously. At the cap, the oldest encoder is killed instead of returning `503`.
+- Before this work a disconnected stream could hold its slot until a garbage-collection pass, or lose it permanently, because Starlette abandons the body iterator and cancels cleanup awaits. The response now closes the encoder itself and releases the slot synchronously. At the cap, new streams receive retryable `503`; live encoders are protected because a paused connection cannot be distinguished from active backpressured playback.
 - `expectedPreviousToken` is an error on `REPLACE_ENQUEUED`. The gateway sends `REPLACE_ENQUEUED` only when a stream is already queued, so a mode change before `PlaybackNearlyFinished` sends no directive and the new order applies when Alexa asks for the next track.
 
 Open: behaviour on a physical Echo. See `tools/echo-gateway/README.md`.

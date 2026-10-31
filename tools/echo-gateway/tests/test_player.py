@@ -290,6 +290,13 @@ def test_shuffle_on_before_near_end_keeps_playing_without_directive(echo: Echo):
 
 def test_shuffle_toggle_after_enqueue_replaces_queued_item(echo: Echo):
     token = echo.start()
+    # Force a different successor so this test does not depend on random shuffle.
+    session = echo.session()
+    ids = echo.library.ids()
+    expected = ids[(ids.index(track_of(token)) + 1) % len(ids)]
+    others = [item for item in session.order if item not in (track_of(token), expected)]
+    session.order = [track_of(token), *others, expected]
+    session.position = 0
     queued = echo.play(audio_event("PlaybackNearlyFinished", token))
     assert queued["playBehavior"] == "ENQUEUE"
 
@@ -655,7 +662,7 @@ def test_failed_current_track_skips_to_next(echo: Echo):
     assert list(response) == ["directives"]
     assert response["directives"][0]["playBehavior"] == "REPLACE_ALL"
     assert track_of(response["directives"][0]) == order[1]
-    assert echo.order() == order[1:]
+    assert echo.order() == order
 
 
 def test_failures_are_bounded_on_a_broken_library(echo: Echo):
@@ -775,3 +782,63 @@ def test_interaction_model_declares_every_handled_builtin_intent():
         "AMAZON.StopIntent",
         "PlayTestIntent",
     }
+
+
+def test_retried_next_replays_response_without_advancing(echo: Echo):
+    echo.start()
+    request = intent("AMAZON.NextIntent")
+    first = echo.send(request)
+    token = echo.session().current_token
+    assert echo.send(request) == first
+    assert echo.session().current_token == token
+
+
+def test_delayed_started_cannot_restore_replaced_stream(echo: Echo):
+    old = echo.start()
+    new = stream(echo.play(intent("AMAZON.NextIntent")))["token"]
+    echo.send(audio_event("PlaybackStarted", old))
+    echo.send(audio_event("PlaybackStopped", old, 9000))
+    assert echo.session().current_token == new
+    assert echo.session().offset_ms == 0
+
+
+def test_prefetch_failures_preserve_queue_and_skip_each_failed_track(echo: Echo):
+    token = echo.start()
+    order = echo.order()
+    queued = stream(echo.play(audio_event("PlaybackNearlyFinished", token)))["token"]
+    for index in (2, 3):
+        queued = stream(echo.play(failed(queued, state_token=token, activity="PLAYING")))["token"]
+        assert track_of(queued) == order[index]
+    assert echo.order() == order
+
+
+def test_exception_event_redacts_stream_token(echo: Echo, caplog):
+    with caplog.at_level(logging.ERROR):
+        echo.send(envelope({'type': 'System.ExceptionEncountered',
+                            'error': {'message': f'Failed https://example/stream/t/{STREAM_TOKEN}/x'}}))
+    assert STREAM_TOKEN not in caplog.text
+
+
+def test_concurrent_retries_advance_once(echo: Echo):
+    from concurrent.futures import ThreadPoolExecutor
+    echo.start()
+    order = echo.order()
+    request = intent('AMAZON.NextIntent')
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        replies = list(pool.map(echo.send, [request] * 8))
+    assert all(reply == replies[0] for reply in replies)
+    assert echo.session().current_id == order[1]
+
+
+def test_request_cache_is_bounded_and_expires(echo: Echo, monkeypatch):
+    import echo_gateway.session as sessions
+    now = [0.0]
+    monkeypatch.setattr(sessions.time, 'monotonic', lambda: now[0])
+    echo.start()
+    request = intent('AMAZON.NextIntent')
+    first = echo.send(request)
+    now[0] = 301.0
+    assert echo.send(request) != first
+    for _ in range(520):
+        echo.send(intent('AMAZON.HelpIntent'))
+    assert len(echo.player.sessions._responses) == 512

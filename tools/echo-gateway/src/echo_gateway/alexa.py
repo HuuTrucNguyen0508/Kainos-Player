@@ -276,11 +276,12 @@ def _handle_playback_failed(
         failed = StreamToken.parse(token)
         session.queued_token = ""
         if failed is not None and failed.track_id != session.current_id:
-            session.remove(failed.track_id)
+            session.failed_tracks.append(failed.track_id)
         return _enqueue_successor(session)
 
     session.owns(token)
-    session.drop_current()
+    if session.current_id is not None:
+        session.failed_tracks.append(session.current_id)
     track_id = session.successor()
     if track_id is None:
         return Reply()
@@ -309,6 +310,7 @@ def _handle_audio_event(
     elif request_type == "AudioPlayer.PlaybackNearlyFinished":
         if session.owns(token):
             session.failures = 0
+            session.failed_tracks.clear()
             session.near_end = True
             return _enqueue_successor(session)
     elif request_type == "AudioPlayer.PlaybackStopped":
@@ -317,6 +319,7 @@ def _handle_audio_event(
     elif request_type == "AudioPlayer.PlaybackFinished":
         if session.owns(token):
             session.failures = 0
+            session.failed_tracks.clear()
             if not session.queued_token:
                 session.offset_ms = 0
                 session.near_end = False
@@ -340,6 +343,7 @@ def _dispatch(
         "PlaybackController."
     ):
         session.failures = 0
+        session.failed_tracks.clear()
 
     if request_type == "LaunchRequest":
         return _start_fresh(session, player.library, SPEECH_FRESH_START)
@@ -364,7 +368,7 @@ def _dispatch(
             "alexa_exception request_id=%s error_type=%s message=%s",
             request_id,
             error.get("type") or "unknown",
-            str(error.get("message") or "")[:MAX_LOGGED_ERROR_CHARS],
+            str(error.get("message") or "").replace(settings.public_stream_token, "<token>")[:MAX_LOGGED_ERROR_CHARS],
         )
         return Reply()
 
@@ -397,11 +401,16 @@ def handle_alexa_envelope(
     request_type = request.get("type") or ""
     logger.info("alexa_request request_id=%s type=%s", request.get("requestId") or "", request_type)
 
-    with player.sessions.open(_session_key(context)) as session:
+    key = _session_key(context)
+    request_id = request.get("requestId") or ""
+    with player.sessions.open(key) as session:
+        cached = player.sessions.cached_response(key, request_id)
+        if cached is not None:
+            return cached
         reply = _dispatch(request, context, session, settings, player)
-    return render(
-        reply,
-        settings,
-        player,
-        conversational=request_type in {"LaunchRequest", "IntentRequest"},
-    )
+        response = render(
+            reply, settings, player,
+            conversational=request_type in {"LaunchRequest", "IntentRequest"},
+        )
+        player.sessions.remember_response(key, request_id, response)
+        return response

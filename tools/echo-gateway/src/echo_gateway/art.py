@@ -51,16 +51,16 @@ class ArtCache:
         self._extract_one_at_a_time = asyncio.Semaphore(1)
 
     async def jpeg_for(self, track: LibraryTrack) -> bytes:
-        stamp = file_stamp(track)
+        stamp = await asyncio.to_thread(file_stamp, track)
         if stamp is None:
             return self._default
         name = f"{track.track_id}-{stamp[0]}-{stamp[1]}"
         cached = self._dir / f"{name}.jpg"
         no_art = self._dir / f"{name}.none"
         async with self._extract_one_at_a_time:
-            if cached.is_file():
-                return cached.read_bytes()
-            if no_art.is_file():
+            if await asyncio.to_thread(cached.is_file):
+                return await asyncio.to_thread(cached.read_bytes)
+            if await asyncio.to_thread(no_art.is_file):
                 return self._default
             return await self._extract(track, cached, no_art)
 
@@ -76,7 +76,7 @@ class ArtCache:
         exit_code, jpeg, _ = result
         target, payload = (cached, jpeg) if exit_code == 0 and jpeg else (no_art, b"")
         try:
-            atomic_write(target, payload)
+            await asyncio.to_thread(atomic_write, target, payload)
         except OSError:
             logger.error("art_cache_failed category=state_dir")
         return payload or self._default

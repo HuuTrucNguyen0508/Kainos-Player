@@ -12,8 +12,17 @@ if [[ ! -f "$ROOT/.env" ]]; then
 fi
 
 mkdir -p "$UNIT_DIR"
-ESCAPED_ROOT="$(printf '%s' "$ROOT" | sed 's/[&|\\]/\\&/g')"
-sed "s|__GATEWAY_DIR__|$ESCAPED_ROOT|" "$ROOT/scripts/$UNIT_NAME" > "$UNIT_DIR/$UNIT_NAME"
+# WorkingDirectory takes a path, not a shell word. Percent signs are specifiers.
+python3 - "$ROOT" "$UNIT_DIR/$UNIT_NAME" <<'PYTHON'
+from pathlib import Path
+import sys
+root, target = sys.argv[1:]
+if any(ord(char) < 32 for char in root) or "\\" in root or root != root.rstrip():
+    raise SystemExit("Gateway directory cannot contain control characters, backslashes or trailing whitespace")
+escaped = root.replace("%", "%%")
+template = (Path(root) / "scripts/kainos-echo-gateway.service").read_text()
+Path(target).write_text(template.replace("__GATEWAY_DIR__", escaped))
+PYTHON
 
 systemctl --user daemon-reload
 systemctl --user enable "$UNIT_NAME"

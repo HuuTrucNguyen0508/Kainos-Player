@@ -73,7 +73,7 @@ The container does not mount `~/.universal-music-player`, which holds tokens.
 | `STATE_DIR` | `/state` | Sessions, `scan.json`, art cache. If unwritable, playback still works without persistence |
 | `ECHO_STATE_DIR` | `./state` | Host folder bound to `/state` by Compose |
 | `TARGET_LUFS` | `-11` | Loudness target. -11 matches Spotify Loud |
-| `MAX_CONCURRENT_STREAMS` | `4` | Encoder cap. When full, the oldest encoder is killed instead of refusing the stream |
+| `MAX_CONCURRENT_STREAMS` | `4` | Encoder cap. When full, new streams receive 503 with Retry-After; existing playback is protected |
 
 The `state-init` service makes the state folder writable for container uid 10001
 on a fresh checkout.
@@ -156,9 +156,9 @@ Content-Type: audio/aac
 
 `Range: bytes=0-` returns the whole stream. Any other `Range` returns `416`.
 
-A paused Echo may not close its connection, so a stopped stream can hold an
-encoder for a long time. The newest request always gets a stream: at the cap the
-oldest encoder is killed. A resume can never get a `503`.
+A paused Echo may hold an encoder connection open. At the cap, new requests get
+`503` with `Retry-After: 2`. The gateway cannot distinguish a paused connection
+from a long mix under backpressure, so it never evicts a live encoder.
 
 ## Metadata and art
 
@@ -167,8 +167,8 @@ Every Play directive sends title, subtitle (artist), art and background image.
 - Text comes from ffprobe tags. A missing field comes from the filename: it strips
   `y2mate.com - ` and `_<id>_320kbps`, then splits `Artist - Title`. There is no
   dependency on `kainos.db`.
-- A track the scan has not reached is probed on the spot for at most 1 second, then
-  falls back to the filename, because Alexa has a tight response deadline.
+- A track the scan has not reached uses filename metadata immediately. Play
+  responses never wait for a probe.
 - Art is the embedded picture, centre-cropped to 512×512 JPEG and cached in
   `STATE_DIR/art`. Tracks without art get `assets/default-art.jpg`.
 
@@ -180,11 +180,13 @@ size and mtime. It repeats hourly and reads only new or changed files, so new mu
 appears without a restart.
 
 ```text
-gain_db = min(TARGET_LUFS - measured_I, -1.0 - measured_true_peak)
+gain_db = min(TARGET_LUFS - measured_I, -4.0 - measured_true_peak)
 ```
 
 Tracks not yet scanned play at 0 dB. There is no limiter, so a track with little
-headroom stays quieter than the target instead of clipping.
+headroom stays quieter than the target. The -4 dBTP input ceiling leaves room
+for AAC encoder overshoot; it is tested against synthetic signals, not a guarantee
+for every possible source. Unscanned tracks still play at unity gain.
 
 `GET /health` reports `scan.scanned`, `scan.total` and `sessions`.
 
@@ -219,3 +221,8 @@ Record after physical-device tests:
 - Startup latency: _pending_
 - Premature end / buffering: _pending_
 - Pause / resume: _pending_
+
+Alexa request IDs are cached per device for five minutes, up to 512 responses in
+memory. Retries replay the response without changing the queue again. Restarting
+the gateway clears this cache. Transient failures skip tracks without removing
+them from the session queue; five consecutive failures stop recovery.

@@ -17,7 +17,6 @@ from echo_gateway.art import ART_SIZE_PX, DEFAULT_ART
 from echo_gateway.library import Library, track_id_for
 from echo_gateway.main import create_app
 from echo_gateway.scan import (
-    LAZY_PROBE_TIMEOUT_S,
     LibraryScan,
     compute_gain_db,
     filename_metadata,
@@ -128,7 +127,7 @@ async def test_full_pause_resume_over_http_streams_the_remainder(music: Path, tm
         stopped = await client.post(
             "/alexa", json=audio_event("PlaybackStopped", started["token"], 12_500)
         )
-        assert stopped.json() == {"version": "1.0", "response": {}}
+        assert stopped.content == b""
 
         resumed = stream_of((await client.post("/alexa", json=controller("PlayCommandIssued"))).json())
         assert resumed["url"].endswith("?start_ms=12500")
@@ -165,8 +164,8 @@ def test_unscanned_track_plays_at_unity_gain(music: Path):
 
 def test_gain_formula():
     assert compute_gain_db(-11, -8.1, -3.0) == -2.9
-    assert compute_gain_db(-11, -14.2, -6.0) == 3.2
-    assert compute_gain_db(-11, -14.2, -0.5) == -0.5
+    assert compute_gain_db(-11, -14.2, -6.0) == 2.0
+    assert compute_gain_db(-11, -14.2, -0.5) == -3.5
     assert compute_gain_db(-11, -5.2, 0.4) == -5.8
     assert compute_gain_db(-11, None, None) == 0.0
     assert compute_gain_db(-11, -70.0, -60.0) == 0.0
@@ -211,11 +210,13 @@ def test_filename_fallback(name: str, title: str, artist: str):
     assert (metadata.title, metadata.artist) == (title, artist)
 
 
-def test_lazy_metadata_prefers_tags_and_fills_gaps_from_filename(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_cached_metadata_prefers_tags_and_fills_gaps_from_filename(tmp_path: Path):
     make_tone(tmp_path / "File Artist - File Title.flac", seconds=1, tags={"TITLE": "Tag Title"})
     make_tone(tmp_path / "Both.flac", seconds=1, tags={"title": "T", "artist": "A"})
     library = Library(tmp_path)
     scan = LibraryScan(make_settings(music_root=tmp_path), library)
+    await scan.run_pass()
     by_name = {track.relative_path: scan.metadata_for(track) for track in library.tracks}
     assert by_name["File Artist - File Title.flac"].title == "Tag Title"
     assert by_name["File Artist - File Title.flac"].artist == "File Artist"
@@ -233,7 +234,7 @@ def test_slow_probe_cannot_hold_up_a_play_response(tmp_path: Path):
     scan = LibraryScan(make_settings(music_root=tmp_path, ffprobe_bin=str(slow)), library)
     begun = time.monotonic()
     metadata = scan.metadata_for(library.tracks[0])
-    assert time.monotonic() - begun < LAZY_PROBE_TIMEOUT_S + 1
+    assert time.monotonic() - begun < 0.1
     assert (metadata.title, metadata.artist) == ("Probe", "Slow")
 
 
@@ -470,25 +471,26 @@ async def open_stream(port: int, path: str) -> tuple[asyncio.StreamReader, async
 
 
 @pytest.mark.asyncio
-async def test_resume_reclaims_a_slot_from_a_stalled_stopped_stream(tmp_path: Path):
-    """A paused Echo may never close its connection. Resume must still get a stream."""
+@pytest.mark.parametrize("cap", [2, 4])
+async def test_full_cap_protects_existing_streams(tmp_path: Path, cap):
+    """Backpressured long mixes must survive retries and prefetch at the cap."""
     music = tmp_path / "music"
     music.mkdir()
     make_tone(music / "Tone - Long.flac", seconds=3000)
-    app = create_app(make_settings(music_root=music, max_concurrent_streams=2))
+    app = create_app(make_settings(music_root=music, max_concurrent_streams=cap))
     track = app.state.player.library.tracks[0]
     url = track_url(track.track_id)
 
     async with real_server(app) as port:
-        stalled = [await open_stream(port, url) for _ in range(2)]
+        stalled = [await open_stream(port, url) for _ in range(cap)]
         for _, _, headers in stalled:
             assert headers.startswith(b"HTTP/1.1 200")
-        assert app.state.transcoder.active_count == 2
+        assert app.state.transcoder.active_count == cap
 
         reader, writer, headers = await open_stream(port, f"{url}?start_ms=2990000")
-        assert headers.startswith(b"HTTP/1.1 200")
-        assert await asyncio.wait_for(reader.read(1024), timeout=5)
-        assert app.state.transcoder.active_count <= 2
+        assert headers.startswith(b"HTTP/1.1 503")
+        assert app.state.transcoder.active_count == cap
+        assert all(proc.returncode is None for proc in app.state.transcoder._active)
 
         for _, stale_writer, _ in stalled:
             stale_writer.close()
@@ -510,12 +512,11 @@ async def test_transcoder_never_exceeds_the_slot_cap(tmp_path: Path):
     first = transcoder.stream(source, "a")
     assert await anext(first)
     second = transcoder.stream(source, "b")
-    assert await anext(second)
+    from echo_gateway.stream import TranscodeCapacityError
+    with pytest.raises(TranscodeCapacityError):
+        await anext(second)
     assert transcoder.active_count == 1
-    remainder = bytearray()
-    async for chunk in first:
-        remainder.extend(chunk)
-    assert transcoder.active_count == 1
+    assert await anext(first)
     await first.aclose()
     await second.aclose()
     assert transcoder.active_count == 0
@@ -550,3 +551,103 @@ async def test_alexa_body_is_size_limited(music: Path):
     async with client_for(app) as client:
         response = await client.post("/alexa", content=b"x" * (256 * 1024 + 1))
     assert response.status_code == 413
+
+
+@pytest.mark.parametrize('expression', [
+    'aevalsrc=0.9*sgn(sin(2*PI*997*t)):s=44100:d=3',
+    'anoisesrc=color=white:amplitude=0.9:seed=42:d=3:r=44100',
+    r'aevalsrc=if(eq(mod(n\,997)\,0)\,0.99\,0):s=44100:d=3',
+    'aevalsrc=0.4*sin(2*PI*997*t)+0.4*sin(2*PI*12001*t):s=44100:d=3',
+])
+def test_gain_ceiling_survives_aac_encoding(tmp_path, expression):
+    from echo_gateway.scan import measure_command
+    from echo_gateway.stream import build_ffmpeg_command
+    source = tmp_path / 'signal.wav'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', expression,
+                    '-af', 'pan=stereo|c0=c0|c1=c0', '-c:a', 'pcm_f32le', str(source)], check=True)
+    settings = make_settings(target_lufs=0)
+    def measure(path):
+        result = subprocess.run(measure_command(settings, path), check=True, capture_output=True, text=True)
+        return parse_ebur128(result.stderr)
+    lufs, peak = measure(source)
+    gain = compute_gain_db(settings.target_lufs, lufs, peak)
+    encoded = subprocess.run(build_ffmpeg_command(settings, source, gain_db=gain).argv,
+                             check=True, capture_output=True).stdout
+    output = tmp_path / 'encoded.aac'
+    output.write_bytes(encoded)
+    assert measure(output)[1] <= 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['AudioPlayer.PlaybackStopped', 'System.ExceptionEncountered'])
+async def test_one_way_alexa_events_have_empty_http_body(kind):
+    from support import envelope
+    app = create_app(make_settings())
+    async with client_for(app) as client:
+        response = await client.post('/alexa', json=envelope({'type': kind}))
+    assert response.status_code == 200
+    assert response.content == b''
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route', ['stream', 'art'])
+async def test_indexed_file_replaced_with_external_symlink_is_rejected(tmp_path, route):
+    music = tmp_path / 'music'
+    music.mkdir()
+    source = make_tone(music / 'track.flac', seconds=1)
+    app = create_app(make_settings(music_root=music))
+    track = app.state.player.library.tracks[0]
+    outside = tmp_path / 'outside.flac'
+    source.rename(outside)
+    source.symlink_to(outside)
+    url = track_url(track.track_id) if route == 'stream' else art_url(track.track_id)
+    async with client_for(app) as client:
+        response = await client.get(url)
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_art_cache_write_does_not_block_event_loop(music, monkeypatch):
+    import threading
+    import echo_gateway.art as art
+    event_loop_thread = threading.get_ident()
+    original = art.atomic_write
+    def checked_write(*args):
+        assert threading.get_ident() != event_loop_thread
+        return original(*args)
+    monkeypatch.setattr(art, 'atomic_write', checked_write)
+    app = create_app(make_settings(music_root=music))
+    track = app.state.player.library.tracks[0]
+    async with client_for(app) as client:
+        assert (await client.get(art_url(track.track_id))).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_health_does_not_block_stream_loop_during_session_persist(monkeypatch):
+    import threading
+    import time
+    app = create_app(make_settings())
+    entered = threading.Event()
+    release = threading.Event()
+    original = app.state.player.sessions._persist
+    def slow_persist(*args):
+        entered.set()
+        release.wait(timeout=2)
+        return original(*args)
+    monkeypatch.setattr(app.state.player.sessions, '_persist', slow_persist)
+    async with client_for(app) as client:
+        alexa = asyncio.create_task(client.post('/alexa', json=launch()))
+        assert await asyncio.to_thread(entered.wait, 2)
+        timer = threading.Timer(0.3, release.set)
+        timer.start()
+        try:
+            health = asyncio.create_task(client.get('/health'))
+            begun = time.monotonic()
+            await asyncio.sleep(0.02)
+            elapsed = time.monotonic() - begun
+            assert elapsed < 0.15
+        finally:
+            release.set()
+            timer.cancel()
+            await alexa
+            await health

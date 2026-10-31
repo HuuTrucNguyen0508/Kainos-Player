@@ -6,7 +6,6 @@ import json
 import logging
 import math
 import re
-import subprocess
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
@@ -19,12 +18,12 @@ from echo_gateway.paths import atomic_write
 logger = logging.getLogger("echo_gateway.scan")
 
 SCAN_FILE_VERSION = 1
-LAZY_PROBE_TIMEOUT_S = 1.0
 SCAN_PROBE_TIMEOUT_S = 30.0
 MEASURE_TIMEOUT_S = 15 * 60.0
 RESCAN_INTERVAL_S = 60 * 60.0
 MEASUREMENT_FLOOR_LUFS = -70.0
-TRUE_PEAK_CEILING_DB = -1.0
+# AAC encoding can overshoot the input peak. See the encoded-signal regressions.
+TRUE_PEAK_CEILING_DB = -4.0
 UNKNOWN_ARTIST = "Artiste inconnu"
 NICE_EXEC_FAILED = {125, 126, 127}
 
@@ -200,25 +199,11 @@ class LibraryScan:
         return compute_gain_db(self._settings.target_lufs, entry.lufs, entry.true_peak)
 
     def metadata_for(self, track: LibraryTrack) -> TrackMetadata:
-        """Blocks for at most LAZY_PROBE_TIMEOUT_S, because Alexa is waiting."""
+        """Use cached tags or the filename. Play responses never wait for a probe."""
         entry = self._valid_entry(track)
         if entry is not None:
             return TrackMetadata(title=entry.title, artist=entry.artist)
-        try:
-            result = subprocess.run(
-                probe_command(self._settings, track.absolute_path),
-                capture_output=True,
-                timeout=LAZY_PROBE_TIMEOUT_S,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            logger.info("metadata_probe_fallback category=timeout track=%s", track.track_id[:8])
-            return filename_metadata(track.relative_path)
-        metadata = metadata_from_probe(result.stdout, track.relative_path)
-        stamp = file_stamp(track)
-        if result.returncode == 0 and stamp is not None:
-            self._remember(track, ScanEntry(*stamp, metadata.title, metadata.artist))
-        return metadata
+        return filename_metadata(track.relative_path)
 
     async def run_forever(self) -> None:
         while True:

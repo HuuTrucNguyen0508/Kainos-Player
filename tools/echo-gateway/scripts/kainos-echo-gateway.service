@@ -6,7 +6,8 @@ StartLimitIntervalSec=0
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=__GATEWAY_DIR__
-# docker.service is not enabled at boot. This connects to docker.socket, which starts it.
+# The system Docker socket may not be ready when the user manager starts.
+# A failed connection is retried after RestartSec.
 ExecStart=/usr/bin/docker compose up -d
 Restart=on-failure
 RestartSec=30

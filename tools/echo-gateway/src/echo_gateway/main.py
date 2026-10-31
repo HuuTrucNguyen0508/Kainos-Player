@@ -34,6 +34,7 @@ from echo_gateway.stream import (
     CONTENT_TYPE_ADTS_AAC,
     StreamTranscoder,
     TranscodeStartError,
+    TranscodeCapacityError,
     build_ffmpeg_command,
 )
 
@@ -105,7 +106,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
         return bool(expected) and hmac.compare_digest(provided.encode(), expected.encode())
 
     async def health(_: Request) -> JSONResponse:
-        scanned, total = scan.progress()
+        scanned, total = await asyncio.to_thread(scan.progress)
+        session_count = await asyncio.to_thread(lambda: sessions.count)
         return JSONResponse(
             {
                 "status": "ok",
@@ -118,7 +120,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
                 "library_tracks": library.track_count,
                 "unreadable_tracks": library.unreadable_count,
                 "scan": {"scanned": scanned, "total": total},
-                "sessions": sessions.count,
+                "sessions": session_count,
             }
         )
 
@@ -171,7 +173,10 @@ def create_app(settings: Settings | None = None) -> Starlette:
                     {"error": "not_found", "request_id": request_id},
                     status_code=404,
                 )
-            source = track.absolute_path
+            try:
+                source = resolve_under_root(track.absolute_path, cfg.music_root)
+            except PathValidationError:
+                return JSONResponse({"error": "not_found"}, status_code=404)
             gain_db = scan.gain_for(track)
         else:
             # Legacy token-only URL: serve configured TEST_TRACK if present.
@@ -191,6 +196,10 @@ def create_app(settings: Settings | None = None) -> Starlette:
         if not _token_ok(request.path_params["token"]) or track is None:
             logger.warning("art_reject request_id=%s category=not_found", request_id)
             return JSONResponse({"error": "not_found", "request_id": request_id}, status_code=404)
+        try:
+            resolve_under_root(track.absolute_path, cfg.music_root)
+        except PathValidationError:
+            return JSONResponse({"error": "not_found"}, status_code=404)
         return Response(
             await art.jpeg_for(track),
             media_type="image/jpeg",
@@ -225,6 +234,10 @@ def create_app(settings: Settings | None = None) -> Starlette:
         agen = transcoder.stream(source, request_id=request_id, start_ms=start_ms, gain_db=gain_db)
         try:
             first = await agen.__anext__()
+        except TranscodeCapacityError:
+            await agen.aclose()
+            return JSONResponse({"error": "stream_capacity", "request_id": request_id},
+                                status_code=503, headers={"Retry-After": "2"})
         except StopAsyncIteration:
             await agen.aclose()
             return JSONResponse(
@@ -308,8 +321,12 @@ def create_app(settings: Settings | None = None) -> Starlette:
                 status_code=400,
             )
 
-        # Off the event loop: state writes and the short metadata probe block.
+        # State writes may fsync, so dispatch off the event loop.
         response = await asyncio.to_thread(handle_alexa_envelope, envelope, cfg, player)
+        if (envelope.get("request") or {}).get("type") in {
+            "AudioPlayer.PlaybackStopped", "System.ExceptionEncountered",
+        }:
+            return Response(status_code=200)
         return JSONResponse(response)
 
     routes = [

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,7 +82,7 @@ def envelope(request: dict, *, device: str | None = DEVICE, audio: dict | None =
         "version": "1.0",
         "context": context,
         "request": {
-            "requestId": "req-1",
+            "requestId": uuid.uuid4().hex,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "locale": "fr-FR",
             **request,

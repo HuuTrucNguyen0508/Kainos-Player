@@ -77,12 +77,15 @@ class TranscodeStartError(Exception):
         self.exit_code = exit_code
 
 
+class TranscodeCapacityError(Exception):
+    pass
+
+
 class StreamTranscoder:
     """Runs at most max_concurrent_streams encoders.
 
-    A paused Echo may keep its connection open, so a finished listener can hold
-    a slot for a long time. The newest request always wins: when full, the
-    oldest encoder is killed instead of refusing the stream.
+    Connections carry no authenticated playback/device identity. A slow active
+    listener is indistinguishable from a paused one, so never evict live streams.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -113,9 +116,8 @@ class StreamTranscoder:
     ) -> AsyncIterator[bytes]:
         command = build_ffmpeg_command(self._settings, source, start_ms=start_ms, gain_db=gain_db)
         async with self._lock:
-            while len(self._active) >= self._slots:
-                logger.info("transcode_evict request_id=%s category=slot_reclaimed", request_id)
-                _kill(self._active.pop(0))
+            if len(self._active) >= self._slots:
+                raise TranscodeCapacityError("All encoder slots are in use")
             logger.info(
                 "transcode_start request_id=%s category=start max_concurrent=%s start_ms=%s gain_db=%s",
                 request_id,

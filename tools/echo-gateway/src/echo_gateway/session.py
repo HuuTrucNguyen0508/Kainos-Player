@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -7,6 +8,8 @@ import random
 import re
 import secrets
 import threading
+import time
+from collections import OrderedDict
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -66,6 +69,7 @@ class Session:
     queued_token: str = ""
     near_end: bool = False
     failures: int = 0
+    failed_tracks: list[str] = field(default_factory=list)
 
     @property
     def current_id(self) -> str | None:
@@ -91,6 +95,22 @@ class Session:
         self.position = self.order.index(track_id)
 
     def successor(self) -> str | None:
+        candidate = self._successor()
+        if candidate is None:
+            return None
+        index = self.order.index(candidate)
+        for _ in self.order:
+            candidate = self.order[index]
+            if candidate not in self.failed_tracks:
+                return candidate
+            index += 1
+            if index == len(self.order):
+                if not self.loop:
+                    return None
+                index = 0
+        return None
+
+    def _successor(self) -> str | None:
         """Track that follows the current one, or None at the end of the list.
 
         Finishing a shuffled cycle reshuffles behind the current track, so the
@@ -133,7 +153,7 @@ class Session:
     def adopt(self, token: str) -> None:
         """The device says this stream is playing."""
         parsed = StreamToken.parse(token)
-        if token == self.current_token or parsed is None or parsed.track_id not in self.order:
+        if token != self.queued_token or parsed is None or parsed.track_id not in self.order:
             return
         self.move_to(parsed.track_id)
         self.current_token = token
@@ -151,18 +171,6 @@ class Session:
         audio = context.get("AudioPlayer") or {}
         if audio.get("playerActivity") in _RESUMABLE_ACTIVITIES and self.owns(audio.get("token") or ""):
             self.record_position(audio.get("offsetInMilliseconds"))
-
-    def remove(self, track_id: str) -> None:
-        index = self.order.index(track_id)
-        del self.order[index]
-        if index < self.position:
-            self.position -= 1
-
-    def drop_current(self) -> None:
-        """Remove the failed current track; successor() then gives the one after it."""
-        if self.current_id is not None:
-            del self.order[self.position]
-            self.position -= 1
 
     def reconcile(self, known_ids: set[str]) -> None:
         """Drop ids no longer in the library and keep going from the next survivor."""
@@ -199,6 +207,7 @@ class Session:
             queued_token=str(raw["queued_token"]),
             near_end=bool(raw["near_end"]),
             failures=int(raw["failures"]),
+            failed_tracks=list(raw.get("failed_tracks", [])),
         )
         if order and not 0 <= session.position < len(order):
             session.position = 0
@@ -218,7 +227,22 @@ class SessionStore:
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
         self._saved: dict[str, str] = {}
+        self._responses: OrderedDict[tuple[str, str], tuple[float, dict]] = OrderedDict()
         self._load()
+
+    def cached_response(self, key: str, request_id: str) -> dict | None:
+        # Called under open()'s lock. Keep retries for the signature timestamp window.
+        now = time.monotonic()
+        while self._responses and next(iter(self._responses.values()))[0] < now - 300:
+            self._responses.popitem(last=False)
+        cached = self._responses.get((key, request_id))
+        return copy.deepcopy(cached[1]) if cached is not None else None
+
+    def remember_response(self, key: str, request_id: str, response: dict) -> None:
+        if request_id:
+            self._responses[(key, request_id)] = (time.monotonic(), copy.deepcopy(response))
+            while len(self._responses) > 512:
+                self._responses.popitem(last=False)
 
     @property
     def count(self) -> int:
