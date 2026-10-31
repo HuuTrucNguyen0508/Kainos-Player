@@ -32,3 +32,22 @@ compose.desktop {
         }
     }
 }
+
+// Training is optional and isolated. Missing tools never prevent packaging.
+tasks.matching { it.name == "createDistributable" }.configureEach {
+    val trainerScript = rootProject.file("scripts/perf/desktop-cds.py")
+    val trainerDirectory = rootProject.projectDir
+    inputs.files(trainerScript, rootProject.file("scripts/perf/desktop-bench.py"))
+    inputs.property("cdsXvfb", providers.environmentVariable("KAINOS_CDS_XVFB").orElse("Xvfb"))
+    doLast {
+        try {
+            val trainer = ProcessBuilder("python3", trainerScript.absolutePath)
+                .directory(trainerDirectory)
+                .inheritIO()
+                .start()
+            if (trainer.waitFor() != 0) logger.warn("AppCDS trainer failed; normal startup remains available")
+        } catch (error: java.io.IOException) {
+            logger.warn("AppCDS trainer unavailable; normal startup remains available", error)
+        }
+    }
+}

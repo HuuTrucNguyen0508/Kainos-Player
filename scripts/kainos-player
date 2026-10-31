@@ -66,7 +66,19 @@ fi
 
 classpath="$(IFS=:; echo "${jars[*]}")"
 
-exec "$JAVA_BIN" \
+# Dynamic archives are specific to the packaged jars and JDK. auto sharing lets
+# the JVM fall back when an archive is stale; a missing archive needs no flags.
+jvm_args=()
+archive="$APP_DIR/kainos.jsa"
+archive_size="$APP_DIR/kainos.jsa.size"
+if [[ -f "$archive" && -f "$archive_size" ]] &&
+   read -r expected_size < "$archive_size" &&
+   [[ "$expected_size" =~ ^[0-9]+$ ]] &&
+   [[ "$(stat -c%s "$archive" 2>/dev/null)" == "$expected_size" ]]; then
+  jvm_args+=( -Xshare:auto "-XX:SharedArchiveFile=$APP_DIR/kainos.jsa" )
+fi
+
+exec "$JAVA_BIN" "${jvm_args[@]}" \
   -Dcompose.application.configure.swing.globals=true \
   -Dcompose.application.resources.dir="$APP_DIR/resources" \
   -Dskiko.library.path="$APP_DIR" \
