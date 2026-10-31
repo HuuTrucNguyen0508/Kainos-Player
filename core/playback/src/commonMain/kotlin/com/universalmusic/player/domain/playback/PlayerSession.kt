@@ -830,7 +830,7 @@ class PlayerSession(
                 "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
         )
         if (next == null) {
-            val refill = if (manual) null else continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
             if (refill != null) {
                 val generationAtExhaustion = playGeneration
                 playJob?.cancel()
@@ -880,7 +880,7 @@ class PlayerSession(
                 throw cancelled
             } catch (error: Exception) {
                 trace("continuation failed: ${error.message}")
-                emptyList()
+                return@launch
             }
             if (continuation !== source) return@launch
             if (batch.isEmpty()) {
@@ -1122,6 +1122,15 @@ class PlayerSession(
         // Ignore Repeat One here: re-queuing the same dead item would never reach a healthy one.
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            if (refill != null) {
+                engine.stop()
+                playJob = scope.launch(sessionContext) {
+                    refill.join()
+                    continueAfterRefill(generation)
+                }
+                return
+            }
             failedItemIds.clear()
             beginTransition()
             engine.stop()
