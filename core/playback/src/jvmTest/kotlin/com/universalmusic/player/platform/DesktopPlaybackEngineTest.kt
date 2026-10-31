@@ -30,6 +30,31 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun unavailableOutputClockWaitsForDrainAndNeverStallsForever() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":1}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "b", PlaybackHandle.Url("/b.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append") }) delay(10) }
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":2}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"playback-restart"}""")
+            delay(100)
+            assertEquals(1, engine.state.value.playGeneration, "Missing clock is not a boundary")
+            runtime.events.put("""{"event":"end-file","reason":"eof","playlist_entry_id":2}""")
+            runtime.events.put("""{"event":"idle"}""")
+            withTimeout(3_000) { while (engine.state.value.playGeneration != 2L) delay(10) }
+            assertEquals("b", engine.state.value.seamlessItemId)
+            assertEquals(EngineStatus.ENDED, engine.state.value.status)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun decoderErrorAfterLoadedIsTerminalFailure() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)

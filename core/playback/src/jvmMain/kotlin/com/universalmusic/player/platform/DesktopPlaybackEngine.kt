@@ -653,7 +653,9 @@ class DesktopPlaybackEngine internal constructor(
         synchronized(lifecycleLock) {
             if (activeProcess !== active) return
             when (event["event"]?.jsonPrimitive?.content) {
+                "idle" -> active.outputDrained = true
                 "start-file" -> {
+                    active.outputDrained = false
                     active.decodingEntryId = event["playlist_entry_id"]?.jsonPrimitive?.content?.toLongOrNull()
                 }
                 "file-loaded" -> {
@@ -684,12 +686,29 @@ class DesktopPlaybackEngine internal constructor(
                     scope.launch {
                         // file-loaded means decoding changed, possibly while the previous audio
                         // is still buffered. audio-pts includes the output driver delay.
+                        var unresolvedMs = 0L
+                        var lastSample = System.nanoTime()
                         while (true) {
                             val pts = awaitIpc { runtime.readProperty("audio-pts", active.socket)?.toDoubleOrNull() }
-                            val waiting = synchronized(lifecycleLock) {
-                                activeProcess === active && active.crossing === next && pts != null && pts < 0
+                            val now = System.nanoTime()
+                            val crossed = synchronized(lifecycleLock) {
+                                if (activeProcess !== active || active.crossing !== next) return@launch
+                                if (!userPaused) unresolvedMs += (now - lastSample) / 1_000_000
+                                active.outputDrained || (pts != null && pts.isFinite() && pts >= 0)
                             }
-                            if (!waiting) break
+                            if (crossed) break
+                            if (unresolvedMs >= 2_000) {
+                                synchronized(lifecycleLock) {
+                                    if (activeProcess !== active || active.crossing !== next) return@launch
+                                    // No output evidence: discard lookahead and let the session
+                                    // resolve the selected successor normally, without claiming it played.
+                                    stopProcessLocked()
+                                    cancelTickerLocked()
+                                    publishState(_state.value.copy(status = EngineStatus.ENDED))
+                                }
+                                return@launch
+                            }
+                            lastSample = now
                             delay(10)
                         }
                         synchronized(lifecycleLock) {
@@ -1240,6 +1259,7 @@ class DesktopPlaybackEngine internal constructor(
         var nextDuration: Long? = null,
         var crossing: PreparedPlayback? = null,
         var crossingRunning: Boolean = false,
+        var outputDrained: Boolean = false,
         var endedAfterCrossing: Boolean = false,
         var crossingFailed: Boolean = false,
         var awaitingSuccessor: Boolean = false,

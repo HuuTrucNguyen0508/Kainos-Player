@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-31",
+  "mpv": "0.41.0",
+  "regressions_red_before_fix": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
+  "short_probe": {
+    "outgoing_eof_ms": 1596,
+    "successor_restart_ms": 1596,
+    "output_idle_ms": 2087
+  },
+  "stress": {
+    "seed": 20261031,
+    "operations": 240,
+    "queue_edits": 55,
+    "skips": 54,
+    "seeks": 47,
+    "pauses": 50,
+    "resumes": 34,
+    "matched_samples": 230,
+    "unresolved_samples": 270,
+    "max_event_settlement_ms": 30
+  },
+  "limitations": [
+    "Unresolved output samples are not identity proofs",
+    "50 ms successor can publish at drain, after its audible start"
+  ],
+  "required_checks": "passed; Gradle exit 0; 182 tasks",
+  "pcm": {
+    "runs": 10,
+    "samples_each": 176400,
+    "join_max_error_lsb": 0,
+    "silence_ms": 0
+  }
+}

@@ -70,3 +70,20 @@ Without CDS the corresponding medians were 968.43 -> 964.04 ms and
 Load was around 1 on 24 logical CPUs. Summaries are in `gapless-results/`;
 raw evidence is `/tmp/gapless-warm-final-ab`, `/tmp/gapless-warm-cds-startup`,
 `/tmp/gapless-warm-cds-library` and `/tmp/gapless-verified-idle`.
+
+Sol correctness follow-up (2026-10-31): `gapless-stress.py` opts into
+`GaplessBoundaryStressTest` with real mpv, synthetic 200 ms to 2 s WAVs,
+fixed seed 20261031 and null audio output. It performs 240 queue edits, skips,
+seeks, pauses and resumes. Two independent IPC clients require up to 30 ms
+for event settlement. Samples with missing or negative audio-pts, paused or
+non-playing state are counted separately, not represented as verified audio
+identity. This is **not** a proof of identity at every instant or every sample.
+`gapless-short-probe.py` reproduces the separate decoder/output timelines with
+2 s + 50 ms WAVs. Run it under `flock -x /tmp/kainos-perf.lock`.
+The short-successor engine test requires publication after the outgoing 2 s.
+For a missing clock, the engine waits for mpv's idle/output-drained event;
+if no evidence arrives within 2 s of unpaused waiting it discards lookahead and
+ends the outgoing entry so the session resolves its successor normally.
+A successor shorter than the output buffer may be identified only after drain.
+Gapless seeks reload the owning entry because JSON IPC cannot atomically guard
+`time-pos` by playlist entry. This trades seek startup work for file ownership.

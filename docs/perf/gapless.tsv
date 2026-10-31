@@ -14,3 +14,9 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	first_draw_ms	GUI_idle_mpv_prewarm	503.2068055	502.5241045	513.83544	509.885704	10	no_measurable_regression	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
 2026-10-31	library_interactive_ms	GUI_idle_mpv_prewarm	693.3935180000001	695.0227105	711.793359	704.83799	10	no_measurable_regression	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
 2026-10-31	mpv_idle_rss_kib	GUI_idle_mpv_no_audio_output	0	55564.0	0	55612	2	accepted_0_CPU_no_stream	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
+2026-10-31	wrong_identity_regression	S1_entry_binding	1	0	1	0	1	red_then_green	61d2d8f
+2026-10-31	cross_file_seek_regression	S2_reload_owner	1	0	1	0	1	red_then_green	b88a9af
+2026-10-31	false_completion_regression	S3_loaded_error	1	0	1	0	1	red_then_green	70599f3
+2026-10-31	early_missing_clock_regression	S4_wait_output_evidence	1	0	1	0	1	red_then_green_short_identity_may_wait_for_drain	this_commit
+2026-10-31	randomized_operations_passed	real_mpv_null_seed20261031	0	240	0	240	240	230_resolved_matches_270_unresolved_30ms_settlement	this_commit
+2026-10-31	PCM_join_silence_ms	Sol_correctness_fixes	0	0	0	0	10	176400_samples_zero_LSB_join_error	this_commit
