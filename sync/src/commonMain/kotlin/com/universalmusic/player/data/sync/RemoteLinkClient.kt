@@ -93,6 +93,8 @@ class RemoteLinkClient(
     private val repostGapMs: Long = REMOTE_REPOST_GAP_MS,
     private val linkId: String = Random.nextLong().toULong().toString(36),
     private val monotonicClock: TimeSource = TimeSource.Monotonic,
+    /** Whether a press is possible here. A locked phone keeps one held poll instead of polling every 2 s. */
+    private val pressable: () -> Boolean = { true },
 ) {
     private val _state = MutableStateFlow(RemoteLinkState())
     val state: StateFlow<RemoteLinkState> = _state.asStateFlow()
@@ -308,7 +310,7 @@ class RemoteLinkClient(
             player.state.first { next -> sent?.status.isMaterialChange(next?.status, elapsedSince(sent, next)) }
         }
         // Refresh a receiver lease before it expires, even when neither player changes.
-        val refresh = async { if (directLease != null) delay(2_000) else awaitCancellation() }
+        val refresh = async { if (directLease != null && pressable()) delay(2_000) else awaitCancellation() }
         val wake = async { reconnect.receive() }
         select<RemotePollReply?> {
             call.onAwait { reply -> change.cancel(); refresh.cancel(); wake.cancel(); reply }

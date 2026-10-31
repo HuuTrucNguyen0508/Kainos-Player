@@ -92,6 +92,7 @@ class RemoteControl internal constructor(
     clientTarget: () -> DeliveryTarget?,
     openLink: suspend (com.universalmusic.player.data.sync.PairedPeer) -> com.universalmusic.player.data.sync.RemoteLinkTransport,
     onLinkConnected: () -> Unit,
+    pressable: () -> Boolean = { true },
     private val clock: () -> Long = ::currentTimeMillis,
 ) {
     private val artworkReader = RemoteArtworkReader()
@@ -103,6 +104,7 @@ class RemoteControl internal constructor(
         artwork = artworkReader,
         onConnected = onLinkConnected,
         clock = clock,
+        pressable = pressable,
     )
 
     private val intent = MutableStateFlow<RemotePlayIntent?>(null)
@@ -160,7 +162,7 @@ class RemoteControl internal constructor(
         )
     }
 
-    /** Integration hook for the raw visible edge, which linkWanted's grace can hide. */
+    /** The raw visible edge, which linkWanted's grace can hide. Its poll restarts the lease refresh. */
     fun onAppVisible() {
         if (role.value == RemoteRole.CLIENT) client.reconnectNow()
     }

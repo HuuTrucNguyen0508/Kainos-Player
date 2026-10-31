@@ -21,6 +21,25 @@ import kotlinx.coroutines.test.runTest
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteLinkClientTest {
     @Test
+    fun aHiddenAppHoldsOnePollAndBecomingVisibleResumesLeaseRefresh() = runTest {
+        var visible = false
+        val rig = rig(pressable = { visible })
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
+        rig.nextPoll()
+
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertNull(rig.transport.polls.tryReceive().getOrNull())
+
+        visible = true
+        rig.client.reconnectNow()
+        rig.nextPoll()
+        advanceTimeBy(2_001)
+        rig.nextPoll()
+    }
+
+    @Test
     fun aPressWakesBackoffAndOnlyLatestWaitingIntentIsSent() = runTest {
         var available = false
         val transport = FakeTransport()
@@ -403,6 +422,7 @@ class RemoteLinkClientTest {
     private fun TestScope.rig(
         artwork: RemoteArtworkReader = RemoteArtworkReader { null },
         connect: (suspend (PairedPeer) -> RemoteLinkTransport)? = null,
+        pressable: () -> Boolean = { true },
     ): Rig {
         val transport = FakeTransport()
         val player = FakePlayer()
@@ -418,6 +438,7 @@ class RemoteLinkClientTest {
             onConnected = { connections++ },
             clock = { testScheduler.currentTime },
             monotonicClock = testScheduler.timeSource,
+            pressable = pressable,
         )
         client.run(wanted)
         return Rig(this, client, player, transport, wanted) { connections }
