@@ -48,8 +48,9 @@ internal enum class LibraryTab { Songs, Albums, Artists, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(
+internal fun LibraryScreen(
     container: AppContainer,
+    presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
@@ -69,9 +70,8 @@ fun LibraryScreen(
     val artistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val scope = rememberCoroutineScope()
-    val presenter = remember(container) { LibraryPresenter.from(container, scope) }
     val emitted by presenter.state.collectAsState()
-    val state = emitted.withQuery(query)
+    val state = remember(emitted, query) { emitted.withQuery(query) }
     SideEffect { presenter.setQuery(query) }
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }

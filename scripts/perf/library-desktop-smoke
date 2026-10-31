@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Private Xvfb + D-Bus + synthetic data + null-audio desktop smoke. Never uses the user's app."""
+import ctypes as c
+import json
+import os
+from pathlib import Path
+import re
+import subprocess as sp
+import tempfile
+import time
+import wave
+
+root = Path(__file__).resolve().parents[2]
+out = Path(tempfile.mkdtemp(prefix='kainos-library-desktop-'))
+print(out, flush=True)
+for name in ('music', 'data', 'home', 'bin'):
+    (out/name).mkdir()
+for title in ('Alpha', 'Beta', 'Gamma'):
+    with wave.open(str(out/'music'/f'{title}.wav'), 'wb') as w:
+        w.setparams((1, 2, 44100, 0, 'NONE', 'not compressed'))
+        w.writeframes(bytes(44100*2*120))
+(out/'data/settings.json').write_text(json.dumps({'localMusicFoldersConfigured': True, 'localMusicFolders': [str(out/'music')]}))
+(out/'bin/mpv').write_text('#!/bin/sh\nexec /usr/bin/mpv --ao=null "$@"\n')
+(out/'bin/mpv').chmod(0o755)
+
+def wait_for(predicate, message, seconds=30):
+    deadline = time.monotonic()+seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(.05)
+    raise AssertionError(message)
+
+def text():
+    return (out/'run.log').read_text(errors='replace')
+
+xvfb = app = None
+try:
+    with (out/'display').open('w+') as display, (out/'xvfb.log').open('w') as log:
+        xvfb = sp.Popen(['/tmp/kainos-desktop-tools/usr/bin/Xvfb', '-screen', '0', '1600x1000x24', '-nolisten', 'tcp', '-displayfd', str(display.fileno())], pass_fds=(display.fileno(),), stdout=log, stderr=log)
+        wait_for(lambda: (out/'display').stat().st_size > 0, 'Xvfb did not start')
+    env = dict(os.environ, DISPLAY=':'+ (out/'display').read_text().strip(), KAINOS_INSTANCE='librarysmoke', KAINOS_DATA_DIR=str(out/'data'), KAINOS_HUB_PORT='44983', KAINOS_MUSIC_DIRS=str(out/'music'), PATH=str(out/'bin')+':'+os.environ['PATH'], SKIKO_RENDER_API='SOFTWARE', XDG_CURRENT_DESKTOP='KainosPerf')
+    env.pop('WAYLAND_DISPLAY', None)
+    appdir = root/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+    java = str(Path.home()/'.jdks/temurin-17/bin/java')
+    args = [java, '-Duser.home='+str(out/'home'), '-Dcompose.application.configure.swing.globals=true', '-Dcompose.application.resources.dir='+str(appdir/'resources'), '-Dskiko.library.path='+str(appdir), '-cp', str(appdir/'*'), 'com.universalmusic.player.desktop.MainKt']
+    # A private bus also proves MPRIS without sending a command to the user's player.
+    launcher = out/'launch'
+    import shlex
+    launcher.write_text('#!/bin/bash\nprintf "%s" "$DBUS_SESSION_BUS_ADDRESS" > '+shlex.quote(str(out/'bus'))+'\nexec '+shlex.join(args)+'\n')
+    launcher.chmod(0o755)
+    with (out/'run.log').open('w') as log:
+        app = sp.Popen(['dbus-run-session', str(launcher)], env=env, stdout=log, stderr=log, start_new_session=True)
+    wait_for(lambda: (out/'data/kainos.db').exists(), 'app did not open database')
+    x = c.CDLL('libX11.so.6'); t = c.CDLL('libXtst.so.6')
+    x.XOpenDisplay.argtypes=[c.c_char_p]; x.XOpenDisplay.restype=c.c_void_p
+    x.XStringToKeysym.argtypes=[c.c_char_p]; x.XStringToKeysym.restype=c.c_ulong
+    x.XKeysymToKeycode.argtypes=[c.c_void_p,c.c_ulong]; x.XKeysymToKeycode.restype=c.c_uint
+    x.XFlush.argtypes=[c.c_void_p]
+    t.XTestFakeMotionEvent.argtypes=[c.c_void_p,c.c_int,c.c_int,c.c_int,c.c_ulong]
+    t.XTestFakeButtonEvent.argtypes=[c.c_void_p,c.c_uint,c.c_int,c.c_ulong]
+    t.XTestFakeKeyEvent.argtypes=[c.c_void_p,c.c_uint,c.c_int,c.c_ulong]
+    d=x.XOpenDisplay(env['DISPLAY'].encode()); assert d
+    def key(name):
+        code=x.XKeysymToKeycode(d,x.XStringToKeysym(name.encode())); assert code
+        t.XTestFakeKeyEvent(d,code,1,0); t.XTestFakeKeyEvent(d,code,0,0); x.XFlush(d)
+    # Startup and first scan settle before input; this is a functional smoke, never timing data.
+    time.sleep(4)
+    t.XTestFakeMotionEvent(d,-1,90,290,0)
+    t.XTestFakeButtonEvent(d,1,1,0); t.XTestFakeButtonEvent(d,1,0,0); x.XFlush(d)
+    time.sleep(1)
+    for char in 'alpha': key(char)
+    time.sleep(1)
+    sp.run(['import', '-display', env['DISPLAY'], '-window', 'root', str(out/'search.png')], check=True)
+    key('Return')
+    wait_for(lambda: re.search(r"engine.play ok gen=\d+;", text()), 'Enter did not play the first match')
+    busenv=dict(env, DBUS_SESSION_BUS_ADDRESS=(out/'bus').read_text())
+    def transport(command):
+        sp.run(['gdbus','call','--session','--dest','org.mpris.MediaPlayer2.kainosplayer.instancelibrarysmoke','--object-path','/org/mpris/MediaPlayer2','--method','org.mpris.MediaPlayer2.Player.'+command], env=busenv, check=True, capture_output=True)
+    for title in ('Beta', 'Gamma'):
+        before = text().count('engine.play ok gen=')
+        transport('Next')
+        wait_for(lambda: "engine.play '"+title+"'" in text() and text().count('engine.play ok gen=') > before, 'skip did not start '+title)
+    transport('Pause')
+    wait_for(lambda: 'engine -> PAUSED' in text(), 'MPRIS pause not observed')
+    transport('Play')
+    time.sleep(1)
+    sp.run(['import','-display',env['DISPLAY'],'-window','root',str(out/'playing.png')],check=True)
+    t.XTestFakeMotionEvent(d,-1,976,76,0)
+    t.XTestFakeButtonEvent(d,1,1,0); t.XTestFakeButtonEvent(d,1,0,0); x.XFlush(d)
+    time.sleep(1)
+    sp.run(['import','-display',env['DISPLAY'],'-window','root',str(out/'mini.png')],check=True)
+    assert '--ao=null' in sp.check_output(['ps','-eo','args'],text=True)
+    assert not re.search(r'Exception|\bERROR\b', text()), 'exception in private run log'
+    print('PASS: type-to-search, Enter, three-track chip queue, two MPRIS skips, pause/resume, no exceptions',flush=True)
+finally:
+    import signal
+    if app is not None and app.poll() is None:
+        os.killpg(app.pid,signal.SIGTERM)
+        try: app.wait(timeout=10)
+        except sp.TimeoutExpired: os.killpg(app.pid,signal.SIGKILL); app.wait()
+    if xvfb is not None:
+        xvfb.terminate(); xvfb.wait(timeout=10)
