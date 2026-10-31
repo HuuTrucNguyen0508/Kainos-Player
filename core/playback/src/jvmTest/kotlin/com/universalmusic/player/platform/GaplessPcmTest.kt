@@ -17,13 +17,16 @@ class GaplessPcmTest {
             for (pair in listOf("same")) repeat(10) { run ->
                 val output = File(root, "$pair-$run.raw")
                 var runtimeSocket = java.nio.file.Path.of("/tmp/nonexistent-gapless-proof")
+                var spawns = 0
                 val runtime = object : DesktopPlaybackRuntime by SystemDesktopPlaybackRuntime {
                     override fun createIpcPath(): java.nio.file.Path = SystemDesktopPlaybackRuntime.createIpcPath().also { runtimeSocket = it }
-                    override fun startProcess(command: List<String>): Process =
-                        ProcessBuilder(command.filter { it != "--really-quiet" } + listOf("--no-config", "--pause", "--ao=pcm",
+                    override fun startProcess(command: List<String>): Process {
+                        spawns++
+                        return ProcessBuilder(command.filter { it != "--really-quiet" } + listOf("--no-config", "--pause", "--ao=pcm",
                             "--ao-pcm-waveheader=no", "--ao-pcm-file=${output.absolutePath}",
                             "--audio-format=s16", "--audio-channels=mono"))
                             .redirectOutput(File(root, "$pair-$run.mpv.log")).redirectErrorStream(true).start()
+                    }
                 }
                 val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
                 val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -40,10 +43,16 @@ class GaplessPcmTest {
                         while (runtime.readProperty("playlist-count", runtimeSocket) != "2") delay(10)
                     }
                     engine.pause()
+                    engine.seekTo(500)
+                    withTimeout(5_000) {
+                        while (runtime.readProperty("time-pos", runtimeSocket)?.toDoubleOrNull() != 0.5) delay(10)
+                        while (runtime.readProperty("playlist-count", runtimeSocket) != "2") delay(10)
+                    }
                     engine.resume()
                     withTimeout(20_000) {
                         session.nowPlaying.first { it.track?.canonicalId == "1" && !it.isPlaying && !it.buffering }
                     }
+                    assertEquals(1, spawns, "Seek and boundary must preserve the process")
                     assertNull(session.nowPlaying.value.error)
                     assertEquals(2_000, session.nowPlaying.value.durationMs, "Fresh file metadata")
                     assertEquals(2, session.queueState.value.items.size)

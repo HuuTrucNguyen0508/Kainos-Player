@@ -21,3 +21,12 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	randomized_operations_passed	real_mpv_null_seed20261031	0	240	0	240	240	230_resolved_matches_270_unresolved_30ms_settlement	this_commit
 2026-10-31	PCM_join_silence_ms	Sol_correctness_fixes	0	0	0	0	10	176400_samples_zero_LSB_join_error	this_commit
 2026-10-31	randomized_operations_passed	final_head_real_mpv_null	0	240	0	240	240	237_resolved_matches_263_unresolved_30ms_settlement	this_commit
+2026-10-31	seek_cold_ms	restart_to_head	58.5936085	5.1249295	60.049243	5.4526441000000005	10	restored_in_place_seek	this_commit
+2026-10-31	seek_cold_ms	base_to_head	2.423809	5.1249295	2.7530791	5.4526441000000005	10	baseline_latency_target_unmet	this_commit
+2026-10-31	seek_warm_ms	restart_to_head	55.716495	2.259219	56.187116100000004	2.3658481	10	restored_in_place_seek	this_commit
+2026-10-31	seek_warm_ms	base_to_head	1.0323815	2.259219	1.204132	2.3658481	10	baseline_latency_target_unmet	this_commit
+2026-10-31	seek_cold_PCM_silence_ms	restart_to_head	42	0	85	0	10	private_Pulse_1ms_resolution	this_commit
+2026-10-31	seek_process_spawns	restart_to_head	1	0	1	0	10	initial_process_excluded	this_commit
+2026-10-31	seek_storm_process_spawns	20_targets_in_2_seconds	0	0	0	0	20	last_target_3.9_actual_3.899977_seconds	this_commit
+2026-10-31	randomized_operations_passed	seek_near_EOF_seed20261031	0	240	0	240	240	257_matches_243_unresolved_zero_mismatches	this_commit
+2026-10-31	PCM_join_silence_after_seek_ms	automatic_successor_no_caller_prepare	0	0	0	0	10	154350_samples_zero_LSB_error_one_process	this_commit

@@ -85,5 +85,77 @@ For a missing clock, the engine waits for mpv's idle/output-drained event;
 if no evidence arrives within 2 s of unpaused waiting it discards lookahead and
 ends the outgoing entry so the session resolves its successor normally.
 A successor shorter than the output buffer may be identified only after drain.
-Gapless seeks reload the owning entry because JSON IPC cannot atomically guard
-`time-pos` by playlist entry. This trades seek startup work for file ownership.
+S5 reloaded the owning entry on every gapless seek. The follow-up below
+supersedes that path with successor removal and an owning-entry check.
+
+### Seek ownership and lookahead recovery
+
+The S5 unconditional restart is replaced by an IPC FIFO seek. It reads the
+playlist, resolves the bound successor ID to its index, removes that entry, then
+reads the playing entry ID again. Only the owning entry may receive `time-pos`.
+With the successor removed, EOF can enter idle but cannot advance to another
+file. Failed checks or IPC use the owning-file restart. The valid successor is
+retained across internal teardown and re-prepared after startup. Explicit stop,
+new playback, disabling gapless and `prepareNext(null)` invalidate it. A failed
+same-file retry rebinds its generation. A separate seek sequence lets pause after
+seek retain the last target while dropping superseded slider requests.
+
+`GaplessPcmTest` now seeks to 500 ms while paused after preparing the successor,
+then resumes and waits for the automatic boundary, with no caller re-preparation.
+It requires one process, 154350 rendered samples and a phase-continuous join at
+sample 66150. The real-mpv stress test includes seeks 1–39 ms before EOF.
+
+Reproduce the seek comparison with immutable baseline/restart jars retained
+before rebuilding the candidate. The original baseline needs its matching model
+jar because EngineState gained fields since that build. All other dependencies
+and the probe are identical. The harness records artifact hashes on new runs.
+
+```bash
+# Compile under the shared lock before timing. Use JDK 17.
+flock -s /tmp/kainos-perf.lock ./gradlew :core:playback:jvmTestClasses :core:playback:jvmJar
+flock -x /tmp/kainos-perf.lock python scripts/perf/seek-bench.py \
+  --out /tmp/new-seek-comparison \
+  --app-dir desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app \
+  --baseline-jar /path/to/baseline/playback-jvm.jar \
+  --baseline-model-jar /path/to/baseline/model-jvm.jar \
+  --restart-jar /path/to/0e3bd0b/playback-jvm.jar \
+  --head-jar core/playback/build/libs/playback-jvm.jar
+```
+
+The default measures the first seek in each fresh JVM. `--warm` adds one untimed
+seek to every arm before preparing the successor, and reports steady use
+separately. Both use ten interleaved runs per arm, warm OS page cache, a synthetic
+10 s FLAC, and a private Pulse sink. The timer starts immediately before the
+engine call and ends in the observer thread when mpv's `playback-restart` arrives;
+`time-pos` must then match 4 s. No physical sound-device latency is measured.
+PCM gaps are low-energy 1 ms blocks between the first and last audible block.
+The storm sends twenty targets at 100 ms intervals, pauses immediately after the
+last call and verifies that mpv ends at 3.9 s with no additional process.
+
+Cold first-seek and warmed results are kept separately; no warmup is silently
+discarded from the cold series. The baseline within-noise criterion is evaluated
+against both, rather than treating zero PCM silence as proof of equal latency.
+
+Final seek evidence: `gapless-results/seek-summary.json` retains all sixty samples,
+medians, p90s, hashes and calibration failures. Cold seek median/p90 in ms:
+baseline 2.42/2.75, `0e3bd0b` 58.59/60.05, candidate 5.12/5.45. Ranges are
+2.20–3.03, 57.59–60.08 and 4.89–5.80. Cold PCM silence median/p90 is
+0/0, 42/85 and 0/0 ms respectively. Additional process counts total 0, 10 and 0.
+The twenty-seek storm spawns zero processes and pauses at 3.899977 s for 3.9 s.
+
+The strict baseline latency target remains unmet. The warmed medians are
+1.03, 55.72 and 2.26 ms; candidate and baseline ranges still do not overlap.
+Do not label either series as baseline-equivalent. Warmed PCM measures the
+whole run including its extra warmup seek, so only the cold capture isolates
+one seek. The remaining latency cost has not been profiled separately.
+
+Final correctness: stress passed 240 operations including near-EOF seeks,
+257 resolved matches, 243 unresolved samples and zero settled mismatches.
+Ten PCM joins after seek have zero sample or phase error and use one process.
+Full checks passed with exit 0 through `gapless-checks.py`, which wraps the exact
+requested Gradle tasks in the shared lock and supplies private Xvfb. A first
+attempt without Xvfb failed UI initialization; it is retained, not hidden.
+No schema change, user data, physical phone or user audio output was involved.
+Raw evidence is `/tmp/kainos-seek-final-{cold,warm,pcm}`, with logs
+`/tmp/kainos-seek-final-{checks,stress,pcm}.log`. The restart jar was rebuilt
+from `0e3bd0b` and verified byte-identical to the measured arm.

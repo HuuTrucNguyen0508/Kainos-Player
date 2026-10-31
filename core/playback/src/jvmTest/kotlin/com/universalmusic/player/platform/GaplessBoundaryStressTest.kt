@@ -99,7 +99,9 @@ class GaplessBoundaryStressTest {
                         engine.prepareNext(PreparedPlayback(next, PlaybackHandle.Url(next), null, generation))
                     }
                     1 -> play(random.nextInt(files.size))
-                    2 -> engine.seekTo(random.nextLong(0, 180))
+                    2 -> engine.seekTo(if (step % 2 == 0)
+                        (engine.state.value.durationMs ?: 200) - random.nextLong(1, 40)
+                        else random.nextLong(0, 180))
                     3 -> engine.pause()
                     4 -> engine.resume()
                 }

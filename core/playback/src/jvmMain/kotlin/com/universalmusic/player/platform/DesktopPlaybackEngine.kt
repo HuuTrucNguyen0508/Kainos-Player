@@ -84,9 +84,10 @@ class DesktopPlaybackEngine internal constructor(
 
     override fun prepareNext(next: PreparedPlayback?) {
         synchronized(lifecycleLock) {
+            val candidate = next?.takeIf { gaplessEnabled && it.generation == activePlayGeneration && localFile(it.handle.url) }
+            preparedNext = candidate
             val active = activeProcess ?: return
             if (!active.gapless) return
-            val candidate = next?.takeIf { gaplessEnabled && it.generation == activePlayGeneration && localFile(it.handle.url) }
             if (active.crossing != null && candidate !== active.crossing) {
                 val handle = lastHandle as? PlaybackHandle.Url ?: return
                 elapsedOffset = _state.value.positionMs
@@ -167,6 +168,7 @@ class DesktopPlaybackEngine internal constructor(
      * resume / seek. Async IPC results captured under an older epoch are stale and must not publish.
      */
     private var mpvEpoch = 0L
+    private var seekSequence = 0L
     /**
      * Single-consumer FIFO for all mpv socket I/O. Jobs are enqueued while holding [lifecycleLock]
      * so queue order matches the order of lock-protected transport decisions; the jobs themselves
@@ -226,6 +228,9 @@ class DesktopPlaybackEngine internal constructor(
 
     private suspend fun playInternal(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         val token = synchronized(lifecycleLock) {
+            val retry = _state.value.status == EngineStatus.FAILED && _state.value.retryAtPositionMs != null &&
+                (lastHandle as? PlaybackHandle.Url)?.url == (handle as? PlaybackHandle.Url)?.url
+            preparedNext = if (retry) preparedNext?.copy(generation = playGeneration) else null
             activePlayGeneration = playGeneration
             invalidatePendingStartLocked()
             cancelTickerLocked()
@@ -425,21 +430,19 @@ class DesktopPlaybackEngine internal constructor(
             publishState(current.copy(positionMs = elapsedOffset))
             val handle = lastHandle
             if (handle !is PlaybackHandle.Url) return
-            val epoch = ++mpvEpoch
+            mpvEpoch++
+            val seekId = ++seekSequence
             val active = activeProcess
-            // mpv may switch its decoder before start-file reaches our FIFO. There is no
-            // atomic conditional seek in JSON IPC, so reload the owning local entry.
-            if (active?.gapless == true) {
-                seekRestartLocked(handle, current)?.let(::launchRestart)
-                return
-            }
+            if (active?.crossing != null) preparedNext = active.crossing
             if (active?.process?.isAlive == true) {
                 val seconds = elapsedOffset / 1000.0
                 enqueueIpcLocked {
-                    val ok = sendIpcIfActive(active, """["set_property","time-pos",$seconds]""")
+                    if (synchronized(lifecycleLock) { seekSequence != seekId || lastHandle !== handle || activeProcess !== active }) return@enqueueIpcLocked
+                    val ok = if (active.gapless) seekGapless(active, handle, seconds) else
+                        sendIpcIfActive(active, """["set_property","time-pos",$seconds]""")
                     val fallback = synchronized(lifecycleLock) {
                         // A newer transport command (or track) owns the state now.
-                        if (mpvEpoch != epoch || lastHandle !== handle) return@enqueueIpcLocked
+                        if (seekSequence != seekId || lastHandle !== handle || activeProcess !== active) return@enqueueIpcLocked
                         if (ok) {
                             if (_state.value.status == EngineStatus.PLAYING) {
                                 startedAt = System.currentTimeMillis()
@@ -455,6 +458,42 @@ class DesktopPlaybackEngine internal constructor(
             seekRestartLocked(handle, current) ?: return
         }
         launchRestart(restart)
+    }
+
+    /** Runs in the IPC FIFO. With no successor, EOF can only enter idle, never another file. */
+    private fun seekGapless(active: ActiveProcess, handle: PlaybackHandle.Url, seconds: Double): Boolean {
+        if (!isActiveProcess(active)) return false
+        val playlist = runCatching {
+            Json.parseToJsonElement(runtime.readProperty("playlist", active.socket) ?: return false)
+                as kotlinx.serialization.json.JsonArray
+        }.getOrNull() ?: return false
+        // mpv accepts playlist indices, not IDs. Resolve the bound IDs from this snapshot and
+        // remove backwards so earlier indices remain stable. Automatic advance retains indices.
+        var index = playlist.size - 1
+        while (index >= 0) {
+            val id = playlist[index].jsonObject["id"]?.jsonPrimitive?.content?.toLongOrNull()
+            val successor = synchronized(lifecycleLock) { id in active.entries }
+            if (successor && !runtime.sendIpc("""["playlist-remove",$index]""", active.socket)) return false
+            index--
+        }
+        val playing = runCatching {
+            (Json.parseToJsonElement(runtime.readProperty("playlist", active.socket) ?: return false)
+                as kotlinx.serialization.json.JsonArray).firstOrNull {
+                it.jsonObject["playing"]?.jsonPrimitive?.content == "true"
+            }?.jsonObject?.get("id")?.jsonPrimitive?.content?.toLongOrNull()
+        }.getOrNull()
+        val ownsFile = synchronized(lifecycleLock) {
+            activeProcess === active && lastHandle === handle && active.crossing == null &&
+                playing != null && playing == active.entryId
+        }
+        if (!ownsFile || !runtime.sendIpc("""["set_property","time-pos",$seconds]""", active.socket)) return false
+        synchronized(lifecycleLock) {
+            if (activeProcess !== active || lastHandle !== handle) return true
+            active.entries.clear()
+            active.awaitingSuccessor = false
+            preparedNext?.let { prepareNext(it) }
+        }
+        return true
     }
 
     private fun seekRestartLocked(handle: PlaybackHandle.Url, current: EngineState): Restart? {
@@ -503,6 +542,7 @@ class DesktopPlaybackEngine internal constructor(
                 ))
                 return
             }
+            preparedNext = null
             elapsedOffset = 0
             lastHandle = null
             lastQuality = null
@@ -651,6 +691,7 @@ class DesktopPlaybackEngine internal constructor(
                 durationMs = durationMs,
             ))
             if (targetStatus == EngineStatus.PLAYING) startTickerLocked()
+            preparedNext?.takeIf { gaplessEnabled && it.generation == activePlayGeneration }?.let(::prepareNext)
         }
     }
 
@@ -800,7 +841,7 @@ class DesktopPlaybackEngine internal constructor(
             synchronized(lifecycleLock) {
                 if (activeProcess !== active) return@synchronized
                 activeProcess = null
-                if (active.gapless) preparedNext = null
+                if (preparedNext == null) preparedNext = active.crossing
                 if (userPaused) return@synchronized
                 val position = _state.value.positionMs
                 val truncated = code == 0 && mpvEndedEarly(position, if (active.gapless) _state.value.durationMs else durationMs)
@@ -1223,7 +1264,6 @@ class DesktopPlaybackEngine internal constructor(
 
     private fun stopProcessLocked(): Boolean {
         val active = activeProcess ?: return true
-        preparedNext = null
         runCatching { active.events?.close() }
         val terminated = try {
             active.process.destroyForcibly()

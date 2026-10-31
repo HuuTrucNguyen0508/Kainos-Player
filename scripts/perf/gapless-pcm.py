@@ -24,8 +24,8 @@ for pair in ['same']:
         pcm=np.fromfile(a.out/f'{pair}-{k}.raw',dtype='<i2').astype(float)
         # 441 Hz has an integer 100-sample period at 44.1 kHz. Compare joins to that period;
         # zeros inserted at a join or a dropped/duplicated sample shift the residual phase.
-        assert len(pcm)==176400,(pair,k,len(pcm))
-        for boundary in [88200]:
+        assert len(pcm)==154350,(pair,k,len(pcm))
+        for boundary in [66150]:
             region=pcm[boundary-200:boundary+200]
             reference=pcm[boundary-400:boundary].copy()
             error=float(np.max(np.abs(region-reference)))
