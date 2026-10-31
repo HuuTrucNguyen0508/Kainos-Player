@@ -1,0 +1,52 @@
+[
+  {
+    "run": 0,
+    "variant": "default",
+    "first_draw_ms": 1063.797014
+  },
+  {
+    "run": 1,
+    "variant": "default",
+    "first_draw_ms": 1030.047821
+  },
+  {
+    "run": 2,
+    "variant": "default",
+    "first_draw_ms": 1063.540859
+  },
+  {
+    "run": 3,
+    "variant": "default",
+    "first_draw_ms": 1058.328648
+  },
+  {
+    "run": 4,
+    "variant": "default",
+    "first_draw_ms": 1053.00977
+  },
+  {
+    "run": 5,
+    "variant": "default",
+    "first_draw_ms": 1040.054834
+  },
+  {
+    "run": 6,
+    "variant": "default",
+    "first_draw_ms": 1042.543878
+  },
+  {
+    "run": 7,
+    "variant": "default",
+    "first_draw_ms": 1068.332759
+  },
+  {
+    "run": 8,
+    "variant": "default",
+    "first_draw_ms": 1060.02725
+  },
+  {
+    "run": 9,
+    "variant": "default",
+    "first_draw_ms": 1054.887268
+  }
+]

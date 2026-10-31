@@ -1,0 +1,133 @@
+{
+  "baseline": {
+    "ffprobe_processes": {
+      "n": 10,
+      "median": 4.0,
+      "p90": 4,
+      "min": 4,
+      "max": 4
+    },
+    "idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.20002461022797402
+    },
+    "idle_rss_kib": {
+      "n": 10,
+      "median": 107008.0,
+      "p90": 110672,
+      "min": 102036,
+      "max": 112180
+    },
+    "natural_pcm_boundary_ms": {
+      "n": 10,
+      "median": 85.0,
+      "p90": 90.0,
+      "min": 85.0,
+      "max": 90.0
+    },
+    "natural_pcm_silence_ms": {
+      "n": 10,
+      "median": 85.0,
+      "p90": 90.0,
+      "min": 85.0,
+      "max": 90.0
+    },
+    "pause_ack_ms": {
+      "n": 10,
+      "median": 1.3189895,
+      "p90": 1.349067,
+      "min": 0.973639,
+      "max": 1.39084
+    },
+    "pcm_resolution_ms": {
+      "n": 10,
+      "median": 5.0,
+      "p90": 5,
+      "min": 5,
+      "max": 5
+    },
+    "press_to_started_ms": {
+      "n": 10,
+      "median": 132.7378005,
+      "p90": 139.396099,
+      "min": 127.146948,
+      "max": 142.355541
+    },
+    "resume_ack_ms": {
+      "n": 10,
+      "median": 0.885549,
+      "p90": 0.954457,
+      "min": 0.721473,
+      "max": 1.020742
+    }
+  },
+  "candidate": {
+    "ffprobe_processes": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0,
+      "min": 0,
+      "max": 0
+    },
+    "idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.2001493192380091
+    },
+    "idle_rss_kib": {
+      "n": 10,
+      "median": 105142.0,
+      "p90": 108604,
+      "min": 101928,
+      "max": 116104
+    },
+    "natural_pcm_boundary_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "natural_pcm_silence_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "pause_ack_ms": {
+      "n": 10,
+      "median": 1.121442,
+      "p90": 1.257617,
+      "min": 1.04521,
+      "max": 1.378528
+    },
+    "pcm_resolution_ms": {
+      "n": 10,
+      "median": 5.0,
+      "p90": 5,
+      "min": 5,
+      "max": 5
+    },
+    "press_to_started_ms": {
+      "n": 10,
+      "median": 101.69470799999999,
+      "p90": 105.883851,
+      "min": 100.329427,
+      "max": 110.522949
+    },
+    "resume_ack_ms": {
+      "n": 10,
+      "median": 0.830402,
+      "p90": 1.090948,
+      "min": 0.768259,
+      "max": 1.180245
+    }
+  },
+  "errors": 0
+}

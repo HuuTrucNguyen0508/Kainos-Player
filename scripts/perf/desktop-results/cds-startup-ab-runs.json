@@ -1,0 +1,122 @@
+[
+  {
+    "run": 0,
+    "variant": "baseline",
+    "first_draw_ms": 1077.048046,
+    "mapped_ms": 1105.041255
+  },
+  {
+    "run": 0,
+    "variant": "cds",
+    "first_draw_ms": 984.658001,
+    "mapped_ms": 1003.985088
+  },
+  {
+    "run": 1,
+    "variant": "baseline",
+    "first_draw_ms": 1107.3686,
+    "mapped_ms": 1129.393646
+  },
+  {
+    "run": 1,
+    "variant": "cds",
+    "first_draw_ms": 1009.936818,
+    "mapped_ms": 1028.343503
+  },
+  {
+    "run": 2,
+    "variant": "baseline",
+    "first_draw_ms": 1051.080525,
+    "mapped_ms": 1073.088885
+  },
+  {
+    "run": 2,
+    "variant": "cds",
+    "first_draw_ms": 960.744808,
+    "mapped_ms": 977.269774
+  },
+  {
+    "run": 3,
+    "variant": "baseline",
+    "first_draw_ms": 1062.836001,
+    "mapped_ms": 1085.413921
+  },
+  {
+    "run": 3,
+    "variant": "cds",
+    "first_draw_ms": 977.199579,
+    "mapped_ms": 995.016463
+  },
+  {
+    "run": 4,
+    "variant": "baseline",
+    "first_draw_ms": 1069.796705,
+    "mapped_ms": 1098.538135
+  },
+  {
+    "run": 4,
+    "variant": "cds",
+    "first_draw_ms": 952.582655,
+    "mapped_ms": 972.615702
+  },
+  {
+    "run": 5,
+    "variant": "baseline",
+    "first_draw_ms": 1076.544808,
+    "mapped_ms": 1098.24682
+  },
+  {
+    "run": 5,
+    "variant": "cds",
+    "first_draw_ms": 960.328726,
+    "mapped_ms": 982.499048
+  },
+  {
+    "run": 6,
+    "variant": "baseline",
+    "first_draw_ms": 1060.073028,
+    "mapped_ms": 1085.795715
+  },
+  {
+    "run": 6,
+    "variant": "cds",
+    "first_draw_ms": 969.673528,
+    "mapped_ms": 985.742062
+  },
+  {
+    "run": 7,
+    "variant": "baseline",
+    "first_draw_ms": 1058.497255,
+    "mapped_ms": 1085.620522
+  },
+  {
+    "run": 7,
+    "variant": "cds",
+    "first_draw_ms": 961.53019,
+    "mapped_ms": 976.955669
+  },
+  {
+    "run": 8,
+    "variant": "baseline",
+    "first_draw_ms": 1054.410462,
+    "mapped_ms": 1077.325062
+  },
+  {
+    "run": 8,
+    "variant": "cds",
+    "first_draw_ms": 960.443961,
+    "mapped_ms": 985.716597
+  },
+  {
+    "run": 9,
+    "variant": "baseline",
+    "first_draw_ms": 1060.935238,
+    "mapped_ms": 1086.941185
+  },
+  {
+    "run": 9,
+    "variant": "cds",
+    "first_draw_ms": 968.059785,
+    "mapped_ms": 987.369917
+  }
+]
