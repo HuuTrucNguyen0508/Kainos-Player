@@ -175,7 +175,10 @@ flock -x /tmp/kainos-perf.lock python scripts/perf/desktop-storage.py --out /tmp
 python scripts/perf/desktop-spans.py /tmp/startup-new
 ```
 
-For the pre-extracted-native trial, extract
+For an automated pre-extracted-native trial, pass
+`--extract-native /tmp/new-sqlite-native-directory` to `desktop-storage.py`.
+It extracts from the packaged jar before timing and supplies both variants.
+For the GUI comparison, extract
 `org/sqlite/native/Linux/x86_64/libsqlitejdbc.so` from the single packaged
 `sqlite-jdbc-*.jar` into a new temporary directory, then add
 `--variant='native=["-Dorg.sqlite.lib.path=/that/directory","-Dorg.sqlite.lib.name=libsqlitejdbc.so"]'`
@@ -210,7 +213,7 @@ for isolated measurements only. Reproduce with the existing Library harness,
 `--variant='baseline=["-Dkainos.perf.serialHttp=true"]' --variant='prewarm=[]'`,
 and the packaged archive passed through `--jvm-flag` as above.
 
-Raw measurements are `/tmp/kainos-sqlite-native-ab`, `/tmp/kainos-storage-spans`,
+Compact summaries are `desktop-startup-followup.json`. Raw measurements are `/tmp/kainos-sqlite-native-ab`, `/tmp/kainos-storage-spans`,
 `/tmp/kainos-startup-spans-ab`, `/tmp/kainos-http-ab` and
 `/tmp/kainos-http-final-ab`. They use fresh JVMs, an empty isolated Library,
 private Xvfb software rendering and warm OS page cache. The page cache was not
@@ -221,3 +224,28 @@ Package-path audit: only the intentional launcher fallback and launcher fixtures
 used the old directory. Tests now exercise both paths and the rebuild transition.
 CI, release scripts and the desktop entry use Gradle/the launcher rather than
 that directory. Historical measurements mentioning the old path remain historical.
+
+The production-default HTTP confirmation measured first draw 542.97 → 512.25 ms
+(p90 551.22 → 518.46), Library interaction 731.42 → 699.53 ms
+(p90 735.62 → 708.90), ten samples per arm with zero errors. First-draw ranges
+531.02–556.02 and 502.16–522.24 ms do not overlap. The 30.72 ms first-draw gain
+is smaller than the removed 49 ms serial setup span. Work is overlapped, not skipped.
+
+The next candidate moved MPRIS binding onto a worker. Ten interleaved runs gave
+507.93 → 486.20 ms first draw (p90 524.63 → 504.14) and
+691.59 → 669.85 ms Library (p90 710.41 → 694.96), zero errors.
+The 4.3% first-draw improvement is below the requested 5% threshold. The candidate
+and its lifecycle-wait code were reverted; MPRIS still binds synchronously.
+Raw runs remain at `/tmp/kainos-mpris-ab`. Stop here under the lane's accept rule.
+
+Final checks passed with Gradle exit code 0 under the shared machine lock:
+root `jvmTest`, `:core:data:verifyCommonMainKainosDatabaseMigration` and
+`:desktopApp:createDistributable`. Unchanged module tasks were up-to-date;
+shared tests ran after the AppContainer change. XML results contain 927 tests,
+zero failures/errors and three skips. Both launcher suites passed (6 and 9 tests),
+and `desktop-launcher-e2e.py` passed with null audio under the exclusive lock.
+The extraction helper was also exercised in a separate one-run diagnostic;
+`-Xlog:library=debug` confirmed the candidate loaded the requested extracted file.
+That traced diagnostic is excluded from all ten-run timing summaries.
+Logs: `/tmp/kainos-desktop-final-checks.log`, `/tmp/kainos-startup-final-e2e.log`,
+`/tmp/kainos-sqlite-final-diagnostic`. No schema change was made.
