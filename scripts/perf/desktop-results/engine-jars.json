@@ -1,0 +1,14 @@
+{
+  "/tmp/kainos-desktop-native-packages/baseline": [
+    {
+      "file": "playback-jvm-a977f65831d9501bad578adc8f60c86b.jar",
+      "sha256": "9bfd3e2db063a6bfd1d8520f5ab7727778e838fc8704a7b2b2e8e0bc9fcd542c"
+    }
+  ],
+  "/tmp/kainos-desktop-native-packages/candidate": [
+    {
+      "file": "playback-jvm-94e537bb2fca8a15118bd753b4aae5f.jar",
+      "sha256": "7a0336f4e2779c43275210c659af7626458355fa26aa63d5b8e681b17c4958bb"
+    }
+  ]
+}

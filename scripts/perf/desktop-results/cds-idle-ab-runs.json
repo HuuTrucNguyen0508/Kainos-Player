@@ -1,0 +1,122 @@
+[
+  {
+    "run": 0,
+    "variant": "baseline",
+    "idle_cpu_percent": 3.6022879441965623,
+    "idle_rss_kib": 395368
+  },
+  {
+    "run": 0,
+    "variant": "cds",
+    "idle_cpu_percent": 4.800111764842141,
+    "idle_rss_kib": 408640
+  },
+  {
+    "run": 1,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.602778135622088,
+    "idle_rss_kib": 362956
+  },
+  {
+    "run": 1,
+    "variant": "cds",
+    "idle_cpu_percent": 4.401159096301818,
+    "idle_rss_kib": 408088
+  },
+  {
+    "run": 2,
+    "variant": "baseline",
+    "idle_cpu_percent": 5.001831402561144,
+    "idle_rss_kib": 363384
+  },
+  {
+    "run": 2,
+    "variant": "cds",
+    "idle_cpu_percent": 5.397312829066893,
+    "idle_rss_kib": 412272
+  },
+  {
+    "run": 3,
+    "variant": "baseline",
+    "idle_cpu_percent": 5.191111749393139,
+    "idle_rss_kib": 369696
+  },
+  {
+    "run": 3,
+    "variant": "cds",
+    "idle_cpu_percent": 4.7999120819307155,
+    "idle_rss_kib": 418516
+  },
+  {
+    "run": 4,
+    "variant": "baseline",
+    "idle_cpu_percent": 5.0012999348783636,
+    "idle_rss_kib": 371440
+  },
+  {
+    "run": 4,
+    "variant": "cds",
+    "idle_cpu_percent": 4.40122172105397,
+    "idle_rss_kib": 410520
+  },
+  {
+    "run": 5,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.803607387136704,
+    "idle_rss_kib": 363152
+  },
+  {
+    "run": 5,
+    "variant": "cds",
+    "idle_cpu_percent": 4.800743612141573,
+    "idle_rss_kib": 407580
+  },
+  {
+    "run": 6,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.805618119353114,
+    "idle_rss_kib": 378924
+  },
+  {
+    "run": 6,
+    "variant": "cds",
+    "idle_cpu_percent": 4.800810368148476,
+    "idle_rss_kib": 409852
+  },
+  {
+    "run": 7,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.60184478753783,
+    "idle_rss_kib": 373144
+  },
+  {
+    "run": 7,
+    "variant": "cds",
+    "idle_cpu_percent": 4.392295997153459,
+    "idle_rss_kib": 411484
+  },
+  {
+    "run": 8,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.803596586304417,
+    "idle_rss_kib": 366520
+  },
+  {
+    "run": 8,
+    "variant": "cds",
+    "idle_cpu_percent": 4.400426074774356,
+    "idle_rss_kib": 420360
+  },
+  {
+    "run": 9,
+    "variant": "baseline",
+    "idle_cpu_percent": 4.99248634698923,
+    "idle_rss_kib": 363100
+  },
+  {
+    "run": 9,
+    "variant": "cds",
+    "idle_cpu_percent": 5.001497624441631,
+    "idle_rss_kib": 400960
+  }
+]

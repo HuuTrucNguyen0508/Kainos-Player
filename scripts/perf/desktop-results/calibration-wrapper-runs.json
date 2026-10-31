@@ -1,0 +1,122 @@
+[
+  {
+    "run": 0,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 105960,
+    "press_to_started_ms": 149.535077,
+    "pause_ack_ms": 1.155964,
+    "resume_ack_ms": 0.871458,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 1,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 107408,
+    "press_to_started_ms": 145.887904,
+    "pause_ack_ms": 1.228355,
+    "resume_ack_ms": 0.886048,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 2,
+    "variant": "default",
+    "idle_cpu_percent": 0.19973354251155723,
+    "idle_rss_kib": 108184,
+    "press_to_started_ms": 144.704289,
+    "pause_ack_ms": 1.374696,
+    "resume_ack_ms": 1.03708,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 3,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 105180,
+    "press_to_started_ms": 145.917963,
+    "pause_ack_ms": 1.287033,
+    "resume_ack_ms": 0.892826,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 4,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 111052,
+    "press_to_started_ms": 139.124781,
+    "pause_ack_ms": 1.438425,
+    "resume_ack_ms": 1.051368,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 5,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 107724,
+    "press_to_started_ms": 144.052609,
+    "pause_ack_ms": 1.314831,
+    "resume_ack_ms": 1.043247,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 6,
+    "variant": "default",
+    "idle_cpu_percent": 0.19967873109884568,
+    "idle_rss_kib": 106668,
+    "press_to_started_ms": 142.050609,
+    "pause_ack_ms": 1.26796,
+    "resume_ack_ms": 1.27123,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 7,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 105136,
+    "press_to_started_ms": 145.581798,
+    "pause_ack_ms": 1.270118,
+    "resume_ack_ms": 0.958724,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 8,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 105468,
+    "press_to_started_ms": 143.974455,
+    "pause_ack_ms": 1.245167,
+    "resume_ack_ms": 1.032844,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 9,
+    "variant": "default",
+    "idle_cpu_percent": 0.0,
+    "idle_rss_kib": 106132,
+    "press_to_started_ms": 145.518818,
+    "pause_ack_ms": 1.230466,
+    "resume_ack_ms": 1.062773,
+    "natural_pcm_silence_ms": 90.0,
+    "natural_pcm_boundary_ms": 90.0,
+    "pcm_resolution_ms": 5
+  }
+]

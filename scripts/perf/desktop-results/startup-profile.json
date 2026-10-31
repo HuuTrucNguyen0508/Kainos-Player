@@ -1,0 +1,36 @@
+{
+  "sample_count": 25,
+  "threads": {
+    "main": 3,
+    "AWT-EventQueue-0": 14,
+    "DefaultDispatcher-worker-6": 1,
+    "DefaultDispatcher-worker-8": 3,
+    "DefaultDispatcher-worker-7": 1,
+    "DefaultDispatcher-worker-20": 3
+  },
+  "leaves": {
+    "kotlinx/coroutines/sync/MutexImpl.<init>": 1,
+    "java/util/zip/ZipFile$Source.getEntryPos": 3,
+    "kotlinx/coroutines/BuildersKt__Builders_commonKt.withContext": 1,
+    "java/nio/file/attribute/FileTime.equals": 1,
+    "java/util/LinkedList$ListItr.hasNext": 1,
+    "kotlin/collections/MapsKt__MapsKt.emptyMap": 1,
+    "io/ktor/client/plugins/HttpPlainTextKt.<clinit>": 1,
+    "jdk/internal/ref/PhantomCleanable.insert": 1,
+    "kotlinx/coroutines/scheduling/CoroutineScheduler$Worker.run": 1,
+    "sun/text/UCompactIntArray.initPlane": 1,
+    "java/lang/Character.isDigit": 1,
+    "java/io/BufferedInputStream.read": 2,
+    "java/lang/String.indexOf": 1,
+    "sun/security/provider/SHA2.implCompress0": 1,
+    "java/lang/invoke/VarHandleByteArrayAsInts$ArrayHandle.index": 1,
+    "kotlinx/serialization/json/internal/StringJsonLexer.consumeNextToken": 1,
+    "java/util/Properties.load0": 1,
+    "java/util/HashMap.newNode": 1,
+    "androidx/compose/runtime/SnapshotMutableFloatStateImpl.getFloatValue": 1,
+    "androidx/collection/ScatterMap.containsKey": 1,
+    "androidx/compose/runtime/internal/ComposableLambdaImpl$invoke$1.<init>": 1,
+    "androidx/collection/LruCache.get": 1
+  },
+  "caveat": "One instrumented launch, 25 execution samples; not a timing arm or a precise attribution of startup cost"
+}

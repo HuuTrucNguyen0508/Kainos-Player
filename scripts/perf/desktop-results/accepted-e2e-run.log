@@ -1,0 +1,88 @@
+Picked up JAVA_TOOL_OPTIONS: -Xlog:cds=info
+[0.002s][info][cds] trying to map /home/theadenkingof/.jdks/temurin-17/lib/server/classes.jsa
+[0.002s][info][cds] Opened archive /home/theadenkingof/.jdks/temurin-17/lib/server/classes.jsa.
+[0.003s][info][cds] Archive was created with UseCompressedOops = 1, UseCompressedClassPointers = 1
+[0.003s][info][cds] Core region alignment: 4096
+[0.003s][info][cds] trying to map /home/theadenkingof/.t3/worktrees/Kainos-Player/t3-12d54726/desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app/kainos.jsa
+[0.003s][info][cds] Opened archive /home/theadenkingof/.t3/worktrees/Kainos-Player/t3-12d54726/desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app/kainos.jsa.
+[0.003s][info][cds] Archive was created with UseCompressedOops = 1, UseCompressedClassPointers = 1
+[0.003s][info][cds] ArchiveRelocationMode == 1: always map archive(s) at an alternative address
+[0.003s][info][cds] Try to map archive(s) at an alternative address
+[0.003s][info][cds] Reserved archive_space_rs [0x00007f5c83000000 - 0x00007f5c88000000] (83886080) bytes
+[0.003s][info][cds] Reserved class_space_rs   [0x00007f5c88000000 - 0x00007f5cc8000000] (1073741824) bytes
+[0.003s][info][cds] Mapped static  region #0 at base 0x00007f5c83000000 top 0x00007f5c83454000 (ReadWrite)
+[0.003s][info][cds] Mapped static  region #1 at base 0x00007f5c83454000 top 0x00007f5c83bc7000 (ReadOnly)
+[0.003s][info][cds] Mapped static  region #2 at base 0x00007f5d1058c000 top 0x00007f5d105c3000 (Bitmap)
+[0.008s][info][cds] Mapped dynamic region #0 at base 0x00007f5c83bc7000 top 0x00007f5c85029000 (ReadWrite)
+[0.008s][info][cds] Mapped dynamic region #1 at base 0x00007f5c85029000 top 0x00007f5c8762c000 (ReadOnly)
+[0.008s][info][cds] Mapped dynamic region #2 at base 0x00007f5cdfe01000 top 0x00007f5cdfeeb000 (Bitmap)
+[0.025s][info][cds] CDS archive was created with max heap size = 128M, and the following configuration:
+[0.025s][info][cds]     narrow_klass_base = 0x00007f5c83000000, narrow_klass_shift = 0
+[0.025s][info][cds]     narrow_oop_mode = 0, narrow_oop_base = 0x0000000000000000, narrow_oop_shift = 0
+[0.025s][info][cds]     heap range = [0x00000000f8000000 - 0x0000000100000000]
+[0.025s][info][cds] The current max heap size = 7796M, HeapRegion::GrainBytes = 4194304
+[0.025s][info][cds]     narrow_klass_base = 0x00007f5c83000000, narrow_klass_shift = 0
+[0.025s][info][cds]     narrow_oop_mode = 1, narrow_oop_base = 0x0000000000000000, narrow_oop_shift = 3
+[0.025s][info][cds]     heap range = [0x0000000618c00000 - 0x0000000800000000]
+[0.025s][info][cds] CDS heap data needs to be relocated because the archive was created with an incompatible oop encoding mode.
+[0.025s][info][cds] CDS heap data relocation delta = 30064771072 bytes
+[0.025s][info][cds] CDS heap data needs to be relocated lower by a further 3145728 bytes to 30061625344 to be aligned with HeapRegion::GrainBytes
+[0.025s][info][cds] Trying to map heap data: region[3] at 0x00000007ffc00000, size =   491520 bytes
+[0.025s][info][cds] Trying to map heap data: region[5] at 0x00000007ffb00000, size =   479232 bytes
+[0.026s][info][cds] optimized module handling: enabled
+[0.026s][info][cds] full module graph: enabled
+[0.026s][info][cds] use_full_module_graph = true; java.base = 0x00007f5c8344d910
+[0.026s][info][cds] patching heap embedded pointers
+[0.026s][info][cds] Unmapping region #2 at base 0x00007f5d1058c000 (Bitmap)
+[0.026s][info][cds] Unmapping region #2 at base 0x00007f5cdfe01000 (Bitmap)
+PERF	session_play	8898069356863
+TRACE 14:36:02.984 [Session] engine -> IDLE gen=0 (session gen=0 armed=false) pos=0 dur=null
+TRACE 14:36:02.988 [Session] startCurrent 'Probe 0' [LOCAL] probe:0 gen=1 (cancel previous job + engine.stopForTransition)
+TRACE 14:36:02.993 [Session] engine.play 'Probe 0' [LOCAL] probe:0 via LOCAL gen=1
+TRACE 14:36:02.994 [Session] engine -> BUFFERING gen=1 (session gen=1 armed=false) pos=0 dur=null
+TRACE 14:36:03.061 [Session] engine -> PLAYING gen=1 (session gen=1 armed=false) pos=0 dur=2000
+PERF_VALUE	duration_ms	2000
+TRACE 14:36:03.062 [Session] engine.play ok gen=1; completion armed
+PERF	pause	8898464043557
+TRACE 14:36:03.363 [Session] pauseTransport engine=PLAYING gen=1 track='Probe 0' [LOCAL] probe:0
+PERF	engine_pause	8898465802541
+TRACE 14:36:03.364 [Session] engine -> PAUSED gen=1 (session gen=1 armed=true) pos=12 dur=2000
+PERF	resume	8898764413813
+TRACE 14:36:03.664 [Session] playTransport buffering=false isPlaying=false engine=PAUSED
+PERF	engine_resume	8898766132788
+TRACE 14:36:03.664 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=12 dur=2000
+PERF	seek	8899064797711
+TRACE 14:36:04.263 [Session] skipToNext
+TRACE 14:36:04.266 [Session] advance manual=true current=0 next=1 size=3 repeat=OFF shuffle=false
+TRACE 14:36:04.266 [Session] startCurrent 'Probe 1' [LOCAL] probe:1 gen=2 (cancel previous job + engine.stopForTransition)
+TRACE 14:36:04.269 [Session] engine -> IDLE gen=1 (session gen=2 armed=false) pos=0 dur=null
+TRACE 14:36:04.270 [Session] engine.play 'Probe 1' [LOCAL] probe:1 via LOCAL gen=2
+TRACE 14:36:04.270 [Session] engine -> BUFFERING gen=2 (session gen=2 armed=false) pos=0 dur=null
+TRACE 14:36:04.319 [Session] engine -> PLAYING gen=2 (session gen=2 armed=false) pos=0 dur=2000
+TRACE 14:36:04.319 [Session] engine.play ok gen=2; completion armed
+TRACE 14:36:06.324 [Session] engine -> ENDED gen=2 (session gen=2 armed=true) pos=2000 dur=2000
+TRACE 14:36:06.324 [Session] natural completion of 'Probe 1' [LOCAL] probe:1
+TRACE 14:36:06.325 [Session] advance manual=false current=1 next=2 size=3 repeat=OFF shuffle=false
+TRACE 14:36:06.325 [Session] startCurrent 'Probe 2' [LOCAL] probe:2 gen=3 (cancel previous job + engine.stopForTransition)
+TRACE 14:36:06.328 [Session] engine -> IDLE gen=2 (session gen=3 armed=false) pos=0 dur=null
+TRACE 14:36:06.328 [Session] engine.play 'Probe 2' [LOCAL] probe:2 via LOCAL gen=3
+TRACE 14:36:06.328 [Session] engine -> BUFFERING gen=3 (session gen=3 armed=false) pos=0 dur=null
+TRACE 14:36:06.376 [Session] engine -> PLAYING gen=3 (session gen=3 armed=false) pos=0 dur=2000
+TRACE 14:36:06.376 [Session] engine.play ok gen=3; completion armed
+TRACE 14:36:08.380 [Session] engine -> ENDED gen=3 (session gen=3 armed=true) pos=2000 dur=2000
+PERF	natural_end	8903483177230
+TRACE 14:36:08.381 [Session] natural completion of 'Probe 2' [LOCAL] probe:2
+TRACE 14:36:08.381 [Session] advance manual=false current=2 next=null size=3 repeat=OFF shuffle=false
+TRACE 14:36:08.381 [Session] stopAtQueueEnd
+TRACE 14:36:08.384 [Session] engine -> IDLE gen=3 (session gen=4 armed=false) pos=0 dur=null
+TRACE 14:36:08.385 [Session] startCurrent 'Probe 0' [LOCAL] probe:0 gen=5 (cancel previous job + engine.stopForTransition)
+TRACE 14:36:08.386 [Session] engine.play 'Probe 0' [LOCAL] probe:0 via LOCAL gen=5
+TRACE 14:36:08.386 [Session] engine -> BUFFERING gen=5 (session gen=5 armed=false) pos=0 dur=null
+TRACE 14:36:08.436 [Session] engine -> PLAYING gen=5 (session gen=5 armed=false) pos=0 dur=2000
+TRACE 14:36:08.436 [Session] engine.play ok gen=5; completion armed
+TRACE 14:36:08.736 [Session] pauseTransport engine=PLAYING gen=5 track='Probe 0' [LOCAL] probe:0
+PERF	engine_pause	8903838809368
+TRACE 14:36:08.737 [Session] engine -> PAUSED gen=5 (session gen=5 armed=true) pos=0 dur=2000
+PERF	idle_begin	8904338724262
+PERF	idle_end	8909338861622
+PERF	complete	8909538994682
