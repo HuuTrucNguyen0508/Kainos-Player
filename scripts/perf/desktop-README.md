@@ -33,7 +33,7 @@ flock -x /tmp/kainos-perf.lock python scripts/perf/desktop-snapshot.py --out /tm
 flock -x /tmp/kainos-perf.lock python scripts/perf/desktop-bench.py --mode playback --capture-pcm --runs 10 --compare-app-dir /tmp/desktop-baseline --app-dir /tmp/desktop-candidate --out /tmp/playback-ab
 ```
 
-This stage isolates the FLAC reader with AppCDS disabled in both arms. The original baseline jar's MD5 is `a977f65831d9501bad578adc8f60c86b`; its SHA-256 and complete snapshot manifests are retained in `desktop-results/`. The actual-launcher exercise separately verifies the generated archive is mapped and the same transport operations work.
+This stage isolates the FLAC reader with AppCDS disabled in both arms. The original baseline jar's MD5 is `a977f65831d9501bad578adc8f60c86b`; its SHA-256 is retained in `desktop-results/engine-jars.json`; complete snapshot manifests remain under `/tmp/kainos-desktop-accepted-packages/`. The actual-launcher exercise separately verifies the generated archive is mapped and the same transport operations work.
 
 ## What the endpoints mean
 
@@ -54,11 +54,11 @@ Archives are specific to the JDK, jar set and absolute classpath. Moving the pac
 
 ## Results, noise and rejected attempts
 
-Final data is `accepted-ab-*`, `accepted-startup-*`, `accepted-library-*` and `accepted-idle-*` in `desktop-results/`, with every raw numeric sample and summary. Captures and full logs remain under matching `/tmp/kainos-desktop-accepted-*` directories. The ledger is `docs/perf/desktop.tsv`.
+Historical metric summaries are in `desktop-results/history.tsv`. Every raw numeric sample, capture and full log remains under matching `/tmp/kainos-desktop-accepted-*` directories for this session; these temporary files do not survive cleanup of `/tmp`. The harness regenerates them. The ledger is `docs/perf/desktop.tsv`.
 
 All 20 final FLAC runs passed, with four observed ffprobe starts per baseline queue run and zero in the candidate. Correctness checks cover deliberately wrong supplied duration, 24-bit/96 kHz stereo, WAV, and FLAC with an unknown sample count. The rejected cached-duration implementation reports 123 seconds for a real two-second file and fails the same check; fresh-file probing passes.
 
-The final startup series retains a roughly 3.8-second sample in **both** arms, plus a baseline 1.6-second sample. All ten paired differences favored CDS; median paired improvement was 94.4 ms. Report a median improvement, not a worst-case improvement. Prior clean interleaved sessions also found about 8–9%. An early non-interleaved archive showed a 50% result that was not reproduced by the final package; it is recorded, not shipped as a claim.
+The final startup series retains a roughly 3.8-second sample in **both** arms, plus a baseline 1.6-second sample. All ten paired differences favored CDS; median paired improvement was 94.4 ms. Report a median improvement, not a worst-case improvement. Prior clean interleaved sessions also found about 8–9%. The follow-up below explains and reproduces the earlier 50% archive result; the former attribution to a training artifact was incorrect.
 
 Rejected/deferred: SerialGC gained under 5%; an extra second of training warmup gave no measurable benefit. TieredStopAtLevel 1/2 improved first draw but cap later optimization, so they were left out without evidence about longer-running UI behavior. Persistent mpv with sample-accurate prefetch needs a next-track/preference contract outside this lane; existing fresh-process semantics remain.
 
@@ -155,3 +155,7 @@ This is a login paint, not an authenticated music library or proven interaction.
 Kainos's 730.5 ms endpoint verifies search consumption/focus and two subsequent frames
 in an empty Library. Do not call these equivalent or claim Kainos beats Spotify.
 `--paint` retains private-display screenshot evidence and never plays audio.
+
+Raw capture directories are ignored by the appended `.gitignore` rules. Keep only
+compact summaries, verification status and playback artifact hashes in this directory.
+No images, logs, per-run manifests or generated archives belong in the repository.
