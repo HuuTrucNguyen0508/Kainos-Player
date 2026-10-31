@@ -1,0 +1,64 @@
+{
+  "implementation_commit": "62c8c0164089a746565b23d3eba24664bdf10f53",
+  "baseline_commit": "3701e02344de388cc5b78a0d896f25e745485abd",
+  "branch": "perf/desktop-gapless",
+  "schema_migration": false,
+  "user_data_touched": false,
+  "physical_phone_used": false,
+  "checks": {
+    "command": "python scripts/perf/gapless-checks.py",
+    "gradle_exit": 0,
+    "tests": 956,
+    "failures": 0,
+    "skipped": 3,
+    "tasks": [
+      "jvmTest",
+      ":core:data:verifyCommonMainKainosDatabaseMigration",
+      ":androidApp:assembleDebug",
+      ":desktopApp:createDistributable"
+    ],
+    "log": "/tmp/gapless-shipping-checks.log"
+  },
+  "measurement": {
+    "baseline": "paired-same and paired-mixed baseline arms, ten each",
+    "head": "head-same and head-mixed, ten fresh final-source runs each",
+    "ordering": "Earlier complete A/B loops alternate baseline and candidate. Final-source head checks follow them, are reported separately, and are never pooled with intermediate candidates.",
+    "pcm": "head-pcm-results.json: ten pairs, 176400 samples each, zero join residual in signed-16-bit PCM",
+    "silence_resolution_ms": 5,
+    "idle_cpu_resolution_percentage_points": 0.2,
+    "press_endpoint": "PlayerSession.play -> externally observed mpv playback-restart; not acoustic onset",
+    "page_cache_dropped": false,
+    "lock": "/tmp/kainos-perf.lock; exclusive for timing, shared for required checks"
+  },
+  "reproduce": [
+    "python scripts/perf/gapless-checks.py",
+    "flock -x /tmp/kainos-perf.lock python scripts/perf/desktop-snapshot.py --out /tmp/new-gapless-head",
+    "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-bench.py --mode playback --capture-pcm --runs 10 --compare-app-dir /tmp/gapless-baseline-package --app-dir /tmp/new-gapless-head --out /tmp/new-gapless-same",
+    "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-bench.py --mixed-rate --mode playback --capture-pcm --runs 10 --compare-app-dir /tmp/gapless-baseline-package --app-dir /tmp/new-gapless-head --out /tmp/new-gapless-mixed",
+    "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-pcm.py --out /tmp/new-gapless-pcm",
+    "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-e2e.py --app-dir /tmp/new-gapless-head --out /tmp/new-gapless-e2e"
+  ],
+  "e2e": "head-e2e-run.log: three natural tracks, pause/seek/resume/skip, process death recovery, Repeat One, queue end, missing successor. Private Xvfb and private Pulse sink. No uncaught exception.",
+  "calibrations": {
+    "invalid-stale-wrapper-runs.json": "Invalid: Kotlin delegation wrapper lacked new supportsGapless getter. Forced recompilation and benchmark guard fixed the measurement.",
+    "intermediate-boundary-runs.json": "Interrupted for queued-replacement and drain safety fixes; not final head.",
+    "intermediate-recovery-runs.json": "Interrupted for the cached-YouTube provider guard; not final head.",
+    "rejected-polling-runs.json": "Interrupted to restore original 40ms IPC readiness polling after no clear gain from 5ms.",
+    "rejected-forced-resampling-results.json": "Sample count is preserved but 96kHz successor is downsampled to 44.1kHz. Rejected in favor of clean format-mismatch restart.",
+    "pcm_attempts": "/tmp/gapless-pcm-proof: unsupported ao-pcm-fast option. /tmp/gapless-pcm-proof2: unpaced PCM outran preparation. Final proof starts paused until two files are queued.",
+    "check_failures": "Initial run lacked Xvfb. Two own Gradle invocations collided in result files, then were rerun serially. A later ListeningRecorderWriteTest failed once with SQLITE_ERROR cannot start a transaction within a transaction; full rerun passed without data-layer edits.",
+    "sqlite_failure_log": "/tmp/gapless-source-gate-checks.log",
+    "sqlite_clean_recheck": "/tmp/gapless-source-gate-recheck.log"
+  },
+  "remaining": [
+    "Recents requirement is unresolved outside ownership. shared/.../ui/App.kt:254 and :262 call library.recordPlay only for manual starts. Natural transitions have no wired library callback.",
+    "Exact MPRIS/island visual presentation timing, Nyquist artwork presentation and acoustic onset were not measured. The session adopts source metadata at the output-clock boundary, polled every 10ms.",
+    "Boundary race coverage is deterministic; no exhaustive sub-buffer timing sweep of queue edits or sleep-timer arming was run.",
+    "No physical phone testing, Spotify account traffic, user library changes, schema migrations, pushes, releases or user-app restarts."
+  ],
+  "process_state": "All lane-owned probes, captures, private sinks and Xvfb servers finished. Gradle daemons may remain idle.",
+  "quota": {
+    "codex_weekly_used_percent": 18,
+    "source": "fresh model_controller_status refresh after long operations"
+  }
+}

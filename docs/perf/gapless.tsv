@@ -1,0 +1,12 @@
+date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
+2026-10-31	natural_pcm_silence_ms	compatible_local_successor	45.0	0.0	45.0	0.0	10	accepted	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	natural_pcm_silence_ms	44k1_to_96k_fresh_format_restart	45.0	45.0	45.0	45.0	10	clean_fallback_no_gain	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	press_to_started_ms	cold_JVM_first_play_event_proxy	105.29129499999999	126.5490125	109.577811	130.945574	10	regression_tradeoff	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	mpv_idle_cpu_percent	paused_long_lived_mpv_5s_sample	0.0	0.0	0.0	0.0	10	no_measurable_regression	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	pause_ack_ms	FIFO_transport	1.1970055	1.231509	1.360346	1.360434	10	no_measurable_regression	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	resume_ack_ms	FIFO_transport	0.9005540000000001	0.871198	1.013386	0.950013	10	no_measurable_regression	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	join_max_error_lsb	continuous_441Hz_44k1_PCM	NA	0	NA	0	10	exact_samples_and_phase	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	join_max_error_lsb	forced_44k1_output_for_96k_successor	NA	58	NA	58	10	rejected_downsampling	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	readiness_poll_ms	5ms_instead_of_40ms	NA	NA	NA	NA	0	rejected_no_clear_gain_reverted	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	calibration	probe_wrapper_missing_capability_getter	NA	NA	NA	NA	4	invalid_retained_not_pooled	62c8c0164089a746565b23d3eba24664bdf10f53
+2026-10-31	integration	recents_only_recorded_by_App_kt_manual_start	NA	NA	NA	NA	0	outside_owned_files_unresolved	62c8c0164089a746565b23d3eba24664bdf10f53
