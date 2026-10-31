@@ -485,7 +485,8 @@ class AndroidPlaybackEngine(
         if (activeBackend != ActiveBackend.SPOTIFY) return
         trace("stopSpotifyIfActive -> Connect pause before URL playback")
         ticker?.cancel()
-        runSpotifyCommand("Spotify Connect stop", spotify.pause)
+        runCatching { runSpotifyCommand("Spotify Connect stop", spotify.pause) }
+            .onFailure { markSpotifyFailed(it, "Spotify Connect stop") }
         activeBackend = ActiveBackend.NONE
         runMediaCommand {
             AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
@@ -495,7 +496,7 @@ class AndroidPlaybackEngine(
     private suspend fun awaitPendingSpotifyStop() {
         val pending = pendingSpotifyStop ?: return
         try {
-            pending.await().getOrThrow()
+            pending.await().onFailure { markSpotifyFailed(it, "Spotify Connect stop") }
         } finally {
             if (pendingSpotifyStop === pending) pendingSpotifyStop = null
         }
@@ -580,13 +581,9 @@ class AndroidPlaybackEngine(
     }
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
-        trace("$name failed: ${failure.message}")
+        PlaybackTrace.log("Engine", "$name warning: ${failure.message}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
-            ticker?.cancel()
-            publishState(_state.value.copy(
-                status = EngineStatus.FAILED,
-                error = failure.message ?: "$name failed",
-            ))
+            publishState(_state.value.copy(syncWarning = "$name failed; waiting for receiver state"))
         }
     }
 

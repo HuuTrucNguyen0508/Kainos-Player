@@ -30,6 +30,24 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun spotifyTransportFailuresDoNotFailTheTrack() = runBlocking {
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController({}, { error("offline") }, { error("offline") }, { error("offline") }),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "track", 180_000), null)
+            engine.pause()
+            delay(100)
+            assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+            engine.resume()
+            engine.seekTo(1000)
+            delay(100)
+            assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+        } finally { engine.stop() }
+    }
+
+    @Test
     fun receiverEndAdvancesEvenWhenConnectRewindsTo201Milliseconds() = runBlocking {
         val receiver = FakeSpotifyReceiver()
         val engine = spotifyEngine(receiver) {

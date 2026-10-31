@@ -912,14 +912,9 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
+        PlaybackTrace.log("Engine", "$name warning: ${failure.message}")
         synchronized(lifecycleLock) {
-            if (spotifyIsActive()) {
-                cancelTickerLocked()
-                publishState(_state.value.copy(
-                    status = EngineStatus.FAILED,
-                    error = failure.message ?: "$name failed",
-                ))
-            }
+            if (spotifyIsActive()) publishState(_state.value.copy(syncWarning = "$name failed; waiting for receiver state"))
         }
     }
 
