@@ -416,7 +416,7 @@ private fun RemoteTransport(status: RemoteStatus?, enabled: Boolean, onSend: (Re
         }
         PlayButton(
             playing = status?.isPlaying == true || status?.buffering == true,
-            onClick = { onSend(RemoteCommand.TogglePlay) },
+            onClick = { onSend(if (status?.isPlaying == true || status?.buffering == true) RemoteCommand.Pause else RemoteCommand.Play) },
             enabled = enabled,
         )
         IconButton(onClick = { onSend(RemoteCommand.Next) }, enabled = enabled && status.canSkipNext, modifier = Modifier.size(56.dp)) {
