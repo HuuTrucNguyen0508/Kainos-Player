@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -54,7 +56,7 @@ class AndroidPlaybackEngine(
     @Volatile private var activePlayGeneration: Long = 0L
 
     private fun publishState(state: EngineState) {
-        _state.value = state.copy(playGeneration = activePlayGeneration)
+        _state.update { state.copy(playGeneration = activePlayGeneration) }
     }
     private var receiverJob: Job? = null
     @Volatile private var receiverConfirmed = false
@@ -113,7 +115,7 @@ class AndroidPlaybackEngine(
             if (activeBackend != ActiveBackend.MEDIA3) return
             if (player == null) return
             val status = when (playbackState) {
-                Player.STATE_BUFFERING -> EngineStatus.BUFFERING
+                Player.STATE_BUFFERING -> if (player.playWhenReady) EngineStatus.BUFFERING else EngineStatus.PAUSED
                 Player.STATE_READY -> if (player.isPlaying) EngineStatus.PLAYING else EngineStatus.PAUSED
                 Player.STATE_ENDED -> EngineStatus.ENDED
                 else -> return
@@ -141,7 +143,7 @@ class AndroidPlaybackEngine(
             val status = when {
                 player.playbackState == Player.STATE_ENDED -> EngineStatus.ENDED
                 isPlaying -> EngineStatus.PLAYING
-                player.playbackState == Player.STATE_BUFFERING -> EngineStatus.BUFFERING
+                player.playbackState == Player.STATE_BUFFERING -> if (player.playWhenReady) EngineStatus.BUFFERING else EngineStatus.PAUSED
                 else -> EngineStatus.PAUSED
             }
             _state.update { current -> current.copy(status = status, error = null) }
@@ -182,10 +184,11 @@ class AndroidPlaybackEngine(
         val wakeLock = power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Kainos:playback")
         wakeLock.setReferenceCounted(false)
         scope.launch {
-            state.collectLatest { current ->
+            state.map { current ->
+                com.universalmusic.player.domain.playback.playbackNeedsWakeLock(activeBackend == ActiveBackend.SPOTIFY, current.status)
+            }.distinctUntilChanged().collectLatest { needed ->
                 try {
-                    if (com.universalmusic.player.domain.playback.playbackNeedsWakeLock(
-                            activeBackend == ActiveBackend.SPOTIFY, current.status)) {
+                    if (needed) {
                         while (true) {
                             wakeLock.acquire(120_000L)
                             delay(60_000L)
@@ -230,7 +233,7 @@ class AndroidPlaybackEngine(
             throw cancelled
         } catch (failure: Throwable) {
             if (activePlayGeneration == playGeneration) {
-                publishState(_state.value.copy(status = EngineStatus.FAILED, error = failure.message))
+                _state.update { it.copy(status = EngineStatus.FAILED, error = failure.message) }
             }
             throw failure
         }
@@ -318,12 +321,13 @@ class AndroidPlaybackEngine(
                             if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation ||
                                 event.trackId != handle.trackId.removePrefix("spotify:track:")) return@collect
                             receiverConfirmed = true
-                            val status = com.universalmusic.player.domain.playback.spotifyReceiverStatus(event.kind, _state.value.status)
                             spotifyOffset = event.positionMs ?: _state.value.positionMs
                             spotifyStartedAt = System.currentTimeMillis()
-                            _state.update { current -> current.copy(status = status, positionMs = spotifyOffset,
-                                error = if (status == EngineStatus.FAILED) "Spotify track is unavailable" else null) }
-                            if (status == EngineStatus.PLAYING) startTicker() else ticker?.cancel()
+                            _state.update { current -> current.copy(
+                                status = com.universalmusic.player.domain.playback.spotifyReceiverStatus(event.kind, current.status),
+                                positionMs = spotifyOffset,
+                                error = if (event.kind == SpotifyReceiverEvent.Kind.UNAVAILABLE) "Spotify track is unavailable" else null) }
+                            if (_state.value.status == EngineStatus.PLAYING) startTicker() else ticker?.cancel()
                         }
                     }
                 }
@@ -337,8 +341,10 @@ class AndroidPlaybackEngine(
                     }
                     throw failure
                 }
-                spotifyOffset = 0
-                spotifyStartedAt = System.currentTimeMillis()
+                if (!receiverConfirmed) {
+                    spotifyOffset = 0
+                    spotifyStartedAt = System.currentTimeMillis()
+                }
                 val duration = handle.durationMs
                     ?: AndroidMediaControls.currentDurationMs()
                     ?: AndroidMediaControls.currentTrack()?.durationMs
@@ -356,9 +362,9 @@ class AndroidPlaybackEngine(
                                 .setIsPlayable(true)
                                 .build(),
                         artworkUri = AndroidMediaControls.currentTrack()?.artwork?.url?.let(android.net.Uri::parse),
-                        isPlaying = true,
-                        buffering = false,
-                        positionMs = 0L,
+                        isPlaying = _state.value.status == EngineStatus.PLAYING,
+                        buffering = _state.value.status == EngineStatus.BUFFERING,
+                        positionMs = _state.value.positionMs,
                         durationMs = duration,
                         canSeek = true,
                         canSkipNext = AndroidMediaControls.canSkipNext(),
@@ -382,10 +388,12 @@ class AndroidPlaybackEngine(
             enqueueSpotifyCommand("Spotify Connect pause", spotify.pause)
             return
         }
+        _state.update { it.copy(status = EngineStatus.PAUSED) }
         launchMediaCommand { it.pause() }
     }
 
     override fun resume() {
+        transportIntent++
         trace("resume() status=${_state.value.status} pos=${_state.value.positionMs}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             spotifyStartedAt = System.currentTimeMillis()
@@ -401,6 +409,7 @@ class AndroidPlaybackEngine(
     }
 
     override fun seekTo(positionMs: Long) {
+        transportIntent++
         trace("seekTo($positionMs)")
         if (activeBackend == ActiveBackend.SPOTIFY) {
             val target = positionMs.coerceAtLeast(0)
@@ -667,8 +676,21 @@ class AndroidPlaybackEngine(
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
         PlaybackTrace.log("Engine", "$name warning: ${failure.message}")
-        if (activeBackend == ActiveBackend.SPOTIFY) {
-            _state.update { current -> current.copy(syncWarning = "$name failed; waiting for receiver state") }
+        if (name.endsWith("stop") || name.endsWith("transition")) return
+        if (activeBackend != ActiveBackend.SPOTIFY) return
+        _state.update { it.copy(syncWarning = "$name failed; waiting for receiver state") }
+        val generation = activePlayGeneration
+        val intent = transportIntent
+        scope.launch {
+            val observed = runCatching { spotify.observe?.invoke() }.getOrNull() ?: return@launch
+            if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation || transportIntent != intent) return@launch
+            spotifyOffset = observed.progressMs ?: _state.value.positionMs
+            spotifyStartedAt = System.currentTimeMillis()
+            _state.update { it.copy(
+                status = if (observed.isPlaying) EngineStatus.PLAYING else EngineStatus.PAUSED,
+                positionMs = spotifyOffset,
+            ) }
+            if (observed.isPlaying) startTicker() else ticker?.cancel()
         }
     }
 

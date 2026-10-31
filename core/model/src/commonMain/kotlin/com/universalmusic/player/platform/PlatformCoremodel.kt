@@ -45,7 +45,7 @@ data class SpotifyReceiverEvent(
     val trackId: String,
     val positionMs: Long? = null,
 ) {
-    enum class Kind { PLAYING, PAUSED, SEEKED, POSITION_CORRECTION, END_OF_TRACK, STOPPED, UNAVAILABLE }
+    enum class Kind { PLAYING, BUFFERING, PAUSED, SEEKED, POSITION_CORRECTION, END_OF_TRACK, STOPPED, UNAVAILABLE }
 }
 
 expect fun openUrl(url: String)

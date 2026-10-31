@@ -286,7 +286,11 @@ internal class AndroidLibrespotPlaybackHost(
         override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
             if (halted == lastHalted) return
             lastHalted = halted
-            receiverEvent(if (halted) SpotifyReceiverEvent.Kind.PAUSED else SpotifyReceiverEvent.Kind.PLAYING, trackTime)
+            receiverEvent(when {
+                player.stateWrapper.state.isPaused -> SpotifyReceiverEvent.Kind.PAUSED
+                halted -> SpotifyReceiverEvent.Kind.BUFFERING
+                else -> SpotifyReceiverEvent.Kind.PLAYING
+            }, trackTime)
             trace("halted=$halted at $trackTime (true = buffer ran dry)")
         }
 
@@ -306,7 +310,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onFinishedLoading(player: Player) {
             trace("finishedLoading")
-            receiverEvent(SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
+            receiverEvent(if (player.stateWrapper.state.isPaused) SpotifyReceiverEvent.Kind.PAUSED else SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
         }
     }
 
