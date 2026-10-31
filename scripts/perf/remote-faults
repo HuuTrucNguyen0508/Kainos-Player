@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+export KAINOS_REMOTE_PERF_OUTPUT="${1:?pass absolute raw TSV output path}"
+export KAINOS_REMOTE_SCENARIOS="${2:-held,reply-flight,gap,repost,double,five,loss2-request,loss2-reply,loss10-request,loss10-reply,latency200,latency1000,blip2000,blip10000,restart,suspend60000,artwork,position,direct}"
+# Compile under the shared build lock; time only under the exclusive measurement lock.
+flock -s /tmp/kainos-perf.lock ./gradlew :sync:jvmTestClasses --console=plain
+flock -x /tmp/kainos-perf.lock bash -c 'uptime; nproc; ./gradlew :sync:jvmTest --tests "*RemoteFaultHarnessTest" --rerun --console=plain' 
+python3 scripts/perf/remote-summary.py "$KAINOS_REMOTE_PERF_OUTPUT"
