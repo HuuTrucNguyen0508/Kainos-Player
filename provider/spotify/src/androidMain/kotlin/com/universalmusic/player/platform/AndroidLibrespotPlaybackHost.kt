@@ -130,7 +130,7 @@ internal class AndroidLibrespotPlaybackHost(
                 session = createdSession
                 player = createdPlayer
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
-                Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_DEVICE_NAME")
+                Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_ANDROID_DEVICE_NAME")
                 namedDevice()
             } catch (cancelled: CancellationException) {
                 Log.w(TAG, "session start cancelled")
@@ -181,7 +181,7 @@ internal class AndroidLibrespotPlaybackHost(
         session = null
     }
 
-    private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_DEVICE_NAME)
+    private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
 
     private fun hasCachedCredentials(): Boolean =
         credentialsFile.isFile && credentialsFile.length() > 0L
@@ -200,7 +200,7 @@ internal class AndroidLibrespotPlaybackHost(
                 val builder = Session.Builder(conf)
                     .setPreferredLocale(Locale.getDefault().language)
                     .setDeviceType(Connect.DeviceType.SMARTPHONE)
-                    .setDeviceName(KAINOS_SPOTIFY_DEVICE_NAME)
+                    .setDeviceName(KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
                 when {
                     oauthCredentials != null -> builder.credentials(oauthCredentials)
                     hasCachedCredentials() -> builder.stored()
