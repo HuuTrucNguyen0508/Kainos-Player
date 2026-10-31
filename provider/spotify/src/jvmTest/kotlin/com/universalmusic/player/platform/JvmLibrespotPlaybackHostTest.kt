@@ -9,12 +9,23 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
+import kotlin.test.assertNotNull
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JvmLibrespotPlaybackHostTest {
+    @Test
+    fun firstPlayAfterReceiverCrashRestartsWithCachedCredentials() = runBlocking {
+        fixture(cached = true) { host, runtime, _ ->
+            assertNotNull(host.ensureDeviceReady())
+            runtime.child.isAlive = false
+            assertNotNull(host.ensureDeviceReady())
+            assertEquals(2, runtime.starts.size)
+        }
+    }
+
     @Test
     fun eventProgramDeliversOrderedReceiverEventsAndShutdownRemovesIt() = runBlocking {
         fixture(cached = true) { host, runtime, _ ->
@@ -215,14 +226,16 @@ class JvmLibrespotPlaybackHostTest {
 
     private class FakeRuntime(alive: Boolean, private val installed: Boolean) : LibrespotRuntime {
         val starts = mutableListOf<List<String>>()
-        val child = object : LibrespotProcess {
+        class Child(alive: Boolean) : LibrespotProcess {
             override var isAlive = alive
             override val exitCode: Int? get() = if (isAlive) null else 0
             override fun stop() { isAlive = false }
         }
+        val child = Child(alive)
         override fun findExecutable(): Path? = if (installed) Path.of("/fake/librespot") else null
         override fun start(executable: Path, arguments: List<String>, logFile: Path): LibrespotProcess {
             starts += arguments
+            if (starts.size > 1) child.isAlive = true
             return child
         }
     }
