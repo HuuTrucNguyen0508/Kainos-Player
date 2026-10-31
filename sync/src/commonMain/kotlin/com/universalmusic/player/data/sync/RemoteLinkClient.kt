@@ -7,11 +7,13 @@ import com.universalmusic.player.platform.readLocalArtworkBytes
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
+import kotlin.time.TimeMark
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -40,6 +42,9 @@ interface RemoteLinkTransport : AutoCloseable {
 
     /** Throws [RemoteHubHasNoPlayer] when the hub process has no player (`--hub-only`). */
     suspend fun command(command: RemoteCommand): RemoteCommandReply
+
+    /** Called only after a new hub advertises a lease. Old/test transports keep legacy behavior. */
+    suspend fun intent(intent: RemoteDirectIntent): RemoteCommandReply = command(intent.command)
 
     suspend fun postTransfer(epoch: String, seq: Long, reply: RemoteTransferReply)
 
@@ -102,8 +107,12 @@ class RemoteLinkClient(
     private var failures = 0
     private val reconnect = Channel<Unit>(Channel.CONFLATED)
     private var latestIntent = 0L
+    private var forcePollStatus = false
+    private var directLease: String? = null
+    private data class StatusIntent(val playing: Boolean, val started: TimeMark)
+    private var statusIntent: StatusIntent? = null
 
-    fun reconnectNow() { reconnect.trySend(Unit) }
+    fun reconnectNow() { forcePollStatus = true; reconnect.trySend(Unit) }
     private suspend fun backoff(wait: Long) { withTimeoutOrNull(wait) { reconnect.receive() } }
 
 
@@ -125,21 +134,41 @@ class RemoteLinkClient(
         }
     }
 
-    /** Sends [command] to the hub's own player. Never retried: a failure marks the hub unreachable. */
+    /** Only explicit Play/Pause may retry, under a receiver-issued ordering and expiry lease. */
     suspend fun send(command: RemoteCommand): RemoteClientSend {
         val explicit = command == RemoteCommand.Play || command == RemoteCommand.Pause
         val intent = if (explicit) ++latestIntent else 0L
+        // Capture before the press is dispatched: a later-issued lease could extend its deadline.
+        val lease = directLease
+        val started = monotonicClock.markNow()
+        if (explicit) statusIntent = StatusIntent(command == RemoteCommand.Play, started)
         return try {
             val reply = withTimeout(if (explicit) REMOTE_COMMAND_DEADLINE_MS else REMOTE_COMMAND_REQUEST_TIMEOUT_MS) {
                 if (explicit && !_state.value.connected) {
+                    if (!_state.value.active) return@withTimeout null
                     reconnectNow()
                     state.first { it.connected || !it.active }
                 }
-                if (explicit && intent != latestIntent) return RemoteClientSend.Unreachable
-                val current = transport?.takeIf { _state.value.connected } ?: return RemoteClientSend.Unreachable
-                current.command(command)
+                if (explicit && intent != latestIntent) return@withTimeout null
+                val current = transport?.takeIf { _state.value.connected } ?: return@withTimeout null
+                if (!explicit || lease == null) current.command(command) else {
+                    while (true) {
+                        if (intent != latestIntent) return@withTimeout null
+                        try {
+                            return@withTimeout (transport ?: current).intent(RemoteDirectIntent(command, linkId, intent, started.elapsedNow().inWholeMilliseconds, lease))
+                        } catch (cancelled: CancellationException) { throw cancelled
+                        } catch (noPlayer: RemoteHubHasNoPlayer) { throw noPlayer
+                        } catch (err: Exception) {
+                            // Retry only explicit intents and only with receiver-proven ordering/expiry.
+                            delay(100)
+                        }
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    error("unreachable")
+                }
             }
-            reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
+            if (reply == null) return RemoteClientSend.Unreachable
+            if (!explicit || intent == latestIntent) reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
             RemoteClientSend.Applied(reply)
         } catch (cancelled: CancellationException) {
             if (cancelled is kotlinx.coroutines.TimeoutCancellationException) unreachable("command timed out") else throw cancelled
@@ -214,6 +243,7 @@ class RemoteLinkClient(
         }
         while (true) {
             val sent = player.state.value
+            val observingIntent = latestIntent
             val request = execution.withLock {
                 RemotePollRequest(
                     deviceId = current.deviceId,
@@ -221,7 +251,7 @@ class RemoteLinkClient(
                     generation = ++generation,
                     epoch = epoch,
                     ackSeq = lastExecuted,
-                    knownHubVersion = knownHubVersion,
+                    knownHubVersion = if (forcePollStatus) -1 else knownHubVersion,
                     status = artwork.wireStatus(sent, clock()),
                     droppedSeqs = dropped.toList(),
                 )
@@ -233,19 +263,26 @@ class RemoteLinkClient(
                 if (wait > 0) delay(wait)
                 continue
             }
+            if (request.knownHubVersion == -1L && observingIntent == latestIntent) forcePollStatus = false
+            directLease = reply.directIntentLease
             val wasConnected = _state.value.connected
             failures = 0
             if (!reply.superseded) {
                 val transit = (sentAt.elapsedNow().inWholeMilliseconds - reply.heldMs).coerceAtLeast(0)
                 val transfers = execute(reply, transit, request)
+                val pendingStatus = statusIntent
+                val freshStatus = observingIntent == latestIntent && (pendingStatus == null ||
+                    pendingStatus.started.elapsedNow().inWholeMilliseconds >= REMOTE_COMMAND_DEADLINE_MS ||
+                    reply.hubStatus?.let { (it.isPlaying || it.buffering) == pendingStatus.playing } == true)
+                if (freshStatus) statusIntent = null
                 _state.update {
                     it.copy(
                         connected = true,
                         unreachable = false,
                         hubName = reply.hubName,
                         hubHasPlayer = reply.hubHasPlayer,
-                        hubStatus = reply.hubStatus,
-                        hubStatusAtMs = clock(),
+                        hubStatus = if (freshStatus) reply.hubStatus else it.hubStatus,
+                        hubStatusAtMs = if (freshStatus) clock() else it.hubStatusAtMs,
                     )
                 }
                 for ((seq, transfer) in transfers) postTransfer(opened, reply.epoch, seq, transfer)
@@ -270,9 +307,14 @@ class RemoteLinkClient(
         val change = async {
             player.state.first { next -> sent?.status.isMaterialChange(next?.status, elapsedSince(sent, next)) }
         }
+        // Refresh a receiver lease before it expires, even when neither player changes.
+        val refresh = async { if (directLease != null) delay(2_000) else awaitCancellation() }
+        val wake = async { reconnect.receive() }
         select<RemotePollReply?> {
-            call.onAwait { reply -> change.cancel(); reply }
-            change.onAwait { call.cancel(); null }
+            call.onAwait { reply -> change.cancel(); refresh.cancel(); wake.cancel(); reply }
+            change.onAwait { call.cancel(); refresh.cancel(); wake.cancel(); null }
+            refresh.onAwait { call.cancel(); change.cancel(); wake.cancel(); null }
+            wake.onAwait { call.cancel(); change.cancel(); refresh.cancel(); null }
         }
     }
 

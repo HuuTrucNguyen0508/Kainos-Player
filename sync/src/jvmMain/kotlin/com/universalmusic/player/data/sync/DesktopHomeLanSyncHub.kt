@@ -47,6 +47,7 @@ class DesktopHomeLanSyncHub(
     @Volatile
     private var lastActivityMs: Long = System.currentTimeMillis()
     private val vaultMutex = Mutex()
+    private val directIntents = RemoteDirectIntentReceiver()
     private val self = PairedPeer(config.deviceId, "This PC", identity.fingerprint, pairedAtMs = 0L)
     private val vault get() = config.vault
     private val listeningExchange = config.listening?.let { ListeningExchangeHost(it, config.deviceId, clock) }
@@ -166,15 +167,20 @@ class DesktopHomeLanSyncHub(
                         val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
                         val request = runCatching { json.decodeFromString<RemotePollRequest>(body) }.getOrNull()
                             ?: return@post call.respondText("Malformed poll", status = HttpStatusCode.BadRequest)
-                        call.respondRemote(host.poll(peer, request)) { json.encodeToString(it) }
+                        call.respondRemote(host.poll(peer, request)) { json.encodeToString(it.copy(directIntentLease = directIntents.lease(peer.deviceId))) }
                     }
                     post(HOME_LAN_SYNC_PATH_V3_REMOTE_COMMAND) {
                         val deadline = TimeSource.Monotonic.markNow() + REMOTE_COMMAND_REQUEST_TIMEOUT_MS.milliseconds
-                        call.pairedPeer() ?: return@post
+                        val peer = call.pairedPeer() ?: return@post
                         touchActivity()
                         val player = config.guiPlayer()
                             ?: return@post call.respondText("This hub has no player", status = HttpStatusCode.Conflict)
                         val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
+                        val intent = runCatching { json.decodeFromString<RemoteDirectIntent>(body) }.getOrNull()
+                        if (intent != null) {
+                            call.respondText(json.encodeToString(directIntents.apply(peer.deviceId, intent, player)), ContentType.Application.Json)
+                            return@post
+                        }
                         val command = runCatching { json.decodeFromString<RemoteCommand>(body) }.getOrNull()
                             ?: return@post call.respondText("Malformed command", status = HttpStatusCode.BadRequest)
                         val reply = try {
@@ -378,7 +384,7 @@ class DesktopHomeLanSyncHub(
         return body
     }
 
-    private suspend fun <T> ApplicationCall.respondRemote(reply: RemoteHostReply<T>, encode: (T) -> String) = when (reply) {
+    private suspend fun <T> ApplicationCall.respondRemote(reply: RemoteHostReply<T>, encode: suspend (T) -> String) = when (reply) {
         is RemoteHostReply.Ok -> {
             val body = encode(reply.value)
             if (body.isEmpty()) respond(HttpStatusCode.NoContent) else respondText(body, ContentType.Application.Json)

@@ -116,7 +116,7 @@ class RemoteControlTest {
         assertEquals("phone", rig.control.state.value.selected?.deviceId)
         rig.control.send(RemoteCommand.Pause)
         advanceTimeBy(6_000)
-        assertEquals("Poco didn't respond", rig.control.state.value.message?.text)
+        assertEquals("Poco didn't confirm", rig.control.state.value.message?.text)
     }
 
     @Test

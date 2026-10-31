@@ -160,6 +160,11 @@ class RemoteControl internal constructor(
         )
     }
 
+    /** Integration hook for the raw visible edge, which linkWanted's grace can hide. */
+    fun onAppVisible() {
+        if (role.value == RemoteRole.CLIENT) client.reconnectNow()
+    }
+
     fun select(deviceId: String?) {
         selection.value = deviceId
     }

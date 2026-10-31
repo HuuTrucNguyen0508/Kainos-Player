@@ -130,6 +130,8 @@ data class RemotePollReply(
     val hubHasPlayer: Boolean = false,
     /** A newer poll from the same device, or a stopping hub, ended this one; it carries nothing. */
     val superseded: Boolean = false,
+    /** Optional receiver-issued four-second lease; absent on older hubs. */
+    val directIntentLease: String? = null,
 )
 
 /** The portable queue a source device hands over for "Play here". */
@@ -193,3 +195,12 @@ fun RemoteStatus?.isMaterialChange(next: RemoteStatus?, elapsedMs: Long): Boolea
     if (copy(positionMs = 0, positionAgeMs = 0) != next.copy(positionMs = 0, positionAgeMs = 0)) return true
     return kotlin.math.abs(next.positionAfter(0) - positionAfter(elapsedMs)) > REMOTE_SEEK_JUMP_MS
 }
+
+@Serializable
+data class RemoteDirectIntent(
+    val command: RemoteCommand,
+    val senderId: String,
+    val seq: Long,
+    val ageMs: Long,
+    val lease: String,
+)

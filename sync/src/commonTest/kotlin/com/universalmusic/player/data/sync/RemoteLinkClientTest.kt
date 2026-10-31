@@ -37,12 +37,15 @@ class RemoteLinkClientTest {
         val pause = async { rig.client.send(RemoteCommand.Pause) }
         runCurrent()
         assertEquals(250L, attempts.last())
-        val poll = transport.polls.tryReceive().getOrThrow()
+        advanceTimeBy(REMOTE_REPOST_GAP_MS)
+        runCurrent()
+        var poll = transport.polls.tryReceive().getOrThrow()
+        while (true) { poll = transport.polls.tryReceive().getOrNull() ?: break }
         poll.reply(rig.replyOf("e1"))
         runCurrent()
         assertEquals(RemoteClientSend.Unreachable, play.await())
         assertIs<RemoteClientSend.Applied>(pause.await())
-        assertEquals(listOf(RemoteCommand.Pause), transport.commands)
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), transport.commands)
     }
 
     @Test
