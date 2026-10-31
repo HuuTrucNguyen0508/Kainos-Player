@@ -17,6 +17,7 @@ import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.MusicProvider
 import com.universalmusic.player.platform.UnavailableYouTubeStreamResolver
+import com.universalmusic.player.platform.YouTubeMixEntry
 import com.universalmusic.player.platform.YouTubeStreamResolver
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -154,6 +155,15 @@ class YouTubeMusicProvider(
         )
     }
 
+    /** YouTube's own Mix for [seed] (its `RD` playlist), as tracks. Throws with the reason when unavailable. */
+    suspend fun mix(seed: Track): List<Track> {
+        val videoId = requireNotNull(seed.sourceFor(ProviderId.YOUTUBE_MUSIC)?.providerTrackId) {
+            "${seed.canonicalId} is not a YouTube track"
+        }
+        check(streams.isAvailable()) { "no YouTube extractor available (yt-dlp / NewPipe)" }
+        return streams.mix(videoId).map { it.toTrack() }
+    }
+
     override suspend fun getCapabilities(): ProviderCapabilities {
         val configured = config.hasYouTubeCredentials
         val playback = configured && streams.isAvailable()
@@ -244,6 +254,28 @@ private fun YouTubeItem.toTrack(playable: Boolean): Track {
                 quality = null,
                 isPlayable = playable,
                 handle = PlaybackHandle.ProviderPlayback(ProviderId.YOUTUBE_MUSIC, id),
+            ),
+        ),
+    )
+}
+
+private fun YouTubeMixEntry.toTrack(): Track {
+    val artwork = Artwork("https://i.ytimg.com/vi/$videoId/hqdefault.jpg", 480, 360)
+    val artistName = channel?.takeIf { it.isNotBlank() } ?: "YouTube"
+    return Track(
+        canonicalId = "yt:$videoId",
+        title = title.ifBlank { videoId },
+        artists = listOf(ArtistRef("yt-artist-$artistName", artistName)),
+        album = AlbumRef("yt-album-$videoId", "YouTube Music", artwork),
+        durationMs = durationSeconds?.takeIf { it > 0 }?.times(1_000),
+        artwork = artwork,
+        sources = listOf(
+            PlaybackSource(
+                provider = ProviderId.YOUTUBE_MUSIC,
+                providerTrackId = videoId,
+                quality = null,
+                isPlayable = true,
+                handle = PlaybackHandle.ProviderPlayback(ProviderId.YOUTUBE_MUSIC, videoId),
             ),
         ),
     )

@@ -2,8 +2,10 @@ package com.universalmusic.player.data.youtube
 
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.platform.ResolvedYouTubeAudio
+import com.universalmusic.player.platform.YouTubeMixEntry
 import com.universalmusic.player.platform.YouTubeStreamResolver
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -78,6 +80,10 @@ class YouTubeMusicProviderTest {
                 override fun isAvailable(): Boolean = true
                 override suspend fun resolveAudioUrl(videoId: String) =
                     ResolvedYouTubeAudio(url = "https://example.test/$videoId")
+                override suspend fun mix(videoId: String) = listOf(
+                    YouTubeMixEntry(videoId, "Song", "Artist", 60),
+                    YouTubeMixEntry("video-9", "Other Song", "Other Artist - Topic", 200),
+                )
             }
             val provider = YouTubeMusicProvider(http, config, streams)
             val track = provider.search("Song").tracks.single()
@@ -85,6 +91,11 @@ class YouTubeMusicProviderTest {
             assertTrue(provider.getCapabilities().playback)
             val stream = provider.getStream(track)
             assertEquals("https://example.test/video-1", (stream?.handle as? PlaybackHandle.Url)?.url)
+            val mix = provider.mix(track)
+            assertEquals(listOf("yt:video-1", "yt:video-9"), mix.map { it.canonicalId })
+            assertEquals("Other Artist - Topic", mix[1].artists.single().name)
+            assertEquals(200_000L, mix[1].durationMs)
+            assertEquals("video-9", mix[1].sourceFor(ProviderId.YOUTUBE_MUSIC)?.providerTrackId)
         } finally { http.close() }
     }
 

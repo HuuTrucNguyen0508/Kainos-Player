@@ -83,6 +83,7 @@ internal fun isRetryableLibrespotConnectFailure(failure: Throwable): Boolean {
 
 interface SpotifyWebPlaybackHost {
     val state: StateFlow<SpotifyWebPlaybackState>
+    val receiverEvents: SpotifyReceiverEvents? get() = null
     val requiresStreamingScope: Boolean get() = true
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */

@@ -43,29 +43,39 @@ private data class LibrespotDiscoverTrack(
 
 private val discoverJson = Json { ignoreUnknownKeys = true }
 
-actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? = withContext(Dispatchers.IO) {
+actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? =
+    runCatching { runLibrespotHelper(playlistId?.trim()?.takeIf { it.isNotEmpty() }) }
+        .getOrNull()
+        ?.takeIf { it.ok && !it.id.isNullOrBlank() }
+        ?.toPlaylist()
+
+actual suspend fun fetchLibrespotTrackRadio(trackId: String, excludeCanonicalIds: Set<String>): List<Track> {
+    require(trackId.isNotBlank() && trackId.all { it.isLetterOrDigit() }) { "bad Spotify track id" }
+    val out = runLibrespotHelper("radio:$trackId")
+    check(out.ok && !out.id.isNullOrBlank()) { "librespot radio: ${out.error ?: "no playlist"}" }
+    return out.toPlaylist().tracks.filter { it.canonicalId !in excludeCanonicalIds }
+}
+
+/** Runs the librespot helper in [mode] (Discover Weekly when null) and parses its JSON answer. */
+private suspend fun runLibrespotHelper(mode: String?): LibrespotDiscoverOut = withContext(Dispatchers.IO) {
     val credentials = LibrespotPaths.defaults().credentialsFile
-    if (!credentials.exists()) return@withContext null
-    val binary = findDiscoverWeeklyBinary() ?: return@withContext null
+    check(credentials.exists()) { "no librespot credentials (connect Spotify playback first)" }
+    val binary = findDiscoverWeeklyBinary() ?: error("librespot helper kainos-discover-weekly not found")
     val command = buildList {
         add(binary.toAbsolutePath().toString())
         add(credentials.toAbsolutePath().toString())
-        playlistId?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+        mode?.let { add(it) }
     }
     val process = ProcessBuilder(command)
-        .redirectError(ProcessBuilder.Redirect.PIPE)
+        .redirectError(ProcessBuilder.Redirect.DISCARD)
         .start()
-    val finished = process.waitFor(90, TimeUnit.SECONDS)
-    if (!finished) {
-        process.destroyForcibly()
-        return@withContext null
-    }
     val stdout = process.inputStream.readBytes().toString(StandardCharsets.UTF_8).trim()
-    if (stdout.isEmpty()) return@withContext null
-    val parsed = runCatching { discoverJson.decodeFromString<LibrespotDiscoverOut>(stdout) }.getOrNull()
-        ?: return@withContext null
-    if (!parsed.ok || parsed.id.isNullOrBlank()) return@withContext null
-    parsed.toPlaylist()
+    if (!process.waitFor(90, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        error("librespot helper timed out")
+    }
+    check(stdout.isNotEmpty()) { "librespot helper exited ${process.exitValue()} without output" }
+    discoverJson.decodeFromString<LibrespotDiscoverOut>(stdout)
 }
 
 private fun LibrespotDiscoverOut.toPlaylist(): Playlist {

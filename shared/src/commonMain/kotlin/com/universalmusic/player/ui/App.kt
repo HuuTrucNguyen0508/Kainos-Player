@@ -226,11 +226,11 @@ private fun AppScaffold(
         openNowPlaying()
     }
 
-    fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0, query: String) {
+    fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
-        container.playSearchResults(tracks, startIndex = index, query = query)
+        container.playSearchResults(tracks, startIndex = index)
         openNowPlaying()
     }
 
@@ -337,9 +337,7 @@ private fun AppScaffold(
                                     )
                                     AppDestination.Search -> SearchScreen(
                                         presenter = searchPresenter,
-                                        onPlayTrackInList = { tracks, index, query ->
-                                            playSearchTracks(tracks, index, query)
-                                        },
+                                        onPlayTrackInList = ::playSearchTracks,
                                         requestFocus = true,
                                     )
                                     AppDestination.Library -> LibraryScreen(container, ::playTracks)

@@ -49,7 +49,7 @@ import com.universalmusic.player.ui.components.TrackRow
 @Composable
 internal fun SearchScreen(
     presenter: SearchPresenter,
-    onPlayTrackInList: (List<Track>, Int, query: String) -> Unit,
+    onPlayTrackInList: (List<Track>, Int) -> Unit,
     requestFocus: Boolean = false,
 ) {
     val state by presenter.state.collectAsState()
@@ -164,7 +164,7 @@ internal fun SearchScreen(
                             } else {
                                 val index = trackList.indexOfFirst { it.canonicalId == track.canonicalId }
                                     .coerceAtLeast(0)
-                                onPlayTrackInList(trackList, index, query.trim())
+                                onPlayTrackInList(trackList, index)
                             }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp),

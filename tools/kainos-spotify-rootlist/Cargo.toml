@@ -11,7 +11,3 @@ protobuf = "3.7.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-
-[patch.crates-io]
-# librespot-core 0.8 build.rs breaks when cargo resolves two vergen_lib majors
-vergen-lib = { version = "=0.1.6" }

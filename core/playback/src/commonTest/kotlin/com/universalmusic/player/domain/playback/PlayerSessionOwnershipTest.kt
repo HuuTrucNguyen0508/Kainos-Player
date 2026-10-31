@@ -199,70 +199,6 @@ class PlayerSessionOwnershipTest {
     }
 
     @Test
-    fun naturalCompletionAppendsAutoplayTracksOnce() = runTest {
-        var fetches = 0
-        val engine = ControllableEngine()
-        val session = PlayerSession(
-            engine,
-            DefaultSourceResolver(),
-            backgroundScope,
-            onQueueExhausted = {
-                fetches++
-                if (fetches == 1) {
-                    listOf(track("Cont", "Z", provider = ProviderId.SAMPLE, canonicalId = "sample:cont"))
-                } else {
-                    emptyList()
-                }
-            },
-        )
-        session.play(
-            listOf(
-                track("One", "A", provider = ProviderId.SAMPLE, canonicalId = "sample:1"),
-                track("Two", "B", provider = ProviderId.SAMPLE, canonicalId = "sample:2"),
-            ),
-            startIndex = 0,
-        )
-        runCurrent()
-        assertEquals("One", session.nowPlaying.value.track?.title)
-
-        engine.emitEnded()
-        runCurrent()
-        assertEquals("Two", session.nowPlaying.value.track?.title)
-
-        engine.emitEnded()
-        runCurrent()
-        runCurrent()
-        assertEquals(1, fetches)
-        assertEquals("Cont", session.nowPlaying.value.track?.title)
-        assertEquals(3, session.queueState.value.items.size)
-
-        // Second exhaustion: controller-style empty result stops cleanly (engine idle).
-        engine.emitEnded()
-        runCurrent()
-        runCurrent()
-        assertEquals(2, fetches)
-        assertEquals(EngineStatus.IDLE, engine.state.value.status)
-    }
-
-    @Test
-    fun emptyContinuationStopsAtQueueEnd() = runTest {
-        val engine = ControllableEngine()
-        val session = PlayerSession(
-            engine,
-            DefaultSourceResolver(),
-            backgroundScope,
-            onQueueExhausted = { emptyList() },
-        )
-        session.play(listOf(track("Only", "A", provider = ProviderId.SAMPLE)), startIndex = 0)
-        runCurrent()
-        engine.emitEnded()
-        runCurrent()
-        runCurrent()
-        assertEquals("Only", session.nowPlaying.value.track?.title)
-        assertFalse(session.nowPlaying.value.isPlaying)
-    }
-
-    @Test
     fun favoriteDerivesFromTrackIdentityWithoutCarryover() = runTest {
         val favorites = mutableSetOf("spotify:kept")
         val engine = ControllableEngine()
@@ -339,7 +275,7 @@ class PlayerSessionOwnershipTest {
     }
 }
 
-private class ControllableEngine : PlaybackEngine {
+internal class ControllableEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     private var activePlayGeneration: Long = 0L
 

@@ -30,7 +30,10 @@ struct OutTrack {
 async fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <credentials.json> [discover-weekly|playlist:<id>]", args[0]);
+        eprintln!(
+            "Usage: {} <credentials.json> [discover-weekly|playlist:<id>|radio:<trackId>]",
+            args[0]
+        );
         exit(2);
     }
     let cred_path = PathBuf::from(&args[1]);
@@ -61,6 +64,16 @@ async fn main() {
             }
         },
         other if other.starts_with("playlist:") => other.trim_start_matches("playlist:").to_string(),
+        other if other.starts_with("radio:") => {
+            match find_track_radio(&session, other.trim_start_matches("radio:")).await {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("radio failed: {e}");
+                    println!("{{\"ok\":false,\"error\":{}}}", serde_json::to_string(&e).unwrap());
+                    exit(1);
+                }
+            }
+        }
         other => other.to_string(),
     };
 
@@ -111,6 +124,28 @@ async fn find_discover_weekly(session: &Session) -> Option<String> {
     None
 }
 
+/// Spotify's own "inspired by" radio for a track: the seed_to_playlist answer names a
+/// generated playlist, which is then read like any other playlist.
+async fn find_track_radio(session: &Session, track_id: &str) -> Result<String, String> {
+    let uri = format!("spotify:track:{track_id}");
+    let spotify_uri = librespot_core::spotify_uri::SpotifyUri::from_uri(&uri)
+        .map_err(|e| format!("bad track id: {e}"))?;
+    let bytes = session
+        .spclient()
+        .get_radio_for_track(&spotify_uri)
+        .await
+        .map_err(|e| format!("seed_to_playlist: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("seed_to_playlist json: {e}"))?;
+    json.get("mediaItems")
+        .and_then(|items| items.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("uri").and_then(|u| u.as_str()))
+        .find_map(|uri| uri.strip_prefix("spotify:playlist:").map(str::to_string))
+        .ok_or_else(|| "no_radio".to_string())
+}
+
 async fn fetch_playlist(session: &Session, playlist_id: &str) -> Result<OutPlaylist, String> {
     let uri = format!("spotify:playlist:{playlist_id}");
     let spotify_uri = librespot_core::spotify_uri::SpotifyUri::from_uri(&uri)
@@ -138,17 +173,20 @@ async fn fetch_playlist(session: &Session, playlist_id: &str) -> Result<OutPlayl
             title: track.name.clone(),
             artists: track.artists.iter().map(|a| a.name.clone()).collect(),
             duration_ms: Some(track.duration as i32),
-            artwork_url: track.album.cover.as_ref().map(|c| {
-                // librespot Cover may expose url differently — fall back later if compile fails
-                format!("{c:?}")
-            }),
+            artwork_url: track
+                .album
+                .covers
+                .iter()
+                .max_by_key(|image| image.width)
+                .and_then(|image| image.id.to_base16().ok())
+                .map(|hex| format!("https://i.scdn.co/image/{hex}")),
         });
     }
 
     Ok(OutPlaylist {
         id: playlist_id.to_string(),
-        name: plist.name.clone(),
-        description: plist.description.clone().unwrap_or_default(),
+        name: plist.name().to_string(),
+        description: plist.attributes.description.clone(),
         artwork_url: None,
         tracks,
     })

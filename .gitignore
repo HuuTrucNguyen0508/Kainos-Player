@@ -31,3 +31,4 @@ release/
 
 # Local agent audit trails
 .audit/
+tools/kainos-spotify-rootlist/target/

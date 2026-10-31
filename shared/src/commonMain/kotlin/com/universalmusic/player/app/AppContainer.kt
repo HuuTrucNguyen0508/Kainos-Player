@@ -41,11 +41,9 @@ import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
 import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
-import com.universalmusic.player.data.spotify.SpotifyRecommendationsAccess
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
-import com.universalmusic.player.domain.continuation.ContinuationOutcome
-import com.universalmusic.player.domain.continuation.SearchAutoplayController
-import com.universalmusic.player.domain.continuation.SearchContinuationFetcher
+import com.universalmusic.player.domain.continuation.SourceRadio
+import com.universalmusic.player.domain.continuation.planSearchPlayback
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
@@ -272,19 +270,12 @@ class AppContainer {
     val spotifyLibraryLoading = _spotifyLibraryLoading.asStateFlow()
     private val libraryMutex = Mutex()
 
-    val searchContinuation = SearchContinuationFetcher(spotify = spotify, youtube = youtube)
-    val searchAutoplay = SearchAutoplayController(
-        autoplayEnabled = { _settings.value.searchAutoplayEnabled },
-        fetchContinuation = { seed, query, exclude ->
-            searchContinuation.fetch(seed, query, exclude)
-        },
-    )
-
     val player = PlayerSession(
         engine = createPlaybackEngine(SpotifyPlaybackController(
             spotify::startConnectPlayback, spotify::pauseConnectPlayback,
             spotify::resumeConnectPlayback, spotify::seekConnectPlayback,
             observe = spotify::observeConnectPlayback,
+            receiverEvents = spotifyWebPlayback.receiverEvents,
         )),
         resolver = resolver,
         scope = scope,
@@ -299,12 +290,6 @@ class AppContainer {
         },
         isFavorite = library::isFavorite,
         prepareTrack = { heartedAudio.applyCacheToTrack(it) },
-        onQueueExhausted = { exclude ->
-            when (val outcome = searchAutoplay.requestContinuation(exclude)) {
-                is ContinuationOutcome.Appended -> outcome.tracks
-                else -> emptyList()
-            }
-        },
         confineTo = playbackDispatcher(),
         workContext = Dispatchers.Default,
         persistence = NowPlayingRecorder(
@@ -378,22 +363,27 @@ class AppContainer {
     fun consumeLibraryTypeAhead(): String = _libraryTypeAhead.getAndUpdate { "" }
 
     fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
-        searchAutoplay.clearSearchSession()
         player.play(tracks, startIndex = startIndex)
     }
 
-    fun playSearchResults(tracks: List<Track>, startIndex: Int, query: String) {
-        searchAutoplay.beginSearchPlayback(tracks, query)
-        player.play(tracks, startIndex = startIndex)
+    /** The picked result keeps its source: that source's radio follows it, or its same-source results. */
+    fun playSearchResults(tracks: List<Track>, startIndex: Int) {
+        val plan = planSearchPlayback(tracks, startIndex, radioEnabled = _settings.value.searchRadioEnabled)
+        val radio = plan.radio?.let { provider ->
+            SourceRadio(provider, fetch = { seed, exclude ->
+                when (provider) {
+                    ProviderId.SPOTIFY -> spotify.radio(seed, exclude)
+                    ProviderId.YOUTUBE_MUSIC -> youtube.mix(seed)
+                    else -> error("$provider has no radio")
+                }
+            })
+        }
+        player.play(plan.tracks, startIndex = plan.startIndex, continuation = radio)
     }
 
     fun clearPlaybackQueue() {
-        searchAutoplay.clearSearchSession()
         player.clearQueue()
     }
-
-    suspend fun spotifyRecommendationsAccess(): SpotifyRecommendationsAccess =
-        spotify.ensureRecommendationsAccess()
 
     fun requestUi(request: UiRequest) {
         _uiRequests.trySend(request)

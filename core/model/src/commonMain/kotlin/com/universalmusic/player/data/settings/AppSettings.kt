@@ -60,10 +60,11 @@ data class AppSettings(
     /** When true, Library Songs (and related album views) show only app-hearted tracks. */
     val libraryFavoritesOnly: Boolean = false,
     /**
-     * When true, a Search-started queue may append one continuation batch after the last track.
-     * Default is off so playback stops at the end of the Search results unless the user opts in.
+     * When true, tapping a Spotify or YouTube Search result plays that track followed by its own
+     * source's radio (Spotify radio / YouTube Mix). When false, only the same-source results follow.
+     * Replaces the old opt-in `searchAutoplayEnabled`, which stored settings still carry and is ignored.
      */
-    val searchAutoplayEnabled: Boolean = false,
+    val searchRadioEnabled: Boolean = true,
     /** In-app playback gain 0–1 (desktop mpv / Android ExoPlayer). Default full. */
     val playbackVolume: Float = 1f,
     /** Home LAN hearts sync (phone client ↔ desktop hub). */

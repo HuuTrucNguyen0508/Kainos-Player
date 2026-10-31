@@ -42,15 +42,15 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SettingToggle(
-            "Autoplay similar tracks after Search (default off)",
-            settings.searchAutoplayEnabled,
+            "Start the source's radio from Search",
+            settings.searchRadioEnabled,
         ) {
-            presenter.change { current -> current.copy(searchAutoplayEnabled = it) }
+            presenter.change { current -> current.copy(searchRadioEnabled = it) }
         }
         Text(
-            "When on, finishing a Search result queue can append one continuation batch. " +
-                "Manually queued tracks stay ahead of autoplay. Spotify radio uses /recommendations only when " +
-                "this Client ID is allowed; otherwise Spotify continuation is skipped (no Liked Songs shuffle).",
+            "A Spotify result continues with Spotify radio and a YouTube result with its YouTube Mix; " +
+                "sources are never mixed. Off: the picked track plays, then only same-source results " +
+                "from the list. Tracks you queue stay ahead of the radio.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

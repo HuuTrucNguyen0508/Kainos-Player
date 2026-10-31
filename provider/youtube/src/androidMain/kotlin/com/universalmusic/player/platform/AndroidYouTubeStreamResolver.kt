@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -32,6 +33,25 @@ class AndroidYouTubeStreamResolver(
                 resolveWatchUrl("https://www.youtube.com/watch?v=$id")
             }.getOrNull()
         }
+
+    override suspend fun mix(videoId: String): List<YouTubeMixEntry> = withContext(Dispatchers.IO) {
+        val id = videoId.trim()
+        require(id.isNotEmpty() && id.none { it.isWhitespace() || it == '&' }) { "unsafe video id" }
+        check(ensureInitialized()) { "NewPipe failed to initialise" }
+        // NewPipe routes RD playlists to its YouTube Mix extractor.
+        val info = PlaylistInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$id&list=RD$id")
+        val links = ServiceList.YouTube.streamLHFactory
+        info.relatedItems.mapNotNull { item ->
+            val itemId = runCatching { links.getId(item.url) }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            YouTubeMixEntry(
+                videoId = itemId,
+                title = item.name.orEmpty(),
+                channel = item.uploaderName,
+                durationSeconds = item.duration.takeIf { it > 0 },
+            )
+        }
+    }
 
     companion object {
         private val initialized = AtomicBoolean(false)
