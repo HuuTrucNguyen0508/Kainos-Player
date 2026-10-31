@@ -210,6 +210,20 @@ class RemoteLinkClientTest {
     }
 
     @Test
+    fun aSlowArtworkUploadDoesNotHoldUpCommandsOrTheirAcknowledgement() = runTest {
+        val rig = rig(artwork = RemoteArtworkReader { byteArrayOf(9, 9) })
+        rig.player.state.value = RemotePlayerState(RemoteStatus(title = "A", artworkKey = "abcd1234"), 0, "file:///a.jpg")
+        rig.transport.artworkGate = CompletableDeferred()
+        rig.reply("e1")
+        assertEquals(listOf("abcd1234"), rig.transport.artworkKeys)
+        rig.nextPoll().reply(rig.replyOf("e1", RemoteEnvelope(1, 0, RemoteCommand.Pause)))
+        assertEquals(1, rig.nextPoll().request.ackSeq)
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), rig.player.applied)
+        assertFalse(rig.transport.artworkGate!!.isCompleted)
+        rig.transport.artworkGate!!.complete(Unit)
+    }
+
+    @Test
     fun aPollTimeoutBacksOffAndReconnectsWhileStillWanted() = runTest {
         val rig = rig()
         rig.reply(epoch = "e1")
@@ -275,6 +289,7 @@ class RemoteLinkClientTest {
         var commandError: Exception? = null
         val transfers = mutableListOf<Triple<String, Long, RemoteTransferReply>>()
         val artworkKeys = mutableListOf<String>()
+        var artworkGate: CompletableDeferred<Unit>? = null
 
         override suspend fun poll(request: RemotePollRequest): RemotePollReply {
             val pending = PendingPoll(request)
@@ -299,6 +314,7 @@ class RemoteLinkClientTest {
 
         override suspend fun putArtwork(key: String, bytes: ByteArray) {
             artworkKeys += key
+            artworkGate?.await()
         }
 
         override suspend fun fetchArtwork(key: String): ByteArray? = null

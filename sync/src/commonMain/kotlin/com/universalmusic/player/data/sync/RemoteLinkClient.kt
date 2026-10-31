@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -181,7 +182,20 @@ class RemoteLinkClient(
         }
     }
 
-    private suspend fun polls(opened: RemoteLinkTransport, current: DeliveryTarget) {
+    private suspend fun polls(opened: RemoteLinkTransport, current: DeliveryTarget): Unit = coroutineScope {
+        // Cover uploads must not leave the phone without a poll or hold up an acknowledgement.
+        // One worker bounds uploads; newer covers replace pending ones. It closes with this link.
+        val covers = Channel<Pair<String, RemotePlayerState?>>(Channel.CONFLATED)
+        launch {
+            var artworkEpoch: String? = null
+            for ((nextEpoch, state) in covers) {
+                if (nextEpoch != artworkEpoch) {
+                    uploadedArtworkKey = null
+                    artworkEpoch = nextEpoch
+                }
+                uploadArtwork(opened, state)
+            }
+        }
         while (true) {
             val sent = player.state.value
             val request = execution.withLock {
@@ -226,7 +240,7 @@ class RemoteLinkClient(
                 trace("link to ${current.hub.displayName} connected")
                 onConnected()
             }
-            uploadArtwork(opened, player.state.value)
+            covers.trySend(reply.epoch to player.state.value)
         }
     }
 
@@ -267,7 +281,6 @@ class RemoteLinkClient(
                 epoch = reply.epoch
                 lastExecuted = 0
                 dropped.clear()
-                uploadedArtworkKey = null
             }
             knownHubVersion = reply.hubVersion
             val transfers = ArrayList<Pair<Long, RemoteTransferReply>>()

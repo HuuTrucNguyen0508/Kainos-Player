@@ -26,7 +26,7 @@ class RemoteFaultHarnessTest {
         val output = System.getenv("KAINOS_REMOTE_PERF_OUTPUT") ?: return@runBlocking
         val scenarios = (System.getenv("KAINOS_REMOTE_SCENARIOS") ?: "held,reply-flight,gap,repost,double,five,loss2-request,loss2-reply,loss10-request,loss10-reply,latency200,latency1000,blip2000,blip10000,restart,suspend60000,artwork,position,direct").split(',')
         val file = File(output)
-        file.writeText("scenario\trun\tpress\tapplied_ms\toutcome\tapplications\n")
+        file.writeText("scenario\trun\tpress\tapplied_ms\toutcome\tapplications\trequest_drops\treply_drops\n")
         for (scenario in scenarios) repeat(if (scenario.startsWith("loss2-")) 50 else 10) { run ->
             val dir = Files.createTempDirectory("remote-fault-").toFile()
             val pc = JvmDeviceIdentity(dir.resolve("pc")).material()
@@ -44,6 +44,8 @@ class RemoteFaultHarnessTest {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val entered = CompletableDeferred<Unit>()
             var fault = false
+            var requestDrops = 0
+            var replyDrops = 0
             var polls = 0
             var injected = false
             var suspendedMs = 0L
@@ -70,14 +72,14 @@ class RemoteFaultHarnessTest {
                         if (scenario.startsWith("latency")) delay(scenario.removePrefix("latency").toLong() / 2)
                         // Deterministic loss location advances between runs, covering the first request too.
                         val divisor = if (scenario.startsWith("loss2-")) 50 else 10
-                        if (scenario.endsWith("-request") && (polls + run) % divisor == 0) error("injected request loss")
+                        if (scenario.endsWith("-request") && (polls + run) % divisor == 0) { requestDrops++; error("injected request loss") }
                     }
                     val reply = original.poll(request)
                     if (fault) {
                         if (scenario == "reply-flight" || scenario == "gap") { entered.complete(Unit); delay(100) }
                         if (scenario.startsWith("latency")) delay(scenario.removePrefix("latency").toLong() / 2)
                         val divisor = if (scenario.startsWith("loss2-")) 50 else 10
-                        if (scenario.endsWith("-reply") && (polls + run) % divisor == 0) error("injected reply loss")
+                        if (scenario.endsWith("-reply") && (polls + run) % divisor == 0) { replyDrops++; error("injected reply loss") }
                     }
                     if (scenario == "suspend60000" && reply.commands.isNotEmpty() && !injected) {
                         // Simulate the receiver resuming with a reply buffered for 60s. Only its
@@ -124,12 +126,12 @@ class RemoteFaultHarnessTest {
                             val command = if (press % 2 == 0) RemoteCommand.Play else RemoteCommand.Pause
                             val start = System.nanoTime()
                             starts += start
-                            val result = async { if (scenario == "direct") client.send(command).toString() else host.send("phone", command).name }
+                            val result = async { if (scenario == "direct") client.send(command).let { if (it is RemoteClientSend.Applied) "APPLIED" else it.toString() } else host.send("phone", command).name }
                             if (scenario == "restart") { delay(5); host.stop(); host.start() }
                             val outcome = result.await()
                             val applications = player.applications.getOrNull(press)?.takeIf { it.first == command && it.second >= start }?.let { listOf(it) } ?: emptyList()
                             val elapsed = applications.firstOrNull()?.let { (it.second - start) / 1_000_000.0 }
-                            synchronized(file) { file.appendText("$scenario\t$run\t$press\t${elapsed ?: "NA"}\t$outcome\t${applications.size}\n") }
+                            synchronized(file) { file.appendText("$scenario\t$run\t$press\t${elapsed ?: "NA"}\t$outcome\t${applications.size}\t$requestDrops\t$replyDrops\n") }
                             assertTrue(applications.size <= 1, "duplicate application: $scenario")
                             assertTrue(elapsed == null || elapsed < REMOTE_COMMAND_DEADLINE_MS, "late command: $scenario $elapsed")
                         }
