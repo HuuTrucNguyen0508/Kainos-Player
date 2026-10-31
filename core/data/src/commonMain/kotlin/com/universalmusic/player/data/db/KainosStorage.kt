@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.universalmusic.player.data.library.UserLibrarySnapshot
 import com.universalmusic.player.data.local.LocalTrack
@@ -59,7 +60,19 @@ class KainosStorage(
     }
 
     private suspend fun open(): KainosDatabase = withContext(Dispatchers.IO) {
-        val db = KainosDatabase(openDriver())
+        val driver = openDriver()
+        val version = driver.executeQuery(
+            null,
+            "PRAGMA user_version",
+            { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0) else 0L) },
+            0,
+        ).value
+        // Only Android's helper refuses this itself; an older build must not write over newer data.
+        if (version != null && version > KainosDatabase.Schema.version) {
+            driver.close()
+            error("kainos.db is from a newer build (version $version)")
+        }
+        val db = KainosDatabase(driver)
         if (!db.storageMetaQueries.isDone(LEGACY_JSON_IMPORT_STEP).executeAsOne()) {
             val data = legacy?.load() ?: LegacyJsonData()
             db.transaction {
