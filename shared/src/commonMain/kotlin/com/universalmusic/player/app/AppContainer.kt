@@ -276,6 +276,7 @@ class AppContainer {
             spotify::resumeConnectPlayback, spotify::seekConnectPlayback,
             observe = spotify::observeConnectPlayback,
             receiverEvents = spotifyWebPlayback.receiverEvents,
+            setVolume = spotify::setConnectVolume,
         )),
         resolver = resolver,
         scope = scope,

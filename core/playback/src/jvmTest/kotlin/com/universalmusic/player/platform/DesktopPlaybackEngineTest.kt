@@ -40,6 +40,20 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun spotifyVolumeDebouncesToTheFinalSliderValue() = runBlocking {
+        val levels = CopyOnWriteArrayList<Float>()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController({}, {}, {}, {}, setVolume = { levels += it }), FakeDesktopPlaybackRuntime())
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "track", 180_000), null)
+            engine.setVolume(0.2f)
+            engine.setVolume(0.6f)
+            delay(400)
+            assertEquals(listOf(0.6f), levels)
+        } finally { engine.stop() }
+    }
+
+    @Test
     fun prematureCleanExitIsNotNaturalCompletion() {
         assertTrue(mpvEndedEarly(60_000, 180_000))
         assertEquals(false, mpvEndedEarly(176_000, 180_000))

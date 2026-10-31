@@ -438,7 +438,17 @@ class DesktopPlaybackEngine internal constructor(
         if (pauseSpotify) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
     }
 
+    private var volumeJob: Job? = null
     override fun setVolume(volume: Float) {
+        volumeJob?.cancel()
+        volumeJob = scope.launch {
+            delay(250)
+            if (spotifyIsActive()) {
+                runCatching { spotify.setVolume(volume.coerceIn(0f, 1f)) }
+                    .onFailure { PlaybackTrace.log("Engine", "Spotify volume update failed") }
+            }
+        }
+
         val percent = (volume.coerceIn(0f, 1f) * 100).toInt()
         volumePercent = percent
         synchronized(lifecycleLock) {

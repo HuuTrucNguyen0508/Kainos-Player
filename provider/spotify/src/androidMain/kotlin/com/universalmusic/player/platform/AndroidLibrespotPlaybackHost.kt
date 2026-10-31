@@ -160,6 +160,12 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
+    override suspend fun setVolume(volume: Float): Boolean = mutex.withLock {
+        val receiver = player ?: return@withLock false
+        receiver.setVolume((volume.coerceIn(0f, 1f) * Player.VOLUME_MAX).toInt())
+        true
+    }
+
     override suspend fun shutdown() = mutex.withLock {
         shutdownLocked()
         _state.value = SpotifyWebPlaybackState.Stopped

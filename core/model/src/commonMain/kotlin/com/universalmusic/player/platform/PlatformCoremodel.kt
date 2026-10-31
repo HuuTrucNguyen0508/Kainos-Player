@@ -31,6 +31,7 @@ data class SpotifyPlaybackController(
     /** Bounded Connect state read. Null when the platform cannot observe the receiver. */
     val observe: (suspend () -> SpotifyObservedPlayback?)? = null,
     val receiverEvents: SpotifyReceiverEvents? = null,
+    val setVolume: suspend (Float) -> Unit = {},
 )
 
 /** Events from the receiver owned by this app, rather than Spotify's delayed Connect snapshot. */

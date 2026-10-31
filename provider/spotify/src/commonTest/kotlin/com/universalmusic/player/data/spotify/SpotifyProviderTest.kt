@@ -36,6 +36,36 @@ import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
     @Test
+    fun volumeRespects429RetryAfterAndSliderLevel() = runTest {
+        var now = 1000L
+        val levels = mutableListOf<String?>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), clock = { now }) { request ->
+            levels += request.url.parameters["volume_percent"]
+            respond("", HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.RetryAfter, "30"))
+        }
+        provider.setConnectVolume(0.35f)
+        provider.setConnectVolume(0.8f)
+        assertEquals(listOf<String?>("35"), levels)
+        now += 30_000
+        provider.setConnectVolume(1f)
+        assertEquals(listOf<String?>("35", "100"), levels)
+    }
+
+    @Test
+    fun nativeVolumeUsesTheInProcessReceiverWithoutHttp() = runTest {
+        val volumes = mutableListOf<Float>()
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
+            override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = null
+            override suspend fun shutdown() = Unit
+            override suspend fun setVolume(volume: Float): Boolean { volumes += volume; return true }
+        }
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { error("No HTTP expected") }
+        provider.setConnectVolume(0.4f)
+        assertEquals(listOf(0.4f), volumes)
+    }
+
+    @Test
     fun spotifyQualityDescribesAssumedDecodeWithoutLossless() {
         val quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality
         assertEquals(com.universalmusic.player.domain.model.QualityConfidence.ASSUMED, quality.confidence)
@@ -60,7 +90,7 @@ class SpotifyProviderTest {
         provider.startConnectPlayback("song")
 
         assertEquals(
-            listOf("/v1/me/player", "/v1/me/player/play", "/v1/me/player/volume"),
+            listOf("/v1/me/player", "/v1/me/player/play"),
             requests,
         )
     }
@@ -115,7 +145,6 @@ class SpotifyProviderTest {
                 "/v1/me/player/devices?",
                 "/v1/me/player?",
                 "/v1/me/player/play?device_id=kainos-device",
-                "/v1/me/player/volume?volume_percent=100&device_id=kainos-device",
             ),
             requests,
         )
