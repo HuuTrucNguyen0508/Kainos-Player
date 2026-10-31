@@ -36,12 +36,12 @@ def text():
 
 xvfb = app = None
 try:
-    with (out/'display').open('w+') as display, (out/'xvfb.log').open('w') as log:
-        xvfb = sp.Popen(['/tmp/kainos-desktop-tools/usr/bin/Xvfb', '-screen', '0', '1600x1000x24', '-nolisten', 'tcp', '-displayfd', str(display.fileno())], pass_fds=(display.fileno(),), stdout=log, stderr=log)
-        wait_for(lambda: (out/'display').stat().st_size > 0, 'Xvfb did not start')
-    env = dict(os.environ, DISPLAY=':'+ (out/'display').read_text().strip(), KAINOS_INSTANCE='librarysmoke', KAINOS_DATA_DIR=str(out/'data'), KAINOS_HUB_PORT='44983', KAINOS_MUSIC_DIRS=str(out/'music'), PATH=str(out/'bin')+':'+os.environ['PATH'], SKIKO_RENDER_API='SOFTWARE', XDG_CURRENT_DESKTOP='KainosPerf')
+    import private_xvfb
+    log = (out/'xvfb.log').open('w')
+    xvfb, display = private_xvfb.start(str(pathlib.Path.home()/'.local/share/kainos-player/Xvfb'), size='1600x1000x24', stdout=log, stderr=log)
+    env = dict(os.environ, DISPLAY=display, KAINOS_INSTANCE='librarysmoke', KAINOS_DATA_DIR=str(out/'data'), KAINOS_HUB_PORT='44983', KAINOS_MUSIC_DIRS=str(out/'music'), PATH=str(out/'bin')+':'+os.environ['PATH'], SKIKO_RENDER_API='SOFTWARE', XDG_CURRENT_DESKTOP='KainosPerf')
     env.pop('WAYLAND_DISPLAY', None)
-    appdir = root/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+    appdir = root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
     java = str(Path.home()/'.jdks/temurin-17/bin/java')
     args = [java, '-Duser.home='+str(out/'home'), '-Dcompose.application.configure.swing.globals=true', '-Dcompose.application.resources.dir='+str(appdir/'resources'), '-Dskiko.library.path='+str(appdir), '-cp', str(appdir/'*'), 'com.universalmusic.player.desktop.MainKt']
     # A private bus also proves MPRIS without sending a command to the user's player.

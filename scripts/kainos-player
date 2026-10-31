@@ -75,6 +75,8 @@ if (( ${#jars[@]} == 0 )); then
   exit 1
 fi
 
+# Byte order, as the AppCDS trainer uses: the JVM rejects an archive on any other order.
+mapfile -t jars < <(printf '%s\n' "${jars[@]}" | LC_ALL=C sort)
 classpath="$(IFS=:; echo "${jars[*]}")"
 
 # Dynamic archives are specific to the packaged jars and JDK. auto sharing lets

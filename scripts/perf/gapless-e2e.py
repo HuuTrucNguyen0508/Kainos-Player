@@ -6,10 +6,10 @@ import argparse, os, pathlib, select, subprocess as S
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',required=True,type=pathlib.Path);p.add_argument('--app-dir',required=True,type=pathlib.Path);a=p.parse_args()
 a.out.mkdir(parents=True,exist_ok=False);root=pathlib.Path(__file__).resolve().parents[2]
 S.run(['uptime'],check=True)
-r,w=os.pipe();x=S.Popen(['/tmp/kainos-desktop-tools/usr/bin/Xvfb','-displayfd',str(w),'-screen','0','1280x800x24','-nolisten','tcp'],pass_fds=[w],stderr=(a.out/'xvfb.log').open('w'));os.close(w)
+import private_xvfb
+x,display=private_xvfb.start(str(pathlib.Path.home()/'.local/share/kainos-player/Xvfb'),stderr=(a.out/'xvfb.log').open('w'))
 module=None
 try:
-    assert select.select([r],[],[],10)[0];display=':'+os.read(r,32).decode().strip();os.close(r)
     sink=f'kainos_gapless_{os.getpid()}'
     module=S.check_output(['pactl','load-module','module-null-sink',f'sink_name={sink}','rate=48000'],text=True).strip()
     config=a.out/'config/mpv';config.mkdir(parents=True);(config/'mpv.conf').write_text('ao=pulse\n')

@@ -72,6 +72,24 @@ class LauncherTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertNotIn('-Xshare:auto', (root / 'java-args').read_text())
 
+    def test_classpath_uses_the_archive_byte_order(self):
+        names = ['Zeta-1.jar', 'a-b.jar', 'ab.jar', 'alpha_1.jar', 'alpha-1.jar']
+        root, _ = self.run_launcher()
+        app_dir = root / 'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
+        for name in names:
+            (app_dir / name).write_bytes(b'')
+        env = {**os.environ, 'JAVA_HOME': str(root / 'fake-jdk'), 'ROOT_MARKER': str(root), 'LC_ALL': 'en_US.UTF-8'}
+        subprocess.run(['bash', str(root / 'scripts/kainos-player')], capture_output=True, env=env, timeout=5, check=True)
+        arguments = (root / 'java-args').read_text().splitlines()
+        classpath = arguments[arguments.index('-cp') + 1].split(':')
+        self.assertEqual(sorted(names + ['app.jar']), [Path(entry).name for entry in classpath])
+
+    def test_perf_harness_never_lets_xvfb_pick_the_display(self):
+        scripts = LAUNCHER.parent / 'perf'
+        offenders = [path.name for path in scripts.iterdir() if path.is_file() and path.name != 'private_xvfb.py'
+            and "'-displayfd'" in path.read_text(errors='ignore')]
+        self.assertEqual([], offenders, 'Xvfb -displayfd removes the live /tmp/.X11-unix/X0 socket')
+
     def test_valid_archive_uses_sharing(self):
         root, result = self.run_launcher(archive=b'archive contents')
         self.assertEqual(0, result.returncode)
