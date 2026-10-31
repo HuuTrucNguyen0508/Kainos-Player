@@ -94,7 +94,7 @@ private fun LibrespotDiscoverOut.toPlaylist(): Playlist {
                 PlaybackSource(
                     provider = ProviderId.SPOTIFY,
                     providerTrackId = row.id,
-                    quality = AudioQuality(tier = QualityTier.LOSSLESS, sampleRateHz = 44_100, bitDepth = 16),
+                    quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality,
                     isPlayable = true,
                     handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, row.id, durationMs = row.duration_ms.takeIf { it > 0 }?.toLong()),
                 ),

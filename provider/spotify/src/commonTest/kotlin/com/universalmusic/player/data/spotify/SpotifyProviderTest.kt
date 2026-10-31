@@ -36,6 +36,15 @@ import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
     @Test
+    fun spotifyQualityDescribesAssumedDecodeWithoutLossless() {
+        val quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality
+        assertEquals(com.universalmusic.player.domain.model.QualityConfidence.ASSUMED, quality.confidence)
+        assertTrue(quality.label.contains("16-bit"))
+        assertTrue(quality.label.contains("44.1 kHz"))
+        assertEquals(false, quality.label.contains("Lossless"))
+    }
+
+    @Test
     fun webPlayerIsActivatedBeforeStartingTheTrack() = runTest {
         val requests = mutableListOf<String>()
         val host = object : SpotifyWebPlaybackHost {
