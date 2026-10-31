@@ -16,7 +16,7 @@ class CdsLauncherTest(Base):
         java = temporary/'fake-jdk/bin/java'
         java.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$ROOT_MARKER/java-args"\n')
         for present in [False, True]:
-            archive = temporary/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app/kainos.jsa'
+            archive = temporary/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app/kainos.jsa'
             if present:
                 archive.write_bytes(b'not a real archive; this test records arguments only')
                 archive.with_suffix('.jsa.size').write_text(str(archive.stat().st_size)+'\n')
@@ -30,7 +30,7 @@ class CdsLauncherTest(Base):
             self.assertEqual(args[-2:],['com.universalmusic.player.desktop.MainKt','--probe-argument'])
 
     def test_new_package_wins_and_rebuild_switches_from_legacy(self):
-        temporary, result = self.run_launcher()
+        temporary, result = self.run_launcher(package="Kainos Player")
         java = temporary/'fake-jdk/bin/java'
         java.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$ROOT_MARKER/java-args"\n')
         app = temporary/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
@@ -48,7 +48,7 @@ class CdsLauncherTest(Base):
         temporary, result = self.run_launcher()
         java=temporary/'fake-jdk/bin/java'
         java.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$ROOT_MARKER/java-args"\n')
-        archive=temporary/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app/kainos.jsa'
+        archive=temporary/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app/kainos.jsa'
         archive.write_bytes(b'truncated')
         archive.with_suffix('.jsa.size').write_text('1000000\n')
         result=subprocess.run(['bash',str(temporary/'scripts/kainos-player')],
