@@ -4,6 +4,7 @@ Leaves only owned processes, controlled by this interactive helper. Audio is mpv
 Run under flock -x /tmp/kainos-perf.lock. Pass the portable Xvfb path explicitly.
 """
 import glob, json, os, pathlib, subprocess, sys, wave
+import private_xvfb
 root = pathlib.Path(__file__).resolve().parents[2]
 profiles = pathlib.Path(sys.argv[1]).resolve()
 xvfb = sys.argv[2]
@@ -20,11 +21,9 @@ hub_port = json.loads((profiles/'phone/settings.json').read_text())['homeLanSync
 processes = []
 try:
     for i, name in enumerate(['pc', 'phone']):
-        r, w = os.pipe()
         display_log = (profiles/f'{name}-display.log').open('w')
-        x = subprocess.Popen([xvfb, '-displayfd', str(w), '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], pass_fds=[w], stdout=subprocess.DEVNULL, stderr=display_log)
-        processes.append(x); os.close(w)
-        display = ':'+os.read(r, 32).decode().strip(); os.close(r); assert display != ':'
+        x, display = private_xvfb.start(xvfb, stdout=subprocess.DEVNULL, stderr=display_log)
+        processes.append(x)
         (profiles/f'{name}.display').write_text(display)
         env = os.environ.copy()
         env.update(DISPLAY=display, KAINOS_REMOTE_PRIVATE_DISPLAY=display, WAYLAND_DISPLAY='', XDG_SESSION_TYPE='x11',

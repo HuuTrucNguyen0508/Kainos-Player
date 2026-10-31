@@ -13,15 +13,11 @@ root = Path(__file__).resolve().parents[2]
 (root/'desktopApp/build').mkdir(parents=True, exist_ok=True)
 build_lock = (root/'desktopApp/build/.perf-build.lock').open('a')
 fcntl.flock(build_lock, fcntl.LOCK_EX)
-read_fd, write_fd = os.pipe()
-server = subprocess.Popen([a.xvfb, '-displayfd', str(write_fd), '-screen', '0', '1280x800x24', '-nolisten', 'tcp'], pass_fds=[write_fd])
-os.close(write_fd)
-display = os.read(read_fd, 32).decode().strip()
-os.close(read_fd)
+import private_xvfb
+server, display = private_xvfb.start(a.xvfb)
 try:
-    assert display, 'Xvfb did not start'
     env = os.environ.copy()
-    env.update(DISPLAY=':' + display, WAYLAND_DISPLAY='', SKIKO_RENDER_API='SOFTWARE',
+    env.update(DISPLAY=display, WAYLAND_DISPLAY='', SKIKO_RENDER_API='SOFTWARE',
                JAVA_HOME=str(Path.home()/'.jdks/temurin-17'))
     result = subprocess.run(['./gradlew', 'jvmTest', ':core:data:verifyCommonMainKainosDatabaseMigration',
                              ':desktopApp:createDistributable', '--rerun', '--continue', '--console=plain'], env=env,

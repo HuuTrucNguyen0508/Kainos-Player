@@ -54,14 +54,8 @@ def markers(file):
 
 x = None
 if a.mode != 'playback':
-    # -displayfd allocates a free private server; never connect to the user's display.
-    r,w=os.pipe()
-    x=S.Popen([a.xvfb,'-displayfd',str(w),'-screen','0','1280x800x24','-nolisten','tcp'],pass_fds=[w],stdout=S.DEVNULL,stderr=(a.out/'xvfb.log').open('w'))
-    os.close(w)
-    if not select.select([r],[],[],10)[0]:
-        x.terminate(); x.wait(timeout=5); os.close(r); raise TimeoutError('Xvfb did not publish a display within 10s')
-    display=':'+os.read(r,32).decode().strip(); os.close(r)
-    if not display[1:]: raise RuntimeError('Xvfb failed; see xvfb.log')
+    import private_xvfb
+    x,display=private_xvfb.start(a.xvfb,stdout=S.DEVNULL,stderr=(a.out/'xvfb.log').open('w'))
 
 rows=[]
 recorder=None
