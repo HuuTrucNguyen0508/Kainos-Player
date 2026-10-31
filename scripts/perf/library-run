@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+flock -s /tmp/kainos-perf.lock ./gradlew -I scripts/perf/library-bench.init.gradle :shared:jvmTestClasses --console=plain
+# Timing includes only the test process work, not Gradle compilation. Hold the
+# exclusive lock for the complete test invocation to exclude the other lanes.
+flock -x /tmp/kainos-perf.lock bash -c 'uptime; nproc; ./gradlew -I scripts/perf/library-bench.init.gradle :shared:libraryPerf --console=plain'

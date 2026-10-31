@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+export JAVA_TOOL_OPTIONS=-Djava.awt.headless=true
+export KAINOS_REMOTE_DIRECT_OUTPUT="${1:?absolute results path}"
+export KAINOS_REMOTE_DIRECT_BASELINE="${2:-0}"
+flock -s /tmp/kainos-perf.lock ./gradlew :sync:jvmTestClasses --console=plain
+flock -x /tmp/kainos-perf.lock bash -c 'uptime; ./gradlew :sync:jvmTest --tests "*RemoteDirectFaultHarnessTest" --rerun --console=plain'

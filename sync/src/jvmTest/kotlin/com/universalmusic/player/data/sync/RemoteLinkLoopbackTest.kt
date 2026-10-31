@@ -130,6 +130,24 @@ class RemoteLinkLoopbackTest {
     }
 
     @Test
+    fun aPressAfterAnIdleLinkOutlivesTheFirstLeaseStillApplies(): Unit = runBlocking {
+        hub.start()
+        val client = RemoteLinkClient(
+            scope = scope,
+            target = { DeliveryTarget(PairedPeer("kainos-pc", "Desk PC", pc.fingerprint, "127.0.0.1", port, 1L), "kainos-phone", phone.fingerprint) },
+            connect = { transport() },
+            player = RecordingPlayer("Phone song"),
+        )
+        client.run(MutableStateFlow(true))
+        withTimeout(10_000) { client.state.first { it.connected } }
+
+        delay(REMOTE_COMMAND_DEADLINE_MS + 1_000)
+
+        assertIs<RemoteClientSend.Applied>(client.send(RemoteCommand.Play))
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Play), hubPlayer.applied)
+    }
+
+    @Test
     fun aHubWithoutAGuiPlayerAnswersCommandsWith409(): Unit = runBlocking {
         guiPlayer = null
         hub.start()

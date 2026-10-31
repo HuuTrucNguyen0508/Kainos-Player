@@ -21,6 +21,7 @@ import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.cacheRemoteArtwork
 import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -34,11 +35,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -89,6 +92,7 @@ class RemoteControl internal constructor(
     clientTarget: () -> DeliveryTarget?,
     openLink: suspend (com.universalmusic.player.data.sync.PairedPeer) -> com.universalmusic.player.data.sync.RemoteLinkTransport,
     onLinkConnected: () -> Unit,
+    pressable: () -> Boolean = { true },
     private val clock: () -> Long = ::currentTimeMillis,
 ) {
     private val artworkReader = RemoteArtworkReader()
@@ -100,8 +104,11 @@ class RemoteControl internal constructor(
         artwork = artworkReader,
         onConnected = onLinkConnected,
         clock = clock,
+        pressable = pressable,
     )
 
+    private val intent = MutableStateFlow<RemotePlayIntent?>(null)
+    private var intentJob: Job? = null
     private val selection = MutableStateFlow<String?>(null)
     private val transferring = MutableStateFlow(false)
     private val message = MutableStateFlow<RemoteMessage?>(null)
@@ -120,7 +127,7 @@ class RemoteControl internal constructor(
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     val state: StateFlow<RemoteControlState> = combine(
-        role, devices, selection, transferring, message,
+        role, combine(devices, intent) { views, pending -> views.map { view -> pending?.display(view) ?: view } }, selection, transferring, message,
     ) { side, views, selected, moving, note ->
         RemoteControlState(
             available = side != RemoteRole.NONE && views.isNotEmpty(),
@@ -143,9 +150,21 @@ class RemoteControl internal constructor(
                 host.updateHubStatus(status, hasPlayer = enabled, artwork = status?.artworkKey?.let { key -> bytes?.let { key to it } })
             }
         }
+        scope.launch {
+            devices.collect { views ->
+                intent.update { pending ->
+                    pending?.takeUnless { next -> views.firstOrNull { it.deviceId == next.deviceId }?.let(next::reconciles) == true }
+                }
+            }
+        }
         client.run(
             combine(role, guiPlayer, linkWanted) { side, enabled, wanted -> side == RemoteRole.CLIENT && enabled && wanted },
         )
+    }
+
+    /** The raw visible edge, which linkWanted's grace can hide. Its poll restarts the lease refresh. */
+    fun onAppVisible() {
+        if (role.value == RemoteRole.CLIENT) client.reconnectNow()
     }
 
     fun select(deviceId: String?) {
@@ -158,13 +177,37 @@ class RemoteControl internal constructor(
 
     fun send(command: RemoteCommand) {
         val target = state.value.selected ?: return
+        val pending = if (command == RemoteCommand.Play || command == RemoteCommand.Pause) {
+            RemotePlayIntent(target.deviceId, command == RemoteCommand.Play, clock()).also {
+                intent.value = it
+                intentJob?.cancel()
+                intentJob = scope.launch {
+                    delay(4_000)
+                    val current = intent.value
+                    if (current?.pressedAtMs == it.pressedAtMs && current.deviceId == it.deviceId && current.playing == it.playing && intent.compareAndSet(current, null)) report("${target.name} didn't confirm")
+                }
+            }
+        } else null
         scope.launch {
             val problem = when (role.value) {
-                RemoteRole.HUB -> host.send(target.deviceId, command).problem(target.name)
+                RemoteRole.HUB -> {
+                    if (pending != null && !host.peer(target.deviceId).connected) {
+                        withTimeoutOrNull(4_000) { host.changes.first { host.peer(target.deviceId).connected } }
+                        if (intent.value != pending) return@launch
+                    }
+                    host.send(target.deviceId, command, pending?.let { (clock() - it.pressedAtMs).coerceAtLeast(0) } ?: 0).problem(target.name)
+                }
                 RemoteRole.CLIENT -> client.send(command).problem(target.name)
                 RemoteRole.NONE -> null
             }
-            problem?.let(::report)
+            if (pending != null && problem == null) {
+                intent.update { current ->
+                    if (current != pending) current else pending.copy(accepted = true).takeUnless { accepted ->
+                        devices.value.firstOrNull { it.deviceId == accepted.deviceId }?.let(accepted::reconciles) == true
+                    }
+                }
+            }
+            if (problem != null && (pending == null || intent.compareAndSet(pending, null))) report(problem)
         }
     }
 
@@ -352,3 +395,12 @@ internal fun remoteLinkWanted(visible: Flow<Boolean>, active: Flow<Boolean>, gra
 }
 
 internal const val REMOTE_LINK_GRACE_MS = 10L * 60 * 1000
+
+/** One pending explicit button intent. A disagreeing old snapshot cannot undo a press. */
+internal data class RemotePlayIntent(val deviceId: String, val playing: Boolean, val pressedAtMs: Long, val accepted: Boolean = false) {
+    fun reconciles(view: RemoteDeviceView): Boolean = accepted && view.deviceId == deviceId &&
+        view.statusAtMs > pressedAtMs && view.status?.let { (it.isPlaying || it.buffering) == playing } == true
+
+    fun display(view: RemoteDeviceView): RemoteDeviceView = if (view.deviceId != deviceId) view else
+        view.copy(status = view.status?.copy(isPlaying = playing, buffering = false))
+}

@@ -130,6 +130,8 @@ data class RemotePollReply(
     val hubHasPlayer: Boolean = false,
     /** A newer poll from the same device, or a stopping hub, ended this one; it carries nothing. */
     val superseded: Boolean = false,
+    /** Optional receiver-issued four-second lease; absent on older hubs. */
+    val directIntentLease: String? = null,
 )
 
 /** The portable queue a source device hands over for "Play here". */
@@ -150,7 +152,12 @@ enum class RemoteTransferFailure { EMPTY, UNSUPPORTED_TRACK, INVALID_ID, DUPLICA
 data class RemoteTransferReply(val snapshot: RemoteTransferSnapshot? = null, val failure: RemoteTransferFailure? = null)
 
 @Serializable
-data class RemoteCommandReply(val status: RemoteStatus? = null, val transfer: RemoteTransferReply? = null)
+data class RemoteCommandReply(
+    val status: RemoteStatus? = null,
+    val transfer: RemoteTransferReply? = null,
+    /** The hub dropped a direct intent unapplied because its lease or age was invalid. */
+    val leaseRejected: Boolean = false,
+)
 
 /**
  * A player's state for the remote link. [status] has a zero position age as of [capturedAtMs];
@@ -193,3 +200,13 @@ fun RemoteStatus?.isMaterialChange(next: RemoteStatus?, elapsedMs: Long): Boolea
     if (copy(positionMs = 0, positionAgeMs = 0) != next.copy(positionMs = 0, positionAgeMs = 0)) return true
     return kotlin.math.abs(next.positionAfter(0) - positionAfter(elapsedMs)) > REMOTE_SEEK_JUMP_MS
 }
+
+@Serializable
+data class RemoteDirectIntent(
+    val command: RemoteCommand,
+    val senderId: String,
+    val seq: Long,
+    val ageMs: Long,
+    /** Null for a single unretried attempt: ordered by [seq], with no transit bound to allow a retry. */
+    val lease: String? = null,
+)

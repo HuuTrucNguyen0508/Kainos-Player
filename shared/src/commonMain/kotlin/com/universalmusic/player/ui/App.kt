@@ -75,6 +75,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Color
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
+import com.universalmusic.player.ui.screens.LibraryPresenter
 import com.universalmusic.player.ui.screens.LibraryScreen
 import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
@@ -82,7 +83,16 @@ import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.theme.KainosTheme
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import coil3.compose.LocalPlatformContext
+import com.universalmusic.player.ui.components.warmQueueArtwork
+import com.universalmusic.player.domain.model.ProviderId
 
 @Composable
 fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
@@ -123,8 +133,28 @@ private fun AppScaffold(
     val tabStateHolder = rememberSaveableStateHolder()
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
-    val now by container.player.nowPlaying.collectAsState()
+    val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
+    val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
+    val imageContext = LocalPlatformContext.current
+    LaunchedEffect(queue, imageContext) {
+        container.player.nowPlaying.map { it.isPlaying }.distinctUntilChanged().collectLatest { playing ->
+            if (!playing) return@collectLatest
+            delay(1_200)
+            val neighbours = listOfNotNull(queue.history.lastOrNull(), queue.upcoming.firstOrNull())
+            for (item in neighbours) {
+                if (item.track.sources.any { it.provider != ProviderId.LOCAL && it.provider != ProviderId.YOUTUBE_MUSIC }) continue
+                try {
+                    val art = item.track.artwork ?: container.local.resolveEmbeddedArtwork(item.track)
+                    if (art != null) warmQueueArtwork(imageContext, art)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // A cover failure must not affect transport; normal display can retry later.
+                }
+            }
+        }
+    }
     val canSkipNext = run {
         queue.shuffle
         queue.repeat
@@ -160,7 +190,7 @@ private fun AppScaffold(
     val queueReplacesSidePane = desktop && showQueue && !wide
     val showSideNowPlaying = desktop && nowPlayingPaneExpanded && !queueReplacesSidePane
     val showDesktopMiniBar = desktop &&
-        now.track != null &&
+        currentTrack != null &&
         !showSideNowPlaying &&
         !queueReplacesSidePane
 
@@ -273,11 +303,10 @@ private fun AppScaffold(
         bottomBar = {
             if (!desktop && !showNowPlaying && !showQueue) {
                 Column {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
@@ -346,7 +375,7 @@ private fun AppScaffold(
                                         onPlayTrackInList = ::playSearchTracks,
                                         requestFocus = true,
                                     )
-                                    AppDestination.Library -> LibraryScreen(container, ::playTracks)
+                                    AppDestination.Library -> LibraryScreen(container, libraryPresenter, ::playTracks)
                                     AppDestination.Settings -> SettingsScreen(container)
                                 }
                             }
@@ -374,11 +403,10 @@ private fun AppScaffold(
                 }
 
                 if (showDesktopMiniBar) {
-                    now.track?.let { track ->
+                    currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
                             track = track,
-                            now = now,
                             canSkipNext = canSkipNext,
                             onOpen = { openNowPlaying() },
                         )
@@ -540,10 +568,10 @@ private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private fun DesktopMiniPlayer(
     container: AppContainer,
     track: Track,
-    now: NowPlayingState,
     canSkipNext: Boolean,
     onOpen: () -> Unit,
 ) {
+    val now by container.player.nowPlaying.collectAsState()
     val durationMs = now.durationMs?.takeIf { it > 0 }
         ?: track.durationMs?.takeIf { it > 0 }
     val miniProgress = if (durationMs != null) {
@@ -566,3 +594,9 @@ private fun DesktopMiniPlayer(
         onNext = { container.player.skipToNext() },
     )
 }
+
+/** The app chrome only depends on track identity/metadata, never transport position. */
+@Composable
+internal fun playbackChromeTrack(nowPlaying: StateFlow<NowPlayingState>): State<Track?> =
+    remember(nowPlaying) { nowPlaying.map { it.track }.distinctUntilChanged() }
+        .collectAsState(initial = nowPlaying.value.track)

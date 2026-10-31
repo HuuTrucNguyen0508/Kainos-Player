@@ -1,0 +1,25 @@
+{
+  "kind": "two real packaged desktop GUIs; one HUB, one CLIENT",
+  "artifact_production_commit": "61c6dc2",
+  "audio": "two mpv processes, --no-config --ao=null",
+  "actions": {
+    "hub_to_client": {
+      "pause": "target Paused; sender Playing",
+      "resume": "target Playing",
+      "double_tap_100ms": "target Playing",
+      "five_taps_200ms": "target Paused"
+    },
+    "client_to_hub": {
+      "pause": "target Paused; sender Playing",
+      "resume": "target Playing",
+      "double_tap_100ms": "target Playing",
+      "five_taps_200ms": "target Paused"
+    }
+  },
+  "target_session_toggle_counts": {
+    "pc": 9,
+    "phone": 9
+  },
+  "evidence_directory": "/tmp/kainos-remote-desktop-proof-20261031-valid",
+  "timing_claim": false
+}

@@ -7,6 +7,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,6 +20,109 @@ import kotlinx.coroutines.test.runTest
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteLinkClientTest {
+    @Test
+    fun aHiddenAppHoldsOnePollAndBecomingVisibleResumesLeaseRefresh() = runTest {
+        var visible = false
+        val rig = rig(pressable = { visible })
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
+        rig.nextPoll()
+
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertNull(rig.transport.polls.tryReceive().getOrNull())
+
+        visible = true
+        rig.client.reconnectNow()
+        val forced = rig.nextPoll()
+        assertEquals(-1L, forced.request.knownHubVersion)
+        forced.reply(rig.replyOf("e1").copy(directIntentLease = "fresh"))
+        runCurrent()
+        rig.nextPoll()
+        advanceTimeBy(2_001)
+        assertEquals(-1L, rig.nextPoll().request.knownHubVersion)
+    }
+
+    @Test
+    fun aPressHoldingAStaleLeaseGoesOutOnceAndStaysOrdered() = runTest {
+        val rig = rig(pressable = { false })
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
+        rig.nextPoll()
+        advanceTimeBy(REMOTE_DIRECT_LEASE_FRESH_MS + 1)
+
+        assertIs<RemoteClientSend.Applied>(rig.client.send(RemoteCommand.Play))
+
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Play), rig.transport.commands)
+        assertNull(rig.transport.intents.single().lease)
+    }
+
+    @Test
+    fun aHubRejectedLeaseIsNotReportedAsApplied() = runTest {
+        val rig = rig()
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        runCurrent()
+        rig.transport.intentReply = RemoteCommandReply(RemoteStatus(title = "PC song"), leaseRejected = true)
+
+        assertEquals(RemoteClientSend.Unreachable, rig.client.send(RemoteCommand.Play))
+    }
+
+    @Test
+    fun aSlowForcedRefreshIsNotCancelledByTheNextRefresh() = runTest {
+        val rig = rig()
+        rig.nextPoll().reply(rig.replyOf("e1").copy(directIntentLease = "lease"))
+        advanceTimeBy(REMOTE_REPOST_GAP_MS + 1)
+        rig.nextPoll()
+        advanceTimeBy(2_001)
+        val forced = rig.nextPoll()
+        assertEquals(-1L, forced.request.knownHubVersion)
+
+        advanceTimeBy(3_000)
+        runCurrent()
+
+        assertNull(rig.transport.polls.tryReceive().getOrNull())
+        assertFalse(forced.cancelled.isCompleted)
+    }
+
+    @Test
+    fun aPressWakesBackoffAndOnlyLatestWaitingIntentIsSent() = runTest {
+        var available = false
+        val transport = FakeTransport()
+        val attempts = mutableListOf<Long>()
+        val rig = rig(connect = {
+            attempts += testScheduler.currentTime
+            if (!available) error("offline")
+            transport
+        })
+        runCurrent()
+        advanceTimeBy(250)
+        available = true
+        val play = async { rig.client.send(RemoteCommand.Play) }
+        val pause = async { rig.client.send(RemoteCommand.Pause) }
+        runCurrent()
+        assertEquals(250L, attempts.last())
+        advanceTimeBy(REMOTE_REPOST_GAP_MS)
+        runCurrent()
+        var poll = transport.polls.tryReceive().getOrThrow()
+        while (true) { poll = transport.polls.tryReceive().getOrNull() ?: break }
+        poll.reply(rig.replyOf("e1"))
+        runCurrent()
+        assertEquals(RemoteClientSend.Unreachable, play.await())
+        assertIs<RemoteClientSend.Applied>(pause.await())
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), transport.commands)
+    }
+
+    @Test
+    fun anOfflineIntentFailsAtFourSecondsAndNeverRunsAfterReconnect() = runTest {
+        val rig = rig(connect = { error("offline") })
+        runCurrent()
+        val result = async { rig.client.send(RemoteCommand.Play) }
+        runCurrent()
+        advanceTimeBy(4_001)
+        assertEquals(RemoteClientSend.Unreachable, result.await())
+        assertTrue(rig.transport.commands.isEmpty())
+    }
+
     @Test
     fun eachCommandRunsOnceEvenWhenTheHubOffersItAgain() = runTest {
         val rig = rig()
@@ -106,12 +210,12 @@ class RemoteLinkClientTest {
     }
 
     @Test
-    fun aFailingHubBacksOffTwoFiveTenTwentyThenThirtySeconds() = runTest {
+    fun aFailingHubRetriesOnceQuicklyThenBacksOffToThirtySeconds() = runTest {
         val attempts = mutableListOf<Long>()
         val rig = rig(connect = { attempts += testScheduler.currentTime; error("no route to host") })
-        advanceTimeBy(2_000 + 5_000 + 10_000 + 20_000 + 30_000 + 30_000 + 1)
+        advanceTimeBy(200 + 2_000 + 5_000 + 10_000 + 20_000 + 30_000 + 30_000 + 1)
 
-        assertEquals(listOf(0L, 2_000, 7_000, 17_000, 37_000, 67_000, 97_000), attempts)
+        assertEquals(listOf(0L, 200, 2_200, 7_200, 17_200, 37_200, 67_200, 97_200), attempts)
         assertTrue(rig.client.state.value.unreachable)
         assertFalse(rig.client.state.value.connected)
     }
@@ -210,6 +314,20 @@ class RemoteLinkClientTest {
     }
 
     @Test
+    fun aSlowArtworkUploadDoesNotHoldUpCommandsOrTheirAcknowledgement() = runTest {
+        val rig = rig(artwork = RemoteArtworkReader { byteArrayOf(9, 9) })
+        rig.player.state.value = RemotePlayerState(RemoteStatus(title = "A", artworkKey = "abcd1234"), 0, "file:///a.jpg")
+        rig.transport.artworkGate = CompletableDeferred()
+        rig.reply("e1")
+        assertEquals(listOf("abcd1234"), rig.transport.artworkKeys)
+        rig.nextPoll().reply(rig.replyOf("e1", RemoteEnvelope(1, 0, RemoteCommand.Pause)))
+        assertEquals(1, rig.nextPoll().request.ackSeq)
+        assertEquals(listOf<RemoteCommand>(RemoteCommand.Pause), rig.player.applied)
+        assertFalse(rig.transport.artworkGate!!.isCompleted)
+        rig.transport.artworkGate!!.complete(Unit)
+    }
+
+    @Test
     fun aPollTimeoutBacksOffAndReconnectsWhileStillWanted() = runTest {
         val rig = rig()
         rig.reply(epoch = "e1")
@@ -272,9 +390,12 @@ class RemoteLinkClientTest {
     private class FakeTransport : RemoteLinkTransport {
         val polls = Channel<PendingPoll>(Channel.UNLIMITED)
         val commands = mutableListOf<RemoteCommand>()
+        val intents = mutableListOf<RemoteDirectIntent>()
+        var intentReply: RemoteCommandReply? = null
         var commandError: Exception? = null
         val transfers = mutableListOf<Triple<String, Long, RemoteTransferReply>>()
         val artworkKeys = mutableListOf<String>()
+        var artworkGate: CompletableDeferred<Unit>? = null
 
         override suspend fun poll(request: RemotePollRequest): RemotePollReply {
             val pending = PendingPoll(request)
@@ -293,12 +414,18 @@ class RemoteLinkClientTest {
             return RemoteCommandReply(RemoteStatus(title = "PC song", isPlaying = false))
         }
 
+        override suspend fun intent(intent: RemoteDirectIntent): RemoteCommandReply {
+            intents += intent
+            return intentReply ?: command(intent.command)
+        }
+
         override suspend fun postTransfer(epoch: String, seq: Long, reply: RemoteTransferReply) {
             transfers += Triple(epoch, seq, reply)
         }
 
         override suspend fun putArtwork(key: String, bytes: ByteArray) {
             artworkKeys += key
+            artworkGate?.await()
         }
 
         override suspend fun fetchArtwork(key: String): ByteArray? = null
@@ -347,6 +474,7 @@ class RemoteLinkClientTest {
     private fun TestScope.rig(
         artwork: RemoteArtworkReader = RemoteArtworkReader { null },
         connect: (suspend (PairedPeer) -> RemoteLinkTransport)? = null,
+        pressable: () -> Boolean = { true },
     ): Rig {
         val transport = FakeTransport()
         val player = FakePlayer()
@@ -362,6 +490,7 @@ class RemoteLinkClientTest {
             onConnected = { connections++ },
             clock = { testScheduler.currentTime },
             monotonicClock = testScheduler.timeSource,
+            pressable = pressable,
         )
         client.run(wanted)
         return Rig(this, client, player, transport, wanted) { connections }
