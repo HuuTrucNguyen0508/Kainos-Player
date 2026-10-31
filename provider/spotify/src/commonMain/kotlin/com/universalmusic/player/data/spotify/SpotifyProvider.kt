@@ -449,9 +449,6 @@ class SpotifyProvider(
                     mapOf("attempt" to attempt + 1),
                 )
                 // #endregion
-                if (target.kainosLocal) {
-                    ensureMaxLocalReceiverVolume(token, target.deviceId)
-                }
                 if (requireExplicitPlaybackDevice) {
                     confirmPlaybackOnTarget(token, target, spotifyTrackId)
                 }
@@ -606,6 +603,7 @@ class SpotifyProvider(
                     "Choose another Spotify device in Settings → Spotify output.",
             )
         }
+
         requireSpotifyVolume(device)
         return ConnectPlaybackTarget(
             deviceId = selectedId,
@@ -644,26 +642,26 @@ class SpotifyProvider(
         )
     }
 
-    /**
-     * Local mpv/ExoPlayer run at full gain. librespot defaults to 50% Connect soft-volume on a log
-     * scale, which sounds much quieter. Force the in-app receiver to 100% when we start playback;
-     * failures here must not block audio (device may still be registering).
-     */
-    private suspend fun ensureMaxLocalReceiverVolume(token: String, deviceId: String) {
-        val response = runCatching {
-            http.put("$API/me/player/volume") {
+    suspend fun setConnectVolume(volume: Float) {
+        try {
+            if (webPlayback.setVolume(volume)) return
+            if (clock() < observeCooldownUntilMs) return
+            val token = accessToken()
+            val response = http.put("$API/me/player/volume") {
                 bearerAuth(token)
-                parameter("volume_percent", 100)
-                parameter("device_id", deviceId)
+                parameter("volume_percent", (volume.coerceIn(0f, 1f) * 100).toInt())
+                activePlaybackDeviceId?.let { parameter("device_id", it) }
             }
-        }.getOrNull() ?: return
-        if (!response.status.isSuccess()) {
-            debugSpotifyLog(
-                "H1",
-                "SpotifyProvider.ensureMaxLocalReceiverVolume",
-                "volume bump skipped",
-                mapOf("status" to response.status.value),
-            )
+            if (response.status == HttpStatusCode.TooManyRequests) {
+                observeCooldownUntilMs = clock() + response.retryAfterMs(OBSERVE_RATE_LIMIT_DEFAULT_MS)
+            }
+            if (!response.status.isSuccess()) {
+                com.universalmusic.player.platform.PlaybackTrace.log("Spotify", "volume update failed: ${response.status.value}")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            com.universalmusic.player.platform.PlaybackTrace.log("Spotify", "volume update failed: ${failure::class.simpleName}")
         }
     }
 

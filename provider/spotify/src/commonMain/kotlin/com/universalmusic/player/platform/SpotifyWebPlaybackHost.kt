@@ -88,6 +88,7 @@ interface SpotifyWebPlaybackHost {
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()
+    suspend fun setVolume(volume: Float): Boolean = false
     suspend fun shutdown()
 }
 

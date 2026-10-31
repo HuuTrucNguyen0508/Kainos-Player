@@ -12,6 +12,17 @@ import kotlin.test.assertTrue
 
 class SourceRadioTest {
     @Test
+    fun transientFetchFailureRetriesTheSameSourceBeforeReturningItsBatch() = runTest {
+        var calls = 0
+        val radio = SourceRadio(ProviderId.SPOTIFY, fetch = { _, _ ->
+            if (++calls < 3) error("network timeout")
+            listOf(sp("next"))
+        }, trace = {})
+        assertEquals(listOf("spotify:next"), radio.nextBatch(queueOf(sp("seed"))).ids())
+        assertEquals(3, calls)
+    }
+
+    @Test
     fun keepsOnlyTheSeedProvidersTracks() = runTest {
         val radio = SourceRadio(ProviderId.SPOTIFY, fetch = { _, _ ->
             listOf(sp("a"), yt("b"), local("c"), sp("d"))
@@ -56,7 +67,7 @@ class SourceRadioTest {
     }
 
     @Test
-    fun aFailingSourceEndsTheRadioWithATraceInsteadOfFallingBack() = runTest {
+    fun aFailingSourceRetriesWithoutPretendingItWasEmpty() = runTest {
         val traces = mutableListOf<String>()
         val radio = SourceRadio(
             ProviderId.SPOTIFY,
@@ -64,10 +75,10 @@ class SourceRadioTest {
             trace = { traces += it },
         )
 
-        val batch = radio.nextBatch(queueOf(sp("seed")))
-
-        assertEquals(emptyList(), batch)
-        assertTrue(traces.single().contains("librespot credentials missing"), traces.toString())
+        var failure: Exception? = null
+        try { radio.nextBatch(queueOf(sp("seed"))) } catch (error: Exception) { failure = error }
+        assertEquals("librespot credentials missing", failure?.message)
+        assertEquals(3, traces.size)
     }
 
     @Test

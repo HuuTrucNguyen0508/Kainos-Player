@@ -106,7 +106,7 @@ internal class JvmLibrespotPlaybackHost(
             process = null
             eventBridge?.close()
             eventBridge = null
-            if (!interactive) {
+            if (!interactive && !hasCachedCredentials()) {
                 _state.value = SpotifyWebPlaybackState.Failed(
                     SpotifyWebPlaybackFailure.LibrespotExited(classifyExit(existing.exitCode)),
                 )

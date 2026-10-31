@@ -136,11 +136,7 @@ private fun Session.tracksFor(uris: List<String>): List<Track> = uris.mapNotNull
             PlaybackSource(
                 provider = ProviderId.SPOTIFY,
                 providerTrackId = base62,
-                quality = AudioQuality(
-                    tier = QualityTier.LOSSLESS,
-                    sampleRateHz = 44_100,
-                    bitDepth = 16,
-                ),
+                quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality,
                 isPlayable = true,
                 handle = PlaybackHandle.ProviderPlayback(
                     ProviderId.SPOTIFY,

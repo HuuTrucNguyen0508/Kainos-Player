@@ -8,7 +8,11 @@ import java.security.SecureRandom
 
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()
 
-actual fun isNetworkAvailable(): Boolean = true
+actual fun isNetworkAvailable(): Boolean = runCatching {
+    java.net.NetworkInterface.getNetworkInterfaces().toList().any { network ->
+        network.isUp && !network.isLoopback && network.inetAddresses.toList().any { !it.isLinkLocalAddress && !it.isLoopbackAddress }
+    }
+}.getOrDefault(true)
 
 actual fun monotonicElapsedRealtimeMs(): Long = System.nanoTime() / 1_000_000L
 
