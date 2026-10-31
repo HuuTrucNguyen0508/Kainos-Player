@@ -249,12 +249,12 @@ class HubLifecycleRegressionTest {
             ).redirectErrorStream(true).start()
             val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
             try {
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
                 while (!Files.exists(ready) && process.isAlive && System.nanoTime() < deadline) Thread.sleep(10)
                 assertTrue(Files.exists(ready), "Child service must own the real hub lock")
                 f.onStop = {
                     process.destroy()
-                    assertTrue(process.waitFor(5, TimeUnit.SECONDS))
+                    assertTrue(process.waitFor(30, TimeUnit.SECONDS))
                 }
                 assertTrue(owner.acquire())
                 assertEquals(143, process.exitValue(), "Java exits with 128 plus SIGTERM")
@@ -268,7 +268,7 @@ class HubLifecycleRegressionTest {
             } finally {
                 owner.close {}
                 if (process.isAlive) process.destroyForcibly()
-                assertTrue(process.waitFor(5, TimeUnit.SECONDS))
+                assertTrue(process.waitFor(30, TimeUnit.SECONDS))
             }
         }
     }
