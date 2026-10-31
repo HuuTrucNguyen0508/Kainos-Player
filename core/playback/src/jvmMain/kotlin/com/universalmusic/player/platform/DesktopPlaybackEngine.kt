@@ -182,7 +182,7 @@ class DesktopPlaybackEngine internal constructor(
             requestToken
         }
         when (handle) {
-            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = handle.startPositionMs / 1000, token = token)
+            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = handle.startPositionMs / 1000.0, token = token)
             is PlaybackHandle.ProviderPlayback -> {
                 if (handle.provider != ProviderId.SPOTIFY) {
                     throw UnsupportedPlaybackException(
@@ -322,7 +322,7 @@ class DesktopPlaybackEngine internal constructor(
         val handle = lastHandle ?: return null
         invalidatePendingStartLocked()
         publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
+        return Restart(handle, lastQuality, elapsedOffset / 1000.0, requestToken, EngineStatus.PLAYING)
     }
 
     private fun launchRestart(restart: Restart) {
@@ -397,7 +397,7 @@ class DesktopPlaybackEngine internal constructor(
         val targetStatus = current.status
         userPaused = targetStatus == EngineStatus.PAUSED
         publishState(_state.value.copy(status = EngineStatus.BUFFERING))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
+        return Restart(handle, lastQuality, elapsedOffset / 1000.0, requestToken, targetStatus)
     }
 
     override fun stopForTransition() {
@@ -459,7 +459,7 @@ class DesktopPlaybackEngine internal constructor(
 
     private suspend fun startUrl(
         url: String,
-        startSeconds: Long,
+        startSeconds: Double,
         token: Long,
         targetStatus: EngineStatus = EngineStatus.PLAYING,
     ) {
@@ -946,6 +946,7 @@ class DesktopPlaybackEngine internal constructor(
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
         PlaybackTrace.log("Engine", "$name warning: ${failure.message}")
+        if (name.endsWith("stop")) return
         synchronized(lifecycleLock) {
             if (spotifyIsActive()) publishState(_state.value.copy(syncWarning = "$name failed; waiting for receiver state"))
         }
@@ -1001,7 +1002,7 @@ class DesktopPlaybackEngine internal constructor(
     private data class Restart(
         val handle: PlaybackHandle,
         val quality: AudioQuality?,
-        val startSeconds: Long,
+        val startSeconds: Double,
         val token: Long,
         val targetStatus: EngineStatus,
     )

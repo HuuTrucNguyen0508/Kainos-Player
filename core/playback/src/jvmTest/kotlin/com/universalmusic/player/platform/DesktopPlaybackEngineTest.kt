@@ -34,8 +34,8 @@ class DesktopPlaybackEngineTest {
         val runtime = FakeDesktopPlaybackRuntime()
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
         try {
-            engine.play(PlaybackHandle.Url("song", startPositionMs = 42_000), null)
-            assertTrue("--start=42" in runtime.commands.single())
+            engine.play(PlaybackHandle.Url("song", startPositionMs = 42_042), null)
+            assertTrue("--start=42.042" in runtime.commands.single())
         } finally { engine.stop() }
     }
 
