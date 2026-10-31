@@ -21,6 +21,20 @@ import kotlinx.coroutines.test.runTest
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteLinkClientTest {
     @Test
+    fun aTargetArrivingAfterStartConnectsWithinASecond() = runTest {
+        var ready = false
+        val rig = rig(ready = { ready })
+        runCurrent()
+        assertNull(rig.transport.polls.tryReceive().getOrNull())
+
+        advanceTimeBy(100)
+        ready = true
+        advanceTimeBy(900)
+
+        rig.nextPoll()
+    }
+
+    @Test
     fun aHiddenAppHoldsOnePollAndBecomingVisibleResumesLeaseRefresh() = runTest {
         var visible = false
         val rig = rig(pressable = { visible })
@@ -475,6 +489,7 @@ class RemoteLinkClientTest {
         artwork: RemoteArtworkReader = RemoteArtworkReader { null },
         connect: (suspend (PairedPeer) -> RemoteLinkTransport)? = null,
         pressable: () -> Boolean = { true },
+        ready: () -> Boolean = { true },
     ): Rig {
         val transport = FakeTransport()
         val player = FakePlayer()
@@ -483,7 +498,7 @@ class RemoteLinkClientTest {
         val hub = PairedPeer("pc", "PC", CertFingerprint.parse("cd".repeat(32))!!, pairedAtMs = 1)
         val client = RemoteLinkClient(
             scope = backgroundScope,
-            target = { DeliveryTarget(hub, "phone", CertFingerprint.parse("ef".repeat(32))!!) },
+            target = { DeliveryTarget(hub, "phone", CertFingerprint.parse("ef".repeat(32))!!).takeIf { ready() } },
             connect = connect ?: { transport },
             player = player,
             artwork = artwork,

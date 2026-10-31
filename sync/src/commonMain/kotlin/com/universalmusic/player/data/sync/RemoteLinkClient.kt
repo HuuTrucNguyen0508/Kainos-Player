@@ -208,8 +208,9 @@ class RemoteLinkClient(
         while (true) {
             val current = target()
             if (current == null) {
+                // The app has not finished loading yet, so nothing is wrong and the wait stays short.
                 _state.update { it.copy(connected = false) }
-                backoff(backoffMs.last())
+                backoff(REMOTE_TARGET_WAIT_MS)
                 continue
             }
             try {
@@ -466,5 +467,7 @@ const val REMOTE_DIRECT_LEASE_FRESH_MS = 3_000L
 // A single fast reconnect recovers a brief LAN failure inside the command deadline.
 // Sustained failures still back off to 30 seconds. Poll seq/epoch dedupe is unchanged.
 val REMOTE_BACKOFF_MS = listOf(200L, 2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
+
+internal const val REMOTE_TARGET_WAIT_MS = 250L
 
 internal const val REMOTE_TRACE_TAG = "Remote"

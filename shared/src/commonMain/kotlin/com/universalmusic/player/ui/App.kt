@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -510,12 +512,19 @@ private fun HandoffNoticeBar(container: AppContainer) {
     AnimatedVisibility(
         visible = notice != null,
         modifier = Modifier.fillMaxWidth(),
-        enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing)) +
+        enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing), expandFrom = Alignment.Top) +
             fadeIn(tween(HandoffNoticeEnterMs, easing = StandardEasing)),
-        exit = shrinkVertically(tween(HandoffNoticeExitMs, easing = StandardEasing)) +
+        exit = shrinkVertically(tween(HandoffNoticeExitMs, easing = StandardEasing), shrinkTowards = Alignment.Top) +
             fadeOut(tween(HandoffNoticeExitMs, easing = StandardEasing)),
     ) {
-        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                // Now Playing draws under the status bar, so the pill must inset itself there.
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             shown?.let { current ->
                 HandoffNoticePill(current.deviceName) { handoff.dismissNotice(current.id) }
             }
