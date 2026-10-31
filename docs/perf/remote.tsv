@@ -1,3 +1,6 @@
 date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
 2026-10-31	artwork-blocked send-to-apply ms	independent bounded artwork worker	1046.89	251.47	1048.61	251.95	10 per side	accept; 10/10 delivered each; no duplicate or late application	b42baed
-2026-10-31	2s outage send-to-apply ms	one 200ms poll reconnect before existing backoff	3951.93	2155.19	3952.53	2156.03	10 per side	accept; 10/10 delivered each; four-second deadline unchanged	see git log
+2026-10-31	2s outage send-to-apply ms	one 200ms poll reconnect before existing backoff	3951.93	2155.19	3952.53	2156.03	10 per side	accept; 10/10 delivered each; four-second deadline unchanged	61c6dc2
+2026-10-31	direct command reliability	retry phone-to-hub command	NA	NA	NA	NA	0	rejected without implementation; no request ID; ambiguous delivery can duplicate TogglePlay	NA
+2026-10-31	direct command with held poll ms	increase HTTP connection pool	44.24	NA	44.91	NA	10 baseline	not tried; held poll did not serialize direct commands; no demonstrated pool bottleneck	NA
+2026-10-31	stale UI play-state intent	explicit intent plus optimistic reconcile	NA	NA	NA	NA	0	deferred; needs UI semantics outside owned files	NA

@@ -1,0 +1,11 @@
+scenario	run	press	applied_ms	outcome	applications	request_drops	reply_drops
+restart	0	0	213.044587	STOPPED	1	0	0
+restart	1	0	202.020986	STOPPED	1	0	0
+restart	2	0	201.578394	STOPPED	1	0	0
+restart	3	0	201.768639	STOPPED	1	0	0
+restart	4	0	201.636471	STOPPED	1	0	0
+restart	5	0	201.516802	STOPPED	1	0	0
+restart	6	0	201.835185	STOPPED	1	0	0
+restart	7	0	201.590599	STOPPED	1	0	0
+restart	8	0	202.076797	STOPPED	1	0	0
+restart	9	0	201.332301	STOPPED	1	0	0
