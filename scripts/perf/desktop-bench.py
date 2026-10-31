@@ -11,6 +11,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--out', required=True, type=P)
 p.add_argument('--runs', type=int, default=10)
 p.add_argument('--fixture-format', choices=['flac','wav','unknown-flac','hires-flac'], default='flac')
+p.add_argument('--paint', action='store_true', help='Private-display screenshot proof; Spotify endpoint is first textured paint, not readiness')
 p.add_argument('--settle-ms', type=int, default=0, help='Training only: keep the window alive after the measured frame')
 p.add_argument('--cds-archive', type=P, help='Interleave ordinary JVM with this dynamic archive')
 p.add_argument('--app-dir', type=P, help='Immutable packaged lib/app directory')
@@ -18,12 +19,13 @@ p.add_argument('--compare-app-dir', type=P, help='Interleave baseline package wi
 p.add_argument('--mode', choices=['startup', 'playback', 'spotify', 'idle-gui', 'library'], required=True)
 p.add_argument('--jvm-flag', action='append', default=[])
 p.add_argument('--xvfb', default='Xvfb')
+p.add_argument('--variant', action='append', default=[], help='Interleave NAME=JSON_FLAGS, repeat for each arm')
 p.add_argument('--startup-matrix', action='store_true', help='Interleave default, tier1, tier2 and SerialGC for each run')
 p.add_argument('--capture-pcm', action='store_true', help='Requires pactl, ffmpeg PulseAudio and numpy; records only a private null sink')
 a = p.parse_args(); a.out.mkdir(parents=True, exist_ok=True)
 (a.out/'environment.json').write_text(json.dumps(dict(load=os.getloadavg(), cores=os.cpu_count(),
     flags=a.jvm_flag, page_cache_dropped=False, revision=S.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()), indent=2))
-app = a.app_dir or ROOT/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+app = a.app_dir or ROOT/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
 java = P(os.environ.get('JAVA_HOME', str(P.home()/'.jdks/temurin-17')))/'bin/java'
 cmd = [str(java), *a.jvm_flag, '-Dcompose.application.configure.swing.globals=true',
     f'-Dcompose.application.resources.dir={app}/resources', f'-Dskiko.library.path={app}',
@@ -32,6 +34,7 @@ cmd = [str(java), *a.jvm_flag, '-Dcompose.application.configure.swing.globals=tr
 assert list(app.glob('*.jar')), 'Build :desktopApp:createDistributable first'
 metadata=json.loads((a.out/'environment.json').read_text())
 metadata['packaged_jars']=[dict(name=f.name,size=f.stat().st_size) for f in sorted(app.glob('*.jar'))]
+metadata['variants']=a.variant
 metadata['worktree_dirty']=bool(S.check_output(['git','status','--porcelain'],cwd=ROOT,text=True))
 (a.out/'environment.json').write_text(json.dumps(metadata,indent=2))
 
@@ -69,8 +72,9 @@ if a.capture_pcm:
     module=S.check_output(['pactl','load-module','module-null-sink',f'sink_name={sink}','rate=48000'],text=True).strip()
 try:
     variants=[('default',[]),('tier1',['-XX:TieredStopAtLevel=1']),('tier2',['-XX:TieredStopAtLevel=2']),('serial',['-XX:+UseSerialGC'])] if a.startup_matrix else [('default',[])]
+    if a.variant: variants=[(v.split('=',1)[0],json.loads(v.split('=',1)[1])) for v in a.variant]
     if a.cds_archive: variants=[('baseline',[]),('cds',['-Xshare:auto', '-XX:SharedArchiveFile='+str(a.cds_archive), '-Xlog:cds=info'])]
-    if a.compare_app_dir: variants=[('baseline',[]),('candidate',[])]
+    if a.compare_app_dir and not a.variant: variants=[('baseline',[]),('candidate',[])]
     for iteration in range(a.runs*len(variants)):
         i=iteration//len(variants)
         variant,extra_flags=variants[iteration%len(variants)]
@@ -174,10 +178,24 @@ try:
                         if a.mode=='library' and 'library_interactive' in markers(d/'run.log'):
                             row['library_interactive_ms']=(markers(d/'run.log')['library_interactive']-start)/1e6
                             break
-                        if a.mode=='spotify' and mapped(): row['mapped_ms']=(time.monotonic_ns()-start)/1e6; break
+                        if a.mode=='spotify' and mapped():
+                            row.setdefault('mapped_ms',(time.monotonic_ns()-start)/1e6)
+                            if not a.paint: break
+                            from PIL import ImageGrab
+                            shot=ImageGrab.grab(xdisplay=display)
+                            colors=shot.convert('RGB').getcolors(1280*800) or []
+                            # Reject a blank mapped window. This does not assert login/network readiness.
+                            if len(colors)>128 and sum(n for n,_ in sorted(colors,reverse=True)[4:])>3000:
+                                row['textured_paint_ms']=(time.monotonic_ns()-start)/1e6
+                                shot.save(d/'first-textured-paint.png')
+                                break
                         if proc.poll() is not None: raise RuntimeError('exited before drawing/mapping')
                         time.sleep(.01)
                     else: raise TimeoutError('no frame/window within 30s')
+                    if a.paint and a.mode=='library':
+                        from PIL import ImageGrab
+                        ImageGrab.grab(xdisplay=display).save(d/'library-interactive.png')
+                    row.update({name+'_ms':(ns-start)/1e6 for name,ns in markers(d/'run.log').items()})
                     if a.settle_ms: time.sleep(a.settle_ms/1000)
             except Exception as e:
                 row['error']=str(e)
@@ -216,7 +234,7 @@ summary={}
 for key in sorted(set().union(*(r.keys() for r in rows))-{'run','error','variant'}):
     vals=sorted(r[key] for r in rows if key in r)
     summary[key]=dict(n=len(vals),median=statistics.median(vals),p90=vals[math.ceil(.9*len(vals))-1],min=min(vals),max=max(vals))
-if a.startup_matrix or a.compare_app_dir or a.cds_archive:
+if a.startup_matrix or a.compare_app_dir or a.cds_archive or a.variant:
     summary={variant:{key:dict(n=len(vals),median=statistics.median(vals),p90=sorted(vals)[math.ceil(.9*len(vals))-1],min=min(vals),max=max(vals)) for key in sorted(set().union(*(r.keys() for r in rows))-{'run','error','variant'}) if (vals:=[r[key] for r in rows if r['variant']==variant and key in r])} for variant,_ in variants}
 summary['errors']=sum('error' in r for r in rows)
 (a.out/'summary.json').write_text(json.dumps(summary,indent=2)); print(json.dumps(summary,indent=2))

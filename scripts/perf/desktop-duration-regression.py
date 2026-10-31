@@ -24,7 +24,7 @@ for name,fmt,duration in [('stale-flac','flac',123000),('stale-wav','wav',123000
     assert summary['errors']==0, (name,summary)
     print(name, 'observed ffprobe processes:', summary.get('ffprobe_processes'))
 if a.unsafe_playback_jar:
-    app=root/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+    app=root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
     unsafe=a.out/('unsafe-package-'+str(os.getpid()))
     shutil.copytree(app,unsafe,ignore=shutil.ignore_patterns('kainos.jsa*'),)
     for jar in unsafe.glob('playback-jvm-*.jar'): jar.unlink()

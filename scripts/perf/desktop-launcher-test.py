@@ -29,6 +29,21 @@ class CdsLauncherTest(Base):
             self.assertEqual('-XX:SharedArchiveFile='+str(archive) in args,present)
             self.assertEqual(args[-2:],['com.universalmusic.player.desktop.MainKt','--probe-argument'])
 
+    def test_new_package_wins_and_rebuild_switches_from_legacy(self):
+        temporary, result = self.run_launcher()
+        java = temporary/'fake-jdk/bin/java'
+        java.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$ROOT_MARKER/java-args"\n')
+        app = temporary/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
+        # Simulate a rebuild that creates the new package alongside an older one.
+        gradle = temporary/'gradlew'
+        gradle.write_text('#!/bin/bash\nmkdir -p "'+str(app)+'"\ntouch "'+str(app/'app.jar')+'"\n')
+        result = subprocess.run(['bash', str(temporary/'scripts/kainos-player'), '--rebuild'],
+            env={**os.environ, 'JAVA_HOME':str(temporary/'fake-jdk'), 'ROOT_MARKER':str(temporary)},
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = (temporary/'java-args').read_text().splitlines()
+        self.assertEqual(args[args.index('-cp')+1], str(app/'app.jar'))
+
     def test_incomplete_archive_uses_normal_startup(self):
         temporary, result = self.run_launcher()
         java=temporary/'fake-jdk/bin/java'

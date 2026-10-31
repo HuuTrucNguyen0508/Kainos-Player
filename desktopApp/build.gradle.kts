@@ -21,7 +21,8 @@ compose.desktop {
         mainClass = "com.universalmusic.player.desktop.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Dmg, TargetFormat.Msi)
-            packageName = "Kainos Player"
+            // JDK 17 AppCDS maps the archive but reloads application classes when this path contains spaces.
+            packageName = "KainosPlayer"
             packageVersion = "1.0.0"
             description = "A unified Material music player for Spotify and YouTube Music."
             copyright = "Copyright 2026"

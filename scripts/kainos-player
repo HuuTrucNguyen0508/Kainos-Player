@@ -22,7 +22,11 @@ elif [[ -x "${HOME}/.local/bin/yt-dlp" ]]; then
   export KAINOS_YT_DLP="${HOME}/.local/bin/yt-dlp"
 fi
 
-APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer"
+# Existing packages remain launchable until the next explicit rebuild.
+if [[ ! -d "$APP_ROOT" && -d "$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+fi
 APP_DIR="$APP_ROOT/lib/app"
 JAVA_BIN="$JAVA_HOME/bin/java"
 
@@ -50,6 +54,13 @@ if [[ "$REBUILD" == "1" || ! -d "$APP_DIR" ]]; then
     exit 1
   fi
 fi
+
+if [[ -d "$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer"
+elif [[ -d "$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+fi
+APP_DIR="$APP_ROOT/lib/app"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Kainos Player package is missing ($APP_DIR). See log: $LOG" >&2

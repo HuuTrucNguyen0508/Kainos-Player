@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-app = root/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+app = root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
 xvfb = shutil.which(os.environ.get('KAINOS_CDS_XVFB', 'Xvfb'))
 if not xvfb:
     print('AppCDS training skipped: Xvfb unavailable; launcher will use normal startup.')
