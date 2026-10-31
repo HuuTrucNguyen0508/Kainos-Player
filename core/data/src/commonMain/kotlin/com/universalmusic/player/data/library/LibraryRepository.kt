@@ -20,7 +20,6 @@ import com.universalmusic.player.data.sync.compacted
 import com.universalmusic.player.data.sync.favoriteIdsFromOps
 import com.universalmusic.player.data.sync.forHeartsSync
 import com.universalmusic.player.data.sync.isLocalFileHeartCanonicalId
-import com.universalmusic.player.data.sync.isPortableHeartCanonicalId
 import com.universalmusic.player.data.sync.isProviderHeartCanonicalId
 import com.universalmusic.player.data.sync.isSpotifyHeartCanonicalId
 import com.universalmusic.player.data.sync.mergeFavoriteMetadata
@@ -347,38 +346,61 @@ class LibraryRepository(
         val deltas = mutableListOf<Pair<Track, Boolean>>()
         persistMutex.withLock {
             val before = _favorites.value
-            val known = (_saved.value + localTrackCatalog()).mapNotNull { it.toPersisted(0).localSyncIdentity() } +
+            val deviceTracks = (localTrackCatalog() + _saved.value)
+                .filter { it.canonicalId.startsWith("local:") }
+                .distinctBy { it.canonicalId }
+            val deviceIndex = LocalSyncIdentityIndex(deviceTracks)
+            val deviceById = deviceTracks.associateBy { it.canonicalId }
+            val known = (_saved.value + deviceTracks).mapNotNull { it.toPersisted(0).localSyncIdentity() } +
                 heartOps.mapNotNull { it.localSyncIdentity() } + remote.ops.mapNotNull { it.localSyncIdentity() } +
                 remote.favoritesMetadata.mapNotNull { it.localSyncIdentity() }
             val aliases = localSyncAliases(known)
             fun canonicalMetadata(track: PersistedTrack): PersistedTrack = aliases[track.canonicalId]?.let {
                 track.copy(canonicalId = it, localContentKey = localKeyHeartContentKey(it))
             } ?: track
-            val mergedOps = mergeHeartOps(
+            val wireOps = mergeHeartOps(
                 localOps = heartOps.collapseLocalSyncAliases(known),
                 remoteOps = remote.ops.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) }.collapseLocalSyncAliases(known),
                 localSpotifyAccountId = spotifyAccountId,
                 remoteSpotifyAccountId = remote.spotifyAccountId,
-            ).compacted()
-            // Preserve device-local favorite ids; portable wire ids come from ops.
-            val portableFavorites = mergedOps.favoriteIdsFromOps()
+            )
+            val mergedOps = wireOps.map { op ->
+                // Resolve wire aliases before publishing or saving. A later rematch may
+                // suspend or fail, leaving both ids visible for the same device track.
+                val match = if (isPortableLocalHeartCanonicalId(op.canonicalId)) {
+                    op.localSyncIdentity()?.let(deviceIndex::match)
+                } else null
+                if (match == null) op else op.copy(
+                    canonicalId = match.canonicalId,
+                    localIdentity = match.localSyncIdentity()?.let {
+                        it.copy(contentKey = it.contentKey ?: op.localSyncIdentity()?.contentKey)
+                    },
+                )
+            }.compacted()
+            val opFavorites = mergedOps.favoriteIdsFromOps()
+            val opIds = mergedOps.mapTo(HashSet()) { it.canonicalId }
             val localOnlyFavorites = before.filter {
-                it.startsWith("local:") && !isPortableHeartCanonicalId(it)
+                it.startsWith("local:") && it !in opIds
             }
-            val after = portableFavorites + localOnlyFavorites
+            val after = opFavorites + localOnlyFavorites
 
             val localRemembered = _saved.value.map { canonicalMetadata(it.toPersisted(clock())) }
             val mergedMeta = mergeFavoriteMetadata(
                 local = localRemembered,
                 remote = remote.favoritesMetadata.map(::canonicalMetadata),
-                favoriteIds = after,
-            )
+                favoriteIds = after + wireOps.favoriteIdsFromOps(),
+            ).map { persisted ->
+                val match = if (isPortableLocalHeartCanonicalId(persisted.canonicalId)) {
+                    persisted.localSyncIdentity()?.let(deviceIndex::match)
+                } else null
+                if (match == null) persisted else persisted.copy(canonicalId = match.canonicalId)
+            }.filter { it.canonicalId in after }
             val rememberedById = LinkedHashMap<String, Track>()
             for (track in _saved.value) {
                 rememberedById[track.canonicalId] = track
             }
             for (persisted in mergedMeta) {
-                val existing = rememberedById[persisted.canonicalId]
+                val existing = rememberedById[persisted.canonicalId] ?: deviceById[persisted.canonicalId]
                 rememberedById[persisted.canonicalId] = if (existing != null) {
                     // Keep local cache sources; overlay portable metadata fields.
                     existing.copy(
@@ -406,7 +428,9 @@ class LibraryRepository(
                 val have = rememberedById.keys
                 for (id in after) {
                     if (id in have) continue
-                    val persisted = mergedMeta.firstOrNull { it.canonicalId == id } ?: continue
+                    val persisted = mergedMeta.firstOrNull { it.canonicalId == id }
+                        ?: deviceById[id]?.toPersisted(clock())
+                        ?: continue
                     add(persisted.toDomain().withPersistedSourcesOnly())
                 }
             }.distinctBy { it.canonicalId }
