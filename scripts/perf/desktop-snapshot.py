@@ -13,7 +13,7 @@ p.add_argument('--out',type=Path,required=True)
 p.add_argument('--playback-jar',type=Path)
 a=p.parse_args()
 root=Path(__file__).resolve().parents[2]
-app=root/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+app=root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
 shutil.copytree(app,a.out,ignore=shutil.ignore_patterns('kainos.jsa*'))
 if a.playback_jar:
     for jar in a.out.glob('playback-jvm-*.jar'): jar.unlink()

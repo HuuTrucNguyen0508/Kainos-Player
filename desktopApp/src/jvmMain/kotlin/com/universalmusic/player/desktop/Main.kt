@@ -41,8 +41,16 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
+import io.ktor.client.HttpClient
+import java.util.concurrent.CompletableFuture
+import com.universalmusic.player.platform.createHttpClient
 
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == "--perf-storage") {
+        require(DesktopIsolation.current.isIsolated)
+        runStorageProbe()
+        return
+    }
     if (args.firstOrNull() == "--perf-playback") {
         require(DesktopIsolation.current.isIsolated) { "Performance runs require an isolated instance" }
         runPlaybackProbe(args.drop(1))
@@ -62,6 +70,12 @@ fun main(args: Array<String>) {
             exitProcess(75)
         }
     } else null
+    val serialHttp = java.lang.Boolean.getBoolean("kainos.perf.serialHttp")
+    if (serialHttp) require(isolation.isIsolated) { "Serial HTTP diagnostic requires isolation" }
+    // Overlap client initialization with GUI startup; AppContainer receives this same client.
+    val httpClient = if (args.none { it == "--hub-only" } && !serialHttp) {
+        CompletableFuture.supplyAsync { createHttpClient() }
+    } else null
     val ownership = desktopHubOwnership(hubOnly = args.any { it == "--hub-only" })
     val mode = ownership.mode
     val container = AtomicReference<AppContainer?>()
@@ -79,7 +93,7 @@ fun main(args: Array<String>) {
         } else if (mode != HubProcessMode.GUI) {
             runHubOnly(ensureAppContainer().also(container::set), ownership)
         } else {
-            runGui(container::set)
+            runGui(container::set, httpClient)
             0
         }
     } finally {
@@ -88,11 +102,13 @@ fun main(args: Array<String>) {
     if (exitCode != 0) exitProcess(exitCode)
 }
 
-private fun runGui(onContainer: (AppContainer) -> Unit) {
+private fun runGui(onContainer: (AppContainer) -> Unit, httpClient: CompletableFuture<HttpClient>?) {
     val icon = BitmapPainter(useResource("icon.png", ::loadImageBitmap))
     application {
         if (System.getenv("KAINOS_PERF_MARKERS") == "1") println("PERF\tcontainer_begin\t${System.nanoTime()}")
-        val container = ensureAppContainer().also(onContainer)
+        val container = ensureAppContainer(httpClient = httpClient?.join()) { name ->
+            if (System.getenv("KAINOS_PERF_MARKERS") == "1") println("PERF\t$name\t${System.nanoTime()}")
+        }.also(onContainer)
         if (System.getenv("KAINOS_PERF_MARKERS") == "1") println("PERF\tcontainer_end\t${System.nanoTime()}")
         val firstDraw = androidx.compose.runtime.remember { AtomicBoolean(false) }
         LaunchedEffect(container) {

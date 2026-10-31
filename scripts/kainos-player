@@ -22,7 +22,11 @@ elif [[ -x "${HOME}/.local/bin/yt-dlp" ]]; then
   export KAINOS_YT_DLP="${HOME}/.local/bin/yt-dlp"
 fi
 
-APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer"
+# Existing packages remain launchable until the next explicit rebuild.
+if [[ ! -d "$APP_ROOT" && -d "$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+fi
 APP_DIR="$APP_ROOT/lib/app"
 JAVA_BIN="$JAVA_HOME/bin/java"
 
@@ -51,6 +55,13 @@ if [[ "$REBUILD" == "1" || ! -d "$APP_DIR" ]]; then
   fi
 fi
 
+if [[ -d "$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/KainosPlayer"
+elif [[ -d "$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app" ]]; then
+  APP_ROOT="$ROOT/desktopApp/build/compose/binaries/main/app/Kainos Player"
+fi
+APP_DIR="$APP_ROOT/lib/app"
+
 if [[ ! -d "$APP_DIR" ]]; then
   echo "Kainos Player package is missing ($APP_DIR). See log: $LOG" >&2
   exit 1
@@ -68,13 +79,22 @@ classpath="$(IFS=:; echo "${jars[*]}")"
 
 # Dynamic archives are specific to the packaged jars and JDK. auto sharing lets
 # the JVM fall back when an archive is stale; a missing archive needs no flags.
+# Check integrity off the launch path. A corrupt archive is removed so a JVM
+# crash cannot repeat on the next launch. Older packages without a digest skip CDS.
 jvm_args=()
 archive="$APP_DIR/kainos.jsa"
 archive_size="$APP_DIR/kainos.jsa.size"
-if [[ -f "$archive" && -f "$archive_size" ]] &&
+archive_digest="$APP_DIR/kainos.jsa.sha256"
+if [[ -f "$archive" && -f "$archive_size" && -f "$archive_digest" ]] &&
    read -r expected_size < "$archive_size" &&
    [[ "$expected_size" =~ ^[0-9]+$ ]] &&
    [[ "$(stat -c%s "$archive" 2>/dev/null)" == "$expected_size" ]]; then
+  (
+    if ! (cd "$APP_DIR" && sha256sum --status -c kainos.jsa.sha256); then
+      rm -f -- "$archive"
+      echo "Removed corrupt AppCDS archive; next launch will use normal startup."
+    fi
+  ) >>"$LOG" 2>&1 &
   jvm_args+=( -Xshare:auto "-XX:SharedArchiveFile=$APP_DIR/kainos.jsa" )
 fi
 
