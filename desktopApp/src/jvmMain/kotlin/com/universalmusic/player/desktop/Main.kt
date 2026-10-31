@@ -142,10 +142,18 @@ private fun runGui(onContainer: (AppContainer) -> Unit, httpClient: CompletableF
                 println("PERF\tidle_end\t${System.nanoTime()}")
             }
         }
+        LaunchedEffect(container, firstDraw) {
+            while (!firstDraw.get()) withFrameNanos { }
+            delay(1_000)
+            if (container.settings.value.gapless && !java.lang.Boolean.getBoolean("kainos.perf.noMpvWarmup")) {
+                com.universalmusic.player.platform.DesktopPlaybackWarmup.start()
+            }
+        }
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(
             onCloseRequest = {
                 unbindPlatformMediaControls()
+                com.universalmusic.player.platform.DesktopPlaybackWarmup.close()
                 // Bounded so a wedged disk never blocks quitting.
                 runBlocking { withTimeoutOrNull(2_000) { container.flushListeningSession() } }
                 exitApplication()
@@ -195,12 +203,12 @@ private fun runGui(onContainer: (AppContainer) -> Unit, httpClient: CompletableF
                 false
             },
         ) {
-            if (System.getenv("KAINOS_PERF_MARKERS") == "1") {
-                Box(Modifier.fillMaxSize().drawWithContent {
-                    drawContent()
-                    if (firstDraw.compareAndSet(false, true)) println("PERF\tfirst_draw\t${System.nanoTime()}")
-                }) { UniversalMusicApp(container) }
-            } else UniversalMusicApp(container)
+            Box(Modifier.fillMaxSize().drawWithContent {
+                drawContent()
+                if (firstDraw.compareAndSet(false, true) && System.getenv("KAINOS_PERF_MARKERS") == "1") {
+                    println("PERF\tfirst_draw\t${System.nanoTime()}")
+                }
+            }) { UniversalMusicApp(container) }
         }
     }
 }

@@ -1,0 +1,53 @@
+[
+  {
+    "mode": "sigterm",
+    "mpv_rss_kib": 55384,
+    "cpu_percent": 0.0,
+    "audio_output_open": false,
+    "pulse_streams": 0,
+    "replies": {
+      "idle-active": {
+        "data": true,
+        "request_id": 0,
+        "error": "success"
+      },
+      "current-ao": {
+        "request_id": 0,
+        "error": "property unavailable"
+      },
+      "audio-params": {
+        "request_id": 0,
+        "error": "property unavailable"
+      }
+    },
+    "no_orphan": true
+  },
+  {
+    "mode": "sigkill",
+    "mpv_rss_kib": 55592,
+    "cpu_percent": 0.0,
+    "audio_output_open": false,
+    "pulse_streams": 0,
+    "replies": {
+      "idle-active": {
+        "data": true,
+        "request_id": 0,
+        "error": "success"
+      },
+      "current-ao": {
+        "request_id": 0,
+        "error": "property unavailable"
+      },
+      "audio-params": {
+        "request_id": 0,
+        "error": "property unavailable"
+      }
+    },
+    "no_orphan": true
+  },
+  {
+    "mode": "missing",
+    "children": 0,
+    "no_orphan": true
+  }
+]

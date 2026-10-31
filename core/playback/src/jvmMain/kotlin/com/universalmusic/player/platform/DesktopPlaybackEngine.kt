@@ -525,6 +525,7 @@ class DesktopPlaybackEngine internal constructor(
         token: Long,
         targetStatus: EngineStatus = EngineStatus.PLAYING,
     ) {
+        if (runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.playbackRequested()
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
         val suppliedDuration = synchronized(lifecycleLock) {
@@ -536,7 +537,8 @@ class DesktopPlaybackEngine internal constructor(
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val seamless = gaplessEnabled && localFile(url) && runtime.supportsEvents
-            val socket = runtime.createIpcPath()
+            val warm = if (seamless && runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.take() else null
+            val socket = warm?.second ?: runtime.createIpcPath()
             val command = buildList {
                 add(mpv)
                 add("--no-video")
@@ -556,7 +558,7 @@ class DesktopPlaybackEngine internal constructor(
                 if (!seamless) add(url)
             }
             val process = try {
-                runtime.startProcess(command)
+                warm?.first ?: runtime.startProcess(command)
             } catch (error: Throwable) {
                 runtime.deleteIpcPath(socket)
                 throw error
@@ -574,6 +576,10 @@ class DesktopPlaybackEngine internal constructor(
                 startSeconds > 0 || targetStatus == EngineStatus.PAUSED
             }
             if (active.gapless) {
+                sendIpcIfActive(active, """["set_property","volume",$volumePercent]""")
+                if (targetStatus == EngineStatus.PAUSED) {
+                    check(sendIpcIfActive(active, """["set_property","pause",true]"""))
+                }
                 val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
                 synchronized(lifecycleLock) {
                     if (activeProcess !== active) { events.close(); return@withContext false }
@@ -1346,7 +1352,8 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         Files.createTempFile("kainos-mpv-", ".sock").also { Files.deleteIfExists(it) }
 
     override fun startProcess(command: List<String>): Process =
-        ProcessBuilder(command).redirectErrorStream(true).start()
+        // The JVM owns stdin. mpv exits on EOF, including after SIGKILL of the JVM.
+        ProcessBuilder(command + "--input-ipc-client=fd://0").redirectErrorStream(true).start()
 
     override fun waitForIpc(socket: Path) {
         val deadline = System.currentTimeMillis() + 2_500

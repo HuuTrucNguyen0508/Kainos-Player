@@ -34,6 +34,10 @@ internal fun runPlaybackProbe(paths: List<String>) = runBlocking {
     fun mark(name: String) = println("PERF\t$name\t${System.nanoTime()}")
     suspend fun playing() = withTimeout(15_000) { engine.state.first { it.status == EngineStatus.PLAYING } }
     try {
+        if (!java.lang.Boolean.getBoolean("kainos.perf.noMpvWarmup")) {
+            DesktopPlaybackWarmup.start().get()
+            delay(300)
+        }
         mark("session_play")
         session.play(tracks)
         playing()
