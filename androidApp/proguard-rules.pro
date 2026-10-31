@@ -31,3 +31,7 @@
 # Desktop CLI logging inside the bundled librespot artifact is never invoked.
 -dontwarn org.apache.logging.log4j.Level
 -dontwarn org.apache.logging.log4j.core.config.Configurator
+
+# Room locates WorkManager's generated database by name and invokes this
+# constructor reflectively. Full-mode R8 otherwise removes it before app startup.
+-keep class androidx.work.impl.WorkDatabase_Impl { public <init>(); }
