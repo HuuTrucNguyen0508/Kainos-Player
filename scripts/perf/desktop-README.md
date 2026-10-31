@@ -159,3 +159,65 @@ in an empty Library. Do not call these equivalent or claim Kainos beats Spotify.
 Raw capture directories are ignored by the appended `.gitignore` rules. Keep only
 compact summaries, verification status and playback artifact hashes in this directory.
 No images, logs, per-run manifests or generated archives belong in the repository.
+
+## Follow-up: SQLite and startup wiring
+
+`desktop-storage.py` invokes `SQLiteJDBCLoader.initialize()` directly in fresh,
+isolated JVMs. Its timer includes loader cleanup, extraction and loading, plus
+reflection-call overhead. It excludes loading `SQLiteJDBCLoader` itself. After
+that it times the app's first `UserLibraryStore.read()` and a subsequent read.
+The first read includes SQLDelight driver creation, schema setup, downgrade guard,
+legacy import checks and the query, on a fresh empty fixture. It is not a timer
+around only `sqlite3_open`. This leaves migration and guard ordering untouched.
+
+```bash
+flock -x /tmp/kainos-perf.lock python scripts/perf/desktop-storage.py --out /tmp/storage-new --runs 10
+python scripts/perf/desktop-spans.py /tmp/startup-new
+```
+
+For the pre-extracted-native trial, extract
+`org/sqlite/native/Linux/x86_64/libsqlitejdbc.so` from the single packaged
+`sqlite-jdbc-*.jar` into a new temporary directory, then add
+`--variant='native=["-Dorg.sqlite.lib.path=/that/directory","-Dorg.sqlite.lib.name=libsqlitejdbc.so"]'`
+alongside `--variant='baseline=[]'`. The same variants work in `desktop-bench.py`.
+For the temp-directory trial, create an empty directory and use
+`--variant='tmpdir=["-Dorg.sqlite.tmpdir=/that/directory"]'`.
+The loader bytecode confirms `org.sqlite.tmpdir` changes its extraction/cleanup
+directory, rather than making extraction persistent between processes.
+
+Ten interleaved samples measured loader initialization at median 39.95 ms
+(range 39.35–41.44), pre-extracted 9.29 ms (8.69–11.14), dedicated temp directory
+37.26 ms (36.11–38.06). The subsequent guarded first database read took 27.00 ms
+and the second read 0.68 ms in the baseline. These diagnostic spans explain the
+old 42 ms trace bound but do not establish a 42 ms first-frame bottleneck.
+Pre-extraction did not improve the user endpoint: first draw 529.11 → 535.32 ms,
+Library 714.96 → 714.91 ms. Dedicated temp directory gave 548.13 → 537.81 ms
+first draw and 735.34 → 721.11 ms Library, both under 5%. Neither change ships.
+Therefore there is no native sidecar version/missing-file fallback to maintain.
+
+AppContainer marks separate configuration/HTTP setup, store construction,
+providers, player, MPRIS registration and library hydration. In the serial baseline,
+median spans were 49.06, 1.65, 4.92, 5.12, 28.98 and 55.97 ms respectively.
+The library span overlaps first composition and includes the database read;
+these are wall-clock spans, not additive CPU attribution. Database initialization
+already runs through `Dispatchers.IO` behind the storage mutex. Moving it later
+would risk delaying hydration; it remains unchanged.
+
+The desktop GUI now prepares its one HTTP client on a worker while the GUI starts,
+and gives that same client to AppContainer. Hub-only and Android initialization
+keep their existing path. `-Dkainos.perf.serialHttp=true` restores the serial path
+for isolated measurements only. Reproduce with the existing Library harness,
+`--variant='baseline=["-Dkainos.perf.serialHttp=true"]' --variant='prewarm=[]'`,
+and the packaged archive passed through `--jvm-flag` as above.
+
+Raw measurements are `/tmp/kainos-sqlite-native-ab`, `/tmp/kainos-storage-spans`,
+`/tmp/kainos-startup-spans-ab`, `/tmp/kainos-http-ab` and
+`/tmp/kainos-http-final-ab`. They use fresh JVMs, an empty isolated Library,
+private Xvfb software rendering and warm OS page cache. The page cache was not
+dropped. Timing sessions held the exclusive machine lock, with load around 1–2
+on 24 logical CPUs. No real library, account, phone, audio output or desktop was used.
+
+Package-path audit: only the intentional launcher fallback and launcher fixtures
+used the old directory. Tests now exercise both paths and the rebuild transition.
+CI, release scripts and the desktop entry use Gradle/the launcher rather than
+that directory. Historical measurements mentioning the old path remain historical.
