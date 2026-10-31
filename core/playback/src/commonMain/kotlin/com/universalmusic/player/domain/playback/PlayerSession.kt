@@ -117,6 +117,17 @@ class PlayerSession(
         val resolved: ResolvedPlayback,
         val validUntil: Long,
     )
+    private data class PrefetchTarget(val itemId: String, val track: Track)
+    private var prefetchTarget: PrefetchTarget? = null
+
+    // Presentation metadata cannot change which audio we resolve.
+    private fun resolutionTrack(track: Track): Track = track.copy(durationMs = null, artwork = null)
+
+    private fun nextPrefetchTarget(): PrefetchTarget? {
+        val next = queue.nextIndex()?.let { queueState.value.items.getOrNull(it) } ?: return null
+        return PrefetchTarget(next.id, resolutionTrack(next.track))
+    }
+
     private var prefetched: Prefetched? = null
     private var prefetchedStartGeneration: Long? = null
 
@@ -174,8 +185,7 @@ class PlayerSession(
     init {
         scope.launch(sessionContext) {
             queueState.collect {
-                prefetchJob?.cancel()
-                prefetched = null
+                if (nextPrefetchTarget() != prefetchTarget) schedulePrefetch(playGeneration)
             }
         }
         scope.launch(sessionContext) {
@@ -942,6 +952,7 @@ class PlayerSession(
     private fun beginTransition() {
         prefetchJob?.cancel()
         prefetched = null
+        prefetchTarget = null
         playGeneration++
         prefetchedStartGeneration = null
         completionArmed = false
@@ -955,9 +966,11 @@ class PlayerSession(
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
         val ready = prefetched?.takeIf {
-            it.itemId == item.id && it.track == item.track &&
+            it.itemId == item.id && resolutionTrack(it.track) == resolutionTrack(item.track) &&
                 it.preferences == _preferences.value && clock() < it.validUntil
-        }?.resolved
+        }?.resolved?.let { resolved ->
+            resolved.copy(track = resolved.track.copy(durationMs = item.track.durationMs, artwork = item.track.artwork))
+        }
         prefetched = null
         prefetchJob?.cancel()
         beginTransition()
@@ -1114,8 +1127,10 @@ class PlayerSession(
     /** One short-lived YouTube result only; no Spotify traffic and no persisted URLs. */
     private fun schedulePrefetch(generation: Long) {
         prefetchJob?.cancel()
-        val snapshot = queueState.value
-        val next = snapshot.upcoming.firstOrNull() ?: return
+        prefetched = null
+        val target = nextPrefetchTarget()
+        prefetchTarget = target
+        val next = target?.let { key -> queueState.value.items.firstOrNull { it.id == key.itemId } } ?: return
         if (next.track.sources.isEmpty() || next.track.sources.any { it.provider != ProviderId.YOUTUBE_MUSIC }) return
         val preferences = _preferences.value
         prefetchJob = scope.launch(sessionContext) {
@@ -1129,7 +1144,7 @@ class PlayerSession(
                     result.copy(source = enrichSource(result.track, result.source))
                 } ?: return@launch
                 currentCoroutineContext().ensureActive()
-                if (generation != playGeneration || queueState.value !== snapshot || preferences != _preferences.value) return@launch
+                if (generation != playGeneration || nextPrefetchTarget() != target || preferences != _preferences.value) return@launch
                 val url = (resolved.source.handle as? PlaybackHandle.Url)?.url ?: return@launch
                 // YouTube signed URLs normally carry epoch-seconds expiry. Leave a safety margin.
                 val expires = url.substringAfter('?', "").split('&')
