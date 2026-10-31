@@ -1064,17 +1064,43 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     private fun readLocalFlacDurationMs(media: String): Long? = runCatching {
         val path = Path.of(media)
         if (!Files.isRegularFile(path)) return null
-        val header = Files.newInputStream(path).use { it.readNBytes(42) }
-        if (header.size != 42 || header.copyOfRange(0, 4).decodeToString() != "fLaC") return null
-        if ((header[4].toInt() and 0x7f) != 0 ||
-            header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()
-        ) return null
-        var packed = 0L
-        for (index in 18..25) packed = (packed shl 8) or (header[index].toLong() and 0xff)
-        val sampleRate = packed ushr 44
-        val samples = packed and ((1L shl 36) - 1)
-        if (sampleRate == 0L || samples == 0L) return null
-        ((samples * 1_000) / sampleRate).takeIf { it > 0 }
+        java.io.RandomAccessFile(path.toFile(), "r").use { file ->
+            if (file.length() < 44) return null
+            val header = ByteArray(42)
+            file.readFully(header)
+            if (header.copyOfRange(0, 4).decodeToString() != "fLaC") return null
+            if ((header[4].toInt() and 0x7f) != 0 ||
+                header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()
+            ) return null
+            fun unsigned16(offset: Int) =
+                ((header[offset].toInt() and 0xff) shl 8) or (header[offset + 1].toInt() and 0xff)
+            val minBlock = unsigned16(8)
+            val maxBlock = unsigned16(10)
+            var packed = 0L
+            for (index in 18..25) packed = (packed shl 8) or (header[index].toLong() and 0xff)
+            val sampleRate = packed ushr 44
+            val channels = ((packed ushr 41) and 7) + 1
+            val bitsPerSample = ((packed ushr 36) and 31) + 1
+            val samples = packed and ((1L shl 36) - 1)
+            if (sampleRate !in 1L..655350L || channels !in 1L..8L ||
+                bitsPerSample !in 4L..32L || minBlock < 16 || minBlock > maxBlock || samples == 0L
+            ) return null
+            var last = header[4].toInt() and 0x80 != 0
+            while (!last) {
+                // Seek over payloads (including large pictures); read only block headers.
+                if (file.filePointer + 4 > file.length()) return null
+                val type = file.readUnsignedByte()
+                if ((type and 0x7f) !in 1..6) return null
+                last = type and 0x80 != 0
+                val length = (file.readUnsignedByte() shl 16) or
+                    (file.readUnsignedByte() shl 8) or file.readUnsignedByte()
+                val next = file.filePointer + length
+                if (next + 2 > file.length()) return null
+                file.seek(next)
+            }
+            if (file.read() != 0xff || file.read() !in 0xf8..0xf9) return null
+            ((samples * 1_000) / sampleRate).takeIf { it > 0 }
+        }
     }.getOrNull()
 
     private fun mediaPathForProbe(url: String): String? = runCatching {
