@@ -311,7 +311,17 @@ class LibraryRepository(
             .filter { it.canonicalId in favorites && isPortableLocalHeartCanonicalId(it.canonicalId) }
             .mapNotNull { it.toPersisted(0).forHeartsSync() }
         val pendingLocalFileOps = heartOps.compacted().filter { isPortableLocalHeartCanonicalId(it.canonicalId) }
-        val localfileOps = localExports.map { it.first } + pendingLocalFileOps
+        // A first-seen unheart has no remembered track. Its persisted identity is
+        // enough to keep the tombstone portable without adding a Library row.
+        val rememberedIds = _saved.value.mapTo(HashSet()) { it.canonicalId }
+        val localTombstones = heartOps.compacted().mapNotNull { op ->
+            if (op.action != HeartAction.UNFAVORITE || !op.canonicalId.startsWith("local:")) return@mapNotNull null
+            if (op.canonicalId in rememberedIds) return@mapNotNull null
+            val identity = op.localSyncIdentity() ?: return@mapNotNull null
+            val portableId = identity.portableId ?: return@mapNotNull null
+            op.copy(canonicalId = portableId, localIdentity = identity)
+        }
+        val localfileOps = localExports.map { it.first } + localTombstones + pendingLocalFileOps
         val localfileMeta = localExports.filter { it.first.action == HeartAction.FAVORITE }.map { it.second } + pendingLocalFileMeta
         val opsById = LinkedHashMap<String, HeartOp>()
         for (op in youtubeOps + localfileOps) {
