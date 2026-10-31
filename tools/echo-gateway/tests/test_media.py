@@ -127,7 +127,7 @@ async def test_full_pause_resume_over_http_streams_the_remainder(music: Path, tm
         stopped = await client.post(
             "/alexa", json=audio_event("PlaybackStopped", started["token"], 12_500)
         )
-        assert stopped.content == b""
+        assert stopped.json() == {"version": "1.0", "response": {}}
 
         resumed = stream_of((await client.post("/alexa", json=controller("PlayCommandIssued"))).json())
         assert resumed["url"].endswith("?start_ms=12500")
@@ -580,13 +580,13 @@ def test_gain_ceiling_survives_aac_encoding(tmp_path, expression):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('kind', ['AudioPlayer.PlaybackStopped', 'System.ExceptionEncountered'])
-async def test_one_way_alexa_events_have_empty_http_body(kind):
+async def test_one_way_alexa_events_get_an_empty_envelope(kind):
     from support import envelope
     app = create_app(make_settings())
     async with client_for(app) as client:
         response = await client.post('/alexa', json=envelope({'type': kind}))
     assert response.status_code == 200
-    assert response.content == b''
+    assert response.json() == {'version': '1.0', 'response': {}}
 
 
 @pytest.mark.asyncio

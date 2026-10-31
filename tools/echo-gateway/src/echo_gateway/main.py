@@ -326,7 +326,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
         if (envelope.get("request") or {}).get("type") in {
             "AudioPlayer.PlaybackStopped", "System.ExceptionEncountered",
         }:
-            return Response(status_code=200)
+            # These can't be answered, so send the empty envelope the Alexa SDKs send.
+            return JSONResponse({"version": "1.0", "response": {}})
         return JSONResponse(response)
 
     routes = [
