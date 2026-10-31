@@ -15,12 +15,14 @@ interface SourceResolver {
     ): ResolvedPlayback
 }
 
-class DefaultSourceResolver : SourceResolver {
+class DefaultSourceResolver(private val networkAvailable: () -> Boolean = { com.universalmusic.player.platform.isNetworkAvailable() }) : SourceResolver {
     override suspend fun resolve(
         track: Track,
         preferences: PlaybackPreferences,
     ): ResolvedPlayback {
-        val playable = track.playableSources()
+        val sources = track.playableSources()
+        val cached = sources.filter { it.provider == ProviderId.LOCAL }
+        val playable = if (cached.isNotEmpty() && !networkAvailable()) cached else sources
         if (playable.isEmpty()) {
             error("No playable sources for ${track.title}")
         }
@@ -54,7 +56,8 @@ class DefaultSourceResolver : SourceResolver {
      */
     private fun qualityThenPreference(preferences: PlaybackPreferences): Comparator<PlaybackSource> {
         val bitrateFirst = preferences.sourceSelection == SourceSelectionMode.PREFER_HIGHEST_BITRATE
-        return compareByDescending<PlaybackSource> { source ->
+        return compareByDescending<PlaybackSource> { providerPreferenceScore(it.provider, preferences) }
+            .thenByDescending { source ->
             if (bitrateFirst) source.quality?.bitrateKbps ?: -1 else tierRank(source, preferences)
         }
             .thenByDescending { source ->

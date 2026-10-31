@@ -18,6 +18,17 @@ class SourceResolverTest {
     private val resolver = DefaultSourceResolver()
 
     @Test
+    fun providerPreferenceBeatsVerifiedMirrorQuality() = runTest {
+        val spotify = track("Song", "Artist", provider = ProviderId.SPOTIFY).let { track ->
+            track.copy(sources = track.sources.map { it.copy(quality = AudioQuality(QualityTier.STANDARD, confidence = QualityConfidence.UNKNOWN)) })
+        }
+        val mirror = track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 256, quality = QualityTier.HIGH)
+        val result = resolver.resolve(merged(spotify, mirror), PlaybackPreferences(sourceSelection = SourceSelectionMode.PREFER_SPOTIFY))
+        assertEquals(ProviderId.SPOTIFY, result.source.provider)
+        assertEquals(ProviderId.LOCAL, result.fallbacks.single().provider)
+    }
+
+    @Test
     fun selectsSpotifyWhenItHasHighestBitrate() = runTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 320),
