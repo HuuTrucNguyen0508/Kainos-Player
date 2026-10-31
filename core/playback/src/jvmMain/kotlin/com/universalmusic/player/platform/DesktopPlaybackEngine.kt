@@ -470,11 +470,7 @@ class DesktopPlaybackEngine internal constructor(
             if (token != requestToken) return
             (lastHandle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
         }
-        // Local scans already measured this file. Avoid launching ffprobe on every play/skip;
-        // streams still probe independently because their resolved media can differ from metadata.
-        val durationMs = suppliedDuration?.takeIf {
-            it > 0 && (url.startsWith("/") || url.startsWith("file:"))
-        } ?: withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
@@ -1037,8 +1033,11 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     }
 
     override fun probeDurationMs(url: String): Long? {
-        val ffprobe = findOnPath("ffprobe") ?: return null
         val media = mediaPathForProbe(url) ?: url
+        if (url.startsWith("file:") || !url.contains("://")) {
+            readLocalFlacDurationMs(media)?.let { return it }
+        }
+        val ffprobe = findOnPath("ffprobe") ?: return null
         return runCatching {
             val process = ProcessBuilder(
                 ffprobe,
@@ -1058,6 +1057,25 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
             (seconds * 1000.0).toLong().takeIf { it > 0L }
         }.getOrNull()
     }
+
+    /** Read fresh STREAMINFO duration directly, avoiding a subprocess for local FLACs.
+     * RFC 9639 section 8.2: https://www.rfc-editor.org/rfc/rfc9639.html#section-8.2
+     */
+    private fun readLocalFlacDurationMs(media: String): Long? = runCatching {
+        val path = Path.of(media)
+        if (!Files.isRegularFile(path)) return null
+        val header = Files.newInputStream(path).use { it.readNBytes(42) }
+        if (header.size != 42 || header.copyOfRange(0, 4).decodeToString() != "fLaC") return null
+        if ((header[4].toInt() and 0x7f) != 0 ||
+            header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()
+        ) return null
+        var packed = 0L
+        for (index in 18..25) packed = (packed shl 8) or (header[index].toLong() and 0xff)
+        val sampleRate = packed ushr 44
+        val samples = packed and ((1L shl 36) - 1)
+        if (sampleRate == 0L || samples == 0L) return null
+        ((samples * 1_000) / sampleRate).takeIf { it > 0 }
+    }.getOrNull()
 
     private fun mediaPathForProbe(url: String): String? = runCatching {
         when {

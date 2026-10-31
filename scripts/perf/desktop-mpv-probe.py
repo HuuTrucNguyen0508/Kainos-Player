@@ -46,6 +46,11 @@ def observe_children(pid, output, stop):
         for child in children:
             if child.pid in seen: continue
             try:
+                if child.name()=='ffprobe':
+                    seen.add(child.pid)
+                    with lock, Path(output).open('a') as f:
+                        f.write(json.dumps(dict(ns=time.monotonic_ns(),pid=child.pid,event='ffprobe-spawn'))+'\n')
+                    continue
                 args = child.cmdline()
                 path = next((x.split('=',1)[1] for x in args if x.startswith('--input-ipc-server=')), None)
                 if path and child.name() == 'mpv':

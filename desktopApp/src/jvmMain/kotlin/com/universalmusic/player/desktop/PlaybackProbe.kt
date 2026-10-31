@@ -25,9 +25,10 @@ internal fun runPlaybackProbe(paths: List<String>) = runBlocking {
     val probeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val session = PlayerSession(engine, DefaultSourceResolver { false }, probeScope,
         confineTo = worker, workContext = Dispatchers.Default)
+    val fixtureDuration = System.getenv("KAINOS_PERF_FIXTURE_DURATION_MS")?.toLong() ?: 2_000L
     val tracks = paths.mapIndexed { i, path ->
-        val handle = PlaybackHandle.Url(File(path).absolutePath, durationMs = 2_000)
-        Track("probe:$i", "Probe $i", emptyList(), durationMs = 2_000,
+        val handle = PlaybackHandle.Url(File(path).absolutePath, durationMs = fixtureDuration)
+        Track("probe:$i", "Probe $i", emptyList(), durationMs = fixtureDuration,
             sources = listOf(PlaybackSource(ProviderId.LOCAL, "probe:$i", isPlayable = true, handle = handle)))
     }
     fun mark(name: String) = println("PERF\t$name\t${System.nanoTime()}")
@@ -36,6 +37,8 @@ internal fun runPlaybackProbe(paths: List<String>) = runBlocking {
         mark("session_play")
         session.play(tracks)
         playing()
+        println("PERF_VALUE\tduration_ms\t${engine.state.value.durationMs}")
+        check(engine.state.value.durationMs == 2_000L) { "File duration must override supplied track metadata" }
         delay(300)
         mark("pause")
         session.pauseTransport()

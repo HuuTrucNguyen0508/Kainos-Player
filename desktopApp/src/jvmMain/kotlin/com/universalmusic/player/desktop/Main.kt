@@ -1,6 +1,7 @@
 package com.universalmusic.player.desktop
 
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -97,6 +98,19 @@ private fun runGui(onContainer: (AppContainer) -> Unit) {
         LaunchedEffect(container) {
             container.enableListeningHandoff()
             container.enableGuiPlayer()
+            if (System.getenv("KAINOS_PERF_LIBRARY") == "1") {
+                require(DesktopIsolation.current.isIsolated)
+                container.ready.first { it }
+                while (!firstDraw.get()) withFrameNanos { }
+                container.typeAheadLibrarySearch("probe")
+                kotlinx.coroutines.withTimeout(10_000) {
+                    container.libraryTypeAhead.first { it.isEmpty() }
+                    container.textInputFocused.first { it }
+                }
+                withFrameNanos { }
+                withFrameNanos { }
+                println("PERF\tlibrary_interactive\t${System.nanoTime()}")
+            }
             if (System.getenv("KAINOS_PERF_IDLE_QUEUE") == "1") {
                 require(DesktopIsolation.current.isIsolated)
                 container.ready.first { it }
