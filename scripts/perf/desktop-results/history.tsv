@@ -1,0 +1,140 @@
+source	metric	n	median	p90	min	max
+accepted-ab-summary.json	.errors	0				
+accepted-ab-summary.json	baseline.ffprobe_processes	10	4.0	4	4	4
+accepted-ab-summary.json	baseline.idle_cpu_percent	10	0.0	0.0	0.0	0.20002461022797402
+accepted-ab-summary.json	baseline.idle_rss_kib	10	107008.0	110672	102036	112180
+accepted-ab-summary.json	baseline.natural_pcm_boundary_ms	10	85.0	90.0	85.0	90.0
+accepted-ab-summary.json	baseline.natural_pcm_silence_ms	10	85.0	90.0	85.0	90.0
+accepted-ab-summary.json	baseline.pause_ack_ms	10	1.3189895	1.349067	0.973639	1.39084
+accepted-ab-summary.json	baseline.pcm_resolution_ms	10	5.0	5	5	5
+accepted-ab-summary.json	baseline.press_to_started_ms	10	132.7378005	139.396099	127.146948	142.355541
+accepted-ab-summary.json	baseline.resume_ack_ms	10	0.885549	0.954457	0.721473	1.020742
+accepted-ab-summary.json	candidate.ffprobe_processes	10	0.0	0	0	0
+accepted-ab-summary.json	candidate.idle_cpu_percent	10	0.0	0.0	0.0	0.2001493192380091
+accepted-ab-summary.json	candidate.idle_rss_kib	10	105142.0	108604	101928	116104
+accepted-ab-summary.json	candidate.natural_pcm_boundary_ms	10	45.0	45.0	45.0	45.0
+accepted-ab-summary.json	candidate.natural_pcm_silence_ms	10	45.0	45.0	45.0	45.0
+accepted-ab-summary.json	candidate.pause_ack_ms	10	1.121442	1.257617	1.04521	1.378528
+accepted-ab-summary.json	candidate.pcm_resolution_ms	10	5.0	5	5	5
+accepted-ab-summary.json	candidate.press_to_started_ms	10	101.69470799999999	105.883851	100.329427	110.522949
+accepted-ab-summary.json	candidate.resume_ack_ms	10	0.830402	1.090948	0.768259	1.180245
+accepted-idle-summary.json	.errors	0				
+accepted-idle-summary.json	idle_cpu_percent	10	4.496272653920365	4.793021669119891	3.2013961820182533	4.8034267338901095
+accepted-idle-summary.json	idle_rss_kib	10	422250.0	430824	394296	437296
+accepted-library-summary.json	.errors	0				
+accepted-library-summary.json	baseline.first_draw_ms	10	1072.295578	1097.472048	1054.606763	1106.173761
+accepted-library-summary.json	baseline.library_interactive_ms	10	1380.455845	1406.448455	1354.828872	1414.886719
+accepted-library-summary.json	baseline.mapped_ms	10	1094.8464045	1121.469876	1075.739738	1133.874637
+accepted-library-summary.json	cds.first_draw_ms	10	970.7399634999999	984.190439	956.477743	989.603651
+accepted-library-summary.json	cds.library_interactive_ms	10	1241.6564615	1260.801495	1221.842247	1268.125561
+accepted-library-summary.json	cds.mapped_ms	10	993.3191429999999	1007.386363	976.013798	1008.449404
+accepted-startup-summary.json	.errors	0				
+accepted-startup-summary.json	baseline.first_draw_ms	10	1086.6757735	1599.800869	1072.404716	3787.816938
+accepted-startup-summary.json	baseline.mapped_ms	10	1110.697079	1620.770333	1097.754082	3827.782585
+accepted-startup-summary.json	cds.first_draw_ms	10	1002.6155080000001	1024.607652	966.330707	3780.114058
+accepted-startup-summary.json	cds.mapped_ms	10	1027.479388	1048.341724	985.43346	3804.808647
+calibration-wrapper-summary.json	.errors	0				
+calibration-wrapper-summary.json	idle_cpu_percent	10	0.0	0.19967873109884568	0.0	0.19973354251155723
+calibration-wrapper-summary.json	idle_rss_kib	10	106400.0	108184	105136	111052
+calibration-wrapper-summary.json	natural_pcm_boundary_ms	10	90.0	90.0	90.0	90.0
+calibration-wrapper-summary.json	natural_pcm_silence_ms	10	90.0	90.0	90.0	90.0
+calibration-wrapper-summary.json	pause_ack_ms	10	1.269039	1.374696	1.155964	1.438425
+calibration-wrapper-summary.json	pcm_resolution_ms	10	5.0	5	5	5
+calibration-wrapper-summary.json	press_to_started_ms	10	145.1115535	145.917963	139.124781	149.535077
+calibration-wrapper-summary.json	resume_ack_ms	10	1.0349620000000002	1.062773	0.871458	1.27123
+cds-idle-ab-summary.json	.errors	0				
+cds-idle-ab-summary.json	baseline.idle_cpu_percent	10	4.804612753244909	5.001831402561144	3.6022879441965623	5.191111749393139
+cds-idle-ab-summary.json	baseline.idle_rss_kib	10	368108.0	378924	362956	395368
+cds-idle-ab-summary.json	cds.idle_cpu_percent	10	4.800011923386428	5.001497624441631	4.392295997153459	5.397312829066893
+cds-idle-ab-summary.json	cds.idle_rss_kib	10	410186.0	418516	400960	420360
+cds-playback-ab-summary.json	.errors	0				
+cds-playback-ab-summary.json	baseline.idle_cpu_percent	10	0.0	0.0	0.0	0.19991017472102868
+cds-playback-ab-summary.json	baseline.idle_rss_kib	10	108226.0	112064	104580	113048
+cds-playback-ab-summary.json	baseline.natural_pcm_boundary_ms	10	45.0	45.0	45.0	45.0
+cds-playback-ab-summary.json	baseline.natural_pcm_silence_ms	10	45.0	45.0	45.0	45.0
+cds-playback-ab-summary.json	baseline.pause_ack_ms	10	1.226903	1.384156	1.04663	1.441843
+cds-playback-ab-summary.json	baseline.pcm_resolution_ms	10	5.0	5	5	5
+cds-playback-ab-summary.json	baseline.press_to_started_ms	10	103.8068815	106.562683	101.113568	132.592995
+cds-playback-ab-summary.json	baseline.resume_ack_ms	10	0.859445	0.990879	0.714224	0.994246
+cds-playback-ab-summary.json	cds.idle_cpu_percent	10	0.0	0.0	0.0	0.0
+cds-playback-ab-summary.json	cds.idle_rss_kib	10	154068.0	155960	152460	156212
+cds-playback-ab-summary.json	cds.natural_pcm_boundary_ms	10	45.0	45.0	45.0	45.0
+cds-playback-ab-summary.json	cds.natural_pcm_silence_ms	10	45.0	45.0	45.0	45.0
+cds-playback-ab-summary.json	cds.pause_ack_ms	10	1.230898	1.308577	1.032966	1.364872
+cds-playback-ab-summary.json	cds.pcm_resolution_ms	10	5.0	5	5	5
+cds-playback-ab-summary.json	cds.press_to_started_ms	10	98.58900600000001	100.939691	94.617847	103.660649
+cds-playback-ab-summary.json	cds.resume_ack_ms	10	0.8293284999999999	1.020403	0.699247	1.201674
+cds-startup-ab-summary.json	.errors	0				
+cds-startup-ab-summary.json	baseline.first_draw_ms	10	1061.8856194999998	1077.048046	1051.080525	1107.3686
+cds-startup-ab-summary.json	baseline.mapped_ms	10	1086.36845	1105.041255	1073.088885	1129.393646
+cds-startup-ab-summary.json	cds.first_draw_ms	10	964.7949874999999	984.658001	952.582655	1009.936818
+cds-startup-ab-summary.json	cds.mapped_ms	10	985.7293295	1003.985088	972.615702	1028.343503
+head-library-summary.json	.errors	0				
+head-library-summary.json	baseline.first_draw_ms	10	1070.8876495	1111.187384	1054.844802	1167.864392
+head-library-summary.json	baseline.library_interactive_ms	10	1374.5911780000001	1425.556202	1358.497347	1484.25321
+head-library-summary.json	baseline.mapped_ms	10	1093.663478	1139.466042	1076.150338	1197.724047
+head-library-summary.json	cds.first_draw_ms	10	979.788403	1045.172043	968.751611	3411.626531
+head-library-summary.json	cds.library_interactive_ms	10	1257.451916	1340.162493	1231.911607	3680.604402
+head-library-summary.json	cds.mapped_ms	10	1002.064222	1065.425198	988.086267	3436.929916
+head-playback-summary.json	.errors	0				
+head-playback-summary.json	idle_cpu_percent	10	0.0	0.20009089677236108	0.0	0.20011991129052212
+head-playback-summary.json	idle_rss_kib	10	160006.0	163992	157696	166444
+head-playback-summary.json	natural_pcm_boundary_ms	10	45.0	45.0	45.0	45.0
+head-playback-summary.json	natural_pcm_silence_ms	10	45.0	45.0	40.0	45.0
+head-playback-summary.json	pause_ack_ms	10	1.2969015000000002	1.589486	1.196183	2.013247
+head-playback-summary.json	pcm_resolution_ms	10	5.0	5	5	5
+head-playback-summary.json	press_to_started_ms	10	104.62895950000001	112.479016	95.542248	195.869872
+head-playback-summary.json	resume_ack_ms	10	0.957396	1.034978	0.833866	1.050596
+head-startup-summary.json	.errors	0				
+head-startup-summary.json	baseline.first_draw_ms	10	1063.2829495	1073.428644	1047.633207	1074.029581
+head-startup-summary.json	baseline.mapped_ms	10	1086.838353	1095.586827	1069.910376	1097.760978
+head-startup-summary.json	cds.first_draw_ms	10	977.5561995	982.092499	957.567227	993.477799
+head-startup-summary.json	cds.mapped_ms	10	996.6163235	1006.553504	982.399784	1015.951957
+idle-gui-summary.json	.errors	0				
+idle-gui-summary.json	idle_cpu_percent	10	4.999848268610425	5.393418484773605	3.794582823204951	5.401100913960805
+idle-gui-summary.json	idle_rss_kib	10	371256.0	389332	356040	439772
+native-ab-summary.json	.errors	0				
+native-ab-summary.json	baseline.idle_cpu_percent	10	0.0	0.2001027236536652	0.0	0.20018707830792318
+native-ab-summary.json	baseline.idle_rss_kib	10	105928.0	107040	102800	108944
+native-ab-summary.json	baseline.natural_pcm_boundary_ms	10	87.5	90.0	85.0	90.0
+native-ab-summary.json	baseline.natural_pcm_silence_ms	10	87.5	90.0	85.0	90.0
+native-ab-summary.json	baseline.pause_ack_ms	10	1.2056784999999999	1.229587	1.081371	1.277966
+native-ab-summary.json	baseline.pcm_resolution_ms	10	5.0	5	5	5
+native-ab-summary.json	baseline.press_to_started_ms	10	132.23600750000003	142.263415	125.958688	142.951478
+native-ab-summary.json	baseline.resume_ack_ms	10	0.878979	0.947472	0.681157	0.953412
+native-ab-summary.json	candidate.idle_cpu_percent	10	0.0	0.2000847772406827	0.0	0.2003011937061747
+native-ab-summary.json	candidate.idle_rss_kib	10	106740.0	109384	104340	110844
+native-ab-summary.json	candidate.natural_pcm_boundary_ms	10	45.0	45.0	45.0	45.0
+native-ab-summary.json	candidate.natural_pcm_silence_ms	10	45.0	45.0	45.0	45.0
+native-ab-summary.json	candidate.pause_ack_ms	10	1.1978685	1.333155	1.077551	1.345345
+native-ab-summary.json	candidate.pcm_resolution_ms	10	5.0	5	5	5
+native-ab-summary.json	candidate.press_to_started_ms	10	103.47500199999999	107.560145	98.543531	109.46883
+native-ab-summary.json	candidate.resume_ack_ms	10	0.9484375	1.316705	0.813365	1.355876
+native-cds-summary.json	.errors	0				
+native-cds-summary.json	first_draw_ms	10	534.8981345	538.697761	525.454322	547.427922
+native-startup-default-summary.json	.errors	0				
+native-startup-default-summary.json	first_draw_ms	10	1056.607958	1063.797014	1030.047821	1068.332759
+settled-ab-summary.json	.errors	0				
+settled-ab-summary.json	baseline.first_draw_ms	10	1063.8248055	1075.185006	1046.625534	1104.237363
+settled-ab-summary.json	baseline.mapped_ms	10	1086.6190935	1097.480831	1065.961263	1129.080443
+settled-ab-summary.json	cds.first_draw_ms	10	966.5454645	994.880927	957.637637	1002.396576
+settled-ab-summary.json	cds.mapped_ms	10	986.0772475	1016.73934	975.194783	1029.045385
+spotify-valid-summary.json	.errors	0				
+spotify-valid-summary.json	mapped_ms	10	302.994577	313.252525	302.77543	333.308665
+startup-baseline.json	.errors	0				
+startup-baseline.json	first_draw_ms	10	1054.213644	1084.370228	1043.825065	1095.604812
+startup-matrix.json	.errors	0				
+startup-matrix.json	default.first_draw_ms	10	1059.7144935000001	1061.687776	1048.888447	1100.940811
+startup-matrix.json	tier1.first_draw_ms	10	936.4599135	943.144861	917.796682	953.276059
+startup-matrix.json	tier2.first_draw_ms	10	974.4427795	987.923147	958.587041	1010.03926
+startup-matrix.json	serial.first_draw_ms	10	1042.7791925000001	1063.646015	1026.621575	1065.025604
+verification.json	jvm.errors	0				
+verification.json	duration_results.stale-flac.errors	0				
+verification.json	duration_results.stale-flac.ffprobe_processes	1	0	0	0	0
+verification.json	duration_results.stale-wav.errors	0				
+verification.json	duration_results.stale-wav.ffprobe_processes	1	4	4	4	4
+verification.json	duration_results.hires-flac.errors	0				
+verification.json	duration_results.hires-flac.ffprobe_processes	1	0	0	0	0
+verification.json	duration_results.unknown-flac.errors	0				
+verification.json	duration_results.unknown-flac.ffprobe_processes	1	4	4	4	4
+verification.json	rejected_cached_duration_result.errors	1				

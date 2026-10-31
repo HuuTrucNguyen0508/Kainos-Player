@@ -34,6 +34,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.completeWith
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -465,8 +466,12 @@ class DesktopPlaybackEngine internal constructor(
     ) {
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
-        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) }
-            ?: (lastHandle as? PlaybackHandle.Url)?.durationMs
+        val suppliedDuration = synchronized(lifecycleLock) {
+            if (token != requestToken) return
+            (lastHandle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
+        }
+        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val socket = runtime.createIpcPath()
@@ -1028,8 +1033,11 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     }
 
     override fun probeDurationMs(url: String): Long? {
-        val ffprobe = findOnPath("ffprobe") ?: return null
         val media = mediaPathForProbe(url) ?: url
+        if (url.startsWith("file:") || !url.contains("://")) {
+            readLocalFlacDurationMs(media)?.let { return it }
+        }
+        val ffprobe = findOnPath("ffprobe") ?: return null
         return runCatching {
             val process = ProcessBuilder(
                 ffprobe,
@@ -1049,6 +1057,51 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
             (seconds * 1000.0).toLong().takeIf { it > 0L }
         }.getOrNull()
     }
+
+    /** Read fresh STREAMINFO duration directly, avoiding a subprocess for local FLACs.
+     * RFC 9639 section 8.2: https://www.rfc-editor.org/rfc/rfc9639.html#section-8.2
+     */
+    private fun readLocalFlacDurationMs(media: String): Long? = runCatching {
+        val path = Path.of(media)
+        if (!Files.isRegularFile(path)) return null
+        java.io.RandomAccessFile(path.toFile(), "r").use { file ->
+            if (file.length() < 44) return null
+            val header = ByteArray(42)
+            file.readFully(header)
+            if (header.copyOfRange(0, 4).decodeToString() != "fLaC") return null
+            if ((header[4].toInt() and 0x7f) != 0 ||
+                header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()
+            ) return null
+            fun unsigned16(offset: Int) =
+                ((header[offset].toInt() and 0xff) shl 8) or (header[offset + 1].toInt() and 0xff)
+            val minBlock = unsigned16(8)
+            val maxBlock = unsigned16(10)
+            var packed = 0L
+            for (index in 18..25) packed = (packed shl 8) or (header[index].toLong() and 0xff)
+            val sampleRate = packed ushr 44
+            val channels = ((packed ushr 41) and 7) + 1
+            val bitsPerSample = ((packed ushr 36) and 31) + 1
+            val samples = packed and ((1L shl 36) - 1)
+            if (sampleRate !in 1L..655350L || channels !in 1L..8L ||
+                bitsPerSample !in 4L..32L || minBlock < 16 || minBlock > maxBlock || samples == 0L
+            ) return null
+            var last = header[4].toInt() and 0x80 != 0
+            while (!last) {
+                // Seek over payloads (including large pictures); read only block headers.
+                if (file.filePointer + 4 > file.length()) return null
+                val type = file.readUnsignedByte()
+                if ((type and 0x7f) !in 1..6) return null
+                last = type and 0x80 != 0
+                val length = (file.readUnsignedByte() shl 16) or
+                    (file.readUnsignedByte() shl 8) or file.readUnsignedByte()
+                val next = file.filePointer + length
+                if (next + 2 > file.length()) return null
+                file.seek(next)
+            }
+            if (file.read() != 0xff || file.read() !in 0xf8..0xf9) return null
+            ((samples * 1_000) / sampleRate).takeIf { it > 0 }
+        }
+    }.getOrNull()
 
     private fun mediaPathForProbe(url: String): String? = runCatching {
         when {

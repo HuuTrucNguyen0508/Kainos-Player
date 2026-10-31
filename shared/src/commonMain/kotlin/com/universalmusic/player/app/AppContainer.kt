@@ -124,7 +124,10 @@ enum class UiRequest {
     FOCUS_LIBRARY_SEARCH,
 }
 
-class AppContainer {
+class AppContainer(
+    httpClient: io.ktor.client.HttpClient? = null,
+    private val startupMark: (String) -> Unit = {},
+) {
     val storageError = com.universalmusic.player.data.db.StorageErrors.message
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default +
         kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> com.universalmusic.player.data.db.StorageErrors.report() })
@@ -137,7 +140,8 @@ class AppContainer {
     private val defaults: AppConfig = loadAppConfig()
     var config: AppConfig = defaults
         private set
-    val http = createHttpClient()
+    val http = httpClient ?: createHttpClient()
+    init { startupMark("http_end") }
     val tokens = createTokenStore()
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
@@ -146,6 +150,7 @@ class AppContainer {
     private val foregroundHandoff = ForegroundHandoff { requestHandoff() }
     private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore(), foregroundHandoff::onPeerChanged)
 
+    init { startupMark("stores_end") }
     private val foreground = AppForegroundState()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
@@ -263,6 +268,7 @@ class AppContainer {
         isAppForeground = { foreground.isVisible },
         onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
     )
+    init { startupMark("providers_end") }
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
     val ready = _ready.asStateFlow()
@@ -308,6 +314,7 @@ class AppContainer {
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
+    init { startupMark("player_end") }
     val sleepTimer = SleepTimerController(
         player = player,
         scope = scope,
@@ -401,9 +408,11 @@ class AppContainer {
 
     init {
         monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
+        startupMark("mpris_begin")
         bindPlatformMediaControls(player, scope) { track ->
             library.toggleFavorite(track).also(player::setFavorite)
         }
+        startupMark("mpris_end")
         // The Now Playing / media-session heart follows the library, including hearts that
         // arrive from Home sync while the same track keeps playing.
         scope.launch {
@@ -442,7 +451,9 @@ class AppContainer {
                 player.setVolume(loaded.playbackVolume)
                 applyProviderSettings(loaded, clearSessionOnChange = false)
             }
+            startupMark("library_load_begin")
             storageStep { library.load(spotify.currentUserId()) }
+            startupMark("library_load_end")
             storageStep { kainosPlaylists.load() }
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
@@ -967,9 +978,9 @@ private fun playbackDispatcher(): CoroutineDispatcher =
 
 lateinit var appContainer: AppContainer
 
-fun ensureAppContainer(): AppContainer {
+fun ensureAppContainer(httpClient: io.ktor.client.HttpClient? = null, startupMark: (String) -> Unit = {}): AppContainer {
     if (!::appContainer.isInitialized) {
-        appContainer = AppContainer()
+        appContainer = AppContainer(httpClient, startupMark)
     }
     return appContainer
 }
