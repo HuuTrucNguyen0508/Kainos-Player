@@ -1,0 +1,972 @@
+Reusing configuration cache.
+> Task :core:data:jvmProcessResources NO-SOURCE
+> Task :shared:generateComposeResClass UP-TO-DATE
+> Task :provider:local:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:kmpPartiallyResolvedDependenciesChecker
+> Task :core:model:kmpPartiallyResolvedDependenciesChecker
+> Task :core:data:kmpPartiallyResolvedDependenciesChecker
+> Task :sync:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :sync:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:processJvmMainResources SKIPPED
+> Task :shared:generateExpectResourceCollectorsForCommonMain UP-TO-DATE
+> Task :core:model:jvmProcessResources NO-SOURCE
+> Task :core:data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmMain NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForCommonMain NO-SOURCE
+> Task :core:playback:jvmProcessResources NO-SOURCE
+> Task :sync:jvmProcessResources NO-SOURCE
+> Task :provider:spotify:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:jvmProcessResources NO-SOURCE
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:model:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :sync:processJvmMainResources SKIPPED
+> Task :core:playback:processJvmMainResources SKIPPED
+> Task :shared:checkJvmMainComposeLibrariesCompatibility
+> Task :core:playback:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:processJvmMainResources SKIPPED
+> Task :provider:youtube:kmpPartiallyResolvedDependenciesChecker
+> Task :core:playback:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:model:processJvmMainResources SKIPPED
+> Task :shared:convertXmlValueResourcesForJvmMain NO-SOURCE
+> Task :provider:youtube:jvmProcessResources NO-SOURCE
+> Task :shared:convertXmlValueResourcesForCommonMain NO-SOURCE
+> Task :shared:convertXmlValueResourcesForJvmTest NO-SOURCE
+> Task :provider:local:jvmProcessResources NO-SOURCE
+> Task :provider:youtube:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:youtube:processJvmMainResources SKIPPED
+> Task :core:data:generateCommonMainKainosDatabaseInterface UP-TO-DATE
+> Task :provider:local:processJvmMainResources SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmTest NO-SOURCE
+> Task :provider:spotify:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:copyNonXmlValueResourcesForCommonTest NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForCommonMain NO-SOURCE
+> Task :shared:convertXmlValueResourcesForCommonTest NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForJvmMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForCommonMain NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForJvmTest NO-SOURCE
+> Task :shared:checkJvmTestComposeLibrariesCompatibility
+> Task :shared:generateResourceAccessorsForJvmMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForJvmTest NO-SOURCE
+> Task :shared:assembleJvmMainResources UP-TO-DATE
+> Task :shared:prepareComposeResourcesTaskForCommonTest NO-SOURCE
+> Task :shared:generateActualResourceCollectorsForJvmMain UP-TO-DATE
+> Task :shared:generateResourceAccessorsForCommonTest NO-SOURCE
+> Task :shared:jvmProcessResources UP-TO-DATE
+> Task :shared:assembleJvmTestResources UP-TO-DATE
+> Task :shared:processJvmMainResources SKIPPED
+> Task :shared:jvmTestProcessResources UP-TO-DATE
+> Task :shared:processJvmTestResources SKIPPED
+> Task :core:model:compileKotlinJvm UP-TO-DATE
+> Task :core:model:compileJvmMainJava NO-SOURCE
+> Task :core:model:jvmMainClasses UP-TO-DATE
+> Task :core:model:jvmJar UP-TO-DATE
+> Task :provider:local:compileKotlinJvm UP-TO-DATE
+> Task :provider:local:compileJvmMainJava NO-SOURCE
+> Task :core:playback:compileKotlinJvm UP-TO-DATE
+> Task :provider:local:jvmMainClasses UP-TO-DATE
+> Task :provider:local:jvmJar UP-TO-DATE
+> Task :core:data:compileKotlinJvm UP-TO-DATE
+> Task :core:playback:compileJvmMainJava NO-SOURCE
+> Task :core:playback:jvmMainClasses UP-TO-DATE
+> Task :core:data:compileJvmMainJava NO-SOURCE
+> Task :core:playback:jvmJar UP-TO-DATE
+> Task :core:data:jvmMainClasses UP-TO-DATE
+> Task :core:data:jvmJar UP-TO-DATE
+> Task :provider:youtube:compileKotlinJvm UP-TO-DATE
+> Task :provider:spotify:compileKotlinJvm UP-TO-DATE
+> Task :provider:youtube:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:jvmMainClasses UP-TO-DATE
+> Task :sync:compileKotlinJvm UP-TO-DATE
+> Task :provider:spotify:compileJvmMainJava NO-SOURCE
+> Task :provider:spotify:jvmMainClasses UP-TO-DATE
+> Task :provider:youtube:jvmJar UP-TO-DATE
+> Task :sync:compileJvmMainJava NO-SOURCE
+> Task :provider:spotify:jvmJar UP-TO-DATE
+> Task :sync:jvmMainClasses UP-TO-DATE
+> Task :sync:jvmJar UP-TO-DATE
+> Task :shared:compileKotlinJvm UP-TO-DATE
+> Task :shared:compileJvmMainJava NO-SOURCE
+> Task :shared:jvmMainClasses UP-TO-DATE
+> Task :shared:jvmJar UP-TO-DATE
+> Task :shared:compileTestKotlinJvm
+> Task :shared:compileJvmTestJava NO-SOURCE
+> Task :shared:jvmTestClasses
+
+BUILD SUCCESSFUL in 1s
+35 actionable tasks: 11 executed, 24 up-to-date
+Configuration cache entry reused.
+ 12:50:39 up 42 min,  1 user,  load average: 0.85, 1.95, 1.78
+24
+Calculating task graph as configuration cache cannot be reused because init script 'scripts/perf/library-bench.init.gradle' has changed.
+Type-safe project accessors is an incubating feature.
+> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :build-logic:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :build-logic:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :build-logic:compilePluginsBlocks UP-TO-DATE
+> Task :build-logic:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :build-logic:generateScriptPluginAdapters UP-TO-DATE
+> Task :build-logic:compileKotlin UP-TO-DATE
+> Task :build-logic:compileJava NO-SOURCE
+> Task :build-logic:pluginDescriptors UP-TO-DATE
+> Task :build-logic:processResources UP-TO-DATE
+> Task :build-logic:classes UP-TO-DATE
+> Task :build-logic:jar UP-TO-DATE
+> Task :provider:local:jvmProcessResources NO-SOURCE
+> Task :shared:generateComposeResClass UP-TO-DATE
+> Task :core:playback:jvmProcessResources NO-SOURCE
+> Task :shared:convertXmlValueResourcesForJvmTest NO-SOURCE
+> Task :core:model:kmpPartiallyResolvedDependenciesChecker
+> Task :core:data:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:convertXmlValueResourcesForCommonTest NO-SOURCE
+> Task :provider:local:kmpPartiallyResolvedDependenciesChecker
+> Task :core:model:jvmProcessResources NO-SOURCE
+> Task :shared:generateExpectResourceCollectorsForCommonMain UP-TO-DATE
+> Task :sync:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:youtube:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:kmpPartiallyResolvedDependenciesChecker
+> Task :core:playback:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:kmpPartiallyResolvedDependenciesChecker
+> Task :core:model:processJvmMainResources SKIPPED
+> Task :sync:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:spotify:jvmProcessResources NO-SOURCE
+> Task :provider:youtube:jvmProcessResources NO-SOURCE
+> Task :provider:local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:jvmProcessResources NO-SOURCE
+> Task :shared:convertXmlValueResourcesForJvmMain NO-SOURCE
+> Task :shared:convertXmlValueResourcesForCommonMain NO-SOURCE
+> Task :sync:jvmProcessResources NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForCommonTest NO-SOURCE
+> Task :core:model:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:generateCommonMainKainosDatabaseInterface UP-TO-DATE
+> Task :provider:youtube:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:checkJvmTestComposeLibrariesCompatibility
+> Task :shared:checkJvmMainComposeLibrariesCompatibility
+> Task :provider:spotify:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmTest NO-SOURCE
+> Task :provider:local:processJvmMainResources SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmMain NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForCommonMain NO-SOURCE
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:playback:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:spotify:processJvmMainResources SKIPPED
+> Task :shared:prepareComposeResourcesTaskForCommonMain NO-SOURCE
+> Task :provider:youtube:processJvmMainResources SKIPPED
+> Task :core:data:processJvmMainResources SKIPPED
+> Task :sync:processJvmMainResources SKIPPED
+> Task :core:playback:processJvmMainResources SKIPPED
+> Task :shared:prepareComposeResourcesTaskForJvmMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForCommonMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForJvmMain NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForCommonTest NO-SOURCE
+> Task :shared:assembleJvmMainResources UP-TO-DATE
+> Task :shared:prepareComposeResourcesTaskForJvmTest NO-SOURCE
+> Task :shared:generateActualResourceCollectorsForJvmMain UP-TO-DATE
+> Task :shared:jvmProcessResources UP-TO-DATE
+> Task :shared:assembleJvmTestResources UP-TO-DATE
+> Task :shared:generateResourceAccessorsForCommonTest NO-SOURCE
+> Task :shared:processJvmMainResources SKIPPED
+> Task :shared:jvmTestProcessResources UP-TO-DATE
+> Task :shared:generateResourceAccessorsForJvmTest NO-SOURCE
+> Task :shared:processJvmTestResources SKIPPED
+> Task :core:model:compileKotlinJvm UP-TO-DATE
+> Task :core:model:compileJvmMainJava NO-SOURCE
+> Task :core:model:jvmMainClasses UP-TO-DATE
+> Task :core:model:jvmJar UP-TO-DATE
+> Task :provider:local:compileKotlinJvm UP-TO-DATE
+> Task :core:data:compileKotlinJvm UP-TO-DATE
+> Task :core:playback:compileKotlinJvm UP-TO-DATE
+> Task :core:data:compileJvmMainJava NO-SOURCE
+> Task :provider:local:compileJvmMainJava NO-SOURCE
+> Task :core:data:jvmMainClasses UP-TO-DATE
+> Task :provider:local:jvmMainClasses UP-TO-DATE
+> Task :core:data:jvmJar UP-TO-DATE
+> Task :provider:local:jvmJar UP-TO-DATE
+> Task :core:playback:compileJvmMainJava NO-SOURCE
+> Task :core:playback:jvmMainClasses UP-TO-DATE
+> Task :core:playback:jvmJar UP-TO-DATE
+> Task :provider:spotify:compileKotlinJvm UP-TO-DATE
+> Task :provider:youtube:compileKotlinJvm UP-TO-DATE
+> Task :sync:compileKotlinJvm UP-TO-DATE
+> Task :provider:spotify:compileJvmMainJava NO-SOURCE
+> Task :provider:spotify:jvmMainClasses UP-TO-DATE
+> Task :provider:youtube:compileJvmMainJava NO-SOURCE
+> Task :sync:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:jvmMainClasses UP-TO-DATE
+> Task :sync:jvmMainClasses UP-TO-DATE
+> Task :provider:spotify:jvmJar UP-TO-DATE
+> Task :provider:youtube:jvmJar UP-TO-DATE
+> Task :sync:jvmJar UP-TO-DATE
+> Task :shared:compileKotlinJvm UP-TO-DATE
+> Task :shared:compileJvmMainJava NO-SOURCE
+> Task :shared:jvmMainClasses UP-TO-DATE
+> Task :shared:jvmJar UP-TO-DATE
+> Task :shared:compileTestKotlinJvm UP-TO-DATE
+> Task :shared:compileJvmTestJava NO-SOURCE
+> Task :shared:jvmTestClasses UP-TO-DATE
+
+> Task :shared:libraryPerf
+
+LibraryPathsPerf > hydrationAndColdIndex STANDARD_ERROR
+    SLF4J(W): No SLF4J providers were found.
+    SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+    SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+
+LibraryPathsPerf > hydrationAndColdIndex STANDARD_OUT
+    LIBRARY hydration	2000	0	62.5307	2000
+    LIBRARY coldIndexQuery	2000	0	23.779736	400
+    LIBRARY hydration	2000	1	22.15721	2000
+    LIBRARY coldIndexQuery	2000	1	8.210786	400
+    LIBRARY hydration	2000	2	23.370102	2000
+    LIBRARY coldIndexQuery	2000	2	5.621809	400
+    LIBRARY hydration	2000	3	16.161057	2000
+    LIBRARY coldIndexQuery	2000	3	5.449816	400
+    LIBRARY hydration	2000	4	13.980105	2000
+    LIBRARY coldIndexQuery	2000	4	5.070273	400
+    LIBRARY hydration	2000	5	13.327218	2000
+    LIBRARY coldIndexQuery	2000	5	4.748849	400
+    LIBRARY hydration	2000	6	10.367178	2000
+    LIBRARY coldIndexQuery	2000	6	5.367886	400
+    LIBRARY hydration	2000	7	10.355597	2000
+    LIBRARY coldIndexQuery	2000	7	4.909561	400
+    LIBRARY hydration	2000	8	9.734791	2000
+    LIBRARY coldIndexQuery	2000	8	4.725139	400
+    LIBRARY hydration	2000	9	8.955283	2000
+    LIBRARY coldIndexQuery	2000	9	4.84842	400
+    LIBRARY hydration	20000	0	93.512979	20000
+    LIBRARY coldIndexQuery	20000	0	55.96326	4000
+    LIBRARY hydration	20000	1	86.027132	20000
+    LIBRARY coldIndexQuery	20000	1	51.003639	4000
+    LIBRARY hydration	20000	2	80.466484	20000
+    LIBRARY coldIndexQuery	20000	2	38.618331	4000
+    LIBRARY hydration	20000	3	72.843225	20000
+    LIBRARY coldIndexQuery	20000	3	45.916446	4000
+    LIBRARY hydration	20000	4	73.602043	20000
+    LIBRARY coldIndexQuery	20000	4	40.682919	4000
+    LIBRARY hydration	20000	5	67.432955	20000
+    LIBRARY coldIndexQuery	20000	5	35.440855	4000
+    LIBRARY hydration	20000	6	69.147192	20000
+    LIBRARY coldIndexQuery	20000	6	32.02408	4000
+    LIBRARY hydration	20000	7	67.630957	20000
+    LIBRARY coldIndexQuery	20000	7	41.213575	4000
+    LIBRARY hydration	20000	8	68.664228	20000
+    LIBRARY coldIndexQuery	20000	8	39.648949	4000
+    LIBRARY hydration	20000	9	66.235052	20000
+    LIBRARY coldIndexQuery	20000	9	34.250593	4000
+    LIBRARY hydration	100000	0	374.729919	100000
+    LIBRARY coldIndexQuery	100000	0	197.320101	20000
+    LIBRARY hydration	100000	1	376.624156	100000
+    LIBRARY coldIndexQuery	100000	1	197.674063	20000
+    LIBRARY hydration	100000	2	389.361534	100000
+    LIBRARY coldIndexQuery	100000	2	198.581212	20000
+    LIBRARY hydration	100000	3	373.48	100000
+    LIBRARY coldIndexQuery	100000	3	206.864243	20000
+    LIBRARY hydration	100000	4	382.596521	100000
+    LIBRARY coldIndexQuery	100000	4	193.221186	20000
+    LIBRARY hydration	100000	5	363.506126	100000
+    LIBRARY coldIndexQuery	100000	5	191.243774	20000
+    LIBRARY hydration	100000	6	375.110748	100000
+    LIBRARY coldIndexQuery	100000	6	193.753666	20000
+    LIBRARY hydration	100000	7	392.331641	100000
+    LIBRARY coldIndexQuery	100000	7	188.758347	20000
+    LIBRARY hydration	100000	8	367.785363	100000
+    LIBRARY coldIndexQuery	100000	8	205.35514	20000
+    LIBRARY hydration	100000	9	379.796243	100000
+    LIBRARY coldIndexQuery	100000	9	195.072258	20000
+
+LibraryPerf > measure STANDARD_OUT
+    LIBRARY metric	size	run	ms	rows
+    LIBRARY query:l	2000	0	0.127781	2167
+    LIBRARY query:le	2000	0	0.184772	967
+    LIBRARY query:lem	2000	0	0.122022	967
+    LIBRARY query:lemo	2000	0	0.113071	567
+    LIBRARY query:lemon	2000	0	0.112801	567
+    LIBRARY query:lemon a	2000	0	0.172791	567
+    LIBRARY query:lemon ar	2000	0	0.172211	567
+    LIBRARY query:kmn	2000	0	0.116601	567
+    LIBRARY query:night 1	2000	0	0.190512	548
+    LIBRARY query:absent xyz	2000	0	0.252142	0
+    LIBRARY derive	2000	0	1.443744	2000
+    LIBRARY sort	2000	0	1.373204	2000
+    LIBRARY filter	2000	0	0.677547	500
+    LIBRARY query:l	2000	1	0.109261	2167
+    LIBRARY query:le	2000	1	0.104931	967
+    LIBRARY query:lem	2000	1	0.112131	967
+    LIBRARY query:lemo	2000	1	0.096421	567
+    LIBRARY query:lemon	2000	1	0.099081	567
+    LIBRARY query:lemon a	2000	1	0.159881	567
+    LIBRARY query:lemon ar	2000	1	0.160582	567
+    LIBRARY query:kmn	2000	1	0.115921	567
+    LIBRARY query:night 1	2000	1	0.167371	548
+    LIBRARY query:absent xyz	2000	1	0.222902	0
+    LIBRARY derive	2000	1	1.406204	2000
+    LIBRARY sort	2000	1	1.293433	2000
+    LIBRARY filter	2000	1	0.618626	500
+    LIBRARY query:l	2000	2	0.109891	2167
+    LIBRARY query:le	2000	2	0.110341	967
+    LIBRARY query:lem	2000	2	0.110821	967
+    LIBRARY query:lemo	2000	2	0.096241	567
+    LIBRARY query:lemon	2000	2	0.094991	567
+    LIBRARY query:lemon a	2000	2	0.159232	567
+    LIBRARY query:lemon ar	2000	2	0.157601	567
+    LIBRARY query:kmn	2000	2	0.102871	567
+    LIBRARY query:night 1	2000	2	0.162461	548
+    LIBRARY query:absent xyz	2000	2	0.224482	0
+    LIBRARY derive	2000	2	1.299443	2000
+    LIBRARY sort	2000	2	1.258253	2000
+    LIBRARY filter	2000	2	0.620896	500
+    LIBRARY query:l	2000	3	0.107181	2167
+    LIBRARY query:le	2000	3	0.106471	967
+    LIBRARY query:lem	2000	3	0.106081	967
+    LIBRARY query:lemo	2000	3	0.097081	567
+    LIBRARY query:lemon	2000	3	0.095191	567
+    LIBRARY query:lemon a	2000	3	0.158551	567
+    LIBRARY query:lemon ar	2000	3	0.158442	567
+    LIBRARY query:kmn	2000	3	0.101121	567
+    LIBRARY query:night 1	2000	3	0.162032	548
+    LIBRARY query:absent xyz	2000	3	0.223192	0
+    LIBRARY derive	2000	3	1.299953	2000
+    LIBRARY sort	2000	3	1.271452	2000
+    LIBRARY filter	2000	3	0.620686	500
+    LIBRARY query:l	2000	4	0.109871	2167
+    LIBRARY query:le	2000	4	0.102311	967
+    LIBRARY query:lem	2000	4	0.104461	967
+    LIBRARY query:lemo	2000	4	0.09504	567
+    LIBRARY query:lemon	2000	4	0.093271	567
+    LIBRARY query:lemon a	2000	4	0.162241	567
+    LIBRARY query:lemon ar	2000	4	0.155471	567
+    LIBRARY query:kmn	2000	4	0.098731	567
+    LIBRARY query:night 1	2000	4	0.165142	548
+    LIBRARY query:absent xyz	2000	4	0.218953	0
+    LIBRARY derive	2000	4	1.292593	2000
+    LIBRARY sort	2000	4	1.262002	2000
+    LIBRARY filter	2000	4	0.625606	500
+    LIBRARY query:l	2000	5	0.104661	2167
+    LIBRARY query:le	2000	5	0.106671	967
+    LIBRARY query:lem	2000	5	0.106111	967
+    LIBRARY query:lemo	2000	5	0.096301	567
+    LIBRARY query:lemon	2000	5	0.092731	567
+    LIBRARY query:lemon a	2000	5	0.157681	567
+    LIBRARY query:lemon ar	2000	5	0.162101	567
+    LIBRARY query:kmn	2000	5	0.099671	567
+    LIBRARY query:night 1	2000	5	0.161522	548
+    LIBRARY query:absent xyz	2000	5	0.217932	0
+    LIBRARY derive	2000	5	1.369193	2000
+    LIBRARY sort	2000	5	1.346724	2000
+    LIBRARY filter	2000	5	0.661237	500
+    LIBRARY query:l	2000	6	0.154992	2167
+    LIBRARY query:le	2000	6	0.127831	967
+    LIBRARY query:lem	2000	6	0.107801	967
+    LIBRARY query:lemo	2000	6	0.09714	567
+    LIBRARY query:lemon	2000	6	0.093871	567
+    LIBRARY query:lemon a	2000	6	0.157211	567
+    LIBRARY query:lemon ar	2000	6	0.163081	567
+    LIBRARY query:kmn	2000	6	0.101291	567
+    LIBRARY query:night 1	2000	6	0.163792	548
+    LIBRARY query:absent xyz	2000	6	0.225782	0
+    LIBRARY derive	2000	6	1.317612	2000
+    LIBRARY sort	2000	6	1.322913	2000
+    LIBRARY filter	2000	6	0.717767	500
+    LIBRARY query:l	2000	7	0.112602	2167
+    LIBRARY query:le	2000	7	0.113021	967
+    LIBRARY query:lem	2000	7	0.106091	967
+    LIBRARY query:lemo	2000	7	0.097051	567
+    LIBRARY query:lemon	2000	7	0.096111	567
+    LIBRARY query:lemon a	2000	7	0.187141	567
+    LIBRARY query:lemon ar	2000	7	0.188032	567
+    LIBRARY query:kmn	2000	7	0.116281	567
+    LIBRARY query:night 1	2000	7	0.188162	548
+    LIBRARY query:absent xyz	2000	7	0.246773	0
+    LIBRARY derive	2000	7	1.305782	2000
+    LIBRARY sort	2000	7	1.280442	2000
+    LIBRARY filter	2000	7	0.612887	500
+    LIBRARY query:l	2000	8	0.107541	2167
+    LIBRARY query:le	2000	8	0.103941	967
+    LIBRARY query:lem	2000	8	0.106771	967
+    LIBRARY query:lemo	2000	8	0.096411	567
+    LIBRARY query:lemon	2000	8	0.094821	567
+    LIBRARY query:lemon a	2000	8	0.157691	567
+    LIBRARY query:lemon ar	2000	8	0.161731	567
+    LIBRARY query:kmn	2000	8	0.100261	567
+    LIBRARY query:night 1	2000	8	0.159891	548
+    LIBRARY query:absent xyz	2000	8	0.216702	0
+    LIBRARY derive	2000	8	1.283722	2000
+    LIBRARY sort	2000	8	1.253242	2000
+    LIBRARY filter	2000	8	0.606626	500
+    LIBRARY query:l	2000	9	0.105281	2167
+    LIBRARY query:le	2000	9	0.103041	967
+    LIBRARY query:lem	2000	9	0.104181	967
+    LIBRARY query:lemo	2000	9	0.096631	567
+    LIBRARY query:lemon	2000	9	0.170742	567
+    LIBRARY query:lemon a	2000	9	0.313863	567
+    LIBRARY query:lemon ar	2000	9	0.313203	567
+    LIBRARY query:kmn	2000	9	0.098651	567
+    LIBRARY query:night 1	2000	9	0.162402	548
+    LIBRARY query:absent xyz	2000	9	0.218242	0
+    LIBRARY derive	2000	9	1.270382	2000
+    LIBRARY sort	2000	9	1.629576	2000
+    LIBRARY filter	2000	9	0.737657	500
+    LIBRARY query:l	20000	0	1.397664	21667
+    LIBRARY query:le	20000	0	1.176341	9667
+    LIBRARY query:lem	20000	0	1.132281	9667
+    LIBRARY query:lemo	20000	0	1.03025	5667
+    LIBRARY query:lemon	20000	0	0.9938	5667
+    LIBRARY query:lemon a	20000	0	1.824318	5667
+    LIBRARY query:lemon ar	20000	0	1.460635	5667
+    LIBRARY query:kmn	20000	0	1.01883	5667
+    LIBRARY query:night 1	20000	0	1.555995	5526
+    LIBRARY query:absent xyz	20000	0	2.92406	0
+    LIBRARY derive	20000	0	11.744866	20000
+    LIBRARY sort	20000	0	11.334782	20000
+    LIBRARY filter	20000	0	4.272672	5000
+    LIBRARY query:l	20000	1	2.402834	21667
+    LIBRARY query:le	20000	1	1.211143	9667
+    LIBRARY query:lem	20000	1	1.115541	9667
+    LIBRARY query:lemo	20000	1	0.99864	5667
+    LIBRARY query:lemon	20000	1	0.97406	5667
+    LIBRARY query:lemon a	20000	1	1.536465	5667
+    LIBRARY query:lemon ar	20000	1	1.532645	5667
+    LIBRARY query:kmn	20000	1	1.063071	5667
+    LIBRARY query:night 1	20000	1	1.644076	5526
+    LIBRARY query:absent xyz	20000	1	2.584936	0
+    LIBRARY derive	20000	1	12.601714	20000
+    LIBRARY sort	20000	1	13.050498	20000
+    LIBRARY filter	20000	1	4.395143	5000
+    LIBRARY query:l	20000	2	1.454355	21667
+    LIBRARY query:le	20000	2	1.100341	9667
+    LIBRARY query:lem	20000	2	1.00877	9667
+    LIBRARY query:lemo	20000	2	0.95748	5667
+    LIBRARY query:lemon	20000	2	0.99637	5667
+    LIBRARY query:lemon a	20000	2	1.544365	5667
+    LIBRARY query:lemon ar	20000	2	1.539766	5667
+    LIBRARY query:kmn	20000	2	1.069331	5667
+    LIBRARY query:night 1	20000	2	1.623466	5526
+    LIBRARY query:absent xyz	20000	2	2.772457	0
+    LIBRARY derive	20000	2	13.042009	20000
+    LIBRARY sort	20000	2	11.524943	20000
+    LIBRARY filter	20000	2	4.262142	5000
+    LIBRARY query:l	20000	3	1.569416	21667
+    LIBRARY query:le	20000	3	1.298803	9667
+    LIBRARY query:lem	20000	3	1.132671	9667
+    LIBRARY query:lemo	20000	3	0.991509	5667
+    LIBRARY query:lemon	20000	3	0.972649	5667
+    LIBRARY query:lemon a	20000	3	1.545236	5667
+    LIBRARY query:lemon ar	20000	3	1.539795	5667
+    LIBRARY query:kmn	20000	3	1.062771	5667
+    LIBRARY query:night 1	20000	3	1.947699	5526
+    LIBRARY query:absent xyz	20000	3	2.847289	0
+    LIBRARY derive	20000	3	12.263121	20000
+    LIBRARY sort	20000	3	11.13929	20000
+    LIBRARY filter	20000	3	4.291042	5000
+    LIBRARY query:l	20000	4	1.571746	21667
+    LIBRARY query:le	20000	4	1.356323	9667
+    LIBRARY query:lem	20000	4	1.162021	9667
+    LIBRARY query:lemo	20000	4	1.220662	5667
+    LIBRARY query:lemon	20000	4	1.304833	5667
+    LIBRARY query:lemon a	20000	4	1.541475	5667
+    LIBRARY query:lemon ar	20000	4	1.528185	5667
+    LIBRARY query:kmn	20000	4	1.090031	5667
+    LIBRARY query:night 1	20000	4	1.647137	5526
+    LIBRARY query:absent xyz	20000	4	2.873068	0
+    LIBRARY derive	20000	4	12.254021	20000
+    LIBRARY sort	20000	4	11.939248	20000
+    LIBRARY filter	20000	4	5.573285	5000
+    LIBRARY query:l	20000	5	1.400394	21667
+    LIBRARY query:le	20000	5	1.209322	9667
+    LIBRARY query:lem	20000	5	1.166582	9667
+    LIBRARY query:lemo	20000	5	1.01564	5667
+    LIBRARY query:lemon	20000	5	0.991399	5667
+    LIBRARY query:lemon a	20000	5	1.542365	5667
+    LIBRARY query:lemon ar	20000	5	1.549355	5667
+    LIBRARY query:kmn	20000	5	1.083841	5667
+    LIBRARY query:night 1	20000	5	1.609206	5526
+    LIBRARY query:absent xyz	20000	5	2.735397	0
+    LIBRARY derive	20000	5	13.036699	20000
+    LIBRARY sort	20000	5	11.048579	20000
+    LIBRARY filter	20000	5	4.282822	5000
+    LIBRARY query:l	20000	6	1.558626	21667
+    LIBRARY query:le	20000	6	1.269383	9667
+    LIBRARY query:lem	20000	6	1.138851	9667
+    LIBRARY query:lemo	20000	6	0.927509	5667
+    LIBRARY query:lemon	20000	6	0.907219	5667
+    LIBRARY query:lemon a	20000	6	1.471595	5667
+    LIBRARY query:lemon ar	20000	6	1.500205	5667
+    LIBRARY query:kmn	20000	6	1.075981	5667
+    LIBRARY query:night 1	20000	6	1.937658	5526
+    LIBRARY query:absent xyz	20000	6	3.270642	0
+    LIBRARY derive	20000	6	12.516164	20000
+    LIBRARY sort	20000	6	11.489514	20000
+    LIBRARY filter	20000	6	4.168221	5000
+    LIBRARY query:l	20000	7	2.078621	21667
+    LIBRARY query:le	20000	7	1.700237	9667
+    LIBRARY query:lem	20000	7	1.487714	9667
+    LIBRARY query:lemo	20000	7	1.300343	5667
+    LIBRARY query:lemon	20000	7	1.193042	5667
+    LIBRARY query:lemon a	20000	7	1.754617	5667
+    LIBRARY query:lemon ar	20000	7	1.651176	5667
+    LIBRARY query:kmn	20000	7	1.154992	5667
+    LIBRARY query:night 1	20000	7	1.663236	5526
+    LIBRARY query:absent xyz	20000	7	3.078201	0
+    LIBRARY derive	20000	7	13.122039	20000
+    LIBRARY sort	20000	7	12.293711	20000
+    LIBRARY filter	20000	7	4.301642	5000
+    LIBRARY query:l	20000	8	1.481575	21667
+    LIBRARY query:le	20000	8	1.249062	9667
+    LIBRARY query:lem	20000	8	1.127981	9667
+    LIBRARY query:lemo	20000	8	0.984889	5667
+    LIBRARY query:lemon	20000	8	0.976349	5667
+    LIBRARY query:lemon a	20000	8	1.531295	5667
+    LIBRARY query:lemon ar	20000	8	1.539126	5667
+    LIBRARY query:kmn	20000	8	0.973589	5667
+    LIBRARY query:night 1	20000	8	2.204562	5526
+    LIBRARY query:absent xyz	20000	8	2.905619	0
+    LIBRARY derive	20000	8	12.513024	20000
+    LIBRARY sort	20000	8	11.194471	20000
+    LIBRARY filter	20000	8	4.260802	5000
+    LIBRARY query:l	20000	9	1.564636	21667
+    LIBRARY query:le	20000	9	1.519885	9667
+    LIBRARY query:lem	20000	9	1.00745	9667
+    LIBRARY query:lemo	20000	9	0.926859	5667
+    LIBRARY query:lemon	20000	9	0.909629	5667
+    LIBRARY query:lemon a	20000	9	1.467305	5667
+    LIBRARY query:lemon ar	20000	9	1.521625	5667
+    LIBRARY query:kmn	20000	9	1.09354	5667
+    LIBRARY query:night 1	20000	9	1.617436	5526
+    LIBRARY query:absent xyz	20000	9	3.164572	0
+    LIBRARY derive	20000	9	13.019188	20000
+    LIBRARY sort	20000	9	11.373761	20000
+    LIBRARY filter	20000	9	4.326972	5000
+    LIBRARY query:l	100000	0	9.203679	108334
+    LIBRARY query:le	100000	0	10.620993	48334
+    LIBRARY query:lem	100000	0	10.212539	48334
+    LIBRARY query:lemo	100000	0	9.441321	28333
+    LIBRARY query:lemon	100000	0	8.654903	28333
+    LIBRARY query:lemon a	100000	0	11.144477	28333
+    LIBRARY query:lemon ar	100000	0	11.166178	28333
+    LIBRARY query:kmn	100000	0	8.24654	28334
+    LIBRARY query:night 1	100000	0	13.165078	23953
+    LIBRARY query:absent xyz	100000	0	19.743531	0
+    LIBRARY derive	100000	0	97.594395	100000
+    LIBRARY sort	100000	0	100.491623	100000
+    LIBRARY filter	100000	0	31.0054	25000
+    LIBRARY query:l	100000	1	9.540142	108334
+    LIBRARY query:le	100000	1	11.991717	48334
+    LIBRARY query:lem	100000	1	9.833706	48334
+    LIBRARY query:lemo	100000	1	8.680094	28333
+    LIBRARY query:lemon	100000	1	7.948037	28333
+    LIBRARY query:lemon a	100000	1	13.137158	28333
+    LIBRARY query:lemon ar	100000	1	11.192388	28333
+    LIBRARY query:kmn	100000	1	8.147139	28334
+    LIBRARY query:night 1	100000	1	14.411939	23953
+    LIBRARY query:absent xyz	100000	1	19.922563	0
+    LIBRARY derive	100000	1	105.545803	100000
+    LIBRARY sort	100000	1	100.886128	100000
+    LIBRARY filter	100000	1	38.743496	25000
+    LIBRARY query:l	100000	2	9.195989	108334
+    LIBRARY query:le	100000	2	10.484181	48334
+    LIBRARY query:lem	100000	2	11.706024	48334
+    LIBRARY query:lemo	100000	2	10.40496	28333
+    LIBRARY query:lemon	100000	2	9.601163	28333
+    LIBRARY query:lemon a	100000	2	12.804834	28333
+    LIBRARY query:lemon ar	100000	2	11.158598	28333
+    LIBRARY query:kmn	100000	2	9.610014	28334
+    LIBRARY query:night 1	100000	2	12.730923	23953
+    LIBRARY query:absent xyz	100000	2	21.658679	0
+    LIBRARY derive	100000	2	112.319872	100000
+    LIBRARY sort	100000	2	104.618647	100000
+    LIBRARY filter	100000	2	35.31845	25000
+    LIBRARY query:l	100000	3	9.460571	108334
+    LIBRARY query:le	100000	3	10.987866	48334
+    LIBRARY query:lem	100000	3	9.236169	48334
+    LIBRARY query:lemo	100000	3	9.116078	28333
+    LIBRARY query:lemon	100000	3	8.716164	28333
+    LIBRARY query:lemon a	100000	3	11.645662	28333
+    LIBRARY query:lemon ar	100000	3	11.496941	28333
+    LIBRARY query:kmn	100000	3	8.008097	28334
+    LIBRARY query:night 1	100000	3	12.705853	23953
+    LIBRARY query:absent xyz	100000	3	20.047233	0
+    LIBRARY derive	100000	3	101.377736	100000
+    LIBRARY sort	100000	3	101.732719	100000
+    LIBRARY filter	100000	3	36.828234	25000
+    LIBRARY query:l	100000	4	10.041826	108334
+    LIBRARY query:le	100000	4	10.708603	48334
+    LIBRARY query:lem	100000	4	9.26905	48334
+    LIBRARY query:lemo	100000	4	9.163988	28333
+    LIBRARY query:lemon	100000	4	8.682024	28333
+    LIBRARY query:lemon a	100000	4	11.528301	28333
+    LIBRARY query:lemon ar	100000	4	11.823723	28333
+    LIBRARY query:kmn	100000	4	9.40554	28334
+    LIBRARY query:night 1	100000	4	14.116906	23953
+    LIBRARY query:absent xyz	100000	4	20.599698	0
+    LIBRARY derive	100000	4	107.151252	100000
+    LIBRARY sort	100000	4	98.030764	100000
+    LIBRARY filter	100000	4	37.386489	25000
+    LIBRARY query:l	100000	5	9.067567	108334
+    LIBRARY query:le	100000	5	10.960776	48334
+    LIBRARY query:lem	100000	5	10.117458	48334
+    LIBRARY query:lemo	100000	5	9.567401	28333
+    LIBRARY query:lemon	100000	5	8.193308	28333
+    LIBRARY query:lemon a	100000	5	11.170557	28333
+    LIBRARY query:lemon ar	100000	5	11.45762	28333
+    LIBRARY query:kmn	100000	5	8.198458	28334
+    LIBRARY query:night 1	100000	5	12.465249	23953
+    LIBRARY query:absent xyz	100000	5	20.413645	0
+    LIBRARY derive	100000	5	94.739396	100000
+    LIBRARY sort	100000	5	103.325229	100000
+    LIBRARY filter	100000	5	33.994155	25000
+    LIBRARY query:l	100000	6	9.063137	108334
+    LIBRARY query:le	100000	6	10.37277	48334
+    LIBRARY query:lem	100000	6	10.4463	48334
+    LIBRARY query:lemo	100000	6	8.815964	28333
+    LIBRARY query:lemon	100000	6	10.620901	28333
+    LIBRARY query:lemon a	100000	6	11.087186	28333
+    LIBRARY query:lemon ar	100000	6	12.501899	28333
+    LIBRARY query:kmn	100000	6	9.776283	28334
+    LIBRARY query:night 1	100000	6	15.576979	23953
+    LIBRARY query:absent xyz	100000	6	23.966179	0
+    LIBRARY derive	100000	6	109.948152	100000
+    LIBRARY sort	100000	6	99.068288	100000
+    LIBRARY filter	100000	6	35.014384	25000
+    LIBRARY query:l	100000	7	11.768132	108334
+    LIBRARY query:le	100000	7	10.948705	48334
+    LIBRARY query:lem	100000	7	9.676572	48334
+    LIBRARY query:lemo	100000	7	8.766864	28333
+    LIBRARY query:lemon	100000	7	9.537322	28333
+    LIBRARY query:lemon a	100000	7	10.897004	28333
+    LIBRARY query:lemon ar	100000	7	12.689652	28333
+    LIBRARY query:kmn	100000	7	8.437521	28334
+    LIBRARY query:night 1	100000	7	13.820272	23953
+    LIBRARY query:absent xyz	100000	7	19.636038	0
+    LIBRARY derive	100000	7	105.63732	100000
+    LIBRARY sort	100000	7	101.181708	100000
+    LIBRARY filter	100000	7	34.858151	25000
+    LIBRARY query:l	100000	8	10.300678	108334
+    LIBRARY query:le	100000	8	10.670901	48334
+    LIBRARY query:lem	100000	8	10.255348	48334
+    LIBRARY query:lemo	100000	8	8.469011	28333
+    LIBRARY query:lemon	100000	8	7.853194	28333
+    LIBRARY query:lemon a	100000	8	11.019684	28333
+    LIBRARY query:lemon ar	100000	8	10.812672	28333
+    LIBRARY query:kmn	100000	8	8.220818	28334
+    LIBRARY query:night 1	100000	8	13.164745	23953
+    LIBRARY query:absent xyz	100000	8	20.01034	0
+    LIBRARY derive	100000	8	105.346411	100000
+    LIBRARY sort	100000	8	97.277694	100000
+    LIBRARY filter	100000	8	35.272505	25000
+    LIBRARY query:l	100000	9	9.601922	108334
+    LIBRARY query:le	100000	9	10.724922	48334
+    LIBRARY query:lem	100000	9	9.316249	48334
+    LIBRARY query:lemo	100000	9	8.44704	28333
+    LIBRARY query:lemon	100000	9	8.129178	28333
+    LIBRARY query:lemon a	100000	9	11.144546	28333
+    LIBRARY query:lemon ar	100000	9	10.926474	28333
+    LIBRARY query:kmn	100000	9	8.079357	28334
+    LIBRARY query:night 1	100000	9	13.261746	23953
+    LIBRARY query:absent xyz	100000	9	19.464294	0
+    LIBRARY derive	100000	9	107.240209	100000
+    LIBRARY sort	100000	9	93.997093	100000
+    LIBRARY filter	100000	9	36.651409	25000
+
+LibraryRenderPerf > scrollFrames STANDARD_OUT
+    LIBRARY scroll10frames	2000	0	182.704596	91
+    LIBRARY scroll10frames	2000	1	118.477609	100
+    LIBRARY scroll10frames	2000	2	102.859491	100
+    LIBRARY scroll10frames	2000	3	96.214969	100
+    LIBRARY scroll10frames	2000	4	84.433388	100
+    LIBRARY scroll10frames	2000	5	84.614749	100
+    LIBRARY scroll10frames	2000	6	67.183144	100
+    LIBRARY scroll10frames	2000	7	82.003842	100
+    LIBRARY scroll10frames	2000	8	60.926072	100
+    LIBRARY scroll10frames	2000	9	54.124768	100
+    RECOMPOSE idleRows size=2000 perSimulatedSecond=0
+    LIBRARY scroll10frames	20000	0	57.563191	91
+    LIBRARY scroll10frames	20000	1	59.789121	100
+    LIBRARY scroll10frames	20000	2	60.215795	100
+    LIBRARY scroll10frames	20000	3	52.693134	100
+    LIBRARY scroll10frames	20000	4	54.555842	100
+    LIBRARY scroll10frames	20000	5	44.941982	100
+    LIBRARY scroll10frames	20000	6	47.387255	100
+    LIBRARY scroll10frames	20000	7	47.612777	100
+    LIBRARY scroll10frames	20000	8	47.132572	100
+    LIBRARY scroll10frames	20000	9	44.505308	100
+    RECOMPOSE idleRows size=20000 perSimulatedSecond=0
+    LIBRARY scroll10frames	100000	0	42.973481	91
+    LIBRARY scroll10frames	100000	1	48.377691	100
+    LIBRARY scroll10frames	100000	2	48.932286	100
+    LIBRARY scroll10frames	100000	3	42.660027	100
+    LIBRARY scroll10frames	100000	4	40.511928	100
+    LIBRARY scroll10frames	100000	5	39.047085	100
+    LIBRARY scroll10frames	100000	6	41.670978	100
+    LIBRARY scroll10frames	100000	7	41.85195	100
+    LIBRARY scroll10frames	100000	8	37.740042	100
+    LIBRARY scroll10frames	100000	9	40.672859	100
+    RECOMPOSE idleRows size=100000 perSimulatedSecond=0
+
+LibrarySessionPerf > queuedYoutubeReadiness STANDARD_OUT
+    TRACE 12:51:01.614 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.615 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:01.657 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:01.658 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:01.658 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:01.658 [Session] skipToNext
+    TRACE 12:51:01.659 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:01.659 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.660 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:01.700 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:01.700 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:01.700 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	0	41.88491	2
+    TRACE 12:51:01.701 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.701 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:01.742 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:01.742 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:01.742 [Session] skipToNext
+    TRACE 12:51:01.742 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:01.742 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:01.742 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.742 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:01.783 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:01.783 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:01.783 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	1	40.836301	2
+    TRACE 12:51:01.783 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.783 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:01.823 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:01.824 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:01.824 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:01.824 [Session] skipToNext
+    TRACE 12:51:01.824 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:01.824 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.824 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:01.864 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:01.864 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:01.865 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	2	40.68884	2
+    TRACE 12:51:01.865 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.865 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:01.905 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:01.905 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:01.905 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:01.905 [Session] skipToNext
+    TRACE 12:51:01.905 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:01.906 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.906 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:01.946 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:01.946 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:01.946 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	3	40.84979	2
+    TRACE 12:51:01.946 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.947 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:01.987 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:01.987 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:01.987 [Session] skipToNext
+    TRACE 12:51:01.987 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:01.987 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:01.987 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:01.987 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.028 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.028 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.028 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	4	40.870819	2
+    TRACE 12:51:02.028 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.028 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.068 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.068 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.069 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.069 [Session] skipToNext
+    TRACE 12:51:02.069 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.069 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.069 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.109 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.109 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.109 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	5	40.664477	2
+    TRACE 12:51:02.109 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.109 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.150 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.150 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.150 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.150 [Session] skipToNext
+    TRACE 12:51:02.150 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.150 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.150 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.190 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.190 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.190 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	6	40.591026	2
+    TRACE 12:51:02.191 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.191 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.231 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.231 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.231 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.231 [Session] skipToNext
+    TRACE 12:51:02.231 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.231 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.231 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.271 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.271 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.272 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	7	40.885838	2
+    TRACE 12:51:02.272 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.272 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.312 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.312 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.312 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.312 [Session] skipToNext
+    TRACE 12:51:02.312 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.312 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.312 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.353 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.353 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.353 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	8	40.760288	2
+    TRACE 12:51:02.353 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.353 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.393 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.393 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.394 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.394 [Session] skipToNext
+    TRACE 12:51:02.394 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.394 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.394 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.434 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.434 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.435 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockColdPressToEngine	2	9	40.865008	2
+    TRACE 12:51:02.435 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.435 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.435 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.435 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.435 [Session] skipToNext
+    TRACE 12:51:02.435 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.435 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.435 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.435 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.435 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.435 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	0	0.288543	2
+    TRACE 12:51:02.435 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.436 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.436 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.436 [Session] skipToNext
+    TRACE 12:51:02.436 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.436 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.436 [Session] engine -> PLAYING gen=1 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.436 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	1	0.285043	2
+    TRACE 12:51:02.436 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.436 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.436 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.436 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.436 [Session] skipToNext
+    TRACE 12:51:02.437 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.437 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.437 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.437 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.437 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	2	0.314433	2
+    TRACE 12:51:02.437 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    TRACE 12:51:02.437 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.437 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.437 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.437 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.437 [Session] skipToNext
+    TRACE 12:51:02.437 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.437 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.437 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.437 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.437 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	3	0.303033	2
+    TRACE 12:51:02.437 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.438 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.438 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.438 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] skipToNext
+    TRACE 12:51:02.438 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.438 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.438 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.438 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	4	0.186382	2
+    TRACE 12:51:02.438 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.438 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.438 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.438 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] skipToNext
+    TRACE 12:51:02.438 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.438 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.438 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.438 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.438 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	5	0.280423	2
+    TRACE 12:51:02.439 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.439 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.439 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.439 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.439 [Session] skipToNext
+    TRACE 12:51:02.439 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.439 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.439 [Session] engine -> PLAYING gen=1 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.439 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.439 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	6	0.674046	2
+    TRACE 12:51:02.440 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.440 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.440 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.440 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.440 [Session] skipToNext
+    TRACE 12:51:02.440 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.440 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.440 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.440 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.440 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.440 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	7	0.335274	2
+    TRACE 12:51:02.440 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    TRACE 12:51:02.440 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.441 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.441 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.441 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.441 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.441 [Session] skipToNext
+    TRACE 12:51:02.441 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.441 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.441 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.441 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.441 [Session] engine.play ok gen=2; completion armed
+    LIBRARY mockReadyPressToEngine	2	8	0.343423	2
+    TRACE 12:51:02.441 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    TRACE 12:51:02.441 [Session] startCurrent 'Track 0' [YOUTUBE_MUSIC] youtube:0 gen=1 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.441 [Session] engine -> IDLE gen=0 (session gen=1 armed=false) pos=0 dur=null
+    TRACE 12:51:02.441 [Session] engine.play 'Track 0' [YOUTUBE_MUSIC] youtube:0 via YOUTUBE_MUSIC gen=1
+    TRACE 12:51:02.442 [Session] engine.play ok gen=1; completion armed
+    TRACE 12:51:02.442 [Session] skipToNext
+    TRACE 12:51:02.442 [Session] engine -> PLAYING gen=1 (session gen=1 armed=true) pos=0 dur=null
+    TRACE 12:51:02.442 [Session] advance manual=true current=0 next=1 size=2 repeat=OFF shuffle=false
+    TRACE 12:51:02.442 [Session] startCurrent 'Track 1' [YOUTUBE_MUSIC] youtube:1 gen=2 (cancel previous job + engine.stopForTransition)
+    TRACE 12:51:02.442 [Session] engine -> IDLE gen=0 (session gen=2 armed=false) pos=0 dur=null
+    TRACE 12:51:02.442 [Session] engine.play 'Track 1' [YOUTUBE_MUSIC] youtube:1 via YOUTUBE_MUSIC gen=2
+    TRACE 12:51:02.442 [Session] engine.play ok gen=2; completion armed
+    TRACE 12:51:02.442 [Session] engine -> PLAYING gen=2 (session gen=2 armed=true) pos=0 dur=null
+    LIBRARY mockReadyPressToEngine	2	9	0.333353	2
+
+[Incubating] Problems report is available at: file:///home/theadenkingof/.t3/worktrees/Kainos-Player/t3-04de9be2/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 22s
+45 actionable tasks: 11 executed, 34 up-to-date
+Configuration cache entry stored.

@@ -1,6 +1,13 @@
 date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
-2026-10-31	warm-query-2k-ms	retain folded keys and catalog groups	2.988	0.237	3.969	0.372	100	accepted; repeat 2.797 to 0.238	pending
-2026-10-31	warm-query-20k-ms	retain folded keys and catalog groups	28.295	1.300	32.438	2.188	100	accepted; repeat 27.919 to 1.200	pending
-2026-10-31	warm-query-100k-ms	retain folded keys and catalog groups	179.934	10.311	202.760	17.397	100	accepted; repeat 186.447 to 10.378	pending
-2026-10-31	sort-20k-ms	catalog index	8.457	8.506	8.615	8.719	10	no measured sorting improvement	pending
-2026-10-31	filter-20k-ms	catalog index	3.642	3.489	3.667	3.608	10	under 5 percent; no filter-specific change	pending
+2026-10-31	warm-query-2k-ms	retain folded keys and catalog groups	2.988	0.237	3.969	0.372	100	accepted; repeat 2.797 to 0.238	cf301db
+2026-10-31	warm-query-20k-ms	retain folded keys and catalog groups	28.295	1.300	32.438	2.188	100	accepted; repeat 27.919 to 1.200	cf301db
+2026-10-31	warm-query-100k-ms	retain folded keys and catalog groups	179.934	10.311	202.760	17.397	100	accepted; repeat 186.447 to 10.378	cf301db
+2026-10-31	sort-20k-ms	catalog index	8.457	8.506	8.615	8.719	10	no measured sorting improvement	cf301db
+2026-10-31	filter-20k-ms	catalog index	3.642	3.489	3.667	3.608	10	under 5 percent; no filter-specific change	cf301db
+2026-10-31	hydration-2k-ms	read-only observation; connection through populated UI state	NA	13.654	NA	23.370	10	filesystem-cache warm; no change claimed	cf301db
+2026-10-31	hydration-20k-ms	read-only observation; connection through populated UI state	NA	70.995	NA	86.027	10	filesystem-cache warm; no change claimed	cf301db
+2026-10-31	hydration-100k-ms	read-only observation; connection through populated UI state	NA	375.867	NA	389.362	10	filesystem-cache warm; no change claimed	cf301db
+2026-10-31	cold-query-20k-ms	lazy index construction observation	NA	40.166	NA	51.004	10	first query misses frame target; follow-up required	cf301db
+2026-10-31	cold-query-100k-ms	lazy index construction observation	NA	196.196	NA	205.355	10	first query misses frame target; follow-up required	cf301db
+2026-10-31	scroll-20k-ten-frames-ms	headless TrackRow and shared generated Coil cover	NA	50.153	NA	59.789	10	fixture only; not GPU/full Library	cf301db
+2026-10-31	mock-press-to-engine-ms	cold 40ms extractor versus already ready mock	40.843	0.309	40.886	0.343	10	opportunity only; no prefetch implemented; not sound	cf301db

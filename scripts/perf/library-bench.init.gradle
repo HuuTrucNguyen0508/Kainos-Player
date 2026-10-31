@@ -1,13 +1,17 @@
 allprojects { p ->
     if (p.path == ':shared') {
         p.afterEvaluate {
+            if (p.findProperty('kainos.libraryReports') == 'true') {
+                p.extensions.getByName('composeCompiler').reportsDestination.set(p.layout.buildDirectory.dir('library-compose-reports'))
+            }
             p.kotlin.sourceSets.getByName('jvmTest').kotlin.srcDir(rootProject.file('scripts/perf/library-bench'))
+            p.dependencies.add('jvmTestImplementation', p.extensions.getByType(org.gradle.api.artifacts.VersionCatalogsExtension).named('libs').findLibrary('sqldelight-sqlite-driver').get())
             p.tasks.register('libraryPerf', Test) {
                 dependsOn p.tasks.named('jvmTestClasses')
                 def original = p.tasks.named('jvmTest').get()
                 testClassesDirs = original.testClassesDirs
                 classpath = original.classpath
-                filter.includeTestsMatching('*.LibraryPerf')
+                filter.includeTestsMatching('*.Library*Perf')
                 systemProperty 'java.awt.headless', 'true'
                 testLogging.showStandardStreams = true
                 outputs.upToDateWhen { false }
