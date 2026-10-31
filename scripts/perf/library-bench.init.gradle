@@ -1,0 +1,17 @@
+allprojects { p ->
+    if (p.path == ':shared') {
+        p.afterEvaluate {
+            p.kotlin.sourceSets.getByName('jvmTest').kotlin.srcDir(rootProject.file('scripts/perf/library-bench'))
+            p.tasks.register('libraryPerf', Test) {
+                dependsOn p.tasks.named('jvmTestClasses')
+                def original = p.tasks.named('jvmTest').get()
+                testClassesDirs = original.testClassesDirs
+                classpath = original.classpath
+                filter.includeTestsMatching('*.LibraryPerf')
+                systemProperty 'java.awt.headless', 'true'
+                testLogging.showStandardStreams = true
+                outputs.upToDateWhen { false }
+            }
+        }
+    }
+}

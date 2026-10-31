@@ -1,0 +1,635 @@
+Calculating task graph as no cached configuration is available for tasks: :shared:jvmTestClasses
+Type-safe project accessors is an incubating feature.
+> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :build-logic:generateExternalPluginSpecBuilders FROM-CACHE
+> Task :build-logic:extractPrecompiledScriptPluginPlugins FROM-CACHE
+> Task :build-logic:compilePluginsBlocks FROM-CACHE
+> Task :build-logic:generatePrecompiledScriptPluginAccessors FROM-CACHE
+> Task :build-logic:generateScriptPluginAdapters FROM-CACHE
+> Task :build-logic:compileKotlin FROM-CACHE
+> Task :build-logic:compileJava NO-SOURCE
+> Task :build-logic:pluginDescriptors
+> Task :build-logic:processResources
+> Task :build-logic:classes
+> Task :build-logic:jar
+> Task :shared:copyNonXmlValueResourcesForCommonTest NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForJvmMain NO-SOURCE
+> Task :shared:convertXmlValueResourcesForJvmTest NO-SOURCE
+> Task :sync:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:local:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:convertXmlValueResourcesForCommonMain NO-SOURCE
+> Task :sync:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:youtube:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:convertXmlValueResourcesForCommonTest NO-SOURCE
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:convertXmlValueResourcesForJvmMain NO-SOURCE
+> Task :provider:youtube:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmTest NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForCommonMain NO-SOURCE
+> Task :core:model:kmpPartiallyResolvedDependenciesChecker
+> Task :sync:jvmProcessResources NO-SOURCE
+> Task :core:model:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:local:jvmProcessResources NO-SOURCE
+> Task :sync:processJvmMainResources SKIPPED
+> Task :provider:spotify:jvmProcessResources NO-SOURCE
+> Task :provider:local:processJvmMainResources SKIPPED
+> Task :core:model:jvmProcessResources NO-SOURCE
+> Task :core:data:jvmProcessResources NO-SOURCE
+> Task :core:playback:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:youtube:jvmProcessResources NO-SOURCE
+> Task :core:playback:jvmProcessResources NO-SOURCE
+> Task :provider:spotify:processJvmMainResources SKIPPED
+> Task :shared:prepareComposeResourcesTaskForJvmMain NO-SOURCE
+> Task :core:playback:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:youtube:processJvmMainResources SKIPPED
+> Task :core:data:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:kmpPartiallyResolvedDependenciesChecker
+> Task :core:model:processJvmMainResources SKIPPED
+> Task :shared:prepareComposeResourcesTaskForCommonTest NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForCommonMain NO-SOURCE
+> Task :core:playback:processJvmMainResources SKIPPED
+> Task :core:data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:processJvmMainResources SKIPPED
+> Task :provider:spotify:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:checkJvmTestComposeLibrariesCompatibility
+> Task :shared:generateResourceAccessorsForJvmMain NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForJvmTest NO-SOURCE
+> Task :shared:generateResourceAccessorsForCommonTest NO-SOURCE
+> Task :shared:checkJvmMainComposeLibrariesCompatibility
+> Task :shared:generateResourceAccessorsForCommonMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForJvmTest NO-SOURCE
+> Task :shared:assembleJvmMainResources
+> Task :shared:assembleJvmTestResources
+> Task :shared:generateExpectResourceCollectorsForCommonMain
+> Task :core:data:generateCommonMainKainosDatabaseInterface FROM-CACHE
+> Task :shared:jvmProcessResources
+> Task :shared:processJvmMainResources SKIPPED
+> Task :shared:jvmTestProcessResources
+> Task :shared:generateComposeResClass
+> Task :shared:processJvmTestResources SKIPPED
+> Task :shared:generateActualResourceCollectorsForJvmMain
+> Task :core:model:compileKotlinJvm FROM-CACHE
+> Task :core:model:compileJvmMainJava NO-SOURCE
+> Task :core:model:jvmMainClasses UP-TO-DATE
+> Task :core:model:jvmJar
+> Task :provider:local:compileKotlinJvm FROM-CACHE
+> Task :provider:local:compileJvmMainJava NO-SOURCE
+> Task :provider:local:jvmMainClasses UP-TO-DATE
+> Task :provider:local:jvmJar
+> Task :core:playback:compileKotlinJvm FROM-CACHE
+> Task :core:playback:compileJvmMainJava NO-SOURCE
+> Task :core:playback:jvmMainClasses UP-TO-DATE
+> Task :core:data:compileKotlinJvm FROM-CACHE
+> Task :core:data:compileJvmMainJava NO-SOURCE
+> Task :core:data:jvmMainClasses UP-TO-DATE
+> Task :core:playback:jvmJar
+> Task :core:data:jvmJar
+> Task :provider:youtube:compileKotlinJvm FROM-CACHE
+> Task :provider:youtube:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:jvmMainClasses UP-TO-DATE
+> Task :provider:youtube:jvmJar
+> Task :provider:spotify:compileKotlinJvm FROM-CACHE
+> Task :provider:spotify:compileJvmMainJava NO-SOURCE
+> Task :provider:spotify:jvmMainClasses UP-TO-DATE
+> Task :sync:compileKotlinJvm FROM-CACHE
+> Task :sync:compileJvmMainJava NO-SOURCE
+> Task :sync:jvmMainClasses UP-TO-DATE
+> Task :provider:spotify:jvmJar
+> Task :sync:jvmJar
+> Task :shared:compileKotlinJvm FROM-CACHE
+> Task :shared:compileJvmMainJava NO-SOURCE
+> Task :shared:jvmMainClasses
+> Task :shared:jvmJar
+> Task :shared:compileTestKotlinJvm
+> Task :shared:compileJvmTestJava NO-SOURCE
+> Task :shared:jvmTestClasses
+
+[Incubating] Problems report is available at: file:///home/theadenkingof/.t3/worktrees/Kainos-Player/t3-04de9be2/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 6s
+44 actionable tasks: 29 executed, 15 from cache
+Configuration cache entry stored.
+ 12:39:59 up 32 min,  1 user,  load average: 2.11, 1.66, 1.35
+24
+Calculating task graph as no cached configuration is available for tasks: :shared:libraryPerf
+Type-safe project accessors is an incubating feature.
+> Task :build-logic:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :build-logic:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :build-logic:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :build-logic:compilePluginsBlocks UP-TO-DATE
+> Task :build-logic:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :build-logic:generateScriptPluginAdapters UP-TO-DATE
+> Task :build-logic:compileKotlin UP-TO-DATE
+> Task :build-logic:compileJava NO-SOURCE
+> Task :build-logic:pluginDescriptors UP-TO-DATE
+> Task :build-logic:processResources UP-TO-DATE
+> Task :build-logic:classes UP-TO-DATE
+> Task :build-logic:jar UP-TO-DATE
+> Task :shared:convertXmlValueResourcesForCommonTest NO-SOURCE
+> Task :core:model:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:generateComposeResClass UP-TO-DATE
+> Task :provider:local:kmpPartiallyResolvedDependenciesChecker
+> Task :core:model:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:generateExpectResourceCollectorsForCommonMain UP-TO-DATE
+> Task :shared:copyNonXmlValueResourcesForCommonTest NO-SOURCE
+> Task :core:data:jvmProcessResources NO-SOURCE
+> Task :core:model:jvmProcessResources NO-SOURCE
+> Task :shared:convertXmlValueResourcesForCommonMain NO-SOURCE
+> Task :provider:local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :sync:jvmProcessResources NO-SOURCE
+> Task :provider:spotify:kmpPartiallyResolvedDependenciesChecker
+> Task :core:data:processJvmMainResources SKIPPED
+> Task :shared:convertXmlValueResourcesForJvmTest NO-SOURCE
+> Task :provider:youtube:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:jvmProcessResources NO-SOURCE
+> Task :provider:local:jvmProcessResources NO-SOURCE
+> Task :core:playback:jvmProcessResources NO-SOURCE
+> Task :provider:youtube:jvmProcessResources NO-SOURCE
+> Task :shared:convertXmlValueResourcesForJvmMain NO-SOURCE
+> Task :sync:kmpPartiallyResolvedDependenciesChecker
+> Task :shared:kmpPartiallyResolvedDependenciesChecker
+> Task :core:data:kmpPartiallyResolvedDependenciesChecker
+> Task :core:playback:kmpPartiallyResolvedDependenciesChecker
+> Task :provider:spotify:processJvmMainResources SKIPPED
+> Task :shared:copyNonXmlValueResourcesForJvmMain NO-SOURCE
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :sync:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:model:processJvmMainResources SKIPPED
+> Task :core:playback:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:checkJvmMainComposeLibrariesCompatibility
+> Task :provider:youtube:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :provider:local:processJvmMainResources SKIPPED
+> Task :core:playback:processJvmMainResources SKIPPED
+> Task :sync:processJvmMainResources SKIPPED
+> Task :provider:youtube:processJvmMainResources SKIPPED
+> Task :provider:spotify:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:prepareComposeResourcesTaskForCommonTest NO-SOURCE
+> Task :shared:copyNonXmlValueResourcesForCommonMain NO-SOURCE
+> Task :shared:checkJvmTestComposeLibrariesCompatibility
+> Task :shared:prepareComposeResourcesTaskForJvmMain NO-SOURCE
+> Task :core:data:generateCommonMainKainosDatabaseInterface UP-TO-DATE
+> Task :shared:copyNonXmlValueResourcesForJvmTest NO-SOURCE
+> Task :shared:generateResourceAccessorsForCommonTest NO-SOURCE
+> Task :shared:generateResourceAccessorsForJvmMain NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForJvmTest NO-SOURCE
+> Task :shared:prepareComposeResourcesTaskForCommonMain NO-SOURCE
+> Task :shared:generateResourceAccessorsForJvmTest NO-SOURCE
+> Task :shared:generateResourceAccessorsForCommonMain NO-SOURCE
+> Task :shared:assembleJvmMainResources UP-TO-DATE
+> Task :shared:assembleJvmTestResources UP-TO-DATE
+> Task :shared:jvmProcessResources UP-TO-DATE
+> Task :shared:generateActualResourceCollectorsForJvmMain UP-TO-DATE
+> Task :shared:jvmTestProcessResources UP-TO-DATE
+> Task :shared:processJvmMainResources SKIPPED
+> Task :shared:processJvmTestResources SKIPPED
+> Task :core:model:compileKotlinJvm UP-TO-DATE
+> Task :core:model:compileJvmMainJava NO-SOURCE
+> Task :core:model:jvmMainClasses UP-TO-DATE
+> Task :core:model:jvmJar UP-TO-DATE
+> Task :provider:local:compileKotlinJvm UP-TO-DATE
+> Task :core:playback:compileKotlinJvm UP-TO-DATE
+> Task :provider:local:compileJvmMainJava NO-SOURCE
+> Task :core:data:compileKotlinJvm UP-TO-DATE
+> Task :provider:local:jvmMainClasses UP-TO-DATE
+> Task :core:playback:compileJvmMainJava NO-SOURCE
+> Task :core:data:compileJvmMainJava NO-SOURCE
+> Task :core:data:jvmMainClasses UP-TO-DATE
+> Task :core:playback:jvmMainClasses UP-TO-DATE
+> Task :provider:local:jvmJar UP-TO-DATE
+> Task :core:data:jvmJar UP-TO-DATE
+> Task :core:playback:jvmJar UP-TO-DATE
+> Task :provider:spotify:compileKotlinJvm UP-TO-DATE
+> Task :provider:spotify:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:compileKotlinJvm UP-TO-DATE
+> Task :sync:compileKotlinJvm UP-TO-DATE
+> Task :provider:spotify:jvmMainClasses UP-TO-DATE
+> Task :sync:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:compileJvmMainJava NO-SOURCE
+> Task :provider:youtube:jvmMainClasses UP-TO-DATE
+> Task :sync:jvmMainClasses UP-TO-DATE
+> Task :provider:spotify:jvmJar UP-TO-DATE
+> Task :provider:youtube:jvmJar UP-TO-DATE
+> Task :sync:jvmJar UP-TO-DATE
+> Task :shared:compileKotlinJvm UP-TO-DATE
+> Task :shared:compileJvmMainJava NO-SOURCE
+> Task :shared:jvmMainClasses UP-TO-DATE
+> Task :shared:jvmJar UP-TO-DATE
+> Task :shared:compileTestKotlinJvm UP-TO-DATE
+> Task :shared:compileJvmTestJava NO-SOURCE
+> Task :shared:jvmTestClasses UP-TO-DATE
+
+> Task :shared:libraryPerf
+
+LibraryPerf > measure STANDARD_OUT
+    LIBRARY metric	size	run	ms	rows
+    LIBRARY query:l	2000	0	3.312164	2167
+    LIBRARY query:le	2000	0	3.314024	967
+    LIBRARY query:lem	2000	0	3.261655	967
+    LIBRARY query:lemo	2000	0	3.652905	567
+    LIBRARY query:lemon	2000	0	3.300194	567
+    LIBRARY query:lemon a	2000	0	3.43599	567
+    LIBRARY query:lemon ar	2000	0	3.939467	567
+    LIBRARY query:kmn	2000	0	3.710674	567
+    LIBRARY query:night 1	2000	0	3.580277	548
+    LIBRARY query:absent xyz	2000	0	5.006059	0
+    LIBRARY derive	2000	0	1.847062	2000
+    LIBRARY sort	2000	0	1.714875	2000
+    LIBRARY filter	2000	0	0.639343	500
+    LIBRARY query:l	2000	1	2.992822	2167
+    LIBRARY query:le	2000	1	3.738973	967
+    LIBRARY query:lem	2000	1	3.231915	967
+    LIBRARY query:lemo	2000	1	3.557457	567
+    LIBRARY query:lemon	2000	1	3.85547	567
+    LIBRARY query:lemon a	2000	1	4.685788	567
+    LIBRARY query:lemon ar	2000	1	3.183057	567
+    LIBRARY query:kmn	2000	1	3.169147	567
+    LIBRARY query:night 1	2000	1	3.379882	548
+    LIBRARY query:absent xyz	2000	1	4.367317	0
+    LIBRARY derive	2000	1	1.554799	2000
+    LIBRARY sort	2000	1	1.505431	2000
+    LIBRARY filter	2000	1	0.564185	500
+    LIBRARY query:l	2000	2	2.750988	2167
+    LIBRARY query:le	2000	2	2.962482	967
+    LIBRARY query:lem	2000	2	3.026702	967
+    LIBRARY query:lemo	2000	2	3.010261	567
+    LIBRARY query:lemon	2000	2	3.112099	567
+    LIBRARY query:lemon a	2000	2	3.122648	567
+    LIBRARY query:lemon ar	2000	2	3.387852	567
+    LIBRARY query:kmn	2000	2	3.287395	567
+    LIBRARY query:night 1	2000	2	3.399122	548
+    LIBRARY query:absent xyz	2000	2	4.333627	0
+    LIBRARY derive	2000	2	1.612448	2000
+    LIBRARY sort	2000	2	1.404723	2000
+    LIBRARY filter	2000	2	0.514566	500
+    LIBRARY query:l	2000	3	2.718529	2167
+    LIBRARY query:le	2000	3	3.126928	967
+    LIBRARY query:lem	2000	3	2.984222	967
+    LIBRARY query:lemo	2000	3	3.140008	567
+    LIBRARY query:lemon	2000	3	2.977872	567
+    LIBRARY query:lemon a	2000	3	3.259605	567
+    LIBRARY query:lemon ar	2000	3	3.06014	567
+    LIBRARY query:kmn	2000	3	3.161228	567
+    LIBRARY query:night 1	2000	3	3.127479	548
+    LIBRARY query:absent xyz	2000	3	4.400005	0
+    LIBRARY derive	2000	3	1.431723	2000
+    LIBRARY sort	2000	3	1.54992	2000
+    LIBRARY filter	2000	3	0.606594	500
+    LIBRARY query:l	2000	4	2.794237	2167
+    LIBRARY query:le	2000	4	3.103059	967
+    LIBRARY query:lem	2000	4	2.922614	967
+    LIBRARY query:lemo	2000	4	3.040291	567
+    LIBRARY query:lemon	2000	4	2.900604	567
+    LIBRARY query:lemon a	2000	4	3.137699	567
+    LIBRARY query:lemon ar	2000	4	3.003201	567
+    LIBRARY query:kmn	2000	4	3.871529	567
+    LIBRARY query:night 1	2000	4	3.159608	548
+    LIBRARY query:absent xyz	2000	4	4.394915	0
+    LIBRARY derive	2000	4	1.427273	2000
+    LIBRARY sort	2000	4	1.566019	2000
+    LIBRARY filter	2000	4	0.641003	500
+    LIBRARY query:l	2000	5	2.68856	2167
+    LIBRARY query:le	2000	5	2.991202	967
+    LIBRARY query:lem	2000	5	2.837696	967
+    LIBRARY query:lemo	2000	5	3.04705	567
+    LIBRARY query:lemon	2000	5	2.908004	567
+    LIBRARY query:lemon a	2000	5	3.115909	567
+    LIBRARY query:lemon ar	2000	5	2.792087	567
+    LIBRARY query:kmn	2000	5	2.748928	567
+    LIBRARY query:night 1	2000	5	2.817427	548
+    LIBRARY query:absent xyz	2000	5	3.991546	0
+    LIBRARY derive	2000	5	1.226418	2000
+    LIBRARY sort	2000	5	1.189079	2000
+    LIBRARY filter	2000	5	0.443998	500
+    LIBRARY query:l	2000	6	2.383578	2167
+    LIBRARY query:le	2000	6	2.663161	967
+    LIBRARY query:lem	2000	6	2.657801	967
+    LIBRARY query:lemo	2000	6	2.70003	567
+    LIBRARY query:lemon	2000	6	2.701039	567
+    LIBRARY query:lemon a	2000	6	2.785837	567
+    LIBRARY query:lemon ar	2000	6	2.792597	567
+    LIBRARY query:kmn	2000	6	2.746058	567
+    LIBRARY query:night 1	2000	6	2.807316	548
+    LIBRARY query:absent xyz	2000	6	3.969657	0
+    LIBRARY derive	2000	6	1.207369	2000
+    LIBRARY sort	2000	6	1.161179	2000
+    LIBRARY filter	2000	6	0.432298	500
+    LIBRARY query:l	2000	7	2.408457	2167
+    LIBRARY query:le	2000	7	2.660011	967
+    LIBRARY query:lem	2000	7	2.669121	967
+    LIBRARY query:lemo	2000	7	2.710539	567
+    LIBRARY query:lemon	2000	7	2.71466	567
+    LIBRARY query:lemon a	2000	7	2.794957	567
+    LIBRARY query:lemon ar	2000	7	2.792368	567
+    LIBRARY query:kmn	2000	7	2.779887	567
+    LIBRARY query:night 1	2000	7	2.828106	548
+    LIBRARY query:absent xyz	2000	7	4.830774	0
+    LIBRARY derive	2000	7	1.236568	2000
+    LIBRARY sort	2000	7	1.16282	2000
+    LIBRARY filter	2000	7	0.443419	500
+    LIBRARY query:l	2000	8	2.525284	2167
+    LIBRARY query:le	2000	8	2.71995	967
+    LIBRARY query:lem	2000	8	2.731438	967
+    LIBRARY query:lemo	2000	8	2.822866	567
+    LIBRARY query:lemon	2000	8	2.775448	567
+    LIBRARY query:lemon a	2000	8	2.842636	567
+    LIBRARY query:lemon ar	2000	8	2.777908	567
+    LIBRARY query:kmn	2000	8	2.757669	567
+    LIBRARY query:night 1	2000	8	2.815346	548
+    LIBRARY query:absent xyz	2000	8	3.968726	0
+    LIBRARY derive	2000	8	1.12332	2000
+    LIBRARY sort	2000	8	0.975734	2000
+    LIBRARY filter	2000	8	0.373091	500
+    LIBRARY query:l	2000	9	2.377538	2167
+    LIBRARY query:le	2000	9	2.667161	967
+    LIBRARY query:lem	2000	9	2.66416	967
+    LIBRARY query:lemo	2000	9	2.68958	567
+    LIBRARY query:lemon	2000	9	2.70263	567
+    LIBRARY query:lemon a	2000	9	2.779708	567
+    LIBRARY query:lemon ar	2000	9	2.779747	567
+    LIBRARY query:kmn	2000	9	2.757499	567
+    LIBRARY query:night 1	2000	9	2.815417	548
+    LIBRARY query:absent xyz	2000	9	3.971866	0
+    LIBRARY derive	2000	9	0.986255	2000
+    LIBRARY sort	2000	9	0.945266	2000
+    LIBRARY filter	2000	9	0.37441	500
+    LIBRARY query:l	20000	0	26.727822	21667
+    LIBRARY query:le	20000	0	28.304882	9667
+    LIBRARY query:lem	20000	0	32.437703	9667
+    LIBRARY query:lemo	20000	0	29.89086	5667
+    LIBRARY query:lemon	20000	0	29.988647	5667
+    LIBRARY query:lemon a	20000	0	30.66615	5667
+    LIBRARY query:lemon ar	20000	0	30.550143	5667
+    LIBRARY query:kmn	20000	0	28.645782	5667
+    LIBRARY query:night 1	20000	0	29.448311	5526
+    LIBRARY query:absent xyz	20000	0	42.113921	0
+    LIBRARY derive	20000	0	8.656724	20000
+    LIBRARY sort	20000	0	8.523958	20000
+    LIBRARY filter	20000	0	3.641885	5000
+    LIBRARY query:l	20000	1	25.3157	21667
+    LIBRARY query:le	20000	1	27.568701	9667
+    LIBRARY query:lem	20000	1	27.57438	9667
+    LIBRARY query:lemo	20000	1	27.94634	5667
+    LIBRARY query:lemon	20000	1	27.870782	5667
+    LIBRARY query:lemon a	20000	1	29.453021	5667
+    LIBRARY query:lemon ar	20000	1	29.601067	5667
+    LIBRARY query:kmn	20000	1	28.283682	5667
+    LIBRARY query:night 1	20000	1	29.034022	5526
+    LIBRARY query:absent xyz	20000	1	45.486662	0
+    LIBRARY derive	20000	1	10.245812	20000
+    LIBRARY sort	20000	1	9.275078	20000
+    LIBRARY filter	20000	1	3.667134	5000
+    LIBRARY query:l	20000	2	25.175243	21667
+    LIBRARY query:le	20000	2	27.477612	9667
+    LIBRARY query:lem	20000	2	27.288977	9667
+    LIBRARY query:lemo	20000	2	27.778214	5667
+    LIBRARY query:lemon	20000	2	27.747286	5667
+    LIBRARY query:lemon a	20000	2	29.092931	5667
+    LIBRARY query:lemon ar	20000	2	29.538299	5667
+    LIBRARY query:kmn	20000	2	28.089707	5667
+    LIBRARY query:night 1	20000	2	29.154939	5526
+    LIBRARY query:absent xyz	20000	2	41.106987	0
+    LIBRARY derive	20000	2	8.646824	20000
+    LIBRARY sort	20000	2	8.496119	20000
+    LIBRARY filter	20000	2	3.655704	5000
+    LIBRARY query:l	20000	3	25.184252	21667
+    LIBRARY query:le	20000	3	27.482153	9667
+    LIBRARY query:lem	20000	3	27.2069	9667
+    LIBRARY query:lemo	20000	3	27.93085	5667
+    LIBRARY query:lemon	20000	3	27.875752	5667
+    LIBRARY query:lemon a	20000	3	28.764919	5667
+    LIBRARY query:lemon ar	20000	3	29.166278	5667
+    LIBRARY query:kmn	20000	3	28.183163	5667
+    LIBRARY query:night 1	20000	3	29.226847	5526
+    LIBRARY query:absent xyz	20000	3	40.989309	0
+    LIBRARY derive	20000	3	8.674563	20000
+    LIBRARY sort	20000	3	8.453229	20000
+    LIBRARY filter	20000	3	3.559187	5000
+    LIBRARY query:l	20000	4	25.064215	21667
+    LIBRARY query:le	20000	4	27.374785	9667
+    LIBRARY query:lem	20000	4	27.377685	9667
+    LIBRARY query:lemo	20000	4	27.891112	5667
+    LIBRARY query:lemon	20000	4	27.611589	5667
+    LIBRARY query:lemon a	20000	4	28.759018	5667
+    LIBRARY query:lemon ar	20000	4	29.041102	5667
+    LIBRARY query:kmn	20000	4	28.195183	5667
+    LIBRARY query:night 1	20000	4	29.144939	5526
+    LIBRARY query:absent xyz	20000	4	41.359859	0
+    LIBRARY derive	20000	4	8.560836	20000
+    LIBRARY sort	20000	4	8.358291	20000
+    LIBRARY filter	20000	4	3.661415	5000
+    LIBRARY query:l	20000	5	25.104774	21667
+    LIBRARY query:le	20000	5	27.53829	9667
+    LIBRARY query:lem	20000	5	27.262628	9667
+    LIBRARY query:lemo	20000	5	27.649868	5667
+    LIBRARY query:lemon	20000	5	27.820723	5667
+    LIBRARY query:lemon a	20000	5	28.791488	5667
+    LIBRARY query:lemon ar	20000	5	29.068201	5667
+    LIBRARY query:kmn	20000	5	28.285281	5667
+    LIBRARY query:night 1	20000	5	29.294294	5526
+    LIBRARY query:absent xyz	20000	5	41.053148	0
+    LIBRARY derive	20000	5	8.475589	20000
+    LIBRARY sort	20000	5	8.353092	20000
+    LIBRARY filter	20000	5	3.589557	5000
+    LIBRARY query:l	20000	6	25.64515	21667
+    LIBRARY query:le	20000	6	29.825291	9667
+    LIBRARY query:lem	20000	6	28.365679	9667
+    LIBRARY query:lemo	20000	6	27.737185	5667
+    LIBRARY query:lemon	20000	6	27.810664	5667
+    LIBRARY query:lemon a	20000	6	28.808197	5667
+    LIBRARY query:lemon ar	20000	6	28.888365	5667
+    LIBRARY query:kmn	20000	6	27.980749	5667
+    LIBRARY query:night 1	20000	6	29.07776	5526
+    LIBRARY query:absent xyz	20000	6	40.999448	0
+    LIBRARY derive	20000	6	8.522837	20000
+    LIBRARY sort	20000	6	8.356882	20000
+    LIBRARY filter	20000	6	3.614246	5000
+    LIBRARY query:l	20000	7	25.376396	21667
+    LIBRARY query:le	20000	7	27.579929	9667
+    LIBRARY query:lem	20000	7	26.982954	9667
+    LIBRARY query:lemo	20000	7	27.572019	5667
+    LIBRARY query:lemon	20000	7	27.691456	5667
+    LIBRARY query:lemon a	20000	7	28.723469	5667
+    LIBRARY query:lemon ar	20000	7	28.855536	5667
+    LIBRARY query:kmn	20000	7	28.135944	5667
+    LIBRARY query:night 1	20000	7	29.188167	5526
+    LIBRARY query:absent xyz	20000	7	40.878051	0
+    LIBRARY derive	20000	7	8.646713	20000
+    LIBRARY sort	20000	7	8.460749	20000
+    LIBRARY filter	20000	7	3.643045	5000
+    LIBRARY query:l	20000	8	25.100054	21667
+    LIBRARY query:le	20000	8	27.430393	9667
+    LIBRARY query:lem	20000	8	27.215528	9667
+    LIBRARY query:lemo	20000	8	27.785974	5667
+    LIBRARY query:lemon	20000	8	27.801184	5667
+    LIBRARY query:lemon a	20000	8	28.778797	5667
+    LIBRARY query:lemon ar	20000	8	29.138319	5667
+    LIBRARY query:kmn	20000	8	28.441256	5667
+    LIBRARY query:night 1	20000	8	29.249735	5526
+    LIBRARY query:absent xyz	20000	8	41.200573	0
+    LIBRARY derive	20000	8	8.635974	20000
+    LIBRARY sort	20000	8	8.42582	20000
+    LIBRARY filter	20000	8	3.616886	5000
+    LIBRARY query:l	20000	9	25.116603	21667
+    LIBRARY query:le	20000	9	28.386458	9667
+    LIBRARY query:lem	20000	9	27.509161	9667
+    LIBRARY query:lemo	20000	9	28.028058	5667
+    LIBRARY query:lemon	20000	9	28.048597	5667
+    LIBRARY query:lemon a	20000	9	29.674745	5667
+    LIBRARY query:lemon ar	20000	9	30.074464	5667
+    LIBRARY query:kmn	20000	9	28.512854	5667
+    LIBRARY query:night 1	20000	9	29.498848	5526
+    LIBRARY query:absent xyz	20000	9	41.535363	0
+    LIBRARY derive	20000	9	8.79091	20000
+    LIBRARY sort	20000	9	8.614574	20000
+    LIBRARY filter	20000	9	3.668704	5000
+    LIBRARY query:l	100000	0	164.349486	108334
+    LIBRARY query:le	100000	0	179.262684	48334
+    LIBRARY query:lem	100000	0	172.58095	48334
+    LIBRARY query:lemo	100000	0	174.227684	28333
+    LIBRARY query:lemon	100000	0	175.597117	28333
+    LIBRARY query:lemon a	100000	0	178.993408	28333
+    LIBRARY query:lemon ar	100000	0	187.153853	28333
+    LIBRARY query:kmn	100000	0	185.802109	28334
+    LIBRARY query:night 1	100000	0	189.816011	23953
+    LIBRARY query:absent xyz	100000	0	247.52687	0
+    LIBRARY derive	100000	0	81.855964	100000
+    LIBRARY sort	100000	0	74.447629	100000
+    LIBRARY filter	100000	0	31.15192	25000
+    LIBRARY query:l	100000	1	160.092464	108334
+    LIBRARY query:le	100000	1	177.094655	48334
+    LIBRARY query:lem	100000	1	170.807011	48334
+    LIBRARY query:lemo	100000	1	176.04548	28333
+    LIBRARY query:lemon	100000	1	174.9034	28333
+    LIBRARY query:lemon a	100000	1	182.249006	28333
+    LIBRARY query:lemon ar	100000	1	178.650911	28333
+    LIBRARY query:kmn	100000	1	178.877545	28334
+    LIBRARY query:night 1	100000	1	193.410362	23953
+    LIBRARY query:absent xyz	100000	1	247.872224	0
+    LIBRARY derive	100000	1	81.389994	100000
+    LIBRARY sort	100000	1	75.428531	100000
+    LIBRARY filter	100000	1	33.926805	25000
+    LIBRARY query:l	100000	2	165.775059	108334
+    LIBRARY query:le	100000	2	175.764395	48334
+    LIBRARY query:lem	100000	2	175.53366	48334
+    LIBRARY query:lemo	100000	2	176.735856	28333
+    LIBRARY query:lemon	100000	2	178.473861	28333
+    LIBRARY query:lemon a	100000	2	178.729604	28333
+    LIBRARY query:lemon ar	100000	2	180.710242	28333
+    LIBRARY query:kmn	100000	2	178.445102	28334
+    LIBRARY query:night 1	100000	2	193.103853	23953
+    LIBRARY query:absent xyz	100000	2	242.078309	0
+    LIBRARY derive	100000	2	78.196826	100000
+    LIBRARY sort	100000	2	78.468559	100000
+    LIBRARY filter	100000	2	33.174575	25000
+    LIBRARY query:l	100000	3	162.11991	108334
+    LIBRARY query:le	100000	3	181.83133	48334
+    LIBRARY query:lem	100000	3	175.32753	48334
+    LIBRARY query:lemo	100000	3	183.006776	28333
+    LIBRARY query:lemon	100000	3	179.903348	28333
+    LIBRARY query:lemon a	100000	3	182.943778	28333
+    LIBRARY query:lemon ar	100000	3	182.958777	28333
+    LIBRARY query:kmn	100000	3	178.559753	28334
+    LIBRARY query:night 1	100000	3	192.957581	23953
+    LIBRARY query:absent xyz	100000	3	246.950203	0
+    LIBRARY derive	100000	3	79.09806	100000
+    LIBRARY sort	100000	3	74.91507	100000
+    LIBRARY filter	100000	3	39.73639	25000
+    LIBRARY query:l	100000	4	170.296009	108334
+    LIBRARY query:le	100000	4	173.607992	48334
+    LIBRARY query:lem	100000	4	171.606612	48334
+    LIBRARY query:lemo	100000	4	173.21165	28333
+    LIBRARY query:lemon	100000	4	176.766536	28333
+    LIBRARY query:lemon a	100000	4	182.433696	28333
+    LIBRARY query:lemon ar	100000	4	183.222654	28333
+    LIBRARY query:kmn	100000	4	174.898464	28334
+    LIBRARY query:night 1	100000	4	194.493714	23953
+    LIBRARY query:absent xyz	100000	4	248.981663	0
+    LIBRARY derive	100000	4	79.179595	100000
+    LIBRARY sort	100000	4	77.073201	100000
+    LIBRARY filter	100000	4	31.120947	25000
+    LIBRARY query:l	100000	5	164.076899	108334
+    LIBRARY query:le	100000	5	175.923575	48334
+    LIBRARY query:lem	100000	5	176.79089	48334
+    LIBRARY query:lemo	100000	5	178.344339	28333
+    LIBRARY query:lemon	100000	5	184.183424	28333
+    LIBRARY query:lemon a	100000	5	191.922749	28333
+    LIBRARY query:lemon ar	100000	5	190.558926	28333
+    LIBRARY query:kmn	100000	5	176.397819	28334
+    LIBRARY query:night 1	100000	5	202.73157	23953
+    LIBRARY query:absent xyz	100000	5	246.13522	0
+    LIBRARY derive	100000	5	81.244508	100000
+    LIBRARY sort	100000	5	77.328791	100000
+    LIBRARY filter	100000	5	37.052209	25000
+    LIBRARY query:l	100000	6	157.578557	108334
+    LIBRARY query:le	100000	6	172.757122	48334
+    LIBRARY query:lem	100000	6	173.864243	48334
+    LIBRARY query:lemo	100000	6	178.395232	28333
+    LIBRARY query:lemon	100000	6	176.485023	28333
+    LIBRARY query:lemon a	100000	6	183.36779	28333
+    LIBRARY query:lemon ar	100000	6	180.945834	28333
+    LIBRARY query:kmn	100000	6	177.119214	28334
+    LIBRARY query:night 1	100000	6	192.35537	23953
+    LIBRARY query:absent xyz	100000	6	251.047433	0
+    LIBRARY derive	100000	6	86.169346	100000
+    LIBRARY sort	100000	6	89.674993	100000
+    LIBRARY filter	100000	6	30.16527	25000
+    LIBRARY query:l	100000	7	164.175047	108334
+    LIBRARY query:le	100000	7	179.965616	48334
+    LIBRARY query:lem	100000	7	179.162247	48334
+    LIBRARY query:lemo	100000	7	186.533831	28333
+    LIBRARY query:lemon	100000	7	188.151798	28333
+    LIBRARY query:lemon a	100000	7	192.739497	28333
+    LIBRARY query:lemon ar	100000	7	186.851312	28333
+    LIBRARY query:kmn	100000	7	179.799207	28334
+    LIBRARY query:night 1	100000	7	196.112884	23953
+    LIBRARY query:absent xyz	100000	7	242.188551	0
+    LIBRARY derive	100000	7	78.634573	100000
+    LIBRARY sort	100000	7	81.819388	100000
+    LIBRARY filter	100000	7	31.442476	25000
+    LIBRARY query:l	100000	8	161.674358	108334
+    LIBRARY query:le	100000	8	175.964197	48334
+    LIBRARY query:lem	100000	8	175.947257	48334
+    LIBRARY query:lemo	100000	8	179.500223	28333
+    LIBRARY query:lemon	100000	8	177.578634	28333
+    LIBRARY query:lemon a	100000	8	182.911222	28333
+    LIBRARY query:lemon ar	100000	8	182.179179	28333
+    LIBRARY query:kmn	100000	8	180.347847	28334
+    LIBRARY query:night 1	100000	8	191.827763	23953
+    LIBRARY query:absent xyz	100000	8	246.310475	0
+    LIBRARY derive	100000	8	78.64557	100000
+    LIBRARY sort	100000	8	76.40048	100000
+    LIBRARY filter	100000	8	31.932451	25000
+    LIBRARY query:l	100000	9	160.167963	108334
+    LIBRARY query:le	100000	9	186.270808	48334
+    LIBRARY query:lem	100000	9	182.874208	48334
+    LIBRARY query:lemo	100000	9	188.925157	28333
+    LIBRARY query:lemon	100000	9	186.636368	28333
+    LIBRARY query:lemon a	100000	9	193.606742	28333
+    LIBRARY query:lemon ar	100000	9	192.086271	28333
+    LIBRARY query:kmn	100000	9	188.921485	28334
+    LIBRARY query:night 1	100000	9	202.759857	23953
+    LIBRARY query:absent xyz	100000	9	247.936864	0
+    LIBRARY derive	100000	9	77.154167	100000
+    LIBRARY sort	100000	9	76.860325	100000
+    LIBRARY filter	100000	9	30.79491	25000
+
+[Incubating] Problems report is available at: file:///home/theadenkingof/.t3/worktrees/Kainos-Player/t3-04de9be2/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.6.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 37s
+45 actionable tasks: 11 executed, 34 up-to-date
+Configuration cache entry stored.
