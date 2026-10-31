@@ -32,7 +32,7 @@ internal class PrivateSnapshotWriter(storage: KainosStorage, private val writerI
 }
 
 internal class TracingDriver(private val inner: SqlDriver) : SqlDriver by inner {
-    val statements = mutableListOf<String>()
+    val statements = java.util.concurrent.CopyOnWriteArrayList<String>()
     val threads: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
     private var changesAtStart = 0L
     var rowsChanged = 0L
