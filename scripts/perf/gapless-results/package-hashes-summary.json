@@ -1,0 +1,10 @@
+{
+  "baseline": {
+    "desktopApp-jvm-784c201c39441858435e4f7d65ea0.jar": "74948c68adb695984ba99e481fc3c44b924e4fc2dda1dcdd61a360f2f5ff9b4b",
+    "playback-jvm-dfdd2a882fbf43a973b8807e86bb4a.jar": "32f83bb49a3b2c49b4c296cbbd2357182d548f5dc0dbbc4e36a8526ffeb13c8d"
+  },
+  "head": {
+    "desktopApp-jvm-bed0ed96e34d733cc6452159e01dc2b6.jar": "dd7ce57f0aee2c361a392a9027566c56ba6a67c83c6f4f670312962c2d493414",
+    "playback-jvm-3b5a81fa3d263c31c65694de9aa3af0.jar": "08ec7da343746982f9d5d87319ba126ef695446f43fc5781e453591b0fd826ff"
+  }
+}

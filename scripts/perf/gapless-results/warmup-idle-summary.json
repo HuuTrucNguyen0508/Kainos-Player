@@ -1,7 +1,7 @@
 [
   {
     "mode": "sigterm",
-    "mpv_rss_kib": 55384,
+    "mpv_rss_kib": 55516,
     "cpu_percent": 0.0,
     "audio_output_open": false,
     "pulse_streams": 0,
@@ -24,7 +24,7 @@
   },
   {
     "mode": "sigkill",
-    "mpv_rss_kib": 55592,
+    "mpv_rss_kib": 55612,
     "cpu_percent": 0.0,
     "audio_output_open": false,
     "pulse_streams": 0,

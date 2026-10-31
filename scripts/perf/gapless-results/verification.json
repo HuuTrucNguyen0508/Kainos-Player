@@ -38,17 +38,17 @@
     "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-pcm.py --out /tmp/new-gapless-pcm",
     "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-e2e.py --app-dir /tmp/new-gapless-head --out /tmp/new-gapless-e2e"
   ],
-  "e2e": "head-e2e-run.log: three natural tracks, pause/seek/resume/skip, process death recovery, Repeat One, queue end, missing successor. Private Xvfb and private Pulse sink. No uncaught exception.",
+  "e2e": "/tmp/gapless-final-head-e2e/run.log: three natural tracks, pause/seek/resume/skip, process death recovery, Repeat One, queue end, missing successor. Private Xvfb and private Pulse sink. No uncaught exception.",
   "calibrations": {
-    "invalid-stale-wrapper-runs.json": "Invalid: Kotlin delegation wrapper lacked new supportsGapless getter. Forced recompilation and benchmark guard fixed the measurement.",
-    "intermediate-boundary-runs.json": "Interrupted for queued-replacement and drain safety fixes; not final head.",
-    "intermediate-recovery-runs.json": "Interrupted for the cached-YouTube provider guard; not final head.",
-    "rejected-polling-runs.json": "Interrupted to restore original 40ms IPC readiness polling after no clear gain from 5ms.",
-    "rejected-forced-resampling-results.json": "Sample count is preserved but 96kHz successor is downsampled to 44.1kHz. Rejected in favor of clean format-mismatch restart.",
     "pcm_attempts": "/tmp/gapless-pcm-proof: unsupported ao-pcm-fast option. /tmp/gapless-pcm-proof2: unpaced PCM outran preparation. Final proof starts paused until two files are queued.",
     "check_failures": "Initial run lacked Xvfb. Two own Gradle invocations collided in result files, then were rerun serially. A later ListeningRecorderWriteTest failed once with SQLITE_ERROR cannot start a transaction within a transaction; full rerun passed without data-layer edits.",
     "sqlite_failure_log": "/tmp/gapless-source-gate-checks.log",
-    "sqlite_clean_recheck": "/tmp/gapless-source-gate-recheck.log"
+    "sqlite_clean_recheck": "/tmp/gapless-source-gate-recheck.log",
+    "/tmp/gapless-trimmed-captures/invalid-stale-wrapper-runs.json": "Invalid: Kotlin delegation wrapper lacked new supportsGapless getter. Forced recompilation and benchmark guard fixed the measurement.",
+    "/tmp/gapless-trimmed-captures/intermediate-boundary-runs.json": "Interrupted for queued-replacement and drain safety fixes; not final head.",
+    "/tmp/gapless-trimmed-captures/intermediate-recovery-runs.json": "Interrupted for the cached-YouTube provider guard; not final head.",
+    "/tmp/gapless-trimmed-captures/rejected-polling-runs.json": "Interrupted to restore original 40ms IPC readiness polling after no clear gain from 5ms.",
+    "/tmp/gapless-trimmed-captures/rejected-forced-resampling-results.json": "Sample count is preserved but 96kHz successor is downsampled to 44.1kHz. Rejected in favor of clean format-mismatch restart."
   },
   "remaining": [
     "Recents requirement is unresolved outside ownership. shared/.../ui/App.kt:254 and :262 call library.recordPlay only for manual starts. Natural transitions have no wired library callback.",
@@ -60,5 +60,6 @@
   "quota": {
     "codex_weekly_used_percent": 18,
     "source": "fresh model_controller_status refresh after long operations"
-  }
+  },
+  "raw_capture_policy": "Raw captures removed from git; original copies for this session: /tmp/gapless-trimmed-captures. Regenerate with the harness; /tmp is temporary."
 }

@@ -10,7 +10,7 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	readiness_poll_ms	5ms_instead_of_40ms	NA	NA	NA	NA	0	rejected_no_clear_gain_reverted	62c8c0164089a746565b23d3eba24664bdf10f53
 2026-10-31	calibration	probe_wrapper_missing_capability_getter	NA	NA	NA	NA	4	invalid_retained_not_pooled	62c8c0164089a746565b23d3eba24664bdf10f53
 2026-10-31	integration	recents_only_recorded_by_App_kt_manual_start	NA	NA	NA	NA	0	outside_owned_files_unresolved	62c8c0164089a746565b23d3eba24664bdf10f53
-2026-10-31	press_to_started_ms	GUI_idle_mpv_prewarm	119.2915625	24.131251	121.362193	25.123548	10	accepted_beats_historical_105.3ms	pending_warmup_commit
-2026-10-31	first_draw_ms	GUI_idle_mpv_prewarm	503.2068055	502.5241045	513.83544	509.885704	10	no_measurable_regression	pending_warmup_commit
-2026-10-31	library_interactive_ms	GUI_idle_mpv_prewarm	693.3935180000001	695.0227105	711.793359	704.83799	10	no_measurable_regression	pending_warmup_commit
-2026-10-31	mpv_idle_rss_kib	GUI_idle_mpv_no_audio_output	0	55488	0	55592	2	accepted_0_CPU_no_stream	pending_warmup_commit
+2026-10-31	press_to_started_ms	GUI_idle_mpv_prewarm	119.2915625	24.131251	121.362193	25.123548	10	accepted_beats_historical_105.3ms	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
+2026-10-31	first_draw_ms	GUI_idle_mpv_prewarm	503.2068055	502.5241045	513.83544	509.885704	10	no_measurable_regression	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
+2026-10-31	library_interactive_ms	GUI_idle_mpv_prewarm	693.3935180000001	695.0227105	711.793359	704.83799	10	no_measurable_regression	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
+2026-10-31	mpv_idle_rss_kib	GUI_idle_mpv_no_audio_output	0	55564.0	0	55612	2	accepted_0_CPU_no_stream	1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7
