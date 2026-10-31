@@ -258,7 +258,7 @@ internal fun ColumnScope.RemoteNowPlaying(
     Column(Modifier.fillMaxWidth().alpha(if (enabled) 1f else DISABLED_ALPHA)) {
         RemoteProgress(status, device.statusAtMs, ticking = live, enabled = enabled, onSeek = { onSend(RemoteCommand.SeekTo(it)) })
         Spacer(Modifier.height(8.dp))
-        RemoteTransport(status, enabled, onSend)
+        RemoteTransport(status, enabled, onSend, playEnabled = device.hasPlayer && status != null && !transferring)
         Spacer(Modifier.height(4.dp))
         RemoteVolume(status?.volume ?: 1f, enabled, onCommit = { onSend(RemoteCommand.SetVolume(it)) })
     }
@@ -397,7 +397,7 @@ private fun RemoteProgress(status: RemoteStatus?, statusAtMs: Long, ticking: Boo
 }
 
 @Composable
-private fun RemoteTransport(status: RemoteStatus?, enabled: Boolean, onSend: (RemoteCommand) -> Unit) {
+private fun RemoteTransport(status: RemoteStatus?, enabled: Boolean, onSend: (RemoteCommand) -> Unit, playEnabled: Boolean = enabled) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -417,7 +417,7 @@ private fun RemoteTransport(status: RemoteStatus?, enabled: Boolean, onSend: (Re
         PlayButton(
             playing = status?.isPlaying == true || status?.buffering == true,
             onClick = { onSend(if (status?.isPlaying == true || status?.buffering == true) RemoteCommand.Pause else RemoteCommand.Play) },
-            enabled = enabled,
+            enabled = playEnabled,
         )
         IconButton(onClick = { onSend(RemoteCommand.Next) }, enabled = enabled && status.canSkipNext, modifier = Modifier.size(56.dp)) {
             Icon(Icons.Default.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))

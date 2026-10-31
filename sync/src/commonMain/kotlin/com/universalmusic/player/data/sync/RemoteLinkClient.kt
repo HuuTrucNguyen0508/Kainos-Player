@@ -31,6 +31,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 
 /** One connection to the hub's remote routes; [poll] may take the whole hold. */
@@ -99,6 +100,12 @@ class RemoteLinkClient(
 
     private var generation = 0L
     private var failures = 0
+    private val reconnect = Channel<Unit>(Channel.CONFLATED)
+    private var latestIntent = 0L
+
+    fun reconnectNow() { reconnect.trySend(Unit) }
+    private suspend fun backoff(wait: Long) { withTimeoutOrNull(wait) { reconnect.receive() } }
+
 
     @kotlin.concurrent.Volatile
     private var transport: RemoteLinkTransport? = null
@@ -120,9 +127,18 @@ class RemoteLinkClient(
 
     /** Sends [command] to the hub's own player. Never retried: a failure marks the hub unreachable. */
     suspend fun send(command: RemoteCommand): RemoteClientSend {
-        val current = transport?.takeIf { _state.value.connected } ?: return RemoteClientSend.Unreachable
+        val explicit = command == RemoteCommand.Play || command == RemoteCommand.Pause
+        val intent = if (explicit) ++latestIntent else 0L
         return try {
-            val reply = withTimeout(REMOTE_COMMAND_REQUEST_TIMEOUT_MS) { current.command(command) }
+            val reply = withTimeout(if (explicit) REMOTE_COMMAND_DEADLINE_MS else REMOTE_COMMAND_REQUEST_TIMEOUT_MS) {
+                if (explicit && !_state.value.connected) {
+                    reconnectNow()
+                    state.first { it.connected || !it.active }
+                }
+                if (explicit && intent != latestIntent) return RemoteClientSend.Unreachable
+                val current = transport?.takeIf { _state.value.connected } ?: return RemoteClientSend.Unreachable
+                current.command(command)
+            }
             reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
             RemoteClientSend.Applied(reply)
         } catch (cancelled: CancellationException) {
@@ -158,7 +174,7 @@ class RemoteLinkClient(
             val current = target()
             if (current == null) {
                 _state.update { it.copy(connected = false) }
-                delay(backoffMs.last())
+                backoff(backoffMs.last())
                 continue
             }
             try {
@@ -177,7 +193,7 @@ class RemoteLinkClient(
                 failures++
                 trace("link to ${current.hub.displayName} failed (${err.message ?: err}); retry in $wait ms")
                 _state.update { it.copy(connected = false, unreachable = true) }
-                delay(wait)
+                backoff(wait)
             }
         }
     }
