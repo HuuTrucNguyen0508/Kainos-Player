@@ -51,14 +51,11 @@ class KainosPlaylistRepository(
     }
 
     suspend fun load() {
-        try {
-            val rawStore = store ?: return
-            val snapshot = rawStore.read().migrated()
-            applySnapshot(snapshot)
-            rawStore.write(toSnapshot())
-        } finally {
-            loaded.complete(Unit)
-        }
+        val rawStore = store ?: return
+        val snapshot = rawStore.read().migrated()
+        applySnapshot(snapshot)
+        rawStore.write(toSnapshot())
+        loaded.complete(Unit)
     }
 
     fun applySnapshot(snapshot: KainosPlaylistsSnapshot) {
@@ -89,7 +86,7 @@ class KainosPlaylistRepository(
             },
             createdAtMs = now,
             updatedAtMs = now,
-            revision = now,
+            revision = nextRevision(),
             deviceId = deviceIdProvider(),
         )
         _playlists.value = _playlists.value + playlist
@@ -115,7 +112,7 @@ class KainosPlaylistRepository(
         _playlists.value = _playlists.value.filterNot { it.id == id }
         val tomb = PlaylistTombstone(
             playlistId = id,
-            revision = maxOf(existing.revision + 1, now),
+            revision = nextRevision(),
             deviceId = deviceIdProvider(),
             deletedAtMs = now,
         )
@@ -130,7 +127,7 @@ class KainosPlaylistRepository(
         val now = clock()
         val deviceId = deviceIdProvider()
         _playlists.value = orderedIds.mapNotNull { id ->
-            byId[id]?.copy(updatedAtMs = now, revision = now, deviceId = deviceId)
+            byId[id]?.copy(updatedAtMs = now, revision = nextRevision(), deviceId = deviceId)
         }
         schedulePersist()
         return true
@@ -201,6 +198,7 @@ class KainosPlaylistRepository(
      * playlist revision delete. Does not copy vault audio.
      */
     suspend fun mergeAndPersistSyncState(remote: PlaylistsSyncDocument): PlaylistsSyncDocument {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
         persistJob?.cancel()
         persistJob = null
         persistMutex.withLock {
@@ -209,7 +207,7 @@ class KainosPlaylistRepository(
                 remote = remote,
             )
             applySnapshot(merged)
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         return exportSyncDocument()
     }
@@ -222,7 +220,7 @@ class KainosPlaylistRepository(
         uniqueLocalTracksByBasenameLower: Map<String, Track>,
         localTracks: List<Track> = uniqueLocalTracksByBasenameLower.values.toList(),
     ): Int {
-        if (localTracks.isEmpty()) return 0
+        if (!loaded.isCompleted || localTracks.isEmpty()) return 0
         val index = LocalSyncIdentityIndex(localTracks)
         val present = localTracks.associateBy { it.canonicalId }
         var rematched = 0
@@ -247,10 +245,14 @@ class KainosPlaylistRepository(
                 else playlist.copy(entries = entries)
             }
             _playlists.value = next
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         return rematched
     }
+
+    private fun nextRevision(): Long = maxOf(clock(),
+        maxOf(_playlists.value.maxOfOrNull { it.revision } ?: 0L,
+            tombstones.maxOfOrNull { it.revision } ?: 0L) + 1)
 
     private fun mutate(
         id: String,
@@ -260,12 +262,19 @@ class KainosPlaylistRepository(
         val now = clock()
         val updated = transform(current).copy(
             updatedAtMs = now,
-            revision = now,
+            revision = nextRevision(),
             deviceId = deviceIdProvider(),
         )
         _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
         schedulePersist()
         return updated
+    }
+
+    suspend fun flush() {
+        if (!loaded.isCompleted) return
+        persistJob?.cancel()
+        persistJob = null
+        persistMutex.withLock { store?.write(toSnapshot()) }
     }
 
     private fun schedulePersist() {
