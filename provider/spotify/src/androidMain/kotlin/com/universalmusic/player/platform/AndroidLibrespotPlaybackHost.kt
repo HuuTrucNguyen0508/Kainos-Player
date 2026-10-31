@@ -304,7 +304,10 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onStartedLoading(player: Player) = trace("startedLoading")
 
-        override fun onFinishedLoading(player: Player) = trace("finishedLoading")
+        override fun onFinishedLoading(player: Player) {
+            trace("finishedLoading")
+            receiverEvent(SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
+        }
     }
 
     private companion object {

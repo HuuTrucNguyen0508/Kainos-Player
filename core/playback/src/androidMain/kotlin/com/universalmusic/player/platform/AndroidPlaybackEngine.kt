@@ -60,8 +60,8 @@ class AndroidPlaybackEngine(
     @Volatile private var receiverConfirmed = false
     private var ticker: Job? = null
     @Volatile private var activeBackend = ActiveBackend.NONE
-    private var spotifyStartedAt = 0L
-    private var spotifyOffset = 0L
+    @Volatile private var spotifyStartedAt = 0L
+    @Volatile private var spotifyOffset = 0L
     /** Wall clock of the last Media3 `play()` we issued; focus loss right after it is retried once. */
     @Volatile private var media3PlayRequestedAt = 0L
     private var focusRetryGeneration = -1L
@@ -184,8 +184,8 @@ class AndroidPlaybackEngine(
         scope.launch {
             state.collectLatest { current ->
                 try {
-                    if (current.status == EngineStatus.BUFFERING ||
-                        (activeBackend == ActiveBackend.SPOTIFY && current.status == EngineStatus.PLAYING)) {
+                    if (com.universalmusic.player.domain.playback.playbackNeedsWakeLock(
+                            activeBackend == ActiveBackend.SPOTIFY, current.status)) {
                         while (true) {
                             wakeLock.acquire(120_000L)
                             delay(60_000L)
@@ -342,7 +342,7 @@ class AndroidPlaybackEngine(
                 val duration = handle.durationMs
                     ?: AndroidMediaControls.currentDurationMs()
                     ?: AndroidMediaControls.currentTrack()?.durationMs
-                if (!receiverConfirmed) publishState(EngineState(
+                if (!receiverConfirmed && spotify.receiverEvents?.isAvailable != true) publishState(EngineState(
                     status = EngineStatus.PLAYING,
                     positionMs = 0,
                     durationMs = duration,
@@ -425,17 +425,18 @@ class AndroidPlaybackEngine(
         if (activeBackend == ActiveBackend.SPOTIFY) {
             ticker?.cancel()
             enqueueSpotifyCommand("Spotify Connect transition", spotify.pause)
-            publishState(EngineState())
+            publishState(EngineState(status = EngineStatus.BUFFERING))
             return
         }
         if (activeBackend != ActiveBackend.MEDIA3) {
             stop()
+            publishState(EngineState(status = EngineStatus.BUFFERING))
             return
         }
         trace("stopForTransition() status=${_state.value.status} pos=${_state.value.positionMs} -> pause Exo, keep item + audio focus")
         activeBackend = ActiveBackend.NONE
         ticker?.cancel()
-        publishState(EngineState())
+        publishState(EngineState(status = EngineStatus.BUFFERING))
         launchMediaCommand { it.pause() }
     }
 
@@ -584,10 +585,11 @@ class AndroidPlaybackEngine(
 
     private fun startTicker() {
         ticker?.cancel()
+        val generation = activePlayGeneration
         ticker = scope.launch {
             var lastPosition = Long.MIN_VALUE
             var stalledTicks = 0
-            while (true) {
+            while (activePlayGeneration == generation) {
                 val position = when (activeBackend) {
                     ActiveBackend.SPOTIFY -> spotifyOffset +
                         (System.currentTimeMillis() - spotifyStartedAt)
@@ -621,7 +623,7 @@ class AndroidPlaybackEngine(
                 if (
                     activeBackend == ActiveBackend.SPOTIFY &&
                     duration != null &&
-                    position >= duration && !receiverConfirmed
+                    position >= duration && !receiverConfirmed && spotify.receiverEvents?.isAvailable != true
                 ) {
                     trace("Spotify ticker reached duration=$duration -> synthetic ENDED")
                     ticker?.cancel()
@@ -632,7 +634,10 @@ class AndroidPlaybackEngine(
                     ) }
                     return@launch
                 }
-                _state.update { current -> current.copy(positionMs = capped, durationMs = duration ?: _state.value.durationMs) }
+                _state.update { current ->
+                    if (generation != activePlayGeneration) current else
+                        current.copy(positionMs = capped, durationMs = duration ?: current.durationMs)
+                }
                 delay(TICK_MS)
             }
         }
