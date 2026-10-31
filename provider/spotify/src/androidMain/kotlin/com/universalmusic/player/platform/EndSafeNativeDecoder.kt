@@ -24,7 +24,8 @@ class EndSafeNativeDecoder(
     override fun readInternal(out: OutputStream): Int = try {
         decoder.writeSomeTo(out)
     } catch (failure: IllegalStateException) {
-        if (failure.message?.contains("signalEndOfInputStream") != true) throw failure
+        // Closing races the native decoder's own closed check, so a released codec also ends the stream.
+        if (!closed && failure.message?.contains("signalEndOfInputStream") != true) throw failure
         -1
     }
 
