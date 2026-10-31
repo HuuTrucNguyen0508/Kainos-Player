@@ -495,6 +495,17 @@ class PlayerSession(
 
     fun playNext(track: Track) = onSession { editQueue { playNext(track) } }
 
+    fun stopTransport() = onSession {
+        val position = startupTarget?.positionMs ?: _nowPlaying.value.positionMs
+        beginTransition()
+        playJob?.cancel()
+        playJob = null
+        pendingResumePositionMs = position
+        engine.stop()
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false, positionMs = position) }
+        record(Change.USER_PAUSE, playing = false)
+    }
+
     fun clearQueue() = onSession { clearQueueNow(recorded = queue.queue.value.items.isNotEmpty()) }
 
     private fun clearQueueNow(recorded: Boolean) {
