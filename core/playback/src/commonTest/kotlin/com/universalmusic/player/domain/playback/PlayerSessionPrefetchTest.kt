@@ -25,6 +25,36 @@ class PlayerSessionPrefetchTest {
         assertEquals(2, fixture.engine.handles.size)
     }
 
+    @Test
+    fun rejectedPrefetchRetriesFreshOnceForThrownAndAsynchronousFailures() = runTest {
+        for (asynchronous in listOf(false, true)) {
+            for (rejectFresh in listOf(false, true)) {
+                val fixture = Fixture(this)
+                fixture.engine.onPlay = { attempt ->
+                    if ((!asynchronous && attempt == 2) || (rejectFresh && attempt == 3)) {
+                        error("rejected URL")
+                    }
+                }
+                fixture.session.play(listOf(fixture.first, fixture.next), startIndex = 0)
+                runCurrent()
+                advanceTimeBy(1_001)
+                runCurrent()
+                fixture.engine.end()
+                runCurrent()
+                if (asynchronous) {
+                    fixture.engine.state.value = fixture.engine.state.value.copy(
+                        status = EngineStatus.FAILED, error = "rejected URL",
+                    )
+                    runCurrent()
+                }
+                assertEquals(2, fixture.nextResolutions, "must freshly resolve after prefetch rejection")
+                assertEquals(3, fixture.engine.handles.size, "fresh retry is bounded to one")
+                assertEquals(!rejectFresh, fixture.session.nowPlaying.value.isPlaying)
+                assertEquals("Next", fixture.session.nowPlaying.value.track?.title)
+            }
+        }
+    }
+
     private class Fixture(test: TestScope) {
         val first = track("First", "Artist", provider = ProviderId.YOUTUBE_MUSIC).copy(durationMs = 180_000)
         val next = track("Next", "Artist", provider = ProviderId.YOUTUBE_MUSIC).copy(durationMs = 180_000)
@@ -44,8 +74,10 @@ class PlayerSessionPrefetchTest {
 private class PrefetchEngine : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     val handles = mutableListOf<PlaybackHandle>()
+    var onPlay: (Int) -> Unit = {}
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         handles += handle
+        onPlay(handles.size)
         state.value = EngineState(status = EngineStatus.PLAYING, playGeneration = playGeneration)
     }
     fun end() { state.value = state.value.copy(status = EngineStatus.ENDED) }

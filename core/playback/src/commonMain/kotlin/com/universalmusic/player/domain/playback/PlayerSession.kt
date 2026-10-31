@@ -118,6 +118,7 @@ class PlayerSession(
         val validUntil: Long,
     )
     private var prefetched: Prefetched? = null
+    private var prefetchedStartGeneration: Long? = null
 
     /** Refills the tail of the queue it was started with; dropped when other playback replaces it. */
     private var continuation: QueueContinuation? = null
@@ -942,6 +943,7 @@ class PlayerSession(
         prefetchJob?.cancel()
         prefetched = null
         playGeneration++
+        prefetchedStartGeneration = null
         completionArmed = false
         startupTarget = null
         pausedSeekTargetMs = null
@@ -962,6 +964,7 @@ class PlayerSession(
         val target = StartupTarget(resumeAt)
         startupTarget = target
         val generation = playGeneration
+        if (ready != null) prefetchedStartGeneration = generation
         trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
         engine.stopForTransition()
@@ -1161,6 +1164,13 @@ class PlayerSession(
         target: StartupTarget?,
     ) {
         if (generation != playGeneration) return
+        if (prefetchedStartGeneration == generation) {
+            // A speculative URL can be rejected early. Resolve this same entry normally once.
+            prefetchedStartGeneration = null
+            pendingResumePositionMs = target?.positionMs
+            startCurrent(Change.AUTOMATIC, applyResumePosition = true)
+            return
+        }
         trace(
             "tryFallback from ${current.source.provider} reason=$reason remaining=" +
                 current.fallbacks.map { it.provider },
