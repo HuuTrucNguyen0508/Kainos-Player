@@ -25,3 +25,41 @@ with tempfile.TemporaryDirectory(prefix='kainos-cds-fallback-') as temporary:
         summary=json.loads((out/'summary.json').read_text())
         assert summary['errors']==0 and summary['first_draw_ms']['n']==1, (label,summary)
         print(label,'fallback passed')
+
+    # Clone the launcher/package so corruption never touches the packaged archive.
+    import hashlib
+    import os
+    import shutil
+    import time
+    sandbox=d/'launcher'
+    (sandbox/'scripts').mkdir(parents=True)
+    shutil.copy2(root/'scripts/kainos-player',sandbox/'scripts/kainos-player')
+    source=root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
+    app=sandbox/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
+    shutil.copytree(source,app)
+    archive=app/'kainos.jsa'
+    assert archive.is_file(), 'Train an archive before running corruption checks'
+    (app/'kainos.jsa.sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  kainos.jsa\n')
+    (app/'kainos.jsa.size').write_text(str(archive.stat().st_size)+'\n')
+    with archive.open('r+b') as stream:
+        stream.seek(archive.stat().st_size//2)
+        byte=stream.read(1)
+        stream.seek(-1,1);stream.write(bytes([byte[0]^0xff]))
+    tracks=[]
+    for i in range(3):
+        track=d/f'tone{i}.flac'
+        subprocess.run(['ffmpeg','-v','error','-y','-f','lavfi','-i','sine=duration=2','-c:a','flac',str(track)],check=True)
+        tracks.append(str(track))
+    config=d/'config/mpv';config.mkdir(parents=True)
+    (config/'mpv.conf').write_text('ao=null\n')
+    env={**os.environ,'KAINOS_DATA_DIR':str(d/'data'),'KAINOS_INSTANCE':'corruption'+str(os.getpid()),
+         'KAINOS_HUB_PORT':'49992','XDG_CONFIG_HOME':str(d/'config'),'DISPLAY':'','WAYLAND_DISPLAY':''}
+    command=[str(sandbox/'scripts/kainos-player'),'--perf-playback',*tracks]
+    first=subprocess.run(command,cwd=sandbox,env=env,timeout=40)
+    deadline=time.monotonic()+5
+    while archive.exists() and time.monotonic()<deadline: time.sleep(.01)
+    assert not archive.exists(), 'Corrupt archive must be removed even if JVM crashes'
+    subprocess.run(command,cwd=sandbox,env=env,check=True,timeout=40)
+    text=(sandbox/'logs/desktop-run-latest.log').read_text()
+    assert 'PERF\tcomplete' in text and 'engine -> FAILED' not in text
+    print('same-size corruption: first exit',first.returncode,'; next launch completed without archive')

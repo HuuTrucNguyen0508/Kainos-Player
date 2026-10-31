@@ -68,3 +68,5 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	first_draw_ms	mpris-background	507.92838500000005	486.2021675	524.626629	504.136705	10	reject-under-5-percent	043dff3
 2026-10-31	library_interactive_ms	mpris-background	691.591368	669.852308	710.405922	694.964341	10	reject-under-5-percent	043dff3
 2026-10-31	mapped_ms	mpris-background	525.3221329999999	499.991798	539.803425	519.946283	10	reject-under-5-percent	043dff3
+2026-10-31	first_draw_ms	S1-VerifySharedSpaces	502.8407525	519.497278	510.805981	533.117636	10	reject-first-draw-cost-16.66ms-use-background-sha256-removal	S1
+2026-10-31	library_interactive_ms	S1-VerifySharedSpaces	693.7591305000001	704.7906085	702.508306	718.274995	10	reject-first-draw-cost-16.66ms-use-background-sha256-removal	S1

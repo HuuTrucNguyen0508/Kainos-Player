@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Existing launcher checks plus optional AppCDS argument coverage."""
+import hashlib
 import os
 from pathlib import Path
 import runpy
@@ -20,6 +21,7 @@ class CdsLauncherTest(Base):
             if present:
                 archive.write_bytes(b'not a real archive; this test records arguments only')
                 archive.with_suffix('.jsa.size').write_text(str(archive.stat().st_size)+'\n')
+                archive.with_suffix('.jsa.sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  kainos.jsa\n')
             result = subprocess.run(['bash', str(temporary/'scripts/kainos-player'), '--probe-argument'],
                 env={**os.environ, 'JAVA_HOME':str(temporary/'fake-jdk'), 'ROOT_MARKER':str(temporary), 'KAINOS_REBUILD':'0'},
                 capture_output=True,text=True)

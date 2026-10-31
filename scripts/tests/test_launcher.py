@@ -1,16 +1,18 @@
 """Check the installed launcher's build and failure paths without running Java."""
+import hashlib
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+import time
 
 LAUNCHER = Path(__file__).resolve().parents[1] / 'kainos-player'
 
 
 class LauncherTest(unittest.TestCase):
-    def run_launcher(self, build_succeeds=True, with_jars=True, missing_package=False, args=(), rebuild="0", package="KainosPlayer"):
+    def run_launcher(self, build_succeeds=True, with_jars=True, missing_package=False, args=(), rebuild="0", package="KainosPlayer", archive=None, corrupt=False):
 
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -23,6 +25,13 @@ class LauncherTest(unittest.TestCase):
             app_dir.mkdir(parents=True)
         if with_jars and not missing_package:
             (app_dir / 'app.jar').write_bytes(b'')
+
+        if archive is not None:
+            (app_dir / 'kainos.jsa').write_bytes(archive)
+            (app_dir / 'kainos.jsa.size').write_text(str(len(archive))+'\n')
+            (app_dir / 'kainos.jsa.sha256').write_text(hashlib.sha256(archive).hexdigest()+'  kainos.jsa\n')
+            if corrupt:
+                (app_dir / 'kainos.jsa').write_bytes(bytes(b ^ 1 for b in archive))
 
         jdk = root / 'fake-jdk'
         (jdk / 'bin').mkdir(parents=True)
@@ -49,6 +58,24 @@ class LauncherTest(unittest.TestCase):
             env={**os.environ, 'JAVA_HOME': str(jdk), 'ROOT_MARKER': str(root), 'KAINOS_REBUILD': rebuild},
         )
         return root, result
+
+    def test_corrupt_same_size_archive_is_removed_before_next_launch(self):
+        root, result = self.run_launcher(archive=b'archive contents', corrupt=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        archive = root / 'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app/kainos.jsa'
+        deadline = time.monotonic() + 5
+        while archive.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertFalse(archive.exists())
+        result = subprocess.run(['bash', str(root / 'scripts/kainos-player')], capture_output=True,
+            env={**os.environ, 'JAVA_HOME': str(root / 'fake-jdk'), 'ROOT_MARKER': str(root)}, timeout=5)
+        self.assertEqual(0, result.returncode)
+        self.assertNotIn('-Xshare:auto', (root / 'java-args').read_text())
+
+    def test_valid_archive_uses_sharing(self):
+        root, result = self.run_launcher(archive=b'archive contents')
+        self.assertEqual(0, result.returncode)
+        self.assertIn('-Xshare:auto', (root / 'java-args').read_text())
 
     def test_existing_package_launches_without_build(self):
         root, result = self.run_launcher()
