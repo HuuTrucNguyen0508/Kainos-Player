@@ -116,3 +116,14 @@ fixture counts rows actually composed in each batch and verifies the list moved.
 The five explicit benchmark/correctness tests all passed. Regular tests exclude these
 sources unless the init script is supplied. Compiler report generation is optional via
 `-Pkainos.libraryReports=true` with the same init script.
+
+Compiler reports were not generated in this lane: the final compile waited over seven
+minutes for the machine lock behind another lane's fault-test run, then only this
+lane's queued compile was cancelled. No other process was stopped. Rerun when free:
+
+```bash
+flock -s /tmp/kainos-perf.lock env JAVA_HOME="$HOME/.jdks/temurin-17" ./gradlew -I scripts/perf/library-bench.init.gradle -Pkainos.libraryReports=true :shared:compileKotlinJvm --console=plain
+```
+
+Reports go to `shared/build/library-compose-reports`. Do not infer skip behavior from
+missing annotations alone; inspect the actual strong-skipping compiler output.
