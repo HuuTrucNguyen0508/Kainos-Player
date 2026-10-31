@@ -44,6 +44,7 @@ class AndroidPlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
         val exo = ExoPlayer.Builder(this).build().apply {
+            setWakeMode(C.WAKE_MODE_NETWORK)
             setAudioAttributes(audioAttributes, true)
             setHandleAudioBecomingNoisy(true)
             addListener(exoTrace)

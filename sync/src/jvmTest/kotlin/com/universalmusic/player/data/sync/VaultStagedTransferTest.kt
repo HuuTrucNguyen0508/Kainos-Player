@@ -16,10 +16,11 @@ import kotlin.test.assertTrue
 /** Serves [remote] bytes; [failAfterChunks] / [shortChunks] / [emptyChunks] inject faults. */
 internal class FakeVaultClient(
     private val remote: ByteArray,
-    private val remoteIndex: VaultIndexDocument = VaultIndexDocument("hub"),
+    private val remoteIndex: VaultIndexDocument? = null,
     private val failAfterChunks: Int = Int.MAX_VALUE,
     private val shortChunks: Boolean = false,
     private val emptyChunks: Boolean = false,
+    private val sourcePath: String = "song.flac",
 ) : HomeLanSyncClient {
     var downloads = 0
     var closed = false
@@ -39,7 +40,8 @@ internal class FakeVaultClient(
         Result.success(HomeLanHealthResponse(deviceId = "hub"))
 
     override suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument> =
-        Result.success(remoteIndex)
+        Result.success(remoteIndex ?: VaultIndexDocument("hub", if (remote.isEmpty()) emptyList() else
+            listOf(VaultFileEntry(sourcePath, remote.size.toLong(), 0))))
 
     override suspend fun downloadBlob(relPath: String, offset: Long, length: Int): Result<ByteArray> {
         if (downloads >= failAfterChunks) return Result.failure(IllegalStateException("network dropped"))
@@ -79,7 +81,7 @@ class VaultStagedTransferTest {
         val (root, store) = tempVaultStore()
         val original = Random(1).nextBytes(size)
         Files.write(root.resolve("a.flac"), original)
-        val client = FakeVaultClient(Random(2).nextBytes(size), failAfterChunks = 1)
+        val client = FakeVaultClient(Random(2).nextBytes(size), failAfterChunks = 1, sourcePath = "a.flac")
 
         assertFailsWith<IllegalStateException> {
             executeVaultTransfer(
@@ -100,7 +102,7 @@ class VaultStagedTransferTest {
     @Test
     fun interruptedNewDownloadLeavesNoZeroPaddedFinalFile() = runTest {
         val (root, store) = tempVaultStore()
-        val client = FakeVaultClient(Random(3).nextBytes(size), failAfterChunks = 1)
+        val client = FakeVaultClient(Random(3).nextBytes(size), failAfterChunks = 1, sourcePath = "Album/b.flac")
 
         assertFailsWith<IllegalStateException> {
             executeVaultTransfer(
@@ -124,13 +126,13 @@ class VaultStagedTransferTest {
         val remote = Random(4).nextBytes(size)
         val transfer = PendingVaultTransfer("c.flac", VaultCopyDirection.TO_LOCAL, size.toLong())
         assertFailsWith<IllegalStateException> {
-            executeVaultTransfer(store, FakeVaultClient(remote, failAfterChunks = 1), transfer, onProgress = noProgress)
+            executeVaultTransfer(store, FakeVaultClient(remote, failAfterChunks = 1, sourcePath = "c.flac"), transfer, onProgress = noProgress)
         }
 
-        val resumed = FakeVaultClient(remote)
+        val resumed = FakeVaultClient(remote, sourcePath = "c.flac")
         executeVaultTransfer(store, resumed, transfer, onProgress = noProgress)
 
-        assertEquals(2, resumed.downloads, "resume should continue from the staged offset")
+        assertEquals(3, resumed.downloads, "legacy transfers restart from zero")
         assertContentEquals(remote, Files.readAllBytes(root.resolve("c.flac")))
         assertNull(store.stagedSize("c.flac"))
         assertFalse(Files.exists(root.resolve("c.flac.kainos-part")))
@@ -145,7 +147,7 @@ class VaultStagedTransferTest {
         assertFailsWith<IllegalStateException> {
             executeVaultTransfer(
                 store,
-                FakeVaultClient(Random(6).nextBytes(size), shortChunks = true),
+                FakeVaultClient(Random(6).nextBytes(size), shortChunks = true, sourcePath = "d.flac"),
                 PendingVaultTransfer("d.flac", VaultCopyDirection.TO_LOCAL, size.toLong()),
                 replaceExisting = true,
                 onProgress = noProgress,

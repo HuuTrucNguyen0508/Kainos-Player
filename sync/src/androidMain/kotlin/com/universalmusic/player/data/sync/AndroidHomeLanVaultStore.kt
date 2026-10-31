@@ -20,7 +20,7 @@ class AndroidHomeLanVaultStore(
     context: Context,
     private val vaultRootProvider: () -> String?,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
-) : HomeLanVaultStore {
+) : CheckedVaultStore {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val stateFile = File(appContext.filesDir, "vault-sync-state.json")
@@ -74,6 +74,12 @@ class AndroidHomeLanVaultStore(
         }
 
     override suspend fun writeRange(relPath: String, offset: Long, data: ByteArray, totalSize: Long): Boolean =
+        writeCheckedRange(relPath, offset, data, totalSize, "") {}
+
+    override suspend fun writeCheckedRange(
+        relPath: String, offset: Long, data: ByteArray, totalSize: Long,
+        expectedHash: String, beforePublish: suspend () -> Unit,
+    ): Boolean =
         withContext(Dispatchers.IO) {
             val path = relPath.normalizeVaultRelPath()
             require(path.isNotBlank()) { "Blank vault path" }
@@ -114,6 +120,21 @@ class AndroidHomeLanVaultStore(
                 throw err
             }
             if (received != totalSize) return@withContext false
+            beforePublish()
+            if (expectedHash.isNotBlank()) {
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                (resolver.openInputStream(stagingUri) ?: error("Cannot verify staging")).use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        digest.update(buffer, 0, count)
+                    }
+                }
+                check(digest.digest().joinToString("") { "%02x".format(it) } == expectedHash) {
+                    "Vault content hash mismatch for $relPath"
+                }
+            }
             publishStaged(tree, parentId, stagingUri, stagingName, fileName, totalSize)
             true
         }

@@ -1,5 +1,7 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.model.PlaybackHandle
+
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -113,6 +115,7 @@ class PlayerSession(
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
     private var completionArmed: Boolean = false
+    private var truncatedRetryItemId: String? = null
     /** Last engine status seen by the collector; trace only on change, never per position tick. */
     private var lastTracedStatus: EngineStatus? = null
     /**
@@ -229,6 +232,14 @@ class PlayerSession(
                         if (eventGeneration != playGeneration) return@collectLatest
                         if (!completionArmed && _nowPlaying.value.resolved == null) {
                             trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
+                            return@collectLatest
+                        }
+                        val retryAt = engineState.retryAtPositionMs
+                        val currentItemId = queue.queue.value.current?.id
+                        if (retryAt != null && currentItemId != truncatedRetryItemId) {
+                            truncatedRetryItemId = currentItemId
+                            pendingResumePositionMs = retryAt
+                            startCurrent(Change.AUTOMATIC, applyResumePosition = true)
                             return@collectLatest
                         }
                         completionArmed = false
@@ -493,6 +504,17 @@ class PlayerSession(
 
     fun playNext(track: Track) = onSession { editQueue { playNext(track) } }
 
+    fun stopTransport() = onSession {
+        val position = startupTarget?.positionMs ?: _nowPlaying.value.positionMs
+        beginTransition()
+        playJob?.cancel()
+        playJob = null
+        pendingResumePositionMs = position
+        engine.stop()
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false, positionMs = position) }
+        record(Change.USER_PAUSE, playing = false)
+    }
+
     fun clearQueue() = onSession { clearQueueNow(recorded = queue.queue.value.items.isNotEmpty()) }
 
     private fun clearQueueNow(recorded: Boolean) {
@@ -612,11 +634,12 @@ class PlayerSession(
         val now = _nowPlaying.value
         if (!now.buffering && !now.isPlaying && !lastRecordedPlaying) return
         val engineStatus = engine.state.value.status
-        if (_nowPlaying.value.buffering) {
+        if (now.buffering && !(now.resolved != null && completionArmed)) {
             trace(
                 "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.label()} " +
                     "(engine=$engineStatus gen=$playGeneration)",
             )
+            pendingResumePositionMs = startupTarget?.positionMs ?: now.positionMs.takeIf { it > 0 }
             beginTransition()
             playJob?.cancel()
             playJob = null
@@ -627,7 +650,7 @@ class PlayerSession(
         }
         trace("pauseTransport engine=$engineStatus gen=$playGeneration track=${_nowPlaying.value.track.label()}")
         pausePending = true
-        _nowPlaying.update { it.copy(isPlaying = false) }
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false) }
         engine.pause()
         record(change, playing = false)
     }
@@ -816,7 +839,7 @@ class PlayerSession(
                 "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
         )
         if (next == null) {
-            val refill = if (manual) null else continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
             if (refill != null) {
                 val generationAtExhaustion = playGeneration
                 playJob?.cancel()
@@ -866,7 +889,7 @@ class PlayerSession(
                 throw cancelled
             } catch (error: Exception) {
                 trace("continuation failed: ${error.message}")
-                emptyList()
+                return@launch
             }
             if (continuation !== source) return@launch
             if (batch.isEmpty()) {
@@ -1022,15 +1045,15 @@ class PlayerSession(
         trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
         runCatching {
             withContext(workContext) {
-                engine.play(playable.source.handle, playable.source.quality, playGeneration = generation)
+                val handle = playable.source.handle.let { handle ->
+                    if (handle is PlaybackHandle.Url)
+                        handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
+                }
+                engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == playGeneration) {
                 engine.setVolume(_volume.value)
-                val seekTo = target?.positionMs
-                if (seekTo != null) {
-                    trace("seek after restore resumeAt=$seekTo gen=$generation")
-                    engine.seekTo(seekTo)
-                }
+                target?.positionMs?.let(engine::seekTo)
                 if (startupTarget === target) startupTarget = null
             }
         }.onFailure { error ->
@@ -1108,7 +1131,18 @@ class PlayerSession(
         // Ignore Repeat One here: re-queuing the same dead item would never reach a healthy one.
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
+            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            if (refill != null) {
+                engine.stop()
+                playJob = scope.launch(sessionContext) {
+                    refill.join()
+                    continueAfterRefill(generation)
+                }
+                return
+            }
             failedItemIds.clear()
+            beginTransition()
+            engine.stop()
             return
         }
         val snapshot = queue.queue.value

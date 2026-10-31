@@ -43,6 +43,12 @@ fun main(args: Array<String>) {
         exitProcess(2)
     }
     println("Kainos data dir ${isolation.dataDir}, hub port ${isolation.hubPort}, MPRIS ${mprisBusName(isolation.instance)}")
+    val guiLock = if (args.none { it == "--hub-only" }) {
+        com.universalmusic.player.platform.GuiInstanceLock.acquire(isolation.dataDir) ?: run {
+            System.err.println("kainos-player: another GUI is already using ${isolation.dataDir}. Close it before opening another window.")
+            exitProcess(75)
+        }
+    } else null
     val ownership = desktopHubOwnership(hubOnly = args.any { it == "--hub-only" })
     val mode = ownership.mode
     val container = AtomicReference<AppContainer?>()
@@ -64,7 +70,7 @@ fun main(args: Array<String>) {
             0
         }
     } finally {
-        try { closeHub() } finally { Runtime.getRuntime().removeShutdownHook(shutdown) }
+        try { closeHub() } finally { Runtime.getRuntime().removeShutdownHook(shutdown); guiLock?.close() }
     }
     if (exitCode != 0) exitProcess(exitCode)
 }

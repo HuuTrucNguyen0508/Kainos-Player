@@ -27,6 +27,21 @@ jobs:
           chmod +x gradlew
           ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:lintDebug --stacktrace
 
+      - name: Launcher tests
+        run: python3 scripts/tests/test_launcher.py
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install ffmpeg for Echo gateway tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Echo gateway tests in isolated environment
+        working-directory: tools/echo-gateway
+        run: |
+          uv venv "$RUNNER_TEMP/kainos-echo-tests"
+          uv pip install --python "$RUNNER_TEMP/kainos-echo-tests/bin/python" -r requirements.txt pytest
+          "$RUNNER_TEMP/kainos-echo-tests/bin/python" -m pytest -q -p no:cacheprovider
+
       - name: Secret scan
         run: |
           if git ls-files | grep -qx 'secrets.properties'; then

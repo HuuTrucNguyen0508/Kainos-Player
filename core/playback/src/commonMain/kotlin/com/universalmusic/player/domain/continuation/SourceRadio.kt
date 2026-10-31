@@ -15,7 +15,7 @@ fun Track.radioProvider(): ProviderId? = sources.firstOrNull { it.provider in RA
 /**
  * Keeps a queue going with [provider]'s own recommendations, seeded by the track playing when the
  * queue runs low. Never mixes providers: anything [fetch] returns from elsewhere is dropped, and
- * a failed or empty fetch finishes the radio instead of falling back to another source.
+ * an empty fetch finishes the radio; failures keep the continuation available for retry.
  */
 class SourceRadio(
     val provider: ProviderId,
@@ -33,13 +33,19 @@ class SourceRadio(
             trace("$provider radio stopped: no $provider track in the queue to seed from")
             return emptyList()
         }
-        val fetched = try {
-            fetch(seed, seen.toSet())
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            trace("$provider radio unavailable for ${seed.canonicalId}: ${error.message ?: error::class.simpleName}")
-            return emptyList()
+        var attempts = 0
+        var fetched: List<Track>
+        while (true) {
+            try {
+                fetched = fetch(seed, seen.toSet())
+                break
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                trace("$provider radio unavailable for ${seed.canonicalId}: ${error.message}")
+                if (++attempts >= 3) throw error
+                kotlinx.coroutines.delay(500L * attempts)
+            }
         }
         val batch = fetched.asSequence()
             .filter { it.radioProvider() == provider }

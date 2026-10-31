@@ -1,5 +1,8 @@
 package com.universalmusic.player.platform
 
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
@@ -142,6 +145,19 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        try {
+            playInternal(handle, quality, playGeneration)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (activePlayGeneration == playGeneration) {
+                publishState(_state.value.copy(status = EngineStatus.FAILED, error = failure.message))
+            }
+            throw failure
+        }
+    }
+
+    private suspend fun playInternal(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         activePlayGeneration = playGeneration
         val token = synchronized(lifecycleLock) {
             invalidatePendingStartLocked()
@@ -161,12 +177,12 @@ class DesktopPlaybackEngine internal constructor(
             clearPauseGuardLocked()
             noteLocalTransportLocked()
             mpvEpoch++
-            elapsedOffset = 0
+            elapsedOffset = (handle as? PlaybackHandle.Url)?.startPositionMs ?: 0
             publishState(EngineState(status = EngineStatus.BUFFERING))
             requestToken
         }
         when (handle) {
-            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = 0, token = token)
+            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = handle.startPositionMs / 1000.0, token = token)
             is PlaybackHandle.ProviderPlayback -> {
                 if (handle.provider != ProviderId.SPOTIFY) {
                     throw UnsupportedPlaybackException(
@@ -306,7 +322,7 @@ class DesktopPlaybackEngine internal constructor(
         val handle = lastHandle ?: return null
         invalidatePendingStartLocked()
         publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
+        return Restart(handle, lastQuality, elapsedOffset / 1000.0, requestToken, EngineStatus.PLAYING)
     }
 
     private fun launchRestart(restart: Restart) {
@@ -381,7 +397,7 @@ class DesktopPlaybackEngine internal constructor(
         val targetStatus = current.status
         userPaused = targetStatus == EngineStatus.PAUSED
         publishState(_state.value.copy(status = EngineStatus.BUFFERING))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
+        return Restart(handle, lastQuality, elapsedOffset / 1000.0, requestToken, targetStatus)
     }
 
     override fun stopForTransition() {
@@ -422,7 +438,17 @@ class DesktopPlaybackEngine internal constructor(
         if (pauseSpotify) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
     }
 
+    private var volumeJob: Job? = null
     override fun setVolume(volume: Float) {
+        volumeJob?.cancel()
+        volumeJob = scope.launch {
+            delay(250)
+            if (spotifyIsActive()) {
+                runCatching { spotify.setVolume(volume.coerceIn(0f, 1f)) }
+                    .onFailure { PlaybackTrace.log("Engine", "Spotify volume update failed") }
+            }
+        }
+
         val percent = (volume.coerceIn(0f, 1f) * 100).toInt()
         volumePercent = percent
         synchronized(lifecycleLock) {
@@ -433,13 +459,14 @@ class DesktopPlaybackEngine internal constructor(
 
     private suspend fun startUrl(
         url: String,
-        startSeconds: Long,
+        startSeconds: Double,
         token: Long,
         targetStatus: EngineStatus = EngineStatus.PLAYING,
     ) {
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
         val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) }
+            ?: (lastHandle as? PlaybackHandle.Url)?.durationMs
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val socket = runtime.createIpcPath()
@@ -477,9 +504,6 @@ class DesktopPlaybackEngine internal constructor(
             }
             if (!needsIpc) return@withContext true
             awaitIpc {
-                if (startSeconds > 0) {
-                    sendIpcIfActive(active, """["set_property","time-pos",$startSeconds]""")
-                }
                 targetStatus != EngineStatus.PAUSED ||
                     sendIpcIfActive(active, """["set_property","pause",true]""")
             }
@@ -520,7 +544,9 @@ class DesktopPlaybackEngine internal constructor(
                 if (activeProcess !== active) return@synchronized
                 activeProcess = null
                 if (userPaused) return@synchronized
-                publishState(if (code == 0) {
+                val position = _state.value.positionMs
+                val truncated = code == 0 && mpvEndedEarly(position, durationMs)
+                publishState(if (code == 0 && !truncated) {
                     _state.value.copy(
                         status = EngineStatus.ENDED,
                         positionMs = durationMs ?: _state.value.positionMs,
@@ -528,7 +554,10 @@ class DesktopPlaybackEngine internal constructor(
                 } else {
                     _state.value.copy(
                         status = EngineStatus.FAILED,
-                        error = code?.let { "Player exited with $it" } ?: "Player process failed",
+                        positionMs = position,
+                        retryAtPositionMs = position.takeIf { truncated },
+                        error = if (truncated) "Stream ended before the track finished" else
+                            code?.let { "Player exited with $it" } ?: "Player process failed",
                     )
                 })
                 cancelTickerLocked()
@@ -562,9 +591,13 @@ class DesktopPlaybackEngine internal constructor(
                     if (sample != null) {
                         if (sample.eof) {
                             cancelTickerLocked()
-                            publishState(_state.value.copy(
-                                status = EngineStatus.ENDED,
-                                positionMs = _state.value.durationMs ?: _state.value.positionMs,
+                            val current = _state.value
+                            val truncated = mpvEndedEarly(current.positionMs, current.durationMs)
+                            publishState(current.copy(
+                                status = if (truncated) EngineStatus.FAILED else EngineStatus.ENDED,
+                                positionMs = if (truncated) current.positionMs else current.durationMs ?: current.positionMs,
+                                retryAtPositionMs = current.positionMs.takeIf { truncated },
+                                error = if (truncated) "Stream ended before the track finished" else null,
                             ))
                             return@synchronized true
                         }
@@ -912,14 +945,10 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     private fun markSpotifyFailed(failure: Throwable, name: String) {
+        PlaybackTrace.log("Engine", "$name warning: ${failure.message}")
+        if (name.endsWith("stop")) return
         synchronized(lifecycleLock) {
-            if (spotifyIsActive()) {
-                cancelTickerLocked()
-                publishState(_state.value.copy(
-                    status = EngineStatus.FAILED,
-                    error = failure.message ?: "$name failed",
-                ))
-            }
+            if (spotifyIsActive()) publishState(_state.value.copy(syncWarning = "$name failed; waiting for receiver state"))
         }
     }
 
@@ -973,7 +1002,7 @@ class DesktopPlaybackEngine internal constructor(
     private data class Restart(
         val handle: PlaybackHandle,
         val quality: AudioQuality?,
-        val startSeconds: Long,
+        val startSeconds: Double,
         val token: Long,
         val targetStatus: EngineStatus,
     )
@@ -1044,7 +1073,10 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
 
     override fun sendIpc(commandArrayJson: String, socket: Path): Boolean =
         // Drain one response line so the socket stays healthy; a timeout counts as a failed IPC.
-        exchange(socket, """{"command":$commandArrayJson}""") !is IpcReply.Failed
+        when (val reply = exchange(socket, """{"command":$commandArrayJson}""")) {
+            is IpcReply.Line -> mpvCommandSucceeded(reply.text)
+            else -> false
+        }
 
     override fun readProperty(name: String, socket: Path): String? =
         when (val reply = exchange(socket, """{"command":["get_property","$name"]}""")) {
@@ -1166,3 +1198,10 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         runCatching { Files.deleteIfExists(path) }
     }
 }
+
+internal fun mpvCommandSucceeded(reply: String): Boolean = runCatching {
+    kotlinx.serialization.json.Json.parseToJsonElement(reply).jsonObject["error"]?.jsonPrimitive?.content == "success"
+}.getOrDefault(false)
+
+internal fun mpvEndedEarly(positionMs: Long, durationMs: Long?): Boolean =
+    durationMs != null && durationMs - positionMs > maxOf(5_000L, durationMs / 50)

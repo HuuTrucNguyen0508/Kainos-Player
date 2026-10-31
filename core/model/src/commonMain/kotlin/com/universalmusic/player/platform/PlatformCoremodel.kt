@@ -31,6 +31,7 @@ data class SpotifyPlaybackController(
     /** Bounded Connect state read. Null when the platform cannot observe the receiver. */
     val observe: (suspend () -> SpotifyObservedPlayback?)? = null,
     val receiverEvents: SpotifyReceiverEvents? = null,
+    val setVolume: suspend (Float) -> Unit = {},
 )
 
 /** Events from the receiver owned by this app, rather than Spotify's delayed Connect snapshot. */
@@ -44,7 +45,7 @@ data class SpotifyReceiverEvent(
     val trackId: String,
     val positionMs: Long? = null,
 ) {
-    enum class Kind { PLAYING, PAUSED, SEEKED, POSITION_CORRECTION, END_OF_TRACK, STOPPED, UNAVAILABLE }
+    enum class Kind { PLAYING, BUFFERING, PAUSED, SEEKED, POSITION_CORRECTION, END_OF_TRACK, STOPPED, UNAVAILABLE }
 }
 
 expect fun openUrl(url: String)

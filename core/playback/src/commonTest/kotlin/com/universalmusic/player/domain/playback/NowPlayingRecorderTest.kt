@@ -45,6 +45,22 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class NowPlayingRecorderTest {
     @Test
+    fun cancellingRestoredStartupPreservesTheDeferredPositionForNextPlay() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.pauseTransport()
+        runCurrent()
+        rig.engine.bufferingGate = null
+        rig.session.playTransport()
+        settle(rig)
+        assertEquals(12_000, rig.session.nowPlaying.value.positionMs)
+        assertEquals(12_000, rig.engine.seeks.last())
+    }
+
+    @Test
     fun shuffleTogglesPublishNewRevisionsWithoutChangingTheQueueHash() = runTest {
         val rig = rig()
         rig.session.initializePersistence()

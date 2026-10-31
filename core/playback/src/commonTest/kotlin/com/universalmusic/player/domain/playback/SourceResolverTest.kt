@@ -18,6 +18,37 @@ class SourceResolverTest {
     private val resolver = DefaultSourceResolver()
 
     @Test
+    fun offlineStartsWithCacheWithoutTryingSpotify() = runTest {
+        val spotify = track("Song", "Artist", provider = ProviderId.SPOTIFY)
+        val mirror = track("Song", "Artist", provider = ProviderId.LOCAL)
+        val result = DefaultSourceResolver(networkAvailable = { false }).resolve(
+            merged(spotify, mirror), PlaybackPreferences(sourceSelection = SourceSelectionMode.PREFER_SPOTIFY))
+        assertEquals(ProviderId.LOCAL, result.source.provider)
+        assertTrue(result.fallbacks.isEmpty())
+    }
+
+    @Test
+    fun automaticKeepsTheSpotifyRecordingBeforeAMatchedMirror() = runTest {
+        val spotify = track("Song", "Artist", provider = ProviderId.SPOTIFY, quality = QualityTier.STANDARD)
+        val mirror = track("Song", "Artist", provider = ProviderId.LOCAL, quality = QualityTier.HIGH).let { track ->
+            track.copy(sources = track.sources.map { it.copy(providerTrackId = "hearted-yt:mirror") })
+        }
+        assertEquals(ProviderId.SPOTIFY,
+            DefaultSourceResolver { true }.resolve(merged(spotify, mirror), PlaybackPreferences.Default).source.provider)
+    }
+
+    @Test
+    fun providerPreferenceBeatsVerifiedMirrorQuality() = runTest {
+        val spotify = track("Song", "Artist", provider = ProviderId.SPOTIFY).let { track ->
+            track.copy(sources = track.sources.map { it.copy(quality = AudioQuality(QualityTier.STANDARD, confidence = QualityConfidence.UNKNOWN)) })
+        }
+        val mirror = track("Song", "Artist", provider = ProviderId.LOCAL, bitrate = 256, quality = QualityTier.HIGH)
+        val result = resolver.resolve(merged(spotify, mirror), PlaybackPreferences(sourceSelection = SourceSelectionMode.PREFER_SPOTIFY))
+        assertEquals(ProviderId.SPOTIFY, result.source.provider)
+        assertEquals(ProviderId.LOCAL, result.fallbacks.single().provider)
+    }
+
+    @Test
     fun selectsSpotifyWhenItHasHighestBitrate() = runTest {
         val track = merged(
             track("Song", "Artist", provider = ProviderId.SPOTIFY, bitrate = 320),

@@ -219,14 +219,13 @@ class LibraryRepository(
             }
             schedulePersist()
         }
+        apply(sanitized)
         val cache = metadataCache
         val repoScope = scope
         if (cache != null && repoScope != null) {
             repoScope.launch {
                 apply(enrichFromCache(sanitized))
             }
-        } else {
-            apply(sanitized)
         }
     }
 
@@ -245,20 +244,19 @@ class LibraryRepository(
 
     /**
      * Load disk snapshot, scope Spotify entries to [activeSpotifyAccountId], hydrate artwork from cache.
+     * A null id means the account is unverified (offline, /me failed), not disconnected: keep the
+     * stored scope. Only [setSpotifyAccountId] on an explicit disconnect or a verified switch drops data.
      */
     suspend fun load(activeSpotifyAccountId: String?) {
-        try {
-            val rawStore = store ?: return
-            val raw = rawStore.read().migrated(deviceIdProvider())
-            val scoped = raw.scopedToSpotifyAccount(activeSpotifyAccountId)
-            if (scoped != raw) {
-                rawStore.write(scoped)
-            }
-            applySnapshot(scoped)
-            metadataCache?.evictExpired(clock())
-        } finally {
-            loaded.complete(Unit)
+        val rawStore = store ?: return
+        val raw = rawStore.read().migrated(deviceIdProvider())
+        val scoped = activeSpotifyAccountId?.let(raw::scopedToSpotifyAccount) ?: raw
+        if (scoped != raw) {
+            rawStore.write(scoped)
         }
+        applySnapshot(scoped)
+        loaded.complete(Unit)
+        metadataCache?.evictExpired(clock())
     }
 
     fun applySnapshot(snapshot: UserLibrarySnapshot) {
@@ -273,6 +271,7 @@ class LibraryRepository(
 
     /** Drop Spotify-scoped app data when the signed-in account changes or disconnects. */
     suspend fun setSpotifyAccountId(accountId: String?) {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
         if (accountId == spotifyAccountId) return
         val scoped = toSnapshot().scopedToSpotifyAccount(accountId)
         applySnapshot(scoped)
@@ -342,6 +341,7 @@ class LibraryRepository(
      * onto device `local:` tracks after the file is present.
      */
     suspend fun mergeAndPersistSyncState(remote: HeartsSyncDocument): HeartsSyncDocument {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
         persistJob?.cancel()
         persistJob = null
         val deltas = mutableListOf<Pair<Track, Boolean>>()
@@ -426,7 +426,7 @@ class LibraryRepository(
                 deltas += track to false
             }
 
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         for ((track, nowFavorite) in deltas) {
             onFavoriteChanged?.invoke(track, nowFavorite)
@@ -480,7 +480,7 @@ class LibraryRepository(
             heartOps = ops
             _favorites.value = favorites
             _saved.value = saved.distinctBy { it.canonicalId }
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         for ((track, nowFavorite) in deltas) {
             onFavoriteChanged?.invoke(track, nowFavorite)
@@ -500,12 +500,19 @@ class LibraryRepository(
         val op = HeartOp(
             canonicalId = canonicalId,
             action = action,
-            revision = clock(),
+            revision = maxOf(clock(), (heartOps.maxOfOrNull { it.revision } ?: 0L) + 1),
             deviceId = deviceIdProvider(),
             spotifyAccountId = if (canonicalId.startsWith("spotify:")) spotifyAccountId else null,
             localIdentity = currentLocalTrack(track).localSyncIdentity(),
         )
         heartOps = (heartOps + op).compacted()
+    }
+
+    suspend fun flush() {
+        if (!loaded.isCompleted) return
+        persistJob?.cancel()
+        persistJob = null
+        persistMutex.withLock { store?.write(toSnapshot()) }
     }
 
     private fun schedulePersist() {
