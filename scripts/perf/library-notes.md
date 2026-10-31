@@ -1,6 +1,8 @@
 # Library measurements
 
-Run `scripts/perf/library-run`; summarize with `scripts/perf/library-summary.py <log> ...`.
+Run `scripts/perf/library-run > /tmp/library-run.log`; summarize with
+`scripts/perf/library-summary.py /tmp/library-run.log`. Earlier raw output was replaced
+by `scripts/perf/library-previous-summary.tsv`; raw `scripts/perf/library-*.log` files are ignored.
 Uses JDK 17, the real JVM shared module, Compose compiler, Kotlin/JUnit test executor.
 The init script adds benchmark sources only when explicitly supplied. Default tests
 never run the benchmarks. No user data, windows, audio, or network calls are needed.
@@ -21,8 +23,8 @@ Cold construction/query is measured separately. No debounce is added.
 
 The limiter removed is repeated metadata normalization and album/artist regrouping.
 Remaining work includes FuzzyMatcher tokenization, matching each song and album member,
-and stable sorting of matching songs. Core model FuzzyMatcher/TrackSort are outside
-this lane's ownership. The optimization keeps those algorithms and ranking semantics.
+and stable sorting of matching songs. Core model FuzzyMatcher/TrackSort were outside
+the first pass's ownership. The optimization keeps those algorithms and ranking semantics.
 The same reference helpers check all result lists for every sort and heart filter.
 At 100k the p99 still exceeds 16 ms. Android timing has not been measured.
 Small-catalog derive times differ between processes, where radically different amounts
@@ -87,7 +89,7 @@ desktop createDistributable, Android assembleDebug and Android lintDebug. The XM
 contain 927 tests, zero failures/errors, three existing skips. The first display-dependent
 run's failures disappeared with headless AWT; no test assertions were relaxed.
 
-## Final observations and remaining work
+## First-pass observations and remaining work
 
 At 20k, cold index+query p50/p90 is 40.166/51.004 ms. At 100k it is
 196.196/205.355 ms. Thus the warm-query target passes, but the first query still
@@ -106,7 +108,7 @@ The mock cold/ready engine-admission medians are 40.843/0.309 ms, driven by the
 explicitly configured 40 ms mock extractor delay. They prove no real resolver/network
 speedup and justify no prefetch implementation on their own.
 
-The full lane is **not complete**: first-keystroke/frame latency, full-app playback
+At the end of the first pass the lane was incomplete: first-keystroke/frame latency, full-app playback
 recomposition, and real next-track press-to-sound remain open. These results are JVM-only;
 no physical phone, real desktop app, Spotify endpoint or user data was touched.
 
@@ -127,3 +129,66 @@ flock -s /tmp/kainos-perf.lock env JAVA_HOME="$HOME/.jdks/temurin-17" ./gradlew 
 
 Reports go to `shared/build/library-compose-reports`. Do not infer skip behavior from
 missing annotations alone; inspect the actual strong-skipping compiler output.
+
+## Session 2, current results
+
+Base cd48f003386ee36975b3fd3c704022eeadc24358, branch perf/library-session-2.
+All numbers are JVM-only. The 24-core host had load averages around 8 in the final run.
+Shared build and exclusive timing locks were used; normal desktop activity stayed running.
+
+- Scaffold: actual headless Compose fixture, ten four-tick simulated seconds. Whole-state
+  observation recomposes its scope 4 times, the production track-only helper 0 times.
+  Progress remains 4 in both arms. These are observation-scope counts, not a full App/
+  Now Playing tree profile or GPU frames. Compiler reports show strong skipping already
+  makes scaffold, rows, Now Playing and mini player skippable. Blanket annotations rejected.
+- Prefetch: one YouTube-only next entry after a second of successful playback. Resolve/
+  enrichment run in workContext and publish on the session dispatcher after generation,
+  queue and preference checks. Queue changes/transitions cancel it. Consumption checks
+  entry id, original track, preferences and age. TTL is at most 30 seconds; signed URL
+  expiry leaves another 30-second margin. URLs never enter queue persistence. No Spotify
+  or mixed-provider prefetch. The 40 ms mock extractor gives 41.35/0.62 ms cold/ready,
+  repeated 41.04/0.57 ms. Timer ends at correct engine URL admission, before audio output.
+  Tests prove single extraction, expiry re-resolution, and no stale engine starts after
+  queue replacement even when a non-cancellable extractor finishes. Two real yt-dlp
+  checks: BaW_jenozKc unavailable; jNQXAC9IVRw resolves with signed expiry. No real network
+  latency or audible press-to-sound speedup is claimed. No resolved URLs were retained.
+- Index: app-lifetime presenter derives/warms on Default after hydration, before Library
+  opens. Complete indices are published; matching stays synchronous for Enter. Catalog
+  changes create a new index. Alternating lazy/prewarmed query at 20k is 24.10/2.60 ms,
+  at 100k 137.39/11.24 ms. Ten samples per arm after three warmups. Work moved before the
+  keystroke; prewarm CPU/memory and painted-frame latency are not included in that timer.
+- Sort: normalize once per track; alternating original comparator and production code
+  check exact equality for all four sorts and missing/nonpositive durations. At 20k,
+  title ascending is 5.40/1.76 ms, duration ascending 3.96/2.24 ms. Ten samples after five
+  warmups. Small 2k title ascending is noisy: first run 0.66/0.75 ms, repeat 0.91/0.81 ms.
+  No 2k ascending-title gain is claimed.
+- Artwork: prioritize local/YouTube previous/next covers after 1.2 seconds playing.
+  Reuse local embedded cache and hydrated metadata, then Coil's display loader. Pause
+  and queue changes cancel it. Generated 1024px PNG decoded at 512px: 5.05/0.064 ms,
+  repeat 5.46/0.093 ms. Ten samples per arm after three warmups, alternating order, unique
+  files. Filesystem-cache warm decode/cache admission, not embedded extraction, network
+  or painted frames. No extra metadata fetching over the hydrated scan was justified.
+- Fast skip: explicit SessionWritePerfTest with -Dkainos.perf=true, 200 writes on a
+  500-entry queue. Median 0.692 ms, two metadata statements, zero queue-table writes.
+  Recorder identity caches and SessionDb QueueContent reuse avoid re-encoding unchanged
+  track payloads. Listening commit p50 0.789 ms, portable projection500 0.089 ms.
+  Added coalescing rejected; this is observation, not a speedup.
+
+Raw first-pass logs are replaced with library-previous-summary.tsv. Session 2, final and
+artwork summary TSVs retain all compact statistics. The summary helper's ms column is
+counts for recomposition metrics. Timing samples are consumed and checked; none discarded.
+
+Final production verification passed: root jvmTest, SQL migration verification, desktop
+createDistributable, Android assembleDebug and lintDebug. Explicit perf/correctness tests
+also pass. Controller logs: /tmp/library2-all-final.log, /tmp/library2-perf-final.log,
+/tmp/library2-writes.log. Early counter fixture missed snapshot notifications; explicit
+flushes fixed it. Early desktop smoke raced packaging, then paused a buffering skip.
+The final script waits for playback admission. No production checks were relaxed.
+
+Run scripts/perf/library-desktop-smoke after packaging. Private Xvfb, private D-Bus,
+synthetic WAVs, empty home/data, null-audio mpv. Successful artifact directory:
+/tmp/kainos-library-desktop-7fmspjrk/, with search/Now Playing/mini PNGs and run.log.
+Passed type-to-search, Enter on Alpha, three-track chip queue despite one search match,
+Beta/Gamma MPRIS skips, pause/resume and no exceptions. Its processes are stopped; data
+and logs retained. The user's app, app data and phone were untouched. No schema change.
+Real phone latency, Android rendering and media-session behavior remain unmeasured.
