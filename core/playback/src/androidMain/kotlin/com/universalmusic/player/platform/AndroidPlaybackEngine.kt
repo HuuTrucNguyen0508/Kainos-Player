@@ -326,7 +326,7 @@ class AndroidPlaybackEngine(
                                 event.kind, sameTrack, receiverConfirmed, _state.value.positionMs, _state.value.durationMs,
                             )
                             if (finished) {
-                                finishSpotifyTrack(rolledOver = !sameTrack)
+                                finishSpotifyTrack()
                                 return@collect
                             }
                             if (!sameTrack || event.kind == SpotifyReceiverEvent.Kind.END_OF_TRACK) return@collect
@@ -383,25 +383,34 @@ class AndroidPlaybackEngine(
                     )
                 }
                 if (_state.value.status == EngineStatus.PLAYING) startTicker()
-                else scope.launch {
-                    // Without receiver events the clock is all we have; never sit in buffering.
-                    delay(RECEIVER_CONFIRM_TIMEOUT_MS)
-                    if (activeBackend == ActiveBackend.SPOTIFY && activePlayGeneration == generation && !receiverConfirmed) {
-                        trace("no receiver event after ${RECEIVER_CONFIRM_TIMEOUT_MS}ms -> wall clock")
-                        spotifyStartedAt = System.currentTimeMillis()
-                        _state.update { it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs) }
-                        startTicker()
+                else {
+                    val intent = transportIntent
+                    scope.launch {
+                        // Without receiver events the clock is all we have; never sit in buffering.
+                        while (true) {
+                            delay(RECEIVER_CONFIRM_TIMEOUT_MS)
+                            if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation ||
+                                receiverConfirmed || transportIntent != intent ||
+                                _state.value.status != EngineStatus.BUFFERING) return@launch
+                            val observed = runCatching { spotify.observe?.invoke() }.getOrNull()
+                            if (observed?.isPlaying == false) continue
+                            trace("no receiver event after ${RECEIVER_CONFIRM_TIMEOUT_MS}ms -> wall clock")
+                            spotifyStartedAt = System.currentTimeMillis()
+                            _state.update { it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs) }
+                            startTicker()
+                            return@launch
+                        }
                     }
                 }
             }
         }
     }
 
-    private fun finishSpotifyTrack(rolledOver: Boolean) {
-        trace("Spotify track finished rolledOver=$rolledOver")
+    private fun finishSpotifyTrack() {
+        trace("Spotify track finished")
         ticker?.cancel()
-        // The receiver is now playing something Kainos never queued; silence it.
-        if (rolledOver) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
+        // The receiver may roll into a track Kainos never queued; silence it.
+        enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
         _state.update { it.copy(status = EngineStatus.ENDED, positionMs = it.durationMs ?: it.positionMs) }
     }
 
@@ -665,12 +674,8 @@ class AndroidPlaybackEngine(
                     position >= duration + graceMs
                 ) {
                     trace("Spotify ticker reached duration=$duration -> synthetic ENDED")
-                    ticker?.cancel()
-                    _state.update { current -> current.copy(
-                        status = EngineStatus.ENDED,
-                        positionMs = duration,
-                        durationMs = duration,
-                    ) }
+                    _state.update { it.copy(durationMs = duration) }
+                    finishSpotifyTrack()
                     return@launch
                 }
                 _state.update { current ->
