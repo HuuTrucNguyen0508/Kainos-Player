@@ -396,3 +396,22 @@ async def _wait_until(predicate, timeout: float) -> None:
 
         await asyncio.sleep(0.05)
     raise AssertionError("condition not met before timeout")
+
+@pytest.mark.asyncio
+async def test_alexa_missing_auth_does_not_read_body():
+    app = create_app(make_settings(skip_alexa_signature_verify=False))
+    async def body():
+        raise AssertionError("Unauthenticated body was read")
+        yield b""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/alexa", content=body())
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_alexa_caps_chunked_body(client):
+    async def body():
+        for _ in range(17):
+            yield b"x" * 65536
+    response = await client.post("/alexa", content=body())
+    assert response.status_code == 413

@@ -220,7 +220,21 @@ def create_app(settings: Settings | None = None) -> Starlette:
 
     async def alexa(request: Request) -> Response:
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
-        body = await request.body()
+        if not cfg.skip_alexa_signature_verify and (
+            not request.headers.get("SignatureCertChainUrl") or not request.headers.get("Signature-256")
+        ):
+            return JSONResponse({"error": "signature_headers"}, status_code=400)
+        # Count streamed bytes, including requests without Content-Length.
+        body = bytearray()
+        try:
+            async with asyncio.timeout(10):
+                async for chunk in request.stream():
+                    if len(body) + len(chunk) > 1024 * 1024:
+                        return JSONResponse({"error": "request_too_large"}, status_code=413)
+                    body.extend(chunk)
+        except TimeoutError:
+            return JSONResponse({"error": "request_timeout"}, status_code=408)
+        body = bytes(body)
         try:
             if not cfg.skip_alexa_signature_verify:
                 await asyncio.to_thread(

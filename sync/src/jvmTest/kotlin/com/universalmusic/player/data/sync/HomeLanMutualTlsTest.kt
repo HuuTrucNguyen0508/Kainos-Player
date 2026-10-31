@@ -46,7 +46,7 @@ class HomeLanMutualTlsTest {
             pairing = pairing,
             onHearts = { pcLibrary.mergeAndPersistSyncState(it); pcLibrary.exportHeartsSyncDocument() },
             onPlaylists = { it },
-            vault = null,
+            vault = JvmHomeLanVaultStore({ directory.resolve("vault").apply { mkdirs() }.path }, directory.resolve("vault-state.json").toPath()),
             heartedVaultFileNames = { null },
         ),
         pc,
@@ -158,9 +158,19 @@ class HomeLanMutualTlsTest {
         HOME_LAN_SYNC_PATH_PAIR_CANCEL,
     )
 
-    private fun rawPairingPost(path: String, framing: String, body: String): Int {
+    @Test
+    fun libraryDocumentsRejectOversizedBodiesBeforeReading() = runBlocking {
+        hub.start()
+        for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_V2_HEARTS,
+            HOME_LAN_SYNC_PATH_PLAYLISTS, HOME_LAN_SYNC_PATH_V2_PLAYLISTS,
+            HOME_LAN_SYNC_PATH_VAULT_INDEX, HOME_LAN_SYNC_PATH_V2_VAULT_INDEX)) {
+            assertEquals(413, rawPairingPost(path, "Content-Length: 67108865\r\n", "", phone), path)
+        }
+    }
+
+    private fun rawPairingPost(path: String, framing: String, body: String, identity: JvmDeviceIdentity.Material = stranger): Int {
         val context = SSLContext.getInstance("TLS").apply {
-            init(stranger.keyManagers(), arrayOf(hubPinTrustManager(pc.fingerprint)), null)
+            init(identity.keyManagers(), arrayOf(hubPinTrustManager(pc.fingerprint)), null)
         }
         return (context.socketFactory.createSocket("127.0.0.1", port) as SSLSocket).use { socket ->
             socket.soTimeout = 3_000
