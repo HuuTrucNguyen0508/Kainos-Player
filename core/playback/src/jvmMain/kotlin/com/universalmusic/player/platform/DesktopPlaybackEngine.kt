@@ -780,7 +780,9 @@ class DesktopPlaybackEngine internal constructor(
                         }
                         return
                     }
-                    // Initial-file failures use the existing bounded session fallback.
+                    // Errors on the outgoing entry must also cancel any pending boundary.
+                    active.crossing = null
+                    active.crossingRunning = false
                     preparedNext = null
                     cancelTickerLocked()
                     publishState(_state.value.copy(status = if (reason == "error")

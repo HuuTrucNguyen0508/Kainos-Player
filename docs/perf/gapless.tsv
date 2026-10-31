@@ -20,3 +20,4 @@ date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verd
 2026-10-31	early_missing_clock_regression	S4_wait_output_evidence	1	0	1	0	1	red_then_green_short_identity_may_wait_for_drain	this_commit
 2026-10-31	randomized_operations_passed	real_mpv_null_seed20261031	0	240	0	240	240	230_resolved_matches_270_unresolved_30ms_settlement	this_commit
 2026-10-31	PCM_join_silence_ms	Sol_correctness_fixes	0	0	0	0	10	176400_samples_zero_LSB_join_error	this_commit
+2026-10-31	randomized_operations_passed	final_head_real_mpv_null	0	240	0	240	240	237_resolved_matches_263_unresolved_30ms_settlement	this_commit
