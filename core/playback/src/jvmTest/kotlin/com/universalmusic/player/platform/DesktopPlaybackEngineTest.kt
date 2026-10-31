@@ -30,6 +30,95 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun gaplessSwitchPreservesProcessAndRejectsOldEventsAfterRestart() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/first.flac"), null, 10)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            delay(50)
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "second", PlaybackHandle.Url("/second.flac"), null, 10))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append") }) delay(10) }
+            val outputCrossed = AtomicBoolean(false)
+            runtime.properties = { _, name -> if (name == "audio-pts") if (outputCrossed.get()) "0" else "-0.25" else null }
+            runtime.events.put("""{"event":"end-file","reason":"eof"}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"playback-restart"}""")
+            delay(50)
+            assertEquals(10, engine.state.value.playGeneration, "Do not publish decoded lookahead as audible playback")
+            outputCrossed.set(true)
+            withTimeout(2_000) { while (engine.state.value.playGeneration != 11L) delay(10) }
+            assertEquals("second", engine.state.value.seamlessItemId)
+            assertEquals(0, engine.state.value.positionMs)
+            assertEquals(60_000, engine.state.value.durationMs)
+            assertEquals(1, runtime.commands.size)
+            engine.pause()
+            engine.seekTo(12_000)
+            assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+            engine.resume()
+            engine.setVolume(0.4f)
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("volume\",40") }) delay(10) }
+            runtime.destroyAll()
+            withTimeout(2_000) { while (engine.state.value.status != EngineStatus.FAILED) delay(10) }
+            assertTrue(requireNotNull(engine.state.value.retryAtPositionMs) >= 12_000)
+            engine.play(PlaybackHandle.Url("/second.flac", startPositionMs = 12_000), null, 12)
+            assertEquals(2, runtime.commands.size)
+            assertEquals(12, engine.state.value.playGeneration)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
+    fun pausedProcessDeathDoesNotKeepAnUnqueuedSuccessorAfterResume() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/first.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "next", PlaybackHandle.Url("/next.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append") }) delay(10) }
+            engine.pause()
+            runtime.destroyAll()
+            delay(50)
+            engine.resume()
+            withTimeout(2_000) { while (runtime.commands.size < 2 || engine.state.value.status != EngineStatus.PLAYING) delay(10) }
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"end-file","reason":"eof"}""")
+            withTimeout(2_000) { while (engine.state.value.status != EngineStatus.ENDED) delay(10) }
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
+    fun missingQueuedFileEndsCurrentNormallyAndInitialFailureIsTerminal() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/first.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            delay(50)
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "missing", PlaybackHandle.Url("/missing.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append") }) delay(10) }
+            assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+            runtime.properties = { _, name -> if (name == "time-pos") "59.9" else null }
+            engine.seekTo(59_900)
+            runtime.events.put("""{"event":"end-file","reason":"eof"}""")
+            runtime.events.put("""{"event":"end-file","reason":"error"}""")
+            delay(30)
+            assertEquals(EngineStatus.PLAYING, engine.state.value.status, "Drain the outgoing audio before ending")
+            withTimeout(2_000) { while (engine.state.value.status != EngineStatus.ENDED) delay(10) }
+            assertEquals(1, engine.state.value.playGeneration)
+            engine.play(PlaybackHandle.Url("/missing.flac"), null, 2)
+            runtime.events.put("""{"event":"end-file","reason":"error"}""")
+            withTimeout(2_000) { while (engine.state.value.status != EngineStatus.FAILED) delay(10) }
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun restoredPositionIsAnMpvLaunchArgument() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime()
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
@@ -701,6 +790,17 @@ private class FakeSpotifyReceiver : SpotifyReceiverEvents {
 }
 
 private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
+    override var supportsEvents = false
+    @Volatile var events = java.util.concurrent.LinkedBlockingQueue<String>()
+    override fun openEvents(socket: Path): MpvEventStream {
+        val queue = java.util.concurrent.LinkedBlockingQueue<String>()
+        events = queue
+        return object : MpvEventStream {
+            override fun readLine(): String? = queue.take().takeUnless { it == "closed" }
+            override fun close() { queue.put("closed") }
+        }
+    }
+
     val commands = CopyOnWriteArrayList<List<String>>()
     val liveProcessCount = AtomicInteger()
     val maximumLiveProcesses = AtomicInteger()

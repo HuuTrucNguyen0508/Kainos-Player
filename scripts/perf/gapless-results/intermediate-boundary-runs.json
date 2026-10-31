@@ -1,0 +1,72 @@
+[
+  {
+    "run": 0,
+    "variant": "baseline",
+    "idle_cpu_percent": 0.1997787902197369,
+    "mpv_idle_cpu_percent": 0.0,
+    "idle_rss_kib": 111164,
+    "press_to_started_ms": 104.78963,
+    "ffprobe_processes": 0,
+    "pause_ack_ms": 0.953742,
+    "resume_ack_ms": 1.206483,
+    "natural_pcm_silence_ms": 45.0,
+    "natural_pcm_boundary_ms": 45.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 0,
+    "variant": "candidate",
+    "idle_cpu_percent": 0.0,
+    "mpv_idle_cpu_percent": 0.0,
+    "idle_rss_kib": 107572,
+    "press_to_started_ms": 128.319919,
+    "ffprobe_processes": 0,
+    "pause_ack_ms": 1.266163,
+    "resume_ack_ms": 1.038682,
+    "natural_pcm_silence_ms": 0.0,
+    "natural_pcm_boundary_ms": 0.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 1,
+    "variant": "baseline",
+    "idle_cpu_percent": 0.0,
+    "mpv_idle_cpu_percent": 0.0,
+    "idle_rss_kib": 121648,
+    "press_to_started_ms": 105.789111,
+    "ffprobe_processes": 0,
+    "pause_ack_ms": 1.259933,
+    "resume_ack_ms": 0.925752,
+    "natural_pcm_silence_ms": 45.0,
+    "natural_pcm_boundary_ms": 45.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 1,
+    "variant": "candidate",
+    "idle_cpu_percent": 0.0,
+    "mpv_idle_cpu_percent": 0.0,
+    "idle_rss_kib": 116160,
+    "press_to_started_ms": 118.749938,
+    "ffprobe_processes": 0,
+    "pause_ack_ms": 1.160413,
+    "resume_ack_ms": 0.911282,
+    "natural_pcm_silence_ms": 0.0,
+    "natural_pcm_boundary_ms": 0.0,
+    "pcm_resolution_ms": 5
+  },
+  {
+    "run": 2,
+    "variant": "baseline",
+    "idle_cpu_percent": 0.0,
+    "mpv_idle_cpu_percent": 0.0,
+    "idle_rss_kib": 107184,
+    "press_to_started_ms": 104.318148,
+    "ffprobe_processes": 0,
+    "pause_ack_ms": 1.029582,
+    "resume_ack_ms": 0.922752,
+    "natural_pcm_silence_ms": 45.0,
+    "natural_pcm_boundary_ms": 45.0,
+    "pcm_resolution_ms": 5
+  }
+]
