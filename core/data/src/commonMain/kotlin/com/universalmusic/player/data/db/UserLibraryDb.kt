@@ -11,34 +11,34 @@ import com.universalmusic.player.data.sync.LocalSyncIdentity
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
-internal fun KainosDatabase.readUserLibrary(): UserLibrarySnapshot = UserLibrarySnapshot(
+internal fun KainosDatabase.readUserLibrary(strict: Boolean = false): UserLibrarySnapshot = UserLibrarySnapshot(
     version = USER_LIBRARY_FORMAT_VERSION,
     spotifyAccountId = userLibraryQueries.selectMeta().executeAsOneOrNull()?.spotify_account_id,
     favoriteIds = userLibraryQueries.selectFavorites().executeAsList(),
-    heartOps = userLibraryQueries.selectHeartOps().executeAsList().map { row ->
-        HeartOp(
+    heartOps = userLibraryQueries.selectHeartOps().executeAsList().mapNotNull { row ->
+        readStorageRow(strict) { HeartOp(
             canonicalId = row.canonical_id,
             action = HeartAction.valueOf(row.action),
             revision = row.revision,
             deviceId = row.device_id,
             spotifyAccountId = row.spotify_account_id,
             localIdentity = row.local_identity_json?.let { storageJson.decodeFromString<LocalSyncIdentity>(it) },
-        )
+        ) }
     },
-    remembered = userLibraryQueries.selectRemembered().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedTrack>(json)
+    remembered = userLibraryQueries.selectRemembered().executeAsList().mapNotNull { json ->
+        readStorageRow(strict) { storageJson.decodeFromString<PersistedTrack>(json) }
     },
-    recents = userLibraryQueries.selectRecents().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedTrack>(json)
+    recents = userLibraryQueries.selectRecents().executeAsList().mapNotNull { json ->
+        readStorageRow(strict) { storageJson.decodeFromString<PersistedTrack>(json) }
     },
-    homePins = userLibraryQueries.selectHomePins().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedHomePin>(json)
+    homePins = userLibraryQueries.selectHomePins().executeAsList().mapNotNull { json ->
+        readStorageRow(strict) { storageJson.decodeFromString<PersistedHomePin>(json) }
     },
 )
 
 /** Store inputs remain snapshots; only changed rows are written inside the caller's transaction. */
 internal fun KainosDatabase.writeUserLibrary(snapshot: UserLibrarySnapshot) {
-    val previous = readUserLibrary()
+    val previous = readUserLibrary(strict = true)
     syncOrderedRows(previous.favoriteIds, snapshot.favoriteIds, userLibraryQueries::deleteFavoriteAt) { position, id ->
         userLibraryQueries.insertFavorite(position, id)
     }

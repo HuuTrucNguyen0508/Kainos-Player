@@ -106,6 +106,7 @@ class UserLibraryPersistenceTest {
     fun disconnectClearsSpotifyAccountScopedData() = runTest {
         val store = InMemoryUserLibraryStore()
         val library = LibraryRepository(scope = this, store = store)
+        library.load(null)
         library.applySnapshot(
             UserLibrarySnapshot(
                 spotifyAccountId = "user-a",

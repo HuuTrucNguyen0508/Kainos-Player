@@ -10,17 +10,18 @@ import com.universalmusic.player.data.playlist.PlaylistTombstone
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
-internal fun KainosDatabase.readKainosPlaylists(): KainosPlaylistsSnapshot {
+internal fun KainosDatabase.readKainosPlaylists(strict: Boolean = false): KainosPlaylistsSnapshot {
     val entriesByPlaylist = kainosPlaylistsQueries.selectEntries().executeAsList().groupBy { it.playlist_id }
     val playlists = kainosPlaylistsQueries.selectPlaylists().executeAsList().map { row ->
         PersistedKainosPlaylist(
             id = row.id,
             title = row.title,
-            entries = entriesByPlaylist[row.id].orEmpty().map { entry ->
+            entries = entriesByPlaylist[row.id].orEmpty().mapNotNull { entry ->
+                readStorageRow(strict) {
                 PersistedPlaylistEntry(
                     entryId = entry.entry_id,
                     track = storageJson.decodeFromString<PersistedTrack>(entry.track_json),
-                )
+                ) }
             },
             createdAtMs = row.created_at_ms,
             updatedAtMs = row.updated_at_ms,
@@ -44,7 +45,7 @@ internal fun KainosDatabase.readKainosPlaylists(): KainosPlaylistsSnapshot {
 }
 
 internal fun KainosDatabase.writeKainosPlaylists(snapshot: KainosPlaylistsSnapshot) {
-    val previous = readKainosPlaylists()
+    val previous = readKainosPlaylists(strict = true)
     val oldPlaylists = previous.playlists.associateBy { it.id }
     val newIds = snapshot.playlists.map { it.id }.toSet()
     (oldPlaylists.keys - newIds).forEach { id ->

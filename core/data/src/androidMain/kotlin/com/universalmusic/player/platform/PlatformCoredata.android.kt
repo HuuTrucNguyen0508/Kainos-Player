@@ -94,7 +94,10 @@ actual fun createHeartedAudioCache(): HeartedAudioCache =
     DefaultHeartedAudioCache(AndroidHeartedAudioCacheDisk(androidContext))
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
-    java.net.URI(url).toURL().openStream().use { it.readBytes() }
+    java.net.URI(url).toURL().openConnection().apply {
+        connectTimeout = 10_000
+        readTimeout = 15_000
+    }.getInputStream().use { it.readBytes() }
 }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? =

@@ -125,7 +125,15 @@ enum class UiRequest {
 }
 
 class AppContainer {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val storageError = com.universalmusic.player.data.db.StorageErrors.message
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default +
+        kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> com.universalmusic.player.data.db.StorageErrors.report() })
+
+    private suspend fun storageStep(block: suspend () -> Unit) {
+        try { block() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { com.universalmusic.player.data.db.StorageErrors.report() }
+    }
     private val defaults: AppConfig = loadAppConfig()
     var config: AppConfig = defaults
         private set
@@ -390,6 +398,7 @@ class AppContainer {
     }
 
     init {
+        monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
         bindPlatformMediaControls(player, scope) { track ->
             library.toggleFavorite(track).also(player::setFavorite)
         }
@@ -418,26 +427,28 @@ class AppContainer {
                 }
         }
         scope.launch {
-            val raw = settingsStore.read()
-            val loaded = migrateLocalLibrarySettings(raw)
-            if (loaded != raw) settingsStore.write(loaded)
-            _settings.value = loaded
-            homeLanSync.hydrateFromSettings(loaded)
-            if (loaded.homeLanSyncHubAutostart) {
-                homeLanSync.setHubAutostartEnabled(true)
+            storageStep {
+                val raw = settingsStore.read()
+                val loaded = migrateLocalLibrarySettings(raw)
+                if (loaded != raw) settingsStore.write(loaded)
+                _settings.value = loaded
+                homeLanSync.hydrateFromSettings(loaded)
+                if (loaded.homeLanSyncHubAutostart) {
+                    homeLanSync.setHubAutostartEnabled(true)
+                }
+                player.updatePreferences(loaded.toPlaybackPreferences())
+                player.setVolume(loaded.playbackVolume)
+                applyProviderSettings(loaded, clearSessionOnChange = false)
             }
-            player.updatePreferences(loaded.toPlaybackPreferences())
-            player.setVolume(loaded.playbackVolume)
-            applyProviderSettings(loaded, clearSessionOnChange = false)
-            library.load(spotify.currentUserId())
-            kainosPlaylists.load()
+            storageStep { library.load(spotify.currentUserId()) }
+            storageStep { kainosPlaylists.load() }
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
             heartedAudio.enqueueMissing(hearted)
             runCatching { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            player.initializePersistence()
+            storageStep { player.initializePersistence() }
             _ready.value = true
             foreground.onReady {
                 foregroundHandoff.onForeground()
@@ -670,6 +681,7 @@ class AppContainer {
     }
 
     fun onAppForeground() {
+        heartedAudio.notifyNetworkChanged()
         foregroundHandoff.onForeground()
         foreground.isVisible = true
         if (_ready.value) homeLanSync.onAppForeground()
@@ -683,6 +695,8 @@ class AppContainer {
 
     /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     suspend fun flushListeningSession() {
+        storageStep { library.flush() }
+        storageStep { kainosPlaylists.flush() }
         when (val result = player.flushPersistence()) {
             is FlushResult.Committed -> result.exportUnavailable?.let {
                 PlaybackTrace.log("Recorder", "flushed; local listening export unavailable: $it")
