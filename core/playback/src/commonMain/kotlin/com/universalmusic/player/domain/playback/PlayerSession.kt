@@ -1182,7 +1182,7 @@ class PlayerSession(
         if (prefetchedStartGeneration == generation) {
             // A speculative URL can be rejected early. Resolve this same entry normally once.
             prefetchedStartGeneration = null
-            pendingResumePositionMs = target?.positionMs
+            pendingResumePositionMs = target?.positionMs ?: _nowPlaying.value.positionMs.takeIf { it > 0 }
             startCurrent(Change.AUTOMATIC, applyResumePosition = true)
             return
         }

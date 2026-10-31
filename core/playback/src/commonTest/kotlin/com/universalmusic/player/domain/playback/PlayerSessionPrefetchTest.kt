@@ -57,6 +57,26 @@ class PlayerSessionPrefetchTest {
     }
 
     @Test
+    fun aPrefetchedUrlFailingMidTrackResumesWhereItStopped() = runTest {
+        val fixture = Fixture(this)
+        fixture.session.play(listOf(fixture.first, fixture.next), startIndex = 0)
+        runCurrent()
+        advanceTimeBy(1_001)
+        runCurrent()
+        fixture.engine.end()
+        runCurrent()
+        fixture.engine.state.value = fixture.engine.state.value.copy(status = EngineStatus.PLAYING, positionMs = 42_000)
+        runCurrent()
+
+        fixture.engine.state.value = fixture.engine.state.value.copy(status = EngineStatus.FAILED, error = "rejected URL")
+        runCurrent()
+
+        assertEquals(3, fixture.engine.handles.size)
+        assertEquals(42_000, fixture.engine.state.value.positionMs)
+        assertEquals("Next", fixture.session.nowPlaying.value.track?.title)
+    }
+
+    @Test
     fun queueMetadataKeepsExtractionAndChangedTargetReschedulesWithoutStalePlayback() = runTest {
         val fixture = Fixture(this)
         fixture.enrichDelayMs = 2_000
