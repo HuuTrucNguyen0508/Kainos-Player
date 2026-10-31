@@ -115,6 +115,7 @@ class PlayerSession(
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
     private var completionArmed: Boolean = false
+    private var truncatedRetryItemId: String? = null
     /** Last engine status seen by the collector; trace only on change, never per position tick. */
     private var lastTracedStatus: EngineStatus? = null
     /**
@@ -231,6 +232,14 @@ class PlayerSession(
                         if (eventGeneration != playGeneration) return@collectLatest
                         if (!completionArmed && _nowPlaying.value.resolved == null) {
                             trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
+                            return@collectLatest
+                        }
+                        val retryAt = engineState.retryAtPositionMs
+                        val currentItemId = queue.queue.value.current?.id
+                        if (retryAt != null && currentItemId != truncatedRetryItemId) {
+                            truncatedRetryItemId = currentItemId
+                            pendingResumePositionMs = retryAt
+                            startCurrent(Change.AUTOMATIC, applyResumePosition = true)
                             return@collectLatest
                         }
                         completionArmed = false
@@ -1037,8 +1046,8 @@ class PlayerSession(
         runCatching {
             withContext(workContext) {
                 val handle = playable.source.handle.let { handle ->
-                    if (handle is PlaybackHandle.Url && target?.positionMs != null)
-                        handle.copy(startPositionMs = target.positionMs ?: 0) else handle
+                    if (handle is PlaybackHandle.Url)
+                        handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
                 }
                 engine.play(handle, playable.source.quality, playGeneration = generation)
             }

@@ -30,6 +30,24 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun restoredPositionIsAnMpvLaunchArgument() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime()
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.play(PlaybackHandle.Url("song", startPositionMs = 42_000), null)
+            assertTrue("--start=42" in runtime.commands.single())
+        } finally { engine.stop() }
+    }
+
+    @Test
+    fun prematureCleanExitIsNotNaturalCompletion() {
+        assertTrue(mpvEndedEarly(60_000, 180_000))
+        assertEquals(false, mpvEndedEarly(176_000, 180_000))
+        assertEquals(false, mpvEndedEarly(179_000, 180_000))
+        assertEquals(false, mpvEndedEarly(60_000, null))
+    }
+
+    @Test
     fun mpvRejectsErrorReplies() {
         assertTrue(mpvCommandSucceeded("""{"error":"success"}"""))
         assertEquals(false, mpvCommandSucceeded("""{"error":"property unavailable"}"""))
@@ -669,6 +687,7 @@ private class FakeSpotifyReceiver : SpotifyReceiverEvents {
 }
 
 private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
+    val commands = CopyOnWriteArrayList<List<String>>()
     val liveProcessCount = AtomicInteger()
     val maximumLiveProcesses = AtomicInteger()
     private val probes = ConcurrentHashMap<String, BlockedProbe>()
@@ -712,6 +731,7 @@ private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     override fun createIpcPath(): Path = Path.of("/test/ipc-${System.nanoTime()}")
 
     override fun startProcess(command: List<String>): Process {
+        commands += command
         command.firstOrNull { it.startsWith("--input-ipc-server=") }
             ?.let { urlBySocket[Path.of(it.removePrefix("--input-ipc-server="))] = command.last() }
         val process = FakeProcess(command.last()) {

@@ -21,6 +21,22 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun truncatedStreamResolvesAgainAtItsPositionOnlyOnce() = runTest {
+        var calls = 0
+        val engine = RecordingEngine { calls++ }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("Stream", "Artist", provider = ProviderId.SAMPLE))
+        runCurrent()
+        engine.state.value = engine.state.value.copy(status = EngineStatus.FAILED, retryAtPositionMs = 420)
+        runCurrent()
+        assertEquals(2, calls)
+        assertEquals(420, engine.state.value.positionMs)
+        engine.state.value = engine.state.value.copy(status = EngineStatus.FAILED, retryAtPositionMs = 420)
+        runCurrent()
+        assertEquals(2, calls)
+    }
+
+    @Test
     fun playRetriesAfterFailureOnLastItem() = runTest {
         var calls = 0
         val engine = RecordingEngine { if (++calls == 1) error("start failed") }

@@ -22,6 +22,7 @@ data class EngineState(
     val playGeneration: Long = 0L,
     /** Non-fatal note when receiver state cannot be confirmed. */
     val syncWarning: String? = null,
+    val retryAtPositionMs: Long? = null,
 )
 
 interface PlaybackEngine {

@@ -456,6 +456,7 @@ class DesktopPlaybackEngine internal constructor(
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
         val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) }
+            ?: (lastHandle as? PlaybackHandle.Url)?.durationMs
         val active = synchronized(lifecycleLock) {
             if (token != requestToken) return
             val socket = runtime.createIpcPath()
@@ -533,7 +534,9 @@ class DesktopPlaybackEngine internal constructor(
                 if (activeProcess !== active) return@synchronized
                 activeProcess = null
                 if (userPaused) return@synchronized
-                publishState(if (code == 0) {
+                val position = _state.value.positionMs
+                val truncated = code == 0 && mpvEndedEarly(position, durationMs)
+                publishState(if (code == 0 && !truncated) {
                     _state.value.copy(
                         status = EngineStatus.ENDED,
                         positionMs = durationMs ?: _state.value.positionMs,
@@ -541,7 +544,10 @@ class DesktopPlaybackEngine internal constructor(
                 } else {
                     _state.value.copy(
                         status = EngineStatus.FAILED,
-                        error = code?.let { "Player exited with $it" } ?: "Player process failed",
+                        positionMs = position,
+                        retryAtPositionMs = position.takeIf { truncated },
+                        error = if (truncated) "Stream ended before the track finished" else
+                            code?.let { "Player exited with $it" } ?: "Player process failed",
                     )
                 })
                 cancelTickerLocked()
@@ -575,9 +581,13 @@ class DesktopPlaybackEngine internal constructor(
                     if (sample != null) {
                         if (sample.eof) {
                             cancelTickerLocked()
-                            publishState(_state.value.copy(
-                                status = EngineStatus.ENDED,
-                                positionMs = _state.value.durationMs ?: _state.value.positionMs,
+                            val current = _state.value
+                            val truncated = mpvEndedEarly(current.positionMs, current.durationMs)
+                            publishState(current.copy(
+                                status = if (truncated) EngineStatus.FAILED else EngineStatus.ENDED,
+                                positionMs = if (truncated) current.positionMs else current.durationMs ?: current.positionMs,
+                                retryAtPositionMs = current.positionMs.takeIf { truncated },
+                                error = if (truncated) "Stream ended before the track finished" else null,
                             ))
                             return@synchronized true
                         }
@@ -1181,3 +1191,6 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
 internal fun mpvCommandSucceeded(reply: String): Boolean = runCatching {
     kotlinx.serialization.json.Json.parseToJsonElement(reply).jsonObject["error"]?.jsonPrimitive?.content == "success"
 }.getOrDefault(false)
+
+internal fun mpvEndedEarly(positionMs: Long, durationMs: Long?): Boolean =
+    durationMs != null && durationMs - positionMs > maxOf(5_000L, durationMs / 50)
