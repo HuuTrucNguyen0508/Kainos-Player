@@ -1,0 +1,9 @@
+date	metric	candidate	baseline_median	after_median	baseline_p90	after_p90	n	verdict	commit
+2026-10-31	first_draw_ms	tier1	1059.7144935000001	936.4599135	1061.687776	943.144861	10	defer-long-running-UI-jitter-unproved	d70f373
+2026-10-31	first_draw_ms	tier2	1059.7144935000001	974.4427795	1061.687776	987.923147	10	defer-long-running-UI-jitter-unproved	d70f373
+2026-10-31	first_draw_ms	serial	1059.7144935000001	1042.7791925000001	1061.687776	1063.646015	10	reject-under-5-percent	d70f373
+2026-10-31	sample_accurate_gapless	persistent-mpv-next-track-prefetch	NA	NA	NA	NA	0	blocked-next-handle-and-preferences-contract-outside-lane	NA
+2026-10-31	Library_interactive	interactive-render-confirmation	NA	NA	NA	NA	0	unproved-no-Library-marker-in-owned-code	NA
+2026-10-31	playback_calibration	standalone-Main-dispatcher	NA	NA	NA	NA	10	harness-failure-fixed-not-timing-samples	d70f373
+2026-10-31	playback_calibration	Java-file-URI	NA	NA	NA	NA	4	harness-failure-interrupted-native-paths-fixed	d70f373
+2026-10-31	playback_calibration	Python-mpv-wrapper	NA	NA	NA	NA	10	superseded-added-process-launch-overhead	d70f373

@@ -26,7 +26,7 @@ internal fun runPlaybackProbe(paths: List<String>) = runBlocking {
     val session = PlayerSession(engine, DefaultSourceResolver { false }, probeScope,
         confineTo = worker, workContext = Dispatchers.Default)
     val tracks = paths.mapIndexed { i, path ->
-        val handle = PlaybackHandle.Url(File(path).toURI().toString(), durationMs = 2_000)
+        val handle = PlaybackHandle.Url(File(path).absolutePath, durationMs = 2_000)
         Track("probe:$i", "Probe $i", emptyList(), durationMs = 2_000,
             sources = listOf(PlaybackSource(ProviderId.LOCAL, "probe:$i", isPlayable = true, handle = handle)))
     }
@@ -59,6 +59,7 @@ internal fun runPlaybackProbe(paths: List<String>) = runBlocking {
         mark("idle_begin")
         delay(5_000)
         mark("idle_end")
+        delay(200)
         check(engine.state.value.error == null) { engine.state.value.error.orEmpty() }
         mark("complete")
     } finally {

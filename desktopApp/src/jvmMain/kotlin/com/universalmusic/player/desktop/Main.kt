@@ -34,6 +34,7 @@ import com.universalmusic.player.platform.mprisBusName
 import com.universalmusic.player.platform.unbindPlatformMediaControls
 import com.universalmusic.player.ui.UniversalMusicApp
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -96,6 +97,20 @@ private fun runGui(onContainer: (AppContainer) -> Unit) {
         LaunchedEffect(container) {
             container.enableListeningHandoff()
             container.enableGuiPlayer()
+            if (System.getenv("KAINOS_PERF_IDLE_QUEUE") == "1") {
+                require(DesktopIsolation.current.isIsolated)
+                container.ready.first { it }
+                val items = List(512) { i ->
+                    com.universalmusic.player.data.session.PersistedQueueItem("probe:$i",
+                        com.universalmusic.player.data.library.PersistedTrack("probe:$i", "Probe $i", durationMs = 2_000))
+                }
+                container.player.restorePaused(com.universalmusic.player.data.session.SessionSnapshot(items = items))
+                delay(2_000)
+                check(container.player.queueState.value.items.size == 512)
+                println("PERF\tidle_begin\t${System.nanoTime()}")
+                delay(5_000)
+                println("PERF\tidle_end\t${System.nanoTime()}")
+            }
         }
         val state = rememberWindowState(width = 1280.dp, height = 800.dp)
         Window(

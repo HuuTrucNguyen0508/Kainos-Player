@@ -1,0 +1,202 @@
+[
+  {
+    "run": 0,
+    "variant": "default",
+    "first_draw_ms": 1058.901161
+  },
+  {
+    "run": 0,
+    "variant": "tier1",
+    "first_draw_ms": 919.640476
+  },
+  {
+    "run": 0,
+    "variant": "tier2",
+    "first_draw_ms": 958.587041
+  },
+  {
+    "run": 0,
+    "variant": "serial",
+    "first_draw_ms": 1048.83513
+  },
+  {
+    "run": 1,
+    "variant": "default",
+    "first_draw_ms": 1051.809469
+  },
+  {
+    "run": 1,
+    "variant": "tier1",
+    "first_draw_ms": 939.708575
+  },
+  {
+    "run": 1,
+    "variant": "tier2",
+    "first_draw_ms": 987.330167
+  },
+  {
+    "run": 1,
+    "variant": "serial",
+    "first_draw_ms": 1037.705472
+  },
+  {
+    "run": 2,
+    "variant": "default",
+    "first_draw_ms": 1053.99731
+  },
+  {
+    "run": 2,
+    "variant": "tier1",
+    "first_draw_ms": 953.276059
+  },
+  {
+    "run": 2,
+    "variant": "tier2",
+    "first_draw_ms": 970.738781
+  },
+  {
+    "run": 2,
+    "variant": "serial",
+    "first_draw_ms": 1063.646015
+  },
+  {
+    "run": 3,
+    "variant": "default",
+    "first_draw_ms": 1048.888447
+  },
+  {
+    "run": 3,
+    "variant": "tier1",
+    "first_draw_ms": 938.606452
+  },
+  {
+    "run": 3,
+    "variant": "tier2",
+    "first_draw_ms": 979.920762
+  },
+  {
+    "run": 3,
+    "variant": "serial",
+    "first_draw_ms": 1026.621575
+  },
+  {
+    "run": 4,
+    "variant": "default",
+    "first_draw_ms": 1061.687776
+  },
+  {
+    "run": 4,
+    "variant": "tier1",
+    "first_draw_ms": 942.487646
+  },
+  {
+    "run": 4,
+    "variant": "tier2",
+    "first_draw_ms": 987.923147
+  },
+  {
+    "run": 4,
+    "variant": "serial",
+    "first_draw_ms": 1065.025604
+  },
+  {
+    "run": 5,
+    "variant": "default",
+    "first_draw_ms": 1061.284272
+  },
+  {
+    "run": 5,
+    "variant": "tier1",
+    "first_draw_ms": 943.144861
+  },
+  {
+    "run": 5,
+    "variant": "tier2",
+    "first_draw_ms": 965.472088
+  },
+  {
+    "run": 5,
+    "variant": "serial",
+    "first_draw_ms": 1054.179382
+  },
+  {
+    "run": 6,
+    "variant": "default",
+    "first_draw_ms": 1055.812349
+  },
+  {
+    "run": 6,
+    "variant": "tier1",
+    "first_draw_ms": 917.796682
+  },
+  {
+    "run": 6,
+    "variant": "tier2",
+    "first_draw_ms": 1010.03926
+  },
+  {
+    "run": 6,
+    "variant": "serial",
+    "first_draw_ms": 1045.416973
+  },
+  {
+    "run": 7,
+    "variant": "default",
+    "first_draw_ms": 1060.527826
+  },
+  {
+    "run": 7,
+    "variant": "tier1",
+    "first_draw_ms": 927.816055
+  },
+  {
+    "run": 7,
+    "variant": "tier2",
+    "first_draw_ms": 968.972076
+  },
+  {
+    "run": 7,
+    "variant": "serial",
+    "first_draw_ms": 1030.764793
+  },
+  {
+    "run": 8,
+    "variant": "default",
+    "first_draw_ms": 1100.940811
+  },
+  {
+    "run": 8,
+    "variant": "tier1",
+    "first_draw_ms": 924.641438
+  },
+  {
+    "run": 8,
+    "variant": "tier2",
+    "first_draw_ms": 978.146778
+  },
+  {
+    "run": 8,
+    "variant": "serial",
+    "first_draw_ms": 1037.784243
+  },
+  {
+    "run": 9,
+    "variant": "default",
+    "first_draw_ms": 1061.266612
+  },
+  {
+    "run": 9,
+    "variant": "tier1",
+    "first_draw_ms": 934.313375
+  },
+  {
+    "run": 9,
+    "variant": "tier2",
+    "first_draw_ms": 967.922314
+  },
+  {
+    "run": 9,
+    "variant": "serial",
+    "first_draw_ms": 1040.141412
+  }
+]

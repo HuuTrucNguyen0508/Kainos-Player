@@ -3,26 +3,34 @@
 Requires packaged jars, Temurin 17, real mpv/ffmpeg, private Xvfb for startup.
 All raw runs, failures, logs and environment metadata are retained in --out.
 """
+import threading, runpy
 import argparse, ctypes as C, glob, json, math, os, pathlib, shutil, signal, statistics, subprocess as S, time, wave
 P = pathlib.Path
 ROOT = P(__file__).resolve().parents[2]
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--out', required=True, type=P)
 p.add_argument('--runs', type=int, default=10)
-p.add_argument('--mode', choices=['startup', 'playback', 'spotify'], required=True)
+p.add_argument('--app-dir', type=P, help='Immutable packaged lib/app directory')
+p.add_argument('--compare-app-dir', type=P, help='Interleave baseline package with --app-dir candidate')
+p.add_argument('--mode', choices=['startup', 'playback', 'spotify', 'idle-gui'], required=True)
 p.add_argument('--jvm-flag', action='append', default=[])
 p.add_argument('--xvfb', default='Xvfb')
+p.add_argument('--startup-matrix', action='store_true', help='Interleave default, tier1, tier2 and SerialGC for each run')
 p.add_argument('--capture-pcm', action='store_true', help='Requires pactl, ffmpeg PulseAudio and numpy; records only a private null sink')
 a = p.parse_args(); a.out.mkdir(parents=True, exist_ok=True)
 (a.out/'environment.json').write_text(json.dumps(dict(load=os.getloadavg(), cores=os.cpu_count(),
     flags=a.jvm_flag, page_cache_dropped=False, revision=S.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()), indent=2))
-app = ROOT/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
+app = a.app_dir or ROOT/'desktopApp/build/compose/binaries/main/app/Kainos Player/lib/app'
 java = P(os.environ.get('JAVA_HOME', str(P.home()/'.jdks/temurin-17')))/'bin/java'
 cmd = [str(java), *a.jvm_flag, '-Dcompose.application.configure.swing.globals=true',
     f'-Dcompose.application.resources.dir={app}/resources', f'-Dskiko.library.path={app}',
     '-Djpackage.app-version=1.0.0','-cp', ':'.join(sorted(glob.glob(str(app/'*.jar')))),
     'com.universalmusic.player.desktop.MainKt']
 assert list(app.glob('*.jar')), 'Build :desktopApp:createDistributable first'
+metadata=json.loads((a.out/'environment.json').read_text())
+metadata['packaged_jars']=[dict(name=f.name,size=f.stat().st_size) for f in sorted(app.glob('*.jar'))]
+metadata['worktree_dirty']=bool(S.check_output(['git','status','--porcelain'],cwd=ROOT,text=True))
+(a.out/'environment.json').write_text(json.dumps(metadata,indent=2))
 
 def finish(proc):
     if proc.poll() is None:
@@ -35,7 +43,7 @@ def markers(file):
     result = {}
     for line in file.read_text(errors='replace').splitlines():
         if line.startswith('PERF\t'):
-            _, name, ns = line.split('\t'); result[name] = int(ns)
+            _, name, ns = line.split('\t'); result.setdefault(name, int(ns))
     return result
 
 x = None
@@ -48,20 +56,30 @@ if a.mode != 'playback':
     if not display[1:]: raise RuntimeError('Xvfb failed; see xvfb.log')
 
 rows=[]
+recorder=None
 module=None
 if a.capture_pcm:
     assert a.mode=='playback'
     sink='kainos_perf_'+str(os.getpid())
     module=S.check_output(['pactl','load-module','module-null-sink',f'sink_name={sink}','rate=48000'],text=True).strip()
 try:
-    for i in range(a.runs):
-        d=a.out/str(i); d.mkdir(exist_ok=True)
+    variants=[('default',[]),('tier1',['-XX:TieredStopAtLevel=1']),('tier2',['-XX:TieredStopAtLevel=2']),('serial',['-XX:+UseSerialGC'])] if a.startup_matrix else [('default',[])]
+    if a.compare_app_dir: variants=[('baseline',[]),('candidate',[])]
+    for iteration in range(a.runs*len(variants)):
+        i=iteration//len(variants)
+        variant,extra_flags=variants[iteration%len(variants)]
+        d=a.out/(str(i)+'-'+variant); d.mkdir(exist_ok=True)
         env=os.environ.copy()
         env.update(KAINOS_DATA_DIR=str(d.resolve()/'data'), KAINOS_INSTANCE=f'perfdesktop{i}',
             KAINOS_HUB_PORT=str(49000+i), KAINOS_PERF_MARKERS='1', KAINOS_MUSIC_DIRS=str(d.resolve()/'music'))
         (d/'music').mkdir(exist_ok=True)
-        command=cmd
+        selected=a.compare_app_dir if a.compare_app_dir and variant=='baseline' else app
+        command=[cmd[0],*extra_flags,*cmd[1:]]
+        if selected != app:
+            command=[part.replace(str(app),str(selected)) for part in command]
+            command[command.index('-cp')+1]=':'.join(str(f) for f in sorted(selected.glob('*.jar')))
         if a.mode != 'playback': env.update(DISPLAY=display, WAYLAND_DISPLAY='', SKIKO_RENDER_API='SOFTWARE')
+        if a.mode == 'idle-gui': env['KAINOS_PERF_IDLE_QUEUE']='1'
         if a.mode == 'spotify':
             if S.run(['pgrep','-x','spotify'],stdout=S.DEVNULL).returncode == 0:
                 raise RuntimeError('Spotify is already running; refusing to launch or terminate it')
@@ -86,25 +104,29 @@ try:
                 if children: lib.XFree(children)
                 return found
         if a.mode == 'playback':
-            shim=d/'bin'; shim.mkdir(exist_ok=True)
-            (shim/'mpv').symlink_to(ROOT/'scripts/perf/desktop-mpv-probe.py') if not (shim/'mpv').exists() else None
-            env.update(PATH=str(shim.resolve())+':'+env['PATH'], KAINOS_PERF_MPV_LOG=str(d.resolve()/'mpv.jsonl'))
+            config=d.resolve()/'config'; (config/'mpv').mkdir(parents=True,exist_ok=True)
+            (config/'mpv/mpv.conf').write_text('ao='+('pulse' if a.capture_pcm else 'null')+'\n')
+            env['XDG_CONFIG_HOME']=str(config)
             files=[]
             for k in range(3):
                 file=d/f'tone{k}.flac'
                 S.run(['ffmpeg','-v','error','-y','-f','lavfi','-i',f'sine=frequency={440+k*220}:duration=2','-c:a','flac',str(file)],check=True)
                 files.append(str(file.resolve()))
-            command=cmd+['--perf-playback',*files]
+            command=command+['--perf-playback',*files]
         recorder=None
         if a.capture_pcm:
-            env.update(KAINOS_PERF_AO='pulse', PULSE_SINK=sink)
+            env.update(PULSE_SINK=sink)
             recorder=S.Popen(['ffmpeg','-v','error','-y','-f','pulse','-i',sink+'.monitor','-ac','1','-ar','48000','-c:a','pcm_s16le',str(d/'capture.wav')],stdin=S.PIPE,stdout=S.DEVNULL,stderr=(d/'capture.log').open('w'))
             time.sleep(.3)
         with (d/'run.log').open('w') as log:
             start=time.monotonic_ns(); proc=S.Popen(command,cwd=ROOT,env=env,stdout=log,stderr=S.STDOUT,start_new_session=True)
-            row=dict(run=i)
+            observer_stop=threading.Event()
+            if a.mode=='playback':
+                observe=runpy.run_path(str(ROOT/'scripts/perf/desktop-mpv-probe.py'))['observe_children']
+                threading.Thread(target=observe,args=(proc.pid,d/'mpv.jsonl',observer_stop),daemon=True).start()
+            row=dict(run=i,variant=variant)
             try:
-                if a.mode=='playback':
+                if a.mode in ('playback','idle-gui'):
                     idle=None
                     for _ in range(6000):
                         m=markers(d/'run.log')
@@ -116,8 +138,13 @@ try:
                             row['idle_rss_kib']=int(next(l for l in P(f'/proc/{proc.pid}/status').read_text().splitlines() if l.startswith('VmRSS:')).split()[1]); break
                         if proc.poll() is not None: break
                         time.sleep(.01)
-                    proc.wait(timeout=10)
+                    if a.mode=='idle-gui': finish(proc)
+                    else: proc.wait(timeout=10)
+                    if a.mode=='idle-gui':
+                        assert 'idle_rss_kib' in row, 'no GUI idle sample'
+                        rows.append(row); (a.out/'runs.json').write_text(json.dumps(rows,indent=2)); print(json.dumps(row),flush=True); continue
                     assert proc.returncode==0 and 'complete' in markers(d/'run.log'), 'playback did not complete'
+                    assert 'Exception' not in (d/'run.log').read_text() and 'engine -> FAILED' not in (d/'run.log').read_text(), 'playback exception or engine failure'
                     m=markers(d/'run.log'); events=[json.loads(l) for l in (d/'mpv.jsonl').read_text().splitlines()]
                     played=next(e for e in events if e.get('event')=='playback-restart')
                     row['press_to_started_ms']=(played['ns']-m['session_play'])/1e6
@@ -134,7 +161,9 @@ try:
                     else: raise TimeoutError('no frame/window within 30s')
             except Exception as e:
                 row['error']=str(e)
-            finally: finish(proc)
+            finally:
+                finish(proc)
+                observer_stop.set()
         if recorder:
             recorder.communicate(b'q',timeout=10)
             # Identify the two consecutive natural-transition tones using 5ms FFT blocks.
@@ -154,15 +183,22 @@ try:
                 row['natural_pcm_silence_ms']=float(np.sum(rms[left+1:right]<50)*5)
                 row['natural_pcm_boundary_ms']=float((right-left-1)*5)
                 row['pcm_resolution_ms']=5
-            else: row['error']='natural transition tones missing in PCM'
+            else: row['error']=(row.get('error','')+'; natural transition tones missing in PCM').strip('; ')
+        if a.mode=='spotify': time.sleep(1)
         rows.append(row); print(json.dumps(row),flush=True)
         (a.out/'runs.json').write_text(json.dumps(rows,indent=2))
 finally:
+    if recorder and recorder.poll() is None:
+        recorder.communicate(b'q',timeout=10)
     if x: x.terminate(); x.wait()
     if module: S.run(['pactl','unload-module',module],check=True)
 summary={}
-for key in sorted(set().union(*(r.keys() for r in rows))-{'run','error'}):
+for key in sorted(set().union(*(r.keys() for r in rows))-{'run','error','variant'}):
     vals=sorted(r[key] for r in rows if key in r)
     summary[key]=dict(n=len(vals),median=statistics.median(vals),p90=vals[math.ceil(.9*len(vals))-1],min=min(vals),max=max(vals))
+if a.startup_matrix:
+    summary={variant:{key:dict(n=len(vals),median=statistics.median(vals),p90=sorted(vals)[math.ceil(.9*len(vals))-1],min=min(vals),max=max(vals)) for key in ['first_draw_ms'] if (vals:=[r[key] for r in rows if r['variant']==variant and key in r])} for variant,_ in variants}
+if a.compare_app_dir:
+    summary={variant:{key:dict(n=len(vals),median=statistics.median(vals),p90=sorted(vals)[math.ceil(.9*len(vals))-1],min=min(vals),max=max(vals)) for key in sorted(set().union(*(r.keys() for r in rows))-{'run','error','variant'}) if (vals:=[r[key] for r in rows if r['variant']==variant and key in r])} for variant,_ in variants}
 summary['errors']=sum('error' in r for r in rows)
 (a.out/'summary.json').write_text(json.dumps(summary,indent=2)); print(json.dumps(summary,indent=2))
