@@ -704,19 +704,30 @@ class DesktopPlaybackEngine internal constructor(
                             elapsedOffset = 0
                             startedAt = System.currentTimeMillis()
                             mpvEpoch++
-                            publishState(EngineState(status = if (active.endedAfterCrossing) EngineStatus.ENDED else
+                            publishState(EngineState(status = if (active.crossingFailed) EngineStatus.FAILED else if (active.endedAfterCrossing) EngineStatus.ENDED else
                                 if (userPaused) EngineStatus.PAUSED else EngineStatus.PLAYING,
+                                error = if (active.crossingFailed) "Local file playback failed" else null,
                                 durationMs = active.nextDuration, seamlessItemId = next.itemId, previousGeneration = previous))
                             active.endedAfterCrossing = false
+                            active.crossingFailed = false
                         }
                     }
                 }
                 "end-file" -> {
                     val reason = event["reason"]?.jsonPrimitive?.content
-                    if (reason == "eof" && preparedNext != null) { active.awaitingSuccessor = true; return }
-                    if (active.crossing != null) { active.endedAfterCrossing = true; return }
+                    val id = event["playlist_entry_id"]?.jsonPrimitive?.content?.toLongOrNull()
+                    if (id != null && id != active.entryId && id != active.crossingEntryId && id !in active.entries) return
                     if (reason != "eof" && reason != "error") return
-                    if (reason == "error" && active.awaitingSuccessor) {
+                    if (active.crossing != null && (id == null || id == active.crossingEntryId)) {
+                        active.endedAfterCrossing = true
+                        active.crossingFailed = reason == "error"
+                        return
+                    }
+                    if (reason == "eof" && preparedNext != null && (id == null || id == active.entryId)) {
+                        active.awaitingSuccessor = true
+                        return
+                    }
+                    if (reason == "error" && active.awaitingSuccessor && (id == null || id != active.entryId)) {
                         active.awaitingSuccessor = false
                         preparedNext = null
                         val generation = activePlayGeneration
@@ -747,9 +758,9 @@ class DesktopPlaybackEngine internal constructor(
                     // Initial-file failures use the existing bounded session fallback.
                     preparedNext = null
                     cancelTickerLocked()
-                    publishState(_state.value.copy(status = if (reason == "error" && !active.loaded)
-                        EngineStatus.FAILED else EngineStatus.ENDED, error = if (reason == "error" && !active.loaded)
-                        "Local file could not be loaded" else null))
+                    publishState(_state.value.copy(status = if (reason == "error")
+                        EngineStatus.FAILED else EngineStatus.ENDED, error = if (reason == "error")
+                        "Local file playback failed" else null))
                 }
             }
         }
@@ -1230,6 +1241,7 @@ class DesktopPlaybackEngine internal constructor(
         var crossing: PreparedPlayback? = null,
         var crossingRunning: Boolean = false,
         var endedAfterCrossing: Boolean = false,
+        var crossingFailed: Boolean = false,
         var awaitingSuccessor: Boolean = false,
     )
 

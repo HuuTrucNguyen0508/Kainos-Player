@@ -30,6 +30,21 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun decoderErrorAfterLoadedIsTerminalFailure() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":1}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"end-file","reason":"error","playlist_entry_id":1}""")
+            withTimeout(2_000) { while (engine.state.value.status == EngineStatus.PLAYING) delay(10) }
+            assertEquals(EngineStatus.FAILED, engine.state.value.status)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun queuedSeekCannotLandOnDecodedSuccessor() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
