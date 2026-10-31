@@ -1,5 +1,7 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.model.PlaybackHandle
+
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -1023,15 +1025,15 @@ class PlayerSession(
         trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
         runCatching {
             withContext(workContext) {
-                engine.play(playable.source.handle, playable.source.quality, playGeneration = generation)
+                val handle = playable.source.handle.let { handle ->
+                    if (handle is PlaybackHandle.Url && target?.positionMs != null)
+                        handle.copy(startPositionMs = target.positionMs ?: 0) else handle
+                }
+                engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == playGeneration) {
                 engine.setVolume(_volume.value)
-                val seekTo = target?.positionMs
-                if (seekTo != null) {
-                    trace("seek after restore resumeAt=$seekTo gen=$generation")
-                    engine.seekTo(seekTo)
-                }
+                target?.positionMs?.let(engine::seekTo)
                 if (startupTarget === target) startupTarget = null
             }
         }.onFailure { error ->

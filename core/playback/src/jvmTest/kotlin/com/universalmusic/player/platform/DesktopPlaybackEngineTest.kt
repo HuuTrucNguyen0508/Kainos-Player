@@ -30,6 +30,13 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun mpvRejectsErrorReplies() {
+        assertTrue(mpvCommandSucceeded("""{"error":"success"}"""))
+        assertEquals(false, mpvCommandSucceeded("""{"error":"property unavailable"}"""))
+        assertEquals(false, mpvCommandSucceeded("""{"data":null}"""))
+    }
+
+    @Test
     fun spotifyTransportFailuresDoNotFailTheTrack() = runBlocking {
         val engine = DesktopPlaybackEngine(
             SpotifyPlaybackController({}, { error("offline") }, { error("offline") }, { error("offline") }),

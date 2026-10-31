@@ -1,5 +1,8 @@
 package com.universalmusic.player.platform
 
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
@@ -174,12 +177,12 @@ class DesktopPlaybackEngine internal constructor(
             clearPauseGuardLocked()
             noteLocalTransportLocked()
             mpvEpoch++
-            elapsedOffset = 0
+            elapsedOffset = (handle as? PlaybackHandle.Url)?.startPositionMs ?: 0
             publishState(EngineState(status = EngineStatus.BUFFERING))
             requestToken
         }
         when (handle) {
-            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = 0, token = token)
+            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = handle.startPositionMs / 1000, token = token)
             is PlaybackHandle.ProviderPlayback -> {
                 if (handle.provider != ProviderId.SPOTIFY) {
                     throw UnsupportedPlaybackException(
@@ -490,9 +493,6 @@ class DesktopPlaybackEngine internal constructor(
             }
             if (!needsIpc) return@withContext true
             awaitIpc {
-                if (startSeconds > 0) {
-                    sendIpcIfActive(active, """["set_property","time-pos",$startSeconds]""")
-                }
                 targetStatus != EngineStatus.PAUSED ||
                     sendIpcIfActive(active, """["set_property","pause",true]""")
             }
@@ -1052,7 +1052,10 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
 
     override fun sendIpc(commandArrayJson: String, socket: Path): Boolean =
         // Drain one response line so the socket stays healthy; a timeout counts as a failed IPC.
-        exchange(socket, """{"command":$commandArrayJson}""") !is IpcReply.Failed
+        when (val reply = exchange(socket, """{"command":$commandArrayJson}""")) {
+            is IpcReply.Line -> mpvCommandSucceeded(reply.text)
+            else -> false
+        }
 
     override fun readProperty(name: String, socket: Path): String? =
         when (val reply = exchange(socket, """{"command":["get_property","$name"]}""")) {
@@ -1174,3 +1177,7 @@ private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         runCatching { Files.deleteIfExists(path) }
     }
 }
+
+internal fun mpvCommandSucceeded(reply: String): Boolean = runCatching {
+    kotlinx.serialization.json.Json.parseToJsonElement(reply).jsonObject["error"]?.jsonPrimitive?.content == "success"
+}.getOrDefault(false)
