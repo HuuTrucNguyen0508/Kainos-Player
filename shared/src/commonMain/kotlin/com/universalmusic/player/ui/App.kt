@@ -512,9 +512,9 @@ private fun HandoffNoticeBar(container: AppContainer) {
     AnimatedVisibility(
         visible = notice != null,
         modifier = Modifier.fillMaxWidth(),
-        enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing)) +
+        enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing), expandFrom = Alignment.Top) +
             fadeIn(tween(HandoffNoticeEnterMs, easing = StandardEasing)),
-        exit = shrinkVertically(tween(HandoffNoticeExitMs, easing = StandardEasing)) +
+        exit = shrinkVertically(tween(HandoffNoticeExitMs, easing = StandardEasing), shrinkTowards = Alignment.Top) +
             fadeOut(tween(HandoffNoticeExitMs, easing = StandardEasing)),
     ) {
         Box(
