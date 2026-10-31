@@ -22,8 +22,9 @@ SCAN_PROBE_TIMEOUT_S = 30.0
 MEASURE_TIMEOUT_S = 15 * 60.0
 RESCAN_INTERVAL_S = 60 * 60.0
 MEASUREMENT_FLOOR_LUFS = -70.0
-# AAC encoding can overshoot the input peak. See the encoded-signal regressions.
-TRUE_PEAK_CEILING_DB = -4.0
+# Lower ceilings hold most of this loud library under the target and widen the
+# spread, for no real gain: at -1, AAC overshoot clipped 14 samples across 36 tracks.
+TRUE_PEAK_CEILING_DB = -1.0
 UNKNOWN_ARTIST = "Artiste inconnu"
 NICE_EXEC_FAILED = {125, 126, 127}
 

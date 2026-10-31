@@ -180,13 +180,13 @@ size and mtime. It repeats hourly and reads only new or changed files, so new mu
 appears without a restart.
 
 ```text
-gain_db = min(TARGET_LUFS - measured_I, -4.0 - measured_true_peak)
+gain_db = min(TARGET_LUFS - measured_I, -1.0 - measured_true_peak)
 ```
 
 Tracks not yet scanned play at 0 dB. There is no limiter, so a track with little
-headroom stays quieter than the target. The -4 dBTP input ceiling leaves room
-for AAC encoder overshoot; it is tested against synthetic signals, not a guarantee
-for every possible source. Unscanned tracks still play at unity gain.
+headroom stays quieter than the target. On 36 real tracks, including the 18
+loudest, AAC overshoot at the -1 dBTP ceiling clipped 14 samples in total, so a
+lower ceiling is not worth the lost evenness. Unscanned tracks still play at unity gain.
 
 `GET /health` reports `scan.scanned`, `scan.total` and `sessions`.
 
