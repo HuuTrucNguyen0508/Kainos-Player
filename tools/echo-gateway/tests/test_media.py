@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import stat
 import subprocess
 from contextlib import asynccontextmanager
@@ -317,6 +318,27 @@ def test_lifespan_runs_the_scan_and_health_reports_it(music: Path):
     assert DEVICE not in text
     assert str(music) not in text
     assert "Tone" not in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+async def test_unreadable_files_are_counted_not_silently_dropped(music: Path, caplog):
+    private = make_tone(music / "Private - Song.flac", seconds=1)
+    private.chmod(0)
+    with caplog.at_level(logging.WARNING, logger="echo_gateway.library"):
+        app = create_app(make_settings(music_root=music))
+    async with client_for(app) as client:
+        body = (await client.get("/health")).json()
+    assert body["library_tracks"] == 1
+    assert body["unreadable_tracks"] == 1
+    assert "file_count=1" in caplog.text
+    assert "Private" not in caplog.text
+    assert str(music) not in str(body)
+
+    private.chmod(0o644)
+    app.state.player.library.refresh()
+    assert app.state.player.library.track_count == 2
+    assert app.state.player.library.unreadable_count == 0
 
 
 def art_url(track_id: str, token: str = STREAM_TOKEN) -> str:

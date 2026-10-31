@@ -116,6 +116,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
                 "open_test_stream": cfg.allow_open_test_stream,
                 "alexa_endpoint": "/alexa",
                 "library_tracks": library.track_count,
+                "unreadable_tracks": library.unreadable_count,
                 "scan": {"scanned": scanned, "total": total},
                 "sessions": sessions.count,
             }

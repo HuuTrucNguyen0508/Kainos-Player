@@ -188,6 +188,20 @@ headroom stays quieter than the target instead of clipping.
 
 `GET /health` reports `scan.scanned`, `scan.total` and `sessions`.
 
+## Unreadable files
+
+The container runs as uid 10001, so it can only read music files that are
+world-readable on the host. A file with mode `600` is left out of the library.
+`GET /health` reports the count as `unreadable_tracks`, and the log has a
+`library_unreadable` warning. To list them, then fix them:
+
+```bash
+find ~/Music/Playlist -type f ! -perm -o=r
+find ~/Music/Playlist -type f ! -perm -o=r -exec chmod o+r {} +
+```
+
+The hourly rescan picks the files up without a restart.
+
 ## Tests
 
 ```bash
