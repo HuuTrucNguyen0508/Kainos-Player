@@ -25,6 +25,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
@@ -216,6 +217,129 @@ class DesktopPlaybackEngineTest {
                 while (engine.state.value.status != EngineStatus.ENDED) delay(10)
             }
             assertEquals("Receiver stop acknowledgement timed out", engine.state.value.syncWarning)
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @Test
+    fun receiverThatNeverStopsIsPausedSoItCannotPlayBehindTheNextLocalTrack() = runBlocking {
+        val receiver = FakeSpotifyReceiver()
+        val calls = CopyOnWriteArrayList<String>()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController(
+                play = { calls += "play:$it" }, pause = { calls += "pause" },
+                resume = {}, seekTo = {}, receiverEvents = receiver,
+            ),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "one", 180_000), null)
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "one", 179_000))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK, "one"))
+            withTimeout(3_000) {
+                while (engine.state.value.status != EngineStatus.ENDED) delay(10)
+            }
+            engine.stopForTransition()
+            engine.play(PlaybackHandle.Url("next-local-track"), quality = null)
+            delay(50)
+            assertEquals(listOf("play:one", "pause"), calls)
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @Test
+    fun receiverRollingIntoItsOwnNextTrackEndsTheTrackAtOnceAndIsPaused() = runBlocking {
+        val receiver = FakeSpotifyReceiver()
+        val calls = CopyOnWriteArrayList<String>()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController(
+                play = { calls += "play:$it" }, pause = { calls += "pause" },
+                resume = {}, seekTo = {}, receiverEvents = receiver,
+            ),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "one", 180_000), null)
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "one", 179_000))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK, "one"))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "connect-next", 0))
+            withTimeout(500) {
+                while (engine.state.value.status != EngineStatus.ENDED) delay(10)
+            }
+            assertNull(engine.state.value.syncWarning)
+            withTimeout(500) {
+                while ("pause" !in calls) delay(10)
+            }
+            engine.stopForTransition()
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "two", 180_000), null)
+            assertEquals(listOf("play:one", "pause", "play:two"), calls)
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @Test
+    fun foreignTrackBeforeEndOfTrackDoesNotEndThePlayingTrack() = runBlocking {
+        val receiver = FakeSpotifyReceiver()
+        val calls = CopyOnWriteArrayList<String>()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController({}, { calls += "pause" }, {}, {}, receiverEvents = receiver),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "one", 180_000), null)
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "one", 0))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "stale", 0))
+            delay(50)
+            assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+            assertTrue(calls.isEmpty())
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @Test
+    fun pauseDuringAnUnacknowledgedReceiverEndStillSilencesTheReceiver() = runBlocking {
+        val receiver = FakeSpotifyReceiver()
+        val calls = CopyOnWriteArrayList<String>()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController({}, { calls += "pause" }, {}, {}, receiverEvents = receiver),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "track", 180_000), null)
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "track", 179_000))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK, "track"))
+            delay(50)
+            engine.pause()
+            withTimeout(3_000) {
+                while (calls.isEmpty()) delay(10)
+            }
+            assertEquals(listOf("pause"), calls)
+            assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @Test
+    fun failedPauseAfterAnUnacknowledgedEndStillAdvancesTheQueue() = runBlocking {
+        val receiver = FakeSpotifyReceiver()
+        val engine = DesktopPlaybackEngine(
+            SpotifyPlaybackController({}, { error("no connection") }, {}, {}, receiverEvents = receiver),
+            FakeDesktopPlaybackRuntime(),
+        )
+        try {
+            engine.play(PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "track", 180_000), null)
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PLAYING, "track", 179_000))
+            receiver.events.emit(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK, "track"))
+            withTimeout(3_000) {
+                while (engine.state.value.status != EngineStatus.ENDED) delay(10)
+            }
+            delay(50)
+            assertEquals(EngineStatus.ENDED, engine.state.value.status)
         } finally {
             engine.stop()
         }

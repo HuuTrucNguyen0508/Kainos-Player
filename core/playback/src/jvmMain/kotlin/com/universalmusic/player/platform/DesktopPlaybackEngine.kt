@@ -669,7 +669,15 @@ class DesktopPlaybackEngine internal constructor(
                 synchronized(lifecycleLock) {
                     if (token != requestToken || !spotifyIsActive() || !receiver.isAvailable) return@synchronized
                     val handle = lastHandle as PlaybackHandle.ProviderPlayback
-                    if (event.trackId != handle.trackId.removePrefix("spotify:track:")) return@synchronized
+                    if (event.trackId != handle.trackId.removePrefix("spotify:track:")) {
+                        // Connect gives the receiver a context of its own, so it can roll past
+                        // EndOfTrack into a track that was never in the Kainos queue.
+                        if (spotifyReceiverEndPending && event.kind == SpotifyReceiverEvent.Kind.PLAYING) {
+                            PlaybackTrace.log("Librespot", "receiver rolled over to ${event.trackId}")
+                            silenceOverrunReceiverLocked()
+                        }
+                        return@synchronized
+                    }
                     val current = _state.value
                     if (current.status == EngineStatus.ENDED || current.status == EngineStatus.FAILED) return@synchronized
                     PlaybackTrace.log("Librespot", "receiver ${event.kind} track=${event.trackId} pos=${event.positionMs}")
@@ -689,11 +697,8 @@ class DesktopPlaybackEngine internal constructor(
                             spotifyReceiverEndTimeout = scope.launch {
                                 delay(2_000)
                                 synchronized(lifecycleLock) {
-                                    if (token == requestToken && spotifyReceiverEndPending) {
-                                        spotifyReceiverStopped = true
-                                        if (!userPaused) {
-                                            finishSpotifyReceiverTrackLocked("Receiver stop acknowledgement timed out")
-                                        }
+                                    if (token == requestToken && spotifyReceiverEndPending && !spotifyReceiverStopped) {
+                                        silenceOverrunReceiverLocked("Receiver stop acknowledgement timed out")
                                     }
                                 }
                             }
@@ -757,6 +762,20 @@ class DesktopPlaybackEngine internal constructor(
                 }
             }
         }
+    }
+
+    /**
+     * The receiver did not stop at the end of its track, and the transition skips its pause once
+     * this track is ENDED, so anything played next would otherwise sound on top of it.
+     */
+    private fun silenceOverrunReceiverLocked(warning: String? = null) {
+        enqueueSpotifyCommand("Spotify Connect pause", action = {
+            runCatching { spotify.pause() }.onFailure { failure ->
+                PlaybackTrace.log("Librespot", "pause after end of track failed: ${failure.message}")
+            }
+        })
+        spotifyReceiverStopped = true
+        if (!userPaused) finishSpotifyReceiverTrackLocked(warning)
     }
 
     private fun finishSpotifyReceiverTrackLocked(warning: String? = null) {
