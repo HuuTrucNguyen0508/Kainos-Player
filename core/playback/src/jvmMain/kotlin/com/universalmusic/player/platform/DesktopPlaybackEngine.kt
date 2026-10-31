@@ -118,8 +118,11 @@ class DesktopPlaybackEngine internal constructor(
                         if (preparedNext !== candidate || activeProcess !== active) return@enqueueIpcLocked
                         active.nextDuration = duration
                     }
-                    val ok = runtime.sendIpc("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
-                    if (!ok) synchronized(lifecycleLock) { if (preparedNext === candidate) preparedNext = null }
+                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
+                    synchronized(lifecycleLock) {
+                        if (id != null) active.entries[id] = candidate to duration
+                        else if (preparedNext === candidate) preparedNext = null
+                    }
                 }
             }
         }
@@ -587,7 +590,10 @@ class DesktopPlaybackEngine internal constructor(
                 }
                 scope.launch(Dispatchers.IO) {
                     try {
-                        while (true) handleMpvEvent(active, events.readLine() ?: break)
+                        while (true) {
+                            val line = events.readLine() ?: break
+                            synchronized(lifecycleLock) { enqueueIpcLocked { handleMpvEvent(active, line) } }
+                        }
                     } catch (_: Exception) {
                         // Closing the channel during stop wakes this blocking reader.
                     } finally {
@@ -600,7 +606,11 @@ class DesktopPlaybackEngine internal constructor(
                         }
                     }
                 }
-                check(sendIpcIfActive(active, """["loadfile",${Json.encodeToString(url)},"replace",-1,{"start":"$startSeconds"}]"""))
+                check(awaitIpc {
+                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(url)},"replace",-1,{"start":"$startSeconds"}]""", active.socket)
+                    synchronized(lifecycleLock) { active.entryId = id }
+                    id != null
+                })
             }
             if (!needsIpc) return@withContext true
             awaitIpc {
@@ -641,12 +651,20 @@ class DesktopPlaybackEngine internal constructor(
         synchronized(lifecycleLock) {
             if (activeProcess !== active) return
             when (event["event"]?.jsonPrimitive?.content) {
+                "start-file" -> {
+                    active.decodingEntryId = event["playlist_entry_id"]?.jsonPrimitive?.content?.toLongOrNull()
+                }
                 "file-loaded" -> {
-                    if (!active.loaded) { active.loaded = true; return }
-                    val next = preparedNext ?: run {
+                    if (!active.loaded && (active.decodingEntryId == null || active.decodingEntryId == active.entryId)) {
+                        active.loaded = true
+                        return
+                    }
+                    val binding = active.entries[active.decodingEntryId]
+                    val next = binding?.first?.takeIf { it === preparedNext } ?: run {
                         // Cancellation raced an already decoded file. Let the session select the
                         // current successor again rather than playing an unowned queue item.
                         cancelTickerLocked()
+                        stopProcessLocked()
                         publishState(_state.value.copy(status = EngineStatus.ENDED))
                         return
                     }
@@ -654,6 +672,8 @@ class DesktopPlaybackEngine internal constructor(
                     preparedNext = null
                     active.awaitingSuccessor = false
                     active.crossing = next
+                    active.crossingEntryId = active.decodingEntryId
+                    active.nextDuration = binding.second
                 }
                 "playback-restart" -> {
                     val next = active.crossing ?: return
@@ -672,6 +692,8 @@ class DesktopPlaybackEngine internal constructor(
                         }
                         synchronized(lifecycleLock) {
                             if (activeProcess !== active || active.crossing !== next || next.generation != activePlayGeneration) return@synchronized
+                            active.entryId = active.crossingEntryId
+                            active.entries.remove(active.entryId)
                             active.crossing = null
                             active.crossingRunning = false
                             val previous = activePlayGeneration++
@@ -1198,6 +1220,10 @@ class DesktopPlaybackEngine internal constructor(
         val gapless: Boolean = false,
         var events: MpvEventStream? = null,
         var loaded: Boolean = false,
+        var entryId: Long? = null,
+        var decodingEntryId: Long? = null,
+        var crossingEntryId: Long? = null,
+        val entries: MutableMap<Long, Pair<PreparedPlayback, Long?>> = mutableMapOf(),
         var nextDuration: Long? = null,
         var crossing: PreparedPlayback? = null,
         var crossingRunning: Boolean = false,
@@ -1219,6 +1245,14 @@ internal interface MpvEventStream : AutoCloseable {
 }
 
 internal interface DesktopPlaybackRuntime {
+    fun loadEntry(command: String, socket: Path): Long? {
+        if (!sendIpc(command, socket)) return null
+        return runCatching {
+            val playlist = Json.parseToJsonElement(readProperty("playlist", socket) ?: return null)
+                as kotlinx.serialization.json.JsonArray
+            playlist.last().jsonObject["id"]?.jsonPrimitive?.content?.toLongOrNull()
+        }.getOrNull()
+    }
     fun canPrepare(current: String, next: String): Boolean = true
     val supportsEvents: Boolean get() = false
     fun openEvents(socket: Path): MpvEventStream? = null
@@ -1463,27 +1497,10 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     private const val IPC_IO_TIMEOUT_MS = 1_500L
 
     private fun parseMpvData(line: String): String? {
-        // Minimal parse: "data": <json-value>
-        val key = "\"data\":"
-        val start = line.indexOf(key)
-        if (start < 0) return null
-        var i = start + key.length
-        while (i < line.length && line[i].isWhitespace()) i++
-        if (i >= line.length) return null
-        return when (line[i]) {
-            '"' -> {
-                val end = line.indexOf('"', i + 1)
-                if (end < 0) null else line.substring(i + 1, end)
-            }
-            't', 'f', 'n' -> {
-                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
-                line.substring(i, end).trim()
-            }
-            else -> {
-                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
-                line.substring(i, end).trim()
-            }
-        }
+        return runCatching {
+            val value = Json.parseToJsonElement(line).jsonObject["data"] ?: return null
+            if (value is kotlinx.serialization.json.JsonPrimitive) value.content else value.toString()
+        }.getOrNull()
     }
 
     override fun deleteIpcPath(path: Path) {

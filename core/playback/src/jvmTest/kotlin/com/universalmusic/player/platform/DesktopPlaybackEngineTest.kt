@@ -30,6 +30,30 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
     @Test
+    fun delayedLoadedEventCannotIdentifyReplacedSuccessor() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":1}""")
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "b", PlaybackHandle.Url("/b.flac"), null, 1))
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("/b.flac") }) delay(10) }
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":2}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback(
+                "c", PlaybackHandle.Url("/c.flac"), null, 1))
+            runtime.properties = { _, name -> if (name == "audio-pts") "0" else null }
+            runtime.events.put("""{"event":"file-loaded"}""")
+            runtime.events.put("""{"event":"playback-restart"}""")
+            delay(200)
+            assertNull(engine.state.value.seamlessItemId, "B must never be published as C")
+            assertEquals(1, engine.state.value.playGeneration)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun gaplessSwitchPreservesProcessAndRejectsOldEventsAfterRestart() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
@@ -44,6 +68,7 @@ class DesktopPlaybackEngineTest {
             val outputCrossed = AtomicBoolean(false)
             runtime.properties = { _, name -> if (name == "audio-pts") if (outputCrossed.get()) "0" else "-0.25" else null }
             runtime.events.put("""{"event":"end-file","reason":"eof"}""")
+            runtime.events.put("""{"event":"start-file","playlist_entry_id":2}""")
             runtime.events.put("""{"event":"file-loaded"}""")
             runtime.events.put("""{"event":"playback-restart"}""")
             delay(50)
@@ -831,6 +856,10 @@ private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         probe.entered.countDown()
         assertTrue(probe.release.await(5, TimeUnit.SECONDS), "timed out releasing $call")
     }
+
+    private val entryIds = AtomicInteger()
+    override fun loadEntry(command: String, socket: Path): Long? =
+        if (sendIpc(command, socket)) entryIds.incrementAndGet().toLong() else null
 
     override fun findOnPath(name: String): String? = "/test/mpv"
 
