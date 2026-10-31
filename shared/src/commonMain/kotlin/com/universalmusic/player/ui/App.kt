@@ -75,6 +75,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Color
 import com.universalmusic.player.ui.navigation.AppDestination
 import com.universalmusic.player.ui.screens.HomeScreen
+import com.universalmusic.player.ui.screens.LibraryPresenter
 import com.universalmusic.player.ui.screens.LibraryScreen
 import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
@@ -127,6 +128,7 @@ private fun AppScaffold(
     val tabStateHolder = rememberSaveableStateHolder()
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
+    val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
     val canSkipNext = run {
@@ -349,7 +351,7 @@ private fun AppScaffold(
                                         onPlayTrackInList = ::playSearchTracks,
                                         requestFocus = true,
                                     )
-                                    AppDestination.Library -> LibraryScreen(container, ::playTracks)
+                                    AppDestination.Library -> LibraryScreen(container, libraryPresenter, ::playTracks)
                                     AppDestination.Settings -> SettingsScreen(container)
                                 }
                             }

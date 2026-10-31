@@ -183,6 +183,14 @@ internal data class LibrarySearchIndex(
     }
     private val artistKeys by lazy { artists.map { TrackNormalizer.fold(it.artist.name) } }
 
+    /** Complete lazy normalization before publishing this snapshot to the UI. */
+    fun warm() {
+        songKeys.size
+        keysById.size
+        albumKeys.size
+        artistKeys.size
+    }
+
     fun songs(needle: String): List<Track> {
         if (needle.isEmpty()) return songs
         return songs.indices
