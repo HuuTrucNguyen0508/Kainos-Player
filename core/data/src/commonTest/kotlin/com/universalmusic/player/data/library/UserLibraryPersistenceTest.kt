@@ -74,6 +74,35 @@ class UserLibraryPersistenceTest {
     }
 
     @Test
+    fun bootWithoutAVerifiedAccountKeepsSpotifyScopedData() = runTest {
+        val store = InMemoryUserLibraryStore()
+        val stored = UserLibrarySnapshot(
+            spotifyAccountId = "user-a",
+            favoriteIds = listOf("spotify:1", "yt:keep"),
+            remembered = listOf(spotifyPersisted("spotify:1"), youtubePersisted("yt:keep")),
+            recents = listOf(spotifyPersisted("spotify:1")),
+        )
+        store.write(stored)
+
+        // Offline, or /me failed: the provider has no user id yet.
+        val offline = LibraryRepository(scope = this, store = store)
+        offline.load(activeSpotifyAccountId = null)
+
+        assertTrue(offline.isFavorite("spotify:1"))
+        assertTrue(offline.savedTracks.value.any { it.canonicalId == "spotify:1" })
+        assertEquals("user-a", store.read().spotifyAccountId)
+        assertEquals(listOf("spotify:1", "yt:keep"), store.read().favoriteIds)
+
+        // The same session later verifies the same account: nothing is dropped.
+        offline.setSpotifyAccountId("user-a")
+        assertTrue(offline.isFavorite("spotify:1"))
+
+        // A verified different account is still a real switch.
+        offline.setSpotifyAccountId("user-b")
+        assertFalse(offline.isFavorite("spotify:1"))
+    }
+
+    @Test
     fun disconnectClearsSpotifyAccountScopedData() = runTest {
         val store = InMemoryUserLibraryStore()
         val library = LibraryRepository(scope = this, store = store)

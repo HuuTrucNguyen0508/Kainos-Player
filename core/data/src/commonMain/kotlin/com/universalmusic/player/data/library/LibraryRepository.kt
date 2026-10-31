@@ -245,12 +245,14 @@ class LibraryRepository(
 
     /**
      * Load disk snapshot, scope Spotify entries to [activeSpotifyAccountId], hydrate artwork from cache.
+     * A null id means the account is unverified (offline, /me failed), not disconnected: keep the
+     * stored scope. Only [setSpotifyAccountId] on an explicit disconnect or a verified switch drops data.
      */
     suspend fun load(activeSpotifyAccountId: String?) {
         try {
             val rawStore = store ?: return
             val raw = rawStore.read().migrated(deviceIdProvider())
-            val scoped = raw.scopedToSpotifyAccount(activeSpotifyAccountId)
+            val scoped = activeSpotifyAccountId?.let(raw::scopedToSpotifyAccount) ?: raw
             if (scoped != raw) {
                 rawStore.write(scoped)
             }
