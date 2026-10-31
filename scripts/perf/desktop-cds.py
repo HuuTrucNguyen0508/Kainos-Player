@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Optional AppCDS training after packaging; never touches a real app instance.
-KAINOS_CDS_XVFB may point to an unpacked Xvfb. Without Xvfb, packaging still succeeds.
+KAINOS_CDS_XVFB may point to an unpacked Xvfb; ~/.local/share/kainos-player/Xvfb is the fallback.
+Without Xvfb, packaging still succeeds.
 """
 import hashlib
 import json
@@ -13,7 +14,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 app = root/'desktopApp/build/compose/binaries/main/app/KainosPlayer/lib/app'
-xvfb = shutil.which(os.environ.get('KAINOS_CDS_XVFB', 'Xvfb'))
+personal_xvfb = Path.home()/'.local/share/kainos-player/Xvfb'
+xvfb = shutil.which(os.environ.get('KAINOS_CDS_XVFB', 'Xvfb')) or shutil.which(str(personal_xvfb))
 if not xvfb:
     print('AppCDS training skipped: Xvfb unavailable; launcher will use normal startup.')
     raise SystemExit(0)
