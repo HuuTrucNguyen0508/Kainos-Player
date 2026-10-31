@@ -171,9 +171,13 @@ class RemoteLinkHost(
             link.generation = request.generation
             link.waiter?.let { it.superseded = true; it.wake.complete(Unit) }
             link.waiter = null
+            val pendingIntent = link.outbox.lastOrNull { it.command == RemoteCommand.Play || it.command == RemoteCommand.Pause }
+            val statusAfterIntent = pendingIntent == null || (request.epoch == epoch && request.ackSeq >= pendingIntent.seq)
             if (request.epoch == epoch) acknowledge(link, request.ackSeq, request.droppedSeqs.toSet())
-            link.status = request.status
-            link.statusAtMs = now
+            if (statusAfterIntent) {
+                link.status = request.status
+                link.statusAtMs = now
+            }
             expire(link, now)
             val ready = request.epoch != epoch || request.knownHubVersion != hubVersion || link.deliverable(now).isNotEmpty()
             if (ready) return RemoteHostReply.Ok(reply(link, heldMs = 0)).also { changed() }
@@ -203,8 +207,8 @@ class RemoteLinkHost(
     }
 
     /** Queues [command] for [deviceId] and waits for its acknowledgement or expiry. */
-    suspend fun send(deviceId: String, command: RemoteCommand): RemoteSendOutcome {
-        val out = lock.withLock { enqueue(deviceId, command) ?: return refusal() }
+    suspend fun send(deviceId: String, command: RemoteCommand, ageMs: Long = 0): RemoteSendOutcome {
+        val out = lock.withLock { enqueue(deviceId, command, ageMs) ?: return refusal() }
         return awaitOutcome(deviceId, out)
     }
 
@@ -262,11 +266,12 @@ class RemoteLinkHost(
         RemotePeerView(deviceId, link?.connected(clock()) == true, link?.status, link?.statusAtMs ?: 0L)
     }
 
-    private fun enqueue(deviceId: String, command: RemoteCommand): Outgoing? {
+    private fun enqueue(deviceId: String, command: RemoteCommand, ageMs: Long = 0): Outgoing? {
         if (!running) return null
         val now = clock()
         val link = links[deviceId]?.takeIf { it.connected(now) } ?: return null
-        val out = Outgoing(++link.nextSeq, command, now)
+        if (ageMs !in 0 until deadlineMs) return null
+        val out = Outgoing(++link.nextSeq, command, now - ageMs)
         link.outbox += out
         link.waiter?.wake?.complete(Unit)
         return out

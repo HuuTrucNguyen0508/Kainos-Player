@@ -32,3 +32,7 @@ release/
 # Local agent audit trails
 .audit/
 tools/kainos-spotify-rootlist/target/
+
+# Remote fault harness raw trials are local; retain compact summaries only.
+scripts/perf/remote-results/*.tsv
+!scripts/perf/remote-results/*-summary.tsv

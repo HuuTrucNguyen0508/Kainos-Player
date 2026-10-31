@@ -7,12 +7,15 @@ import com.universalmusic.player.platform.readLocalArtworkBytes
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
+import kotlin.time.TimeMark
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -30,6 +33,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 
 /** One connection to the hub's remote routes; [poll] may take the whole hold. */
@@ -38,6 +42,9 @@ interface RemoteLinkTransport : AutoCloseable {
 
     /** Throws [RemoteHubHasNoPlayer] when the hub process has no player (`--hub-only`). */
     suspend fun command(command: RemoteCommand): RemoteCommandReply
+
+    /** Called only after a new hub advertises a lease. Old/test transports keep legacy behavior. */
+    suspend fun intent(intent: RemoteDirectIntent): RemoteCommandReply = command(intent.command)
 
     suspend fun postTransfer(epoch: String, seq: Long, reply: RemoteTransferReply)
 
@@ -86,6 +93,8 @@ class RemoteLinkClient(
     private val repostGapMs: Long = REMOTE_REPOST_GAP_MS,
     private val linkId: String = Random.nextLong().toULong().toString(36),
     private val monotonicClock: TimeSource = TimeSource.Monotonic,
+    /** Whether a press is possible here. A locked phone keeps one held poll instead of polling every 2 s. */
+    private val pressable: () -> Boolean = { true },
 ) {
     private val _state = MutableStateFlow(RemoteLinkState())
     val state: StateFlow<RemoteLinkState> = _state.asStateFlow()
@@ -98,6 +107,17 @@ class RemoteLinkClient(
 
     private var generation = 0L
     private var failures = 0
+    private val reconnect = Channel<Unit>(Channel.CONFLATED)
+    private var latestIntent = 0L
+    private var forcePollStatus = false
+    private var directLease: String? = null
+    private var directLeaseAt: TimeMark? = null
+    private data class StatusIntent(val playing: Boolean, val started: TimeMark)
+    private var statusIntent: StatusIntent? = null
+
+    fun reconnectNow() { forcePollStatus = true; reconnect.trySend(Unit) }
+    private suspend fun backoff(wait: Long) { withTimeoutOrNull(wait) { reconnect.receive() } }
+
 
     @kotlin.concurrent.Volatile
     private var transport: RemoteLinkTransport? = null
@@ -117,12 +137,44 @@ class RemoteLinkClient(
         }
     }
 
-    /** Sends [command] to the hub's own player. Never retried: a failure marks the hub unreachable. */
+    /** Only explicit Play/Pause may retry, under a receiver-issued ordering and expiry lease. */
     suspend fun send(command: RemoteCommand): RemoteClientSend {
-        val current = transport?.takeIf { _state.value.connected } ?: return RemoteClientSend.Unreachable
+        val explicit = command == RemoteCommand.Play || command == RemoteCommand.Pause
+        val intent = if (explicit) ++latestIntent else 0L
+        // Capture before the press is dispatched: a later-issued lease could extend its deadline.
+        val hubOrdersIntents = directLease != null
+        val lease = directLease?.takeIf { directLeaseAt?.elapsedNow()?.inWholeMilliseconds?.let { age -> age < REMOTE_DIRECT_LEASE_FRESH_MS } == true }
+        val started = monotonicClock.markNow()
+        if (explicit) statusIntent = StatusIntent(command == RemoteCommand.Play, started)
         return try {
-            val reply = withTimeout(REMOTE_COMMAND_REQUEST_TIMEOUT_MS) { current.command(command) }
-            reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
+            val reply = withTimeout(if (explicit) REMOTE_COMMAND_DEADLINE_MS else REMOTE_COMMAND_REQUEST_TIMEOUT_MS) {
+                if (explicit && !_state.value.connected) {
+                    if (!_state.value.active) return@withTimeout null
+                    reconnectNow()
+                    state.first { it.connected || !it.active }
+                }
+                if (explicit && intent != latestIntent) return@withTimeout null
+                val current = transport?.takeIf { _state.value.connected } ?: return@withTimeout null
+                if (!explicit || !hubOrdersIntents) current.command(command)
+                else if (lease == null) current.intent(RemoteDirectIntent(command, linkId, intent, started.elapsedNow().inWholeMilliseconds))
+                else {
+                    while (true) {
+                        if (intent != latestIntent) return@withTimeout null
+                        try {
+                            return@withTimeout (transport ?: current).intent(RemoteDirectIntent(command, linkId, intent, started.elapsedNow().inWholeMilliseconds, lease))
+                        } catch (cancelled: CancellationException) { throw cancelled
+                        } catch (noPlayer: RemoteHubHasNoPlayer) { throw noPlayer
+                        } catch (err: Exception) {
+                            // Retry only explicit intents and only with receiver-proven ordering/expiry.
+                            delay(100)
+                        }
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    error("unreachable")
+                }
+            }
+            if (reply == null || reply.leaseRejected) return RemoteClientSend.Unreachable
+            if (!explicit || intent == latestIntent) reply.status?.let { status -> _state.update { it.copy(hubStatus = status, hubStatusAtMs = clock()) } }
             RemoteClientSend.Applied(reply)
         } catch (cancelled: CancellationException) {
             if (cancelled is kotlinx.coroutines.TimeoutCancellationException) unreachable("command timed out") else throw cancelled
@@ -157,7 +209,7 @@ class RemoteLinkClient(
             val current = target()
             if (current == null) {
                 _state.update { it.copy(connected = false) }
-                delay(backoffMs.last())
+                backoff(backoffMs.last())
                 continue
             }
             try {
@@ -176,14 +228,28 @@ class RemoteLinkClient(
                 failures++
                 trace("link to ${current.hub.displayName} failed (${err.message ?: err}); retry in $wait ms")
                 _state.update { it.copy(connected = false, unreachable = true) }
-                delay(wait)
+                backoff(wait)
             }
         }
     }
 
-    private suspend fun polls(opened: RemoteLinkTransport, current: DeliveryTarget) {
+    private suspend fun polls(opened: RemoteLinkTransport, current: DeliveryTarget): Unit = coroutineScope {
+        // Cover uploads must not leave the phone without a poll or hold up an acknowledgement.
+        // One worker bounds uploads; newer covers replace pending ones. It closes with this link.
+        val covers = Channel<Pair<String, RemotePlayerState?>>(Channel.CONFLATED)
+        launch {
+            var artworkEpoch: String? = null
+            for ((nextEpoch, state) in covers) {
+                if (nextEpoch != artworkEpoch) {
+                    uploadedArtworkKey = null
+                    artworkEpoch = nextEpoch
+                }
+                uploadArtwork(opened, state)
+            }
+        }
         while (true) {
             val sent = player.state.value
+            val observingIntent = latestIntent
             val request = execution.withLock {
                 RemotePollRequest(
                     deviceId = current.deviceId,
@@ -191,7 +257,7 @@ class RemoteLinkClient(
                     generation = ++generation,
                     epoch = epoch,
                     ackSeq = lastExecuted,
-                    knownHubVersion = knownHubVersion,
+                    knownHubVersion = if (forcePollStatus) -1 else knownHubVersion,
                     status = artwork.wireStatus(sent, clock()),
                     droppedSeqs = dropped.toList(),
                 )
@@ -203,19 +269,27 @@ class RemoteLinkClient(
                 if (wait > 0) delay(wait)
                 continue
             }
+            if (request.knownHubVersion == -1L && observingIntent == latestIntent) forcePollStatus = false
+            directLease = reply.directIntentLease
+            directLeaseAt = monotonicClock.markNow()
             val wasConnected = _state.value.connected
             failures = 0
             if (!reply.superseded) {
                 val transit = (sentAt.elapsedNow().inWholeMilliseconds - reply.heldMs).coerceAtLeast(0)
                 val transfers = execute(reply, transit, request)
+                val pendingStatus = statusIntent
+                val freshStatus = observingIntent == latestIntent && (pendingStatus == null ||
+                    pendingStatus.started.elapsedNow().inWholeMilliseconds >= REMOTE_COMMAND_DEADLINE_MS ||
+                    reply.hubStatus?.let { (it.isPlaying || it.buffering) == pendingStatus.playing } == true)
+                if (freshStatus) statusIntent = null
                 _state.update {
                     it.copy(
                         connected = true,
                         unreachable = false,
                         hubName = reply.hubName,
                         hubHasPlayer = reply.hubHasPlayer,
-                        hubStatus = reply.hubStatus,
-                        hubStatusAtMs = clock(),
+                        hubStatus = if (freshStatus) reply.hubStatus else it.hubStatus,
+                        hubStatusAtMs = if (freshStatus) clock() else it.hubStatusAtMs,
                     )
                 }
                 for ((seq, transfer) in transfers) postTransfer(opened, reply.epoch, seq, transfer)
@@ -226,7 +300,7 @@ class RemoteLinkClient(
                 trace("link to ${current.hub.displayName} connected")
                 onConnected()
             }
-            uploadArtwork(opened, player.state.value)
+            covers.trySend(reply.epoch to player.state.value)
         }
     }
 
@@ -240,9 +314,15 @@ class RemoteLinkClient(
         val change = async {
             player.state.first { next -> sent?.status.isMaterialChange(next?.status, elapsedSince(sent, next)) }
         }
+        // Only a poll the hub answers renews the lease, so the repost must ask for an immediate reply.
+        val refreshing = directLease != null && pressable() && request.knownHubVersion != -1L
+        val refresh = async { if (refreshing) delay(REMOTE_DIRECT_LEASE_REFRESH_MS) else awaitCancellation() }
+        val wake = async { reconnect.receive() }
         select<RemotePollReply?> {
-            call.onAwait { reply -> change.cancel(); reply }
-            change.onAwait { call.cancel(); null }
+            call.onAwait { reply -> change.cancel(); refresh.cancel(); wake.cancel(); reply }
+            change.onAwait { call.cancel(); refresh.cancel(); wake.cancel(); null }
+            refresh.onAwait { forcePollStatus = true; call.cancel(); change.cancel(); wake.cancel(); null }
+            wake.onAwait { call.cancel(); change.cancel(); refresh.cancel(); null }
         }
     }
 
@@ -267,7 +347,6 @@ class RemoteLinkClient(
                 epoch = reply.epoch
                 lastExecuted = 0
                 dropped.clear()
-                uploadedArtworkKey = null
             }
             knownHubVersion = reply.hubVersion
             val transfers = ArrayList<Pair<Long, RemoteTransferReply>>()
@@ -379,7 +458,13 @@ const val REMOTE_COMMAND_REQUEST_TIMEOUT_MS = 5_000L
 const val REMOTE_ARTWORK_REQUEST_TIMEOUT_MS = 10_000L
 
 const val REMOTE_REPOST_GAP_MS = 250L
+const val REMOTE_DIRECT_LEASE_REFRESH_MS = 2_000L
 
-val REMOTE_BACKOFF_MS = listOf(2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
+/** Leases last 4 s from issue. Past this age a press goes plain: the reply's transit also spent lease time. */
+const val REMOTE_DIRECT_LEASE_FRESH_MS = 3_000L
+
+// A single fast reconnect recovers a brief LAN failure inside the command deadline.
+// Sustained failures still back off to 30 seconds. Poll seq/epoch dedupe is unchanged.
+val REMOTE_BACKOFF_MS = listOf(200L, 2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
 
 internal const val REMOTE_TRACE_TAG = "Remote"

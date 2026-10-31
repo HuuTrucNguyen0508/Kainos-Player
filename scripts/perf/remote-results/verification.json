@@ -1,0 +1,11 @@
+{
+  "command": "JAVA_TOOL_OPTIONS=-Djava.awt.headless=true JAVA_HOME=$HOME/.jdks/temurin-17 flock -s /tmp/kainos-perf.lock ./gradlew jvmTest --rerun :core:data:verifyCommonMainKainosDatabaseMigration :androidApp:assembleDebug :desktopApp:createDistributable --console=plain",
+  "result": "BUILD SUCCESSFUL",
+  "jvm": {
+    "tests": 930,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 3
+  },
+  "log": "/tmp/remote-final-checks.log"
+}

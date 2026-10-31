@@ -41,13 +41,17 @@ class HttpRemoteLinkTransport(
         return json.decodeFromString(RemotePollReply.serializer(), response.checked("Remote poll").bodyAsText())
     }
 
-    override suspend fun command(command: RemoteCommand): RemoteCommandReply {
+    override suspend fun command(command: RemoteCommand): RemoteCommandReply = sendBody(json.encodeToString(RemoteCommand.serializer(), command))
+
+    override suspend fun intent(intent: RemoteDirectIntent): RemoteCommandReply = sendBody(json.encodeToString(RemoteDirectIntent.serializer(), intent))
+
+    private suspend fun sendBody(body: String): RemoteCommandReply {
         val response = request {
             http.post("$base$HOME_LAN_SYNC_PATH_V3_REMOTE_COMMAND") {
                 expectSuccess = false
                 commandTimeout()
                 contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(RemoteCommand.serializer(), command))
+                setBody(body)
             }
         }
         if (response.status == HttpStatusCode.Conflict) throw RemoteHubHasNoPlayer()

@@ -336,6 +336,7 @@ class AppContainer {
         },
         openLink = ::openPairedRemoteLink,
         onLinkConnected = { homeLanSync.requestListeningDelivery() },
+        pressable = { foreground.isVisible },
     )
     private val handoffRequests = Channel<Unit>(Channel.CONFLATED)
 
@@ -685,6 +686,7 @@ class AppContainer {
         heartedAudio.notifyNetworkChanged()
         foregroundHandoff.onForeground()
         foreground.isVisible = true
+        remoteControl.onAppVisible()
         if (_ready.value) homeLanSync.onAppForeground()
     }
 
