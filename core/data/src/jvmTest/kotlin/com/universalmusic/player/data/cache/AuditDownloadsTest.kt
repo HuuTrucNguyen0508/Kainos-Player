@@ -50,6 +50,24 @@ class AuditDownloadsTest {
             assertNotNull(cache.get("yt:b"))
         } finally { root.deleteRecursively() }
     }
+    @Test fun serviceOutageWaitsButRemovedVideoFails() = runTest {
+        val root = createTempDirectory().toFile()
+        try {
+            val cache = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(root.toPath()))
+            var message = "503 Service unavailable"
+            val service = HeartedAudioCacheService(backgroundScope, cache, object : YouTubeAudioDownloader {
+                override fun isAvailable() = true
+                override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
+                    onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio? = throw IOException(message)
+            }, { emptyList() }, networkAvailable = { true })
+            service.enqueue(Track("yt:a", "A", emptyList())); runCurrent()
+            assertEquals(DownloadPhase.WAITING_FOR_NETWORK, service.downloads.value["yt:a"]?.phase)
+            message = "404 Video unavailable"
+            service.notifyNetworkChanged(); runCurrent()
+            assertEquals(DownloadPhase.FAILED, service.downloads.value["yt:a"]?.phase)
+            assertEquals(message, cache.failure("yt:a")?.message)
+        } finally { root.deleteRecursively() }
+    }
     @Test fun budgetEvictionDoesNotRequeueOnRestart() = runTest {
         val root = createTempDirectory().toFile()
         try {

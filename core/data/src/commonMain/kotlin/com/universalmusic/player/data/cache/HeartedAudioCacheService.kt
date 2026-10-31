@@ -647,7 +647,7 @@ internal fun pathToFileUri(absolutePath: String): String =
 
 internal fun isTransientDownloadFailure(failure: Exception, online: Boolean): Boolean {
     val message = failure.message.orEmpty().lowercase()
-    if (listOf("404", "410", "unavailable", "private video", "removed", "no suitable", "cache full").any { it in message }) return false
+    if (listOf("404", "410", "video unavailable", "private video", "removed", "no suitable", "cache full").any { it in message }) return false
     return !online || failure is java.io.IOException ||
         listOf("quota", "429", "500", "502", "503", "504", "timeout", "network", "connection", "download failed").any { it in message }
 }
