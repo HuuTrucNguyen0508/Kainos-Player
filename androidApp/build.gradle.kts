@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)
+    id("kainos.version")
 }
 
 dependencies {
@@ -33,8 +34,8 @@ android {
         applicationId = "com.universalmusic.player"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = kainosVersion.code
+        versionName = kainosVersion.name
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     testBuildType = providers.gradleProperty("androidTestTarget").getOrElse("debug")

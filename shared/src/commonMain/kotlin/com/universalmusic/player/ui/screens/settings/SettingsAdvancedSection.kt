@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.universalmusic.player.platform.appVersionLabel
 import com.universalmusic.player.platform.platformLabel
 
 @Composable
@@ -31,6 +32,7 @@ internal fun SettingsAdvancedSection(presenter: SettingsAdvancedPresenter, syncP
     val traceInfo = ui.traceInfo
     val traceNotice = ui.traceNotice
         Text("Advanced", style = MaterialTheme.typography.titleMedium)
+        Text("Version: ${appVersionLabel()}", style = MaterialTheme.typography.bodyMedium)
         Text("Platform: ${platformLabel()}", style = MaterialTheme.typography.bodyMedium)
         Text(
             "Metadata cache stores titles and artwork only. Hearted YouTube tracks (and Spotify hearts via a YouTube match) download audio for offline play. Spotify DRM audio is never stored. App favorites are not written back to Spotify Liked.",

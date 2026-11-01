@@ -3,6 +3,7 @@ package com.universalmusic.player.platform
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -47,3 +48,9 @@ actual fun openUrl(url: String) {
 }
 
 actual fun platformLabel(): String = "Android"
+
+actual fun appVersionLabel(): String = runCatching {
+    val info = androidContext.packageManager.getPackageInfo(androidContext.packageName, 0)
+    val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+    "${info.versionName} ($code)"
+}.getOrDefault("dev")
