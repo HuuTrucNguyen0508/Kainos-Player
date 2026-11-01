@@ -16,6 +16,7 @@ dependencies {
     coreLibraryDesugaring(libs.android.desugar.jdk.libs.nio)
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation(libs.kotlinx.coroutines.core)
 }
 

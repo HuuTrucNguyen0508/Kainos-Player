@@ -32,6 +32,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -207,6 +208,86 @@ class HomeLanProtocolCompatibilityTest {
                 directory.deleteRecursively()
             }
         }
+    }
+
+    private fun fill(size: Int, value: Int) = ByteArray(size) { value.toByte() }
+
+    private fun vaultStore(root: java.io.File) =
+        JvmHomeLanVaultStore({ root.absolutePath }, root.resolveSibling("${root.name}-state.json").toPath())
+
+    private fun runWithVaultHub(
+        block: suspend (HttpHomeLanSyncClient, java.io.File, java.io.File) -> Unit,
+    ) = runBlocking {
+        val directory = Files.createTempDirectory("kainos-protocol-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            val hubRoot = directory.resolve("hub-vault").apply { mkdirs() }
+            val localRoot = directory.resolve("local-vault").apply { mkdirs() }
+            hub = hub(pc, phone, port, { it }, { it }, vaultStore(hubRoot), bindHost = "127.0.0.1")
+            hub.start()
+            HttpHomeLanSyncClient(hubPeer(pc, port), LibraryRepository(),
+                KainosPlaylistRepository(), client(pc, phone)).use { client ->
+                block(client, hubRoot, localRoot)
+            }
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun hubNeverPublishesAnUploadWhoseSourceChangedAndTheRetryRestarts() = runWithVaultHub { client, hubRoot, localRoot ->
+        val size = VAULT_BLOB_CHUNK_BYTES * 2
+        val hubFile = hubRoot.resolve("song.flac").apply { writeBytes(fill(size, 9)) }
+        val localFile = localRoot.resolve("song.flac").apply { writeBytes(fill(size, 1)) }
+        val transfer = PendingVaultTransfer("song.flac", VaultCopyDirection.TO_REMOTE, size.toLong())
+        val rewritingClient = object : HomeLanSyncClient by client {
+            override suspend fun uploadBlob(relPath: String, offset: Long, totalSize: Long, chunk: ByteArray) =
+                client.uploadBlob(relPath, offset, totalSize, chunk).also { localFile.writeBytes(fill(size, 2)) }
+        }
+
+        val failure = assertFails {
+            executeVaultTransfer(vaultStore(localRoot), rewritingClient, transfer) { _, _, _ -> }
+        }
+
+        assertContains(failure.message.orEmpty(), "changed")
+        assertContentEquals(fill(size, 9), hubFile.readBytes())
+        executeVaultTransfer(vaultStore(localRoot), client, transfer) { _, _, _ -> }
+        assertContentEquals(fill(size, 2), hubFile.readBytes())
+        assertFalse(hubRoot.resolve("song.flac$VAULT_STAGING_SUFFIX").exists())
+    }
+
+    @Test
+    fun hubHashStopsADownloadWhoseSourceChangedWithoutChangingItsIndexEntry() = runWithVaultHub { client, hubRoot, localRoot ->
+        val size = VAULT_BLOB_CHUNK_BYTES * 3
+        val hubFile = hubRoot.resolve("song.flac").apply { writeBytes(fill(size, 1)) }
+        val localFile = localRoot.resolve("song.flac").apply { writeBytes(fill(size, 9)) }
+        val mtime = hubFile.lastModified()
+        val rewritingClient = object : HomeLanSyncClient by client {
+            override suspend fun downloadBlob(relPath: String, offset: Long, length: Int) =
+                client.downloadBlob(relPath, offset, length).also {
+                    if (offset == 0L) {
+                        hubFile.writeBytes(hubFile.readBytes().also { it[VAULT_BLOB_CHUNK_BYTES] = 7 })
+                        hubFile.setLastModified(mtime)
+                    }
+                }
+        }
+        val transfer = PendingVaultTransfer("song.flac", VaultCopyDirection.TO_LOCAL, size.toLong())
+
+        val failure = assertFails {
+            executeVaultTransfer(vaultStore(localRoot), rewritingClient, transfer) { _, _, _ -> }
+        }
+
+        assertContains(failure.message.orEmpty(), "changed")
+        assertContentEquals(fill(size, 9), localFile.readBytes())
+        executeVaultTransfer(vaultStore(localRoot), client, transfer) { _, _, _ -> }
+        assertContentEquals(hubFile.readBytes(), localFile.readBytes())
+    }
+
+    @Test
+    fun blobHashIsAbsentForAMissingFileSoTheClientTreatsItLikeAnOldHub() = runWithVaultHub { client, _, _ ->
+        assertNull(client.fetchBlobHash("missing.flac").getOrThrow())
     }
 
     private data class Devices(val pc: JvmDeviceIdentity.Material, val phone: JvmDeviceIdentity.Material, val port: Int)

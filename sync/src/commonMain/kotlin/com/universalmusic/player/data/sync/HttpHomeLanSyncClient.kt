@@ -122,6 +122,15 @@ class HttpHomeLanSyncClient(
             bytes
         }
 
+    override suspend fun fetchBlobHash(relPath: String): Result<String?> = runCatching {
+        val response = http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH") {
+            expectSuccess = false
+            parameter("path", relPath)
+        }
+        if (response.status == HttpStatusCode.NotFound) return@runCatching null
+        response.requireSuccess("Blob hash $relPath").bodyAsText().trim()
+    }
+
     override suspend fun uploadBlob(
         relPath: String,
         offset: Long,
