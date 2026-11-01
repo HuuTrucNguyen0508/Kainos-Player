@@ -154,7 +154,7 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
         Column(Modifier.weight(1f)) {
             Text("Vault: hearted tracks only", style = MaterialTheme.typography.bodyLarge)
             Text(
-                "Only sync local files that are app-hearted (by filename). Spotify/YouTube hearts still sync as metadata.",
+                "Only sync local files that are app-hearted (by filename). YouTube hearts still sync as metadata.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
