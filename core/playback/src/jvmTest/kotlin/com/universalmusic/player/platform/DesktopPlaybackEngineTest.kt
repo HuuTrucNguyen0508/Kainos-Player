@@ -29,6 +29,25 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
+    @Test fun pauseReachesMpvWhileCompatibilityProbeIsBlocked() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val runtime = FakeDesktopPlaybackRuntime().apply {
+            supportsEvents = true
+            sendIpcResult.set(true)
+            compatibility = { _, _ -> entered.countDown(); release.await(5, TimeUnit.SECONDS); true }
+        }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback("b", PlaybackHandle.Url("/b.flac"), null, 1))
+            assertTrue(entered.await(2, TimeUnit.SECONDS), "probe did not start")
+            engine.pause()
+            withTimeout(500) { while (runtime.sentIpc.none { it.contains("set_property") && it.contains("pause") && it.contains("true") }) delay(5) }
+        } finally { release.countDown(); engine.stop(); runtime.destroyAll() }
+    }
+
     @Test
     fun outgoingFailureCancelsPendingSuccessorPublication() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
@@ -1114,6 +1133,8 @@ private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     override fun loadEntry(command: String, socket: Path): Long? =
         if (sendIpc(command, socket)) entryIds.incrementAndGet().toLong() else null
 
+    var compatibility: (String, String) -> Boolean = { _, _ -> true }
+    override fun canPrepare(current: String, next: String): Boolean = compatibility(current, next)
     override fun findOnPath(name: String): String? = "/test/mpv"
 
     override fun probeDurationMs(url: String): Long? {

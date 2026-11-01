@@ -4,6 +4,8 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PreparedPlayback
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -92,35 +94,44 @@ internal class GaplessBoundary(
                 // Remove the old successor before probing a potentially incompatible replacement.
                 runtime.sendIpc("""["playlist-clear"]""", active.socket)
                 val currentUrl = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url }
-                val compatible = candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url))
-                if (!compatible) {
-                    synchronized(transport.lock) { if (prepared === candidate) prepared = null }
-                    runtime.sendIpc("""["set_property","gapless-audio","no"]""", active.socket)
+                // File probes must not hold up pause, seek, or other socket commands.
+                scope.launch(Dispatchers.IO) {
+                    val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
+                    val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
                     synchronized(transport.lock) {
-                        if (slot.active === active && playlist.awaitingSuccessor) {
-                            playlist.awaitingSuccessor = false
-                            transport.publish(transport.current.copy(status = EngineStatus.ENDED))
+                        if (prepared !== candidate || slot.active !== active) return@launch
+                        slot.enqueueLocked apply@{
+                            if (!synchronized(transport.lock) { prepared === candidate && slot.active === active }) return@apply
+                            if (!compatible) {
+                                synchronized(transport.lock) { if (prepared === candidate) prepared = null }
+                                runtime.sendIpc("""["set_property","gapless-audio","no"]""", active.socket)
+                                synchronized(transport.lock) {
+                                    if (slot.active === active && playlist.awaitingSuccessor) {
+                                        playlist.awaitingSuccessor = false
+                                        transport.publish(transport.current.copy(status = EngineStatus.ENDED))
+                                    }
+                                }
+                                return@apply
+                            }
+                            runtime.sendIpc("""["set_property","gapless-audio","${if (candidate == null) "no" else "yes"}"]""", active.socket)
+                            if (candidate == null) synchronized(transport.lock) {
+                                if (slot.active === active && playlist.awaitingSuccessor) {
+                                    playlist.awaitingSuccessor = false
+                                    transport.publish(transport.current.copy(status = EngineStatus.ENDED))
+                                }
+                            }
+                            if (candidate != null) {
+                                synchronized(transport.lock) {
+                                    if (prepared !== candidate || slot.active !== active) return@apply
+                                    playlist.nextDuration = duration
+                                }
+                                val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
+                                synchronized(transport.lock) {
+                                    if (id != null) playlist.entries[id] = candidate to duration
+                                    else if (prepared === candidate) prepared = null
+                                }
+                            }
                         }
-                    }
-                    return@enqueueLocked
-                }
-                runtime.sendIpc("""["set_property","gapless-audio","${if (candidate == null) "no" else "yes"}"]""", active.socket)
-                if (candidate == null) synchronized(transport.lock) {
-                    if (slot.active === active && playlist.awaitingSuccessor) {
-                        playlist.awaitingSuccessor = false
-                        transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                    }
-                }
-                if (candidate != null) {
-                    val duration = runtime.probeDurationMs(candidate.handle.url)
-                    synchronized(transport.lock) {
-                        if (prepared !== candidate || slot.active !== active) return@enqueueLocked
-                        playlist.nextDuration = duration
-                    }
-                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
-                    synchronized(transport.lock) {
-                        if (id != null) playlist.entries[id] = candidate to duration
-                        else if (prepared === candidate) prepared = null
                     }
                 }
             }
