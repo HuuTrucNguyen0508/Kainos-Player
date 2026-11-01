@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.cache
 
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.MatchReason
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -303,7 +304,7 @@ class HeartedAudioCacheService(
     suspend fun searchMatchCandidates(track: Track, query: String? = null): List<Track> {
         val q = query?.trim()?.takeIf { it.isNotEmpty() } ?: buildSearchQuery(track)
         if (q.isEmpty()) return emptyList()
-        return runCatching { youtubeSearch(q) }.getOrDefault(emptyList())
+        return youtubeSearch(q)
     }
 
     suspend fun clear() {
@@ -582,11 +583,13 @@ class HeartedAudioCacheService(
     }
 
     private suspend fun refreshSnapshot() = mutationMutex.withLock {
-        val stats = runCatching { cache.stats() }.getOrDefault(HeartedAudioCacheStats(0, 0))
-        val entries = runCatching { cache.allEntries() }.getOrDefault(emptyList())
-        val pins = runCatching { cache.allPinnedIds() }.getOrDefault(emptySet())
-        val failures = runCatching { cache.allFailures() }.getOrDefault(emptyMap())
-        val evictions = runCatching { cache.recentEvictions() }.getOrDefault(emptyList())
+        val stats = runCatching { cache.stats() }.logged(LOG_TAG, "stats read failed")
+            .getOrDefault(HeartedAudioCacheStats(0, 0))
+        val entries = runCatching { cache.allEntries() }.logged(LOG_TAG, "entries read failed").getOrDefault(emptyList())
+        val pins = runCatching { cache.allPinnedIds() }.logged(LOG_TAG, "pins read failed").getOrDefault(emptySet())
+        val failures = runCatching { cache.allFailures() }.logged(LOG_TAG, "failures read failed").getOrDefault(emptyMap())
+        val evictions = runCatching { cache.recentEvictions() }.logged(LOG_TAG, "evictions read failed")
+            .getOrDefault(emptyList())
         val active = _downloads.value
         val cachedItems = entries.map { entry ->
             val meta = trackMeta[entry.ownerCanonicalId]
@@ -651,3 +654,5 @@ internal fun isTransientDownloadFailure(failure: Exception, online: Boolean): Bo
     return !online || failure is java.io.IOException ||
         listOf("quota", "429", "500", "502", "503", "504", "timeout", "network", "connection", "download failed").any { it in message }
 }
+
+private const val LOG_TAG = "Downloads"

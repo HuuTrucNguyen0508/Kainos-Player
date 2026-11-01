@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.HandoffClaim
@@ -22,8 +23,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
 class DbListeningExchangeStore(
-    private val storage: KainosStorage,
+    storage: KainosStorage,
 ) : ListeningExchangeStore {
+    private val storage = AreaStorage(storage, StorageArea.LISTENING)
+
     override suspend fun refusedPairing(): ListeningPairingIdentity? = storage.read { db ->
         db.nowPlayingQueries.selectRefusal().executeAsOneOrNull()
             ?.let { storageJson.decodeFromString<ListeningPairingIdentity>(it) }

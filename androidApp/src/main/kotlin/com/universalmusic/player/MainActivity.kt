@@ -23,6 +23,7 @@ import com.universalmusic.player.platform.AndroidPlaybackService
 import com.universalmusic.player.platform.MusicFolderPickerRelay
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.ui.UniversalMusicApp
 import com.universalmusic.player.ui.theme.resolveTheme
 import kotlinx.coroutines.launch
@@ -47,7 +48,7 @@ class MainActivity : ComponentActivity() {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         runCatching {
             contentResolver.takePersistableUriPermission(uri, flags)
-        }
+        }.logged("Local", "folder access may not survive a restart")
         MusicFolderPickerRelay.complete(uri.toString())
     }
 

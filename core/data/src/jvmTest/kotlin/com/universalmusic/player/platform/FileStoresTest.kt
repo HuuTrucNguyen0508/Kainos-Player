@@ -2,6 +2,10 @@ package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.domain.failure.AppFailure
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.model.ProviderId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -46,6 +50,34 @@ class FileStoresTest {
     }
 
     @Test
+    fun corruptSettingsShowTheStorageMessageUntilTheyAreSavedAgain() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        path.writeText("{ not json")
+        val store = FileSettingsStore(path)
+        val settings = store.read()
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        store.write(settings)
+        assertNull(AppFailures.open.value.shown)
+    }
+
+    @Test
+    fun unreadableSettingsShowTheStorageMessageInsteadOfSilentDefaults() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        Files.createDirectory(path)
+        assertEquals(AppSettings(), FileSettingsStore(path).read())
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        AppFailures.dismiss()
+    }
+
+    @Test
     fun corruptSettingsAreQuarantinedAndDefaultsReturned() = runBlocking {
         val path = dir.resolve("settings.json")
         path.writeText("""{"spotifyClientId":"abc","""")
@@ -84,6 +116,20 @@ class FileStoresTest {
         store.write(loaded)
         assertFalse(path.readText().contains("homeLanSyncPairing"))
         assertEquals(loaded, store.read())
+    }
+
+    @Test
+    fun corruptTokensStayOnScreenUntilTokensAreSavedNotUntilSettingsAre() = runBlocking {
+        AppFailures.dismiss()
+        val tokens = FileTokenStore(dir.resolve("tokens.json").also { it.writeText("{ not json") })
+        val settings = FileSettingsStore(dir.resolve("settings.json"))
+
+        assertNull(tokens.read(ProviderId.SPOTIFY))
+        settings.write(AppSettings())
+        assertEquals(setOf<AppFailure>(AppFailure.Storage(StorageArea.TOKENS)), AppFailures.open.value)
+
+        tokens.write(ProviderId.SPOTIFY, AuthTokens("fresh"))
+        assertNull(AppFailures.open.value.shown)
     }
 
     @Test

@@ -23,11 +23,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
@@ -62,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
+import com.universalmusic.player.domain.failure.AppFailure
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.HandoffNotice
 import com.universalmusic.player.domain.playback.NowPlayingState
@@ -344,12 +349,7 @@ private fun AppScaffold(
 
             // Main content column: tabs stay composed across resize so Library scroll survives.
             Column(Modifier.weight(1f).fillMaxSize()) {
-                val storageError by container.storageError.collectAsState()
-                storageError?.let { message ->
-                    Text(message, color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
-                }
+                FailureBar(container)
                 HandoffNoticeBar(container)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxSize()) {
@@ -509,8 +509,57 @@ private fun HandoffNoticeBar(container: AppContainer) {
         delay(HandoffNoticeVisibleMs)
         handoff.dismissNotice(id)
     }
+    TopNoticeSlot(visible = notice != null) {
+        shown?.let { current ->
+            HandoffNoticePill(current.deviceName) { handoff.dismissNotice(current.id) }
+        }
+    }
+}
+
+@Composable
+private fun FailureBar(container: AppContainer) {
+    val failure = container.failures.collectAsState().value.shown
+    var last by remember { mutableStateOf<AppFailure?>(null) }
+    failure?.let { last = it }
+    LaunchedEffect(failure) { AppFailures.holdOnScreen(failure) }
+    TopNoticeSlot(visible = failure != null) {
+        last?.let { FailureNotice(it.message, onDismiss = AppFailures::dismiss) }
+    }
+}
+
+@Composable
+internal fun FailureNotice(message: String, onDismiss: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(LocalSkinTokens.current.rounding.large),
+        color = MaterialTheme.colorScheme.errorContainer,
+        border = BorderStroke(1.dp, LocalKainosPalette.current.hair),
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.ErrorOutline, contentDescription = null, modifier = Modifier.size(20.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp).weight(1f, fill = false),
+            )
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Default.Close, contentDescription = "Dismiss")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TopNoticeSlot(visible: Boolean, content: @Composable () -> Unit) {
     AnimatedVisibility(
-        visible = notice != null,
+        visible = visible,
         modifier = Modifier.fillMaxWidth(),
         enter = expandVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing), expandFrom = Alignment.Top) +
             fadeIn(tween(HandoffNoticeEnterMs, easing = StandardEasing)),
@@ -524,11 +573,7 @@ private fun HandoffNoticeBar(container: AppContainer) {
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
-        ) {
-            shown?.let { current ->
-                HandoffNoticePill(current.deviceName) { handoff.dismissNotice(current.id) }
-            }
-        }
+        ) { content() }
     }
 }
 

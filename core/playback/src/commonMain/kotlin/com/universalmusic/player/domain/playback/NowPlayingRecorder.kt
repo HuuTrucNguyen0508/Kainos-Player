@@ -1,5 +1,6 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -90,7 +91,7 @@ class NowPlayingRecorder(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
-        trace("restore read failed: ${error.message}")
+        AppFailures.report(error)
         null
     }
 

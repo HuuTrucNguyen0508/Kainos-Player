@@ -17,4 +17,23 @@ actual fun playbackTraceInfo(): PlaybackTraceInfo = PlaybackTraceInfo(
 
 actual fun sharePlaybackTrace(): Boolean = false
 
+internal actual fun flushPlaybackTrace() = System.out.flush()
+
+actual fun installCrashLogging() {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    if (previous !is CrashLogHandler) Thread.setDefaultUncaughtExceptionHandler(CrashLogHandler(previous))
+}
+
+private class CrashLogHandler(private val previous: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+    override fun uncaughtException(thread: Thread, cause: Throwable) {
+        logCrash(thread.name, cause)
+        if (previous != null) {
+            previous.uncaughtException(thread, cause)
+        } else {
+            System.err.print("Exception in thread \"${thread.name}\" ")
+            cause.printStackTrace()
+        }
+    }
+}
+
 actual fun clearPlaybackTrace() = Unit

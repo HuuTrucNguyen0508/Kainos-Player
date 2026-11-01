@@ -15,6 +15,7 @@ fun androidContextOrNull(): Context? =
 
 fun initAndroidPlatform(context: Context) {
     androidContext = context.applicationContext
+    installCrashLogging()
 }
 
 actual fun currentTimeMillis(): Long = System.currentTimeMillis()

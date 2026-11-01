@@ -47,7 +47,7 @@ private fun pickWithZenity(): String? {
         ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val stdout = process.inputStream.bufferedReader().readText()
         if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
-    }.getOrNull()
+    }.logged("Local", "folder picker failed").getOrNull()
 }
 
 private fun pickWithKdialog(): String? {
@@ -62,7 +62,7 @@ private fun pickWithKdialog(): String? {
         ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val stdout = process.inputStream.bufferedReader().readText()
         if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
-    }.getOrNull()
+    }.logged("Local", "folder picker failed").getOrNull()
 }
 
 /** Keep the last absolute path-looking line; ignore GTK/tool chatter on stdout. */

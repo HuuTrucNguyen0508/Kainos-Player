@@ -10,6 +10,7 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.platform.defaultLocalMusicFolder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -168,6 +169,8 @@ internal class HomePresenter(
                     onPlayTracks(tracks, 0)
                     onOpenNowPlaying()
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Exception) {
                 actions.update {
                     it.copy(discoverError = failure.message ?: "Could not load Discover Weekly.")
@@ -229,6 +232,8 @@ internal class HomePresenter(
                 } else if (actions.value.pinError == null) {
                     actions.update { it.copy(pinError = "Could not play \"${pin.title}\".") }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Exception) {
                 actions.update { it.copy(pinError = failure.message ?: "Could not play \"${pin.title}\".") }
             } finally {

@@ -27,6 +27,20 @@ actual fun playbackTraceInfo(): PlaybackTraceInfo {
 
 actual fun sharePlaybackTrace(): Boolean = AndroidPlaybackTraceFile.share()
 
+internal actual fun flushPlaybackTrace() = AndroidPlaybackTraceFile.flush()
+
+actual fun installCrashLogging() {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    if (previous !is CrashLogHandler) Thread.setDefaultUncaughtExceptionHandler(CrashLogHandler(previous))
+}
+
+private class CrashLogHandler(private val previous: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+    override fun uncaughtException(thread: Thread, cause: Throwable) {
+        logCrash(thread.name, cause)
+        previous?.uncaughtException(thread, cause)
+    }
+}
+
 actual fun clearPlaybackTrace() = AndroidPlaybackTraceFile.clear()
 
 /**
@@ -116,7 +130,7 @@ internal object AndroidPlaybackTraceFile {
     }
 
     /** Waits for queued lines so a share never hands off a file missing the last seconds. */
-    private fun flush() {
+    fun flush() {
         runCatching { writer.submit {}.get(2, TimeUnit.SECONDS) }
     }
 

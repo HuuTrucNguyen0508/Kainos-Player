@@ -8,6 +8,7 @@ import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.FileMetadataCacheDisk
 import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.MetadataArtworkCache
+import com.universalmusic.player.data.cache.readBoundedArtwork
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.db.DbKainosPlaylistStore
 import com.universalmusic.player.data.db.DbListeningExchangeStore
@@ -17,6 +18,8 @@ import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.JvmLegacyJsonSource
 import com.universalmusic.player.data.db.KainosDatabase
 import com.universalmusic.player.data.db.KainosStorage
+import com.universalmusic.player.data.db.storageRead
+import com.universalmusic.player.data.db.storageWrite
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -25,6 +28,9 @@ import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.settings.decodeAppSettings
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.StorageFailure
 import com.universalmusic.player.domain.model.ProviderId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.ktor.client.HttpClient
@@ -114,10 +120,8 @@ private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
     URI(url).toURL().openConnection().apply {
         connectTimeout = 10_000
         readTimeout = 15_000
-    }.getInputStream().use { input ->
-        input.readBytes()
-    }
-}.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
+    }.getInputStream().use { readBoundedArtwork(it::read) }
+}.getOrNull()
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = DbLocalLibraryScanCache(kainosStorage)
 
@@ -154,19 +158,19 @@ internal class FileTokenStore(private val path: Path) : TokenStore {
     override suspend fun write(provider: ProviderId, tokens: AuthTokens) = mutex.withLock {
         val all = readAll().toMutableMap()
         all[provider.name] = tokens
-        writeAtomicOwnerOnly(path, json.encodeToString(all))
+        storageWrite(StorageArea.TOKENS) { writeAtomicOwnerOnly(path, json.encodeToString(all)) }
     }
 
     override suspend fun clear(provider: ProviderId) = mutex.withLock {
         val all = readAll().toMutableMap()
         if (all.remove(provider.name) != null || path.exists()) {
-            writeAtomicOwnerOnly(path, json.encodeToString(all))
+            storageWrite(StorageArea.TOKENS) { writeAtomicOwnerOnly(path, json.encodeToString(all)) }
         }
     }
 
     private fun readAll(): Map<String, AuthTokens> {
         if (!path.exists()) return emptyMap()
-        return readOrQuarantine(path) { json.decodeFromString<Map<String, AuthTokens>>(it) } ?: emptyMap()
+        return readOrQuarantine(path, StorageArea.TOKENS) { json.decodeFromString<Map<String, AuthTokens>>(it) } ?: emptyMap()
     }
 }
 
@@ -181,11 +185,11 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
 
     override suspend fun read(): AppSettings = mutex.withLock {
         if (!path.exists()) return@withLock AppSettings()
-        readOrQuarantine(path, ::decodeAppSettings) ?: AppSettings()
+        storageRead(StorageArea.SETTINGS) { readOrQuarantine(path, StorageArea.SETTINGS, ::decodeAppSettings) } ?: AppSettings()
     }
 
     override suspend fun write(settings: AppSettings) = mutex.withLock {
-        writeAtomicOwnerOnly(path, json.encodeToString(settings))
+        storageWrite(StorageArea.SETTINGS) { writeAtomicOwnerOnly(path, json.encodeToString(settings)) }
     }
 }
 
@@ -194,12 +198,13 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
  * evidence) and returns null so the caller falls back to defaults.
  */
 
-private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
+private fun <T> readOrQuarantine(path: Path, area: StorageArea, decode: (String) -> T): T? {
     val text = try {
         path.readText()
     } catch (e: java.io.IOException) {
         // Unreadable (not malformed): leave the file alone.
         System.err.println("WARN Kainos: could not read $path (${e.message}); using defaults")
+        AppFailures.report(StorageFailure(area, e))
         return null
     }
     val failure = try {
@@ -210,9 +215,10 @@ private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
     val quarantine = path.resolveSibling("${path.fileName}.corrupt-${System.currentTimeMillis()}")
     val moved = runCatching { Files.move(path, quarantine) }.isSuccess
     System.err.println(
-        "WARN Kainos: could not read $path (${failure::class.simpleName}: ${failure.message}); " +
+        "WARN Kainos: could not read $path (${failure::class.simpleName}); " +
             if (moved) "moved it to ${quarantine.fileName} and using defaults" else "using defaults",
     )
+    AppFailures.report(StorageFailure(area, failure))
     return null
 }
 

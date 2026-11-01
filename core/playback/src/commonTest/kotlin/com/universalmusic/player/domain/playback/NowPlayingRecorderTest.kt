@@ -10,7 +10,12 @@ import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.domain.continuation.QueueContinuation
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.StorageFailure
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.AudioQuality
@@ -44,6 +49,24 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NowPlayingRecorderTest {
+    @Test
+    fun failedRestoreShowsTheStorageMessageInsteadOfASilentlyEmptyQueue() = runTest {
+        AppFailures.dismiss()
+        val recorder = NowPlayingRecorder(
+            store = object : ListeningStore by FakeListeningStore() {
+                override suspend fun readRestore(): ListeningRestore =
+                    throw StorageFailure(StorageArea.LISTENING, IllegalStateException("database is locked"))
+            },
+            scope = backgroundScope,
+        )
+        assertEquals(null, recorder.readRestore())
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        AppFailures.dismiss()
+    }
+
     @Test
     fun cancellingRestoredStartupPreservesTheDeferredPositionForNextPlay() = runTest {
         val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))

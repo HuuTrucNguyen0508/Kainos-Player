@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.local
 
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.data.sync.localKeyHeartContentKey
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.AlbumRef
@@ -171,7 +172,7 @@ class LocalMusicProvider(
     private suspend fun persistScanned() {
         val snapshot = scanned.value
         if (snapshot.isEmpty()) return
-        runCatching { cache?.write(configKey(), snapshot) }
+        runCatching { cache?.write(configKey(), snapshot) }.logged("Local", "scan snapshot write failed")
     }
 
     /** Load cache for the current config key, if any. */

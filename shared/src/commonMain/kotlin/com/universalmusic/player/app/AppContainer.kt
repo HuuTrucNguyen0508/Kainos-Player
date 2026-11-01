@@ -44,6 +44,7 @@ import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.continuation.SourceRadio
 import com.universalmusic.player.domain.continuation.planSearchPlayback
+import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
@@ -87,6 +88,7 @@ import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
 import com.universalmusic.player.platform.createLocalTrackSource
@@ -128,15 +130,9 @@ class AppContainer(
     httpClient: io.ktor.client.HttpClient? = null,
     private val startupMark: (String) -> Unit = {},
 ) {
-    val storageError = com.universalmusic.player.data.db.StorageErrors.message
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default +
-        kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> com.universalmusic.player.data.db.StorageErrors.report() })
+    val failures = AppFailures.open
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + AppFailures.handler)
 
-    private suspend fun storageStep(block: suspend () -> Unit) {
-        try { block() }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { com.universalmusic.player.data.db.StorageErrors.report() }
-    }
     private val defaults: AppConfig = loadAppConfig()
     var config: AppConfig = defaults
         private set
@@ -438,7 +434,7 @@ class AppContainer(
                 }
         }
         scope.launch {
-            storageStep {
+            AppFailures.reporting {
                 val raw = settingsStore.read()
                 val loaded = migrateLocalLibrarySettings(raw)
                 if (loaded != raw) settingsStore.write(loaded)
@@ -452,16 +448,16 @@ class AppContainer(
                 applyProviderSettings(loaded, clearSessionOnChange = false)
             }
             startupMark("library_load_begin")
-            storageStep { library.load(spotify.currentUserId()) }
+            AppFailures.reporting { library.load(spotify.currentUserId()) }
             startupMark("library_load_end")
-            storageStep { kainosPlaylists.load() }
+            AppFailures.reporting { kainosPlaylists.load() }
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
             heartedAudio.enqueueMissing(hearted)
-            runCatching { local.hydrateFromCache() }
+            AppFailures.reporting { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            storageStep { player.initializePersistence() }
+            AppFailures.reporting { player.initializePersistence() }
             _ready.value = true
             foreground.onReady {
                 foregroundHandoff.onForeground()
@@ -654,7 +650,8 @@ class AppContainer(
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }.getOrNull()
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
+            .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
         if (fromLibrespot != null) return fromLibrespot
         return findDiscoverWeekly(playlists)
     }
@@ -667,9 +664,10 @@ class AppContainer(
         if (cached?.source?.providerEntityId == id && cached.tracks.isNotEmpty()) {
             return cached.tracks
         }
-        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.getOrElse { emptyList() }
-        if (webTracks.isNotEmpty()) return webTracks
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }.getOrNull()
+        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
+        webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
+            .logged("Spotify", "playlist load through librespot failed").getOrNull()
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
             if (cached?.source?.providerEntityId == id || configured == id) {
@@ -677,7 +675,7 @@ class AppContainer(
             }
             return fromLibrespot.tracks
         }
-        return emptyList()
+        return webTracks.getOrThrow()
     }
 
     private var volumePersistJob: Job? = null
@@ -709,13 +707,13 @@ class AppContainer(
 
     /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     suspend fun flushListeningSession() {
-        storageStep { library.flush() }
-        storageStep { kainosPlaylists.flush() }
+        AppFailures.reporting { library.flush() }
+        AppFailures.reporting { kainosPlaylists.flush() }
         when (val result = player.flushPersistence()) {
             is FlushResult.Committed -> result.exportUnavailable?.let {
                 PlaybackTrace.log("Recorder", "flushed; local listening export unavailable: $it")
             }
-            is FlushResult.Failed -> PlaybackTrace.log("Recorder", "flush failed: ${result.cause.message}")
+            is FlushResult.Failed -> AppFailures.report(result.cause)
         }
     }
 
@@ -740,10 +738,8 @@ class AppContainer(
                 if (failure is CancellationException) throw failure
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"
             }
-        runCatching { local.enrichContentKeys() }
-            .onFailure { if (it is CancellationException) throw it }
-        runCatching { local.enrichEmbeddedArtwork() }
-            .onFailure { if (it is CancellationException) throw it }
+        runCatching { local.enrichContentKeys() }.logged("Local", "content key pass failed")
+        runCatching { local.enrichEmbeddedArtwork() }.logged("Local", "embedded artwork pass failed")
     }
 
     /**
