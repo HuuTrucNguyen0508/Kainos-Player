@@ -17,67 +17,45 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.ProviderState
-import com.universalmusic.player.platform.defaultLocalMusicFolder
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.theme.Accents
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.supportsMusicFolderPicker
 
 @Composable
-internal fun SettingsFoldersSection(presenter: SettingsFoldersPresenter) {
+internal fun SettingsFoldersSection(
+    presenter: SettingsFoldersPresenter,
+    readiness: SourceReadiness,
+    onRecheck: () -> Unit,
+) {
     val ui by presenter.state.collectAsState()
     val settings = ui.settings
     val local = ui.local
     val localFolders = ui.folders
     val localLibraryMessage = ui.message
     val pinnedFolders = ui.pinnedFolders
-    val usingDefaultFolder = !settings.localMusicFoldersConfigured
     val canPickFolders = supportsMusicFolderPicker()
-        Text("Music sources", style = MaterialTheme.typography.titleMedium)
-        ProviderAccountRow(
-            name = "Local library",
-            state = local,
-            configured = true,
-            connected = local == ProviderState.AVAILABLE,
-            onConnect = presenter::refresh,
-            onDisconnect = {},
-            showButtons = false,
-            detail = if (canPickFolders) {
-                buildString {
-                    append("${ui.trackCount} tracks in your music folders.")
-                    if (usingDefaultFolder && defaultLocalMusicFolder().isNotBlank()) {
-                        append(" Using the default Music folder until you add folders.")
-                    } else if (settings.localMusicFoldersConfigured && settings.localMusicFolders.isEmpty()) {
-                        append(" No folders selected — nothing is indexed from disk.")
-                    }
-                    localLibraryMessage?.let { append(" $it") }
-                }
-            } else {
-                "${ui.trackCount} tracks."
-            },
-        )
+    val addFolderFocus = remember { FocusRequester() }
+    SectionRule(
+        MusicSource.Local.title,
+        accent = Accents.local,
+        trailing = { SourceStatusMark(readiness) },
+    )
+    SettingsSpot(SettingsTarget.MusicFolders, focus = addFolderFocus) {
+        SetupNote(readiness.detail)
         if (canPickFolders) {
-            Text("Music folders", style = MaterialTheme.typography.labelLarge)
-            if (usingDefaultFolder) {
-                Text(
-                    "Using the default Music folder until you add or change folders.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (localFolders.isEmpty()) {
-                Text(
-                    "No folders selected. Local files will not appear until you add a folder.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             localLibraryMessage?.let { message ->
                 Text(
                     message,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    color = if (local == ProviderState.UNAVAILABLE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             localFolders.forEach { folder ->
@@ -119,7 +97,7 @@ internal fun SettingsFoldersSection(presenter: SettingsFoldersPresenter) {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = presenter::addFolder) {
+                Button(onClick = presenter::addFolder, modifier = Modifier.focusRequester(addFolderFocus)) {
                     Text("Add folder")
                 }
                 OutlinedButton(onClick = presenter::refresh, enabled = local != ProviderState.LOADING) {
@@ -152,5 +130,17 @@ internal fun SettingsFoldersSection(presenter: SettingsFoldersPresenter) {
                 Text(if (local == ProviderState.LOADING) "Scanning…" else "Refresh local library")
             }
         }
-
+    }
+    val needs = readiness.needs
+    if (SourceNeed.AudioPlayer in needs) {
+        val recheckFocus = remember { FocusRequester() }
+        SettingsSpot(SettingsTarget.AudioPlayer, focus = recheckFocus) {
+            Text("Install mpv", style = MaterialTheme.typography.titleSmall)
+            SetupNote(
+                "Kainos plays local files and YouTube through mpv. Install it with your package manager, " +
+                    "for example sudo pacman -S mpv or sudo apt install mpv.",
+            )
+            OutlinedButton(onClick = onRecheck, modifier = Modifier.focusRequester(recheckFocus)) { Text("Check again") }
+        }
+    }
 }

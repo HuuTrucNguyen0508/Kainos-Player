@@ -6,7 +6,6 @@ import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.settings.AppSettings
-import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 import com.universalmusic.player.data.sync.HomeLanSyncController
 import com.universalmusic.player.data.sync.HomeLanTrust
@@ -32,7 +31,6 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.AuthSession
 import com.universalmusic.player.platform.SpotifyWebPlaybackState
 import com.universalmusic.player.platform.authenticateSpotify
-import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,8 +133,8 @@ internal data class ProviderActionState(
     val busy: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
-    val devices: List<SpotifyConnectDevice> = emptyList(),
-    val devicesLoaded: Boolean = false,
+    /** Where the action was started, which is where its result belongs. Null for the connected-account tools. */
+    val spot: SettingsTarget? = null,
 )
 
 internal class SettingsConnectPresenter(
@@ -153,7 +151,6 @@ internal class SettingsConnectPresenter(
     private val beginLogin: suspend () -> AuthSession,
     private val completeLogin: suspend (String) -> Unit,
     private val disconnectAccount: suspend () -> Unit,
-    private val loadDevices: suspend () -> List<SpotifyConnectDevice>,
     private val prepareReceiver: suspend () -> Boolean,
     private val refresh: suspend () -> Unit,
     private val scope: CoroutineScope,
@@ -169,9 +166,9 @@ internal class SettingsConnectPresenter(
     ) { base, loading, error, operation -> base.copy(libraryLoading = loading, libraryError = error, action = operation) }
         .stateIn(scope, SharingStarted.Eagerly, base())
 
-    private fun perform(operation: suspend () -> String?) {
+    private fun perform(spot: SettingsTarget? = null, operation: suspend () -> String?) {
         if (action.value.busy || !ready.value) return
-        action.update { it.copy(busy = true, error = null, notice = null) }
+        action.update { it.copy(busy = true, error = null, notice = null, spot = spot) }
         scope.launch {
             try {
                 val notice = operation()
@@ -186,13 +183,17 @@ internal class SettingsConnectPresenter(
         }
     }
 
-    fun saveCredentials(clientId: String, apiKey: String) = perform {
-        updateSettings { it.copy(spotifyClientId = clientId.trim().takeIf(String::isNotBlank),
-            youtubeDataApiKey = apiKey.trim().takeIf(String::isNotBlank)) }
-        "Provider settings saved."
+    fun saveSpotifyClientId(clientId: String) = perform(SettingsTarget.SpotifyClientId) {
+        updateSettings { it.copy(spotifyClientId = clientId.trim().takeIf(String::isNotBlank)) }
+        "Client ID saved."
     }
 
-    fun connect() = perform {
+    fun saveYouTubeKey(apiKey: String) = perform(SettingsTarget.YouTubeKey) {
+        updateSettings { it.copy(youtubeDataApiKey = apiKey.trim().takeIf(String::isNotBlank)) }
+        "API key saved."
+    }
+
+    fun connect() = perform(SettingsTarget.SpotifySignIn) {
         val login = beginLogin()
         val redirect = authenticateSpotify(login.authorizationUrl, login.redirectScheme)
         if (redirect == null) "Finish signing in in your browser to connect Spotify."
@@ -204,31 +205,8 @@ internal class SettingsConnectPresenter(
         }
     }
 
-    fun disconnect() = perform { disconnectAccount(); null }
-    fun openSpotify() = perform {
-        check(ensureSpotifyConnectClientAvailable()) {
-            "Install the Spotify app to use this phone as a Connect device, or pick another online device below."
-        }
-        "Spotify opened. Sign in if needed, then refresh devices and select this phone."
-    }
-
-    fun refreshDevices() = perform {
-        val devices = loadDevices()
-        action.update { it.copy(devices = devices, devicesLoaded = true) }
-        val selected = settings.value.spotifyPlaybackDeviceId
-        if (selected != null && devices.none { it.id == selected }) {
-            updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
-            "Previous Spotify device went offline. Select another device below."
-        } else if (devices.isEmpty()) "No Connect devices yet. Open Spotify somewhere, then refresh."
-        else "${devices.size} Spotify device${if (devices.size == 1) "" else "s"} found."
-    }
-
-    fun selectDevice(device: SpotifyConnectDevice) = perform {
-        updateSettings { it.copy(spotifyPlaybackDeviceId = device.id, spotifyPlaybackDeviceName = device.name) }
-        "Spotify will play on ${device.name}."
-    }
-
-    fun setupReceiver() = perform {
+    fun disconnect() = perform(SettingsTarget.SpotifySignIn) { disconnectAccount(); null }
+    fun setupReceiver() = perform(SettingsTarget.SpotifyPlayback) {
         check(prepareReceiver()) {
             (playback.value as? SpotifyWebPlaybackState.Failed)?.reason?.let(::spotifyPlaybackFailureMessage)
                 ?: "Spotify receiver setup failed. Try setup again."
@@ -250,7 +228,6 @@ internal class SettingsConnectPresenter(
             container.spotifyWebPlayback.state, container.spotifyLibraryLoading, container.spotifyLibraryError,
             { container.config }, !container.spotifyWebPlayback.requiresStreamingScope, container::updateSettings,
             container.spotify::beginLogin, container.spotify::completeLogin, container::disconnectSpotify,
-            container.spotify::getConnectDevices,
             { container.spotifyWebPlayback.prepareAuthentication() != null }, container::refreshSpotifyLibrary, scope,
         )
     }
