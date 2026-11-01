@@ -627,42 +627,48 @@ class DesktopPlaybackEngine internal constructor(
                 startSeconds > 0 || targetStatus == EngineStatus.PAUSED
             }
             if (active.gapless) {
-                sendIpcIfActive(active, """["set_property","volume",$volumePercent]""")
-                if (targetStatus == EngineStatus.PAUSED) {
-                    check(sendIpcIfActive(active, """["set_property","pause",true]"""))
-                }
-                val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
-                synchronized(lifecycleLock) {
-                    if (activeProcess !== active) { events.close(); return@withContext false }
-                    active.events = events
-                }
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        while (true) {
-                            val line = events.readLine() ?: break
-                            synchronized(lifecycleLock) { enqueueIpcLocked { handleMpvEvent(active, line) } }
-                        }
-                    } catch (_: Exception) {
-                        // Closing the channel during stop wakes this blocking reader.
-                    } finally {
-                        synchronized(lifecycleLock) {
-                            if (activeProcess === active && active.process.isAlive) {
-                                publishState(_state.value.copy(status = EngineStatus.FAILED,
-                                    retryAtPositionMs = _state.value.positionMs,
-                                    error = "Player event connection lost"))
+                try {
+                    sendIpcIfActive(active, """["set_property","volume",$volumePercent]""")
+                    if (targetStatus == EngineStatus.PAUSED) {
+                        check(sendIpcIfActive(active, """["set_property","pause",true]"""))
+                    }
+                    val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
+                    synchronized(lifecycleLock) {
+                        if (activeProcess !== active) { events.close(); return@withContext false }
+                        active.events = events
+                    }
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            while (true) {
+                                val line = events.readLine() ?: break
+                                synchronized(lifecycleLock) { enqueueIpcLocked { handleMpvEvent(active, line) } }
+                            }
+                        } catch (_: Exception) {
+                            // Closing the channel during stop wakes this blocking reader.
+                        } finally {
+                            synchronized(lifecycleLock) {
+                                if (activeProcess === active && active.process.isAlive) {
+                                    publishState(_state.value.copy(status = EngineStatus.FAILED,
+                                        retryAtPositionMs = _state.value.positionMs,
+                                        error = "Player event connection lost"))
+                                }
                             }
                         }
                     }
+                    check(awaitIpc {
+                        // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                        val id = runtime.loadEntry(
+                            """{"name":"loadfile","url":${Json.encodeToString(url)},"flags":"replace","options":{"start":"$startSeconds"}}""",
+                            active.socket,
+                        )
+                        synchronized(lifecycleLock) { active.entryId = id }
+                        id != null
+                    })
+                } catch (failure: IllegalStateException) {
+                    // A newer play or stop replaced this process mid-setup, so its failure means nothing.
+                    if (isActiveProcess(active)) throw failure
+                    return@withContext false
                 }
-                check(awaitIpc {
-                    // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
-                    val id = runtime.loadEntry(
-                        """{"name":"loadfile","url":${Json.encodeToString(url)},"flags":"replace","options":{"start":"$startSeconds"}}""",
-                        active.socket,
-                    )
-                    synchronized(lifecycleLock) { active.entryId = id }
-                    id != null
-                })
             }
             if (!needsIpc) return@withContext true
             awaitIpc {
