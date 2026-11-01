@@ -11,13 +11,12 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import java.io.File
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.exists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -67,15 +66,8 @@ private suspend fun runLibrespotHelper(mode: String?): LibrespotDiscoverOut = wi
         add(credentials.toAbsolutePath().toString())
         mode?.let { add(it) }
     }
-    val process = ProcessBuilder(command)
-        .redirectError(ProcessBuilder.Redirect.DISCARD)
-        .start()
-    val stdout = process.inputStream.readBytes().toString(StandardCharsets.UTF_8).trim()
-    if (!process.waitFor(90, TimeUnit.SECONDS)) {
-        process.destroyForcibly()
-        error("librespot helper timed out")
-    }
-    check(stdout.isNotEmpty()) { "librespot helper exited ${process.exitValue()} without output" }
+    val stdout = runInterruptible { ProcessBuilder(command).readOutputWithin(90_000) }?.trim()
+        ?.takeIf { it.isNotEmpty() } ?: error("librespot helper failed or timed out")
     discoverJson.decodeFromString<LibrespotDiscoverOut>(stdout)
 }
 

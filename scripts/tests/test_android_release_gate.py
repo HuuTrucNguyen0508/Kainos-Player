@@ -66,6 +66,14 @@ class GateTest(unittest.TestCase):
             xml.write_text('<testsuite tests="3" failures="1" errors="1" skipped="1"/>')
             self.assertEqual(gate.junit_counts(Path(temporary)), (3, 2, 1))
 
+    def test_connected_requires_executed_tests(self):
+        from unittest.mock import patch
+        for total, skipped, expected in ((0, 0, False), (3, 3, False), (3, 2, True), (3, 0, True)):
+            with self.subTest(total=total, skipped=skipped), tempfile.TemporaryDirectory() as temporary:
+                run = gate.Gate(type("Args", (), {"max_workers": 6, "serial": "emulator-5554"})(), Path(temporary), Path(temporary))
+                with patch.object(run, "execute", return_value=(True, "test.log")), patch.object(gate, "junit_counts", return_value=(total, 0, skipped)), patch.object(gate.shutil, "rmtree"):
+                    self.assertEqual(run.connected("stage", "PlaybackTest"), expected)
+
     def test_only_a_clean_run_passes(self):
         def outcome(*statuses):
             run = type("Run", (), {"rows": [gate.Row("x", status, 0, "") for status in statuses]})

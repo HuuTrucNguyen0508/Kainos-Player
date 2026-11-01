@@ -28,12 +28,22 @@ private class CrashLogHandler(private val previous: Thread.UncaughtExceptionHand
     override fun uncaughtException(thread: Thread, cause: Throwable) {
         logCrash(thread.name, cause)
         if (previous != null) {
-            previous.uncaughtException(thread, cause)
+            previous.uncaughtException(thread, redactedCrash(cause))
         } else {
             System.err.print("Exception in thread \"${thread.name}\" ")
-            cause.printStackTrace()
+            redactedCrash(cause).printStackTrace()
         }
     }
 }
 
 actual fun clearPlaybackTrace() = Unit
+
+private fun redactedCrash(cause: Throwable): Throwable {
+    if (cause is ThreadDeath) return cause
+    val trace = redactCredentials(cause.stackTraceToString())
+    return object : Throwable(redactCredentials(cause.message.orEmpty())) {
+        override fun toString(): String = trace.lineSequence().first()
+        override fun printStackTrace(stream: java.io.PrintStream) = stream.print(trace)
+        override fun printStackTrace(writer: java.io.PrintWriter) = writer.print(trace)
+    }
+}

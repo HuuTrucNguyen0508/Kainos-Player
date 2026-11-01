@@ -82,6 +82,7 @@ internal class HomePresenter(
     private val unpinHome: (String) -> Unit,
     private val pinSuggestionHome: (PinSuggestion) -> Unit,
     private val scope: CoroutineScope,
+    private val retryLocal: () -> Unit = {},
 ) {
     // Home reads track and play state only. Position ticks must not rebuild the landing page.
     private val stableNow = nowPlaying
@@ -116,6 +117,8 @@ internal class HomePresenter(
     ) { library, providers, catalog, playback ->
         derive(library, providers, catalog, playback)
     }.stateIn(scope, SharingStarted.Eagerly, snapshot())
+
+    fun retryLocalLibrary() = retryLocal()
 
     fun pickMusicFolder() = pickFolder()
 
@@ -392,6 +395,7 @@ internal class HomePresenter(
             ready = container.ready,
             sources = SourcesPresenter.from(container, scope).state,
             pickFolder = container::addLocalMusicFolderFromPicker,
+            retryLocal = container::refreshLocalLibrary,
             defaultMusicFolder = ::defaultLocalMusicFolder,
             tracksInLocalFolder = container::tracksInLocalFolder,
             loadSpotifyPlaylistTracks = container::loadSpotifyPlaylistTracks,

@@ -14,6 +14,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocalMusicProviderTest {
+    @Test fun emptyScanReplacesTheDiskSnapshotSoRemovedFoldersStayRemovedAfterRestart() = runTest {
+        val cache = InMemoryScanCache()
+        var tracks = listOf(localTrack("removed", "Removed"))
+        val provider = LocalMusicProvider(LocalTrackSource { tracks }, cache, { "config" })
+        provider.refresh()
+        tracks = emptyList()
+        provider.refresh()
+        val restarted = LocalMusicProvider(LocalTrackSource { emptyList() }, cache, { "config" })
+        restarted.hydrateFromCache()
+        assertTrue(restarted.libraryTracks.value.isEmpty())
+        assertEquals(emptyList(), cache.read("config"))
+    }
+
     @Test
     fun keysReuseOnlyUnchangedFingerprintsAndReachPersistedMetadata() = runTest {
         var snapshot = listOf(LocalTrack("key", "Track", location = "/track", contentLength = 8, fileModifiedEpochMs = 1))

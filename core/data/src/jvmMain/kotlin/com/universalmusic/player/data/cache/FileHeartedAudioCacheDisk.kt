@@ -116,7 +116,7 @@ class FileHeartedAudioCacheDisk(
             }
             Files.deleteIfExists(normalized)
         }.onFailure { error ->
-            System.err.println("Hearted audio cache skipped delete '$normalized': ${error.message}")
+            com.universalmusic.player.platform.PlaybackTrace.log("Warning", "Hearted audio cache skipped delete '$normalized': ${error.message}")
         }
     }
 

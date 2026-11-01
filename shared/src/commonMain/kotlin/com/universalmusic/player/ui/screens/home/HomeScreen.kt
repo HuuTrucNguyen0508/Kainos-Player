@@ -70,11 +70,13 @@ internal fun HomeContent(
             LibraryDoor.FAVORITES -> presenter.playFavorites(onOpenNowPlaying = onOpenNowPlaying)
             LibraryDoor.SETTINGS -> line.settingsTarget?.let(onOpenSettings)
             LibraryDoor.SEARCH -> onOpenSearch()
+            LibraryDoor.RETRY_LOCAL -> presenter.retryLocalLibrary()
             LibraryDoor.PICK_FOLDER -> presenter.pickMusicFolder()
         }
     }
     val act: (SourceAction) -> Unit = { action ->
         when (action) {
+            SourceAction.RetryLocal -> presenter.retryLocalLibrary()
             SourceAction.PickMusicFolder -> presenter.pickMusicFolder()
             SourceAction.OpenLibrary -> onOpenLibrary()
             SourceAction.OpenSearch -> onOpenSearch()

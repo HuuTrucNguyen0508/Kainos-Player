@@ -4,6 +4,8 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.app.SourceTools
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.data.local.LocalScanResult
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.SpotifyReceiverSetup
@@ -59,6 +61,7 @@ internal sealed interface SourceStatus {
 }
 
 internal sealed interface SourceAction {
+    data object RetryLocal : SourceAction
     data object PickMusicFolder : SourceAction
     data object OpenLibrary : SourceAction
     data object OpenSearch : SourceAction
@@ -87,6 +90,7 @@ internal data class SourceFacts(
     val folderPicker: Boolean,
     val spotify: ProviderState,
     val youtube: ProviderState,
+    val localScan: LocalScanResult? = null,
 )
 
 internal fun sourceReadiness(facts: SourceFacts): List<SourceReadiness> =
@@ -100,7 +104,10 @@ private fun pickFolderStep(facts: SourceFacts) = SourceStep(
 private fun localReadiness(facts: SourceFacts): SourceReadiness {
     val here = if (facts.desktop) "this computer" else "this phone"
     val player = if (facts.tools.audioPlayer) emptyList() else listOf(SourceNeed.AudioPlayer)
-    val folderName = facts.musicFolders.lastOrNull()?.let(::folderPinDisplayName)
+    val missingFolders = facts.localScan?.unavailableRoots ?: facts.musicFolders
+    val folderName = facts.musicFolders.lastOrNull()
+        ?.takeUnless { facts.localScan?.readableRootCount == 0 && facts.localScan.unavailableRoots.isEmpty() }
+        ?.let(::folderPinDisplayName)
     fun readiness(status: SourceStatus, label: String, detail: String, step: SourceStep?) =
         SourceReadiness(MusicSource.Local, status, label, detail, step)
     return when {
@@ -113,14 +120,21 @@ private fun localReadiness(facts: SourceFacts): SourceReadiness {
         facts.local == ProviderState.UNAVAILABLE -> readiness(
             SourceStatus.Trouble,
             "Could not read",
-            "Kainos could not read your music folders.",
-            SourceStep("Check music folders", SourceAction.OpenSettings(SettingsTarget.MusicFolders)),
+            if (missingFolders.isEmpty()) "Kainos could not read your music folders. Check folder access and retry."
+            else "Cannot read music folders: ${missingFolders.joinToString { folderPinDisplayName(it) }}. Reconnect the drive or check folder access, then retry.",
+            SourceStep("Retry", SourceAction.RetryLocal),
         )
         facts.localTrackCount > 0 && player.isNotEmpty() -> readiness(
             SourceStatus.NeedsSetup(player),
             "Needs mpv",
             "${songs(facts.localTrackCount)} found. Kainos plays them through mpv, which is not installed.",
             SourceStep("Install mpv", SourceAction.OpenSettings(SettingsTarget.AudioPlayer)),
+        )
+        facts.local != ProviderState.LOADING && facts.localScan?.unavailableRoots?.isNotEmpty() == true && facts.localScan.readableRootCount > 0 -> readiness(
+            SourceStatus.Ready,
+            "Folder disconnected",
+            "Some music folders are unavailable: ${facts.localScan.unavailableRoots.joinToString { folderPinDisplayName(it) }}. Other folders are up to date. Reconnect or restore folder access, then retry.",
+            SourceStep("Retry", SourceAction.RetryLocal),
         )
         facts.localTrackCount > 0 -> readiness(
             SourceStatus.Ready,
@@ -272,10 +286,11 @@ internal class SourcesPresenter(
     private val defaultMusicFolder: () -> String,
     private val recheckTools: () -> Unit,
     scope: CoroutineScope,
+    localScan: StateFlow<LocalScanResult?> = MutableStateFlow(null),
 ) {
     val state: StateFlow<List<SourceReadiness>> = combine(
-        combine(settings, tools, local, tracks) { prefs, installed, localState, catalog ->
-            DeviceFacts(prefs, installed, localState, catalog)
+        combine(settings, tools, local, tracks, localScan) { prefs, installed, localState, catalog, scan ->
+            DeviceFacts(prefs, installed, localState, catalog, scan)
         },
         spotify,
         youtube,
@@ -283,7 +298,7 @@ internal class SourcesPresenter(
         .stateIn(
             scope,
             SharingStarted.Eagerly,
-            derive(DeviceFacts(settings.value, tools.value, local.value, tracks.value), spotify.value, youtube.value),
+            derive(DeviceFacts(settings.value, tools.value, local.value, tracks.value, localScan.value), spotify.value, youtube.value),
         )
 
     fun recheck() = recheckTools()
@@ -294,6 +309,7 @@ internal class SourcesPresenter(
             tools = device.tools,
             local = device.local,
             localTrackCount = device.tracks.size,
+            localScan = device.scan,
             musicFolders = configuredMusicFolders(
                 device.settings.localMusicFolders,
                 device.settings.localMusicFoldersConfigured,
@@ -310,6 +326,7 @@ internal class SourcesPresenter(
         val tools: SourceTools,
         val local: ProviderState,
         val tracks: List<Track>,
+        val scan: LocalScanResult?,
     )
 
     companion object {
@@ -318,6 +335,7 @@ internal class SourcesPresenter(
             tools = container.sourceTools,
             local = container.local.state,
             tracks = container.local.libraryTracks,
+            localScan = container.local.scanResult,
             spotify = container.spotify.state,
             youtube = container.youtube.state,
             desktop = platformLabel() != "Android",

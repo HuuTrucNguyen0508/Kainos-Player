@@ -52,11 +52,10 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
                 return (packed ushr 36).toString() // sample rate, channels and bit depth, freshly read
             }
             val probe = findOnPath("ffprobe") ?: return null
-            val process = ProcessBuilder(probe, "-v", "error", "-select_streams", "a:0",
+            return ProcessBuilder(probe, "-v", "error", "-select_streams", "a:0",
                 "-show_entries", "stream=sample_rate,channels,sample_fmt", "-of", "csv=p=0", path)
-                .redirectErrorStream(true).start()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) { process.destroyForcibly(); return null }
-            return process.inputStream.bufferedReader().readText().trim().takeIf { process.exitValue() == 0 && it.isNotEmpty() }
+                .readOutputWithin(5_000)?.trim()?.takeIf { it.isNotEmpty() }
+
         }
         return runCatching { val first = format(current); first != null && first == format(next) }.getOrDefault(false)
     }
@@ -84,20 +83,13 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         }
         val ffprobe = findOnPath("ffprobe") ?: return null
         return runCatching {
-            val process = ProcessBuilder(
+            val output = ProcessBuilder(
                 ffprobe,
                 "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 media,
-            ).redirectErrorStream(true).start()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                process.waitFor(1, TimeUnit.SECONDS)
-                return null
-            }
-            if (process.exitValue() != 0) return null
-            val output = process.inputStream.bufferedReader().readText().trim()
+            ).readOutputWithin(5_000)?.trim() ?: return null
             val seconds = output.lineSequence().firstOrNull()?.toDoubleOrNull() ?: return null
             (seconds * 1000.0).toLong().takeIf { it > 0L }
         }.getOrNull()

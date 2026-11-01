@@ -11,6 +11,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -334,7 +335,7 @@ class DesktopPlaybackEngine internal constructor(
             if (token != transport.requestToken) return
             (transport.handle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
         }
-        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+        val durationMs = runInterruptible(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val active = synchronized(transport.lock) {
             if (token != transport.requestToken) return
