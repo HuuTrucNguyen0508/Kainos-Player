@@ -5,4 +5,11 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
+    <!-- Spotify's storage resolver chooses CDN URLs at runtime, and the audio on them is encrypted. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">scdn.co</domain>
+        <domain includeSubdomains="true">pscdn.co</domain>
+        <domain includeSubdomains="true">spotifycdn.com</domain>
+        <domain includeSubdomains="false">audio-ak-spotify-com.akamaized.net</domain>
+    </domain-config>
 </network-security-config>

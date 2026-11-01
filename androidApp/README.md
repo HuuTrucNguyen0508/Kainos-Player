@@ -109,14 +109,14 @@ debug certificate for that range; it has not been run on such a device.
 ## Network security
 
 `src/main/res/xml/network_security_config.xml` denies cleartext everywhere except
-`127.0.0.1`, which the Spotify OAuth redirects use. Library code has no fixed `http://`
+`127.0.0.1`, which the Spotify OAuth redirects use, and Spotify's audio CDN hosts. Library code has no fixed `http://`
 endpoints: librespot's only literal is that redirect, and NewPipe's are scheme checks.
 `AndroidCleartextPolicyTest` proves the policy with live requests, through both the
 network stack and WebView. It failed as expected when the policy was opened.
 
-Spotify picks its audio CDN URLs at runtime and this was not tested with an account.
-If live playback fails with a `CLEARTEXT` error in logcat, the CDN host needs an
-entry in that file. `http://` artwork URLs now fail quietly and fall back.
+Spotify picks its audio CDN URLs at runtime and the audio on them is encrypted, so
+those hosts are allowed without having been tested on an account. If live playback
+fails with a `CLEARTEXT` error in logcat, the named host needs an entry in that file. `http://` artwork URLs now fail quietly and fall back.
 
 ## Release gate
 
