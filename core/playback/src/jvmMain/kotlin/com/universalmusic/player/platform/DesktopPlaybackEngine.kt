@@ -668,7 +668,7 @@ class DesktopPlaybackEngine internal constructor(
                     synchronized(lifecycleLock) {
                         // A newer play or stop superseded this request, so its failure means nothing.
                         if (token != requestToken) return@withContext false
-                        if (isActiveProcess(active)) throw failure
+                        if (isActiveProcess(active) && active.process.isAlive) throw failure
                         // The watcher stays quiet while paused, so nothing else ends this request.
                         publishState(_state.value.copy(
                             status = EngineStatus.FAILED,
