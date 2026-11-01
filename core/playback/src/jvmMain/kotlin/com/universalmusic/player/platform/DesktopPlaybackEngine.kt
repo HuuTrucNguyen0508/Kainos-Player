@@ -10,7 +10,6 @@ import com.universalmusic.player.domain.playback.PreparedPlayback
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
-import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -22,7 +21,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * In-process desktop playback via headless mpv (no extra window).
- * Pause / resume / seek use mpv's JSON IPC socket.
+ * Pause / resume / seek use mpv's JSON IPC socket. This class owns the mpv process start and
+ * restart decisions and routes Spotify handles to [SpotifyConnectPath].
  */
 class DesktopPlaybackEngine internal constructor(
     spotify: SpotifyPlaybackController,
