@@ -176,14 +176,14 @@ class AndroidHomeLanVaultStore(
         }
 
         override fun create(name: String) {
-            // Non-audio names stay octet-stream: a provider appends the extension of any other
-            // MIME type, which would show a backup in the library as a track.
-            val mime = if (name.substringAfterLast('.', "").lowercase() in VAULT_AUDIO_EXTENSIONS) {
-                mimeForAudioName(name)
-            } else {
-                "application/octet-stream"
+            // Android's FileUtils appends the extension of any MIME type that disagrees with the
+            // name, so song.aac as audio/mp4 lands on another name. Only octet-stream keeps it.
+            val created = DocumentsContract.createDocument(resolver, folderUri, "application/octet-stream", name)
+                ?: error("Cannot create $name in vault")
+            if (find(name) == null) {
+                runCatching { DocumentsContract.deleteDocument(resolver, created) }
+                error("Vault provider did not keep the name $name")
             }
-            DocumentsContract.createDocument(resolver, folderUri, mime, name) ?: error("Cannot create $name in vault")
         }
 
         override fun copy(from: String, to: String) {
