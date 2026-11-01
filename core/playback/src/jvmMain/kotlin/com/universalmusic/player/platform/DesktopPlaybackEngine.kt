@@ -665,8 +665,17 @@ class DesktopPlaybackEngine internal constructor(
                         id != null
                     })
                 } catch (failure: IllegalStateException) {
-                    // A newer play or stop replaced this process mid-setup, so its failure means nothing.
-                    if (isActiveProcess(active)) throw failure
+                    synchronized(lifecycleLock) {
+                        // A newer play or stop superseded this request, so its failure means nothing.
+                        if (token != requestToken) return@withContext false
+                        if (isActiveProcess(active)) throw failure
+                        // The watcher stays quiet while paused, so nothing else ends this request.
+                        publishState(_state.value.copy(
+                            status = EngineStatus.FAILED,
+                            retryAtPositionMs = _state.value.positionMs,
+                            error = "Player process failed",
+                        ))
+                    }
                     return@withContext false
                 }
             }

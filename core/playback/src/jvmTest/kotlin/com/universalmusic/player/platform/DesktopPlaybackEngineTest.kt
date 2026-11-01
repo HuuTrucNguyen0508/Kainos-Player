@@ -191,6 +191,29 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun pausedPlayerDyingDuringSetupFailsInsteadOfBufferingForever() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/first.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.pause()
+            runtime.destroyAll()
+            withTimeout(2_000) { while (runtime.liveUrls().isNotEmpty()) delay(10) }
+            delay(50)
+            val load = runtime.blockNextIpc { it.contains("loadfile") }
+            engine.seekTo(5_000)
+            assertTrue(load.entered.await(2, TimeUnit.SECONDS))
+            runtime.sendIpcResult.set(false)
+            runtime.destroyAll()
+            load.release.countDown()
+            withTimeout(8_000) { while (engine.state.value.status != EngineStatus.FAILED) delay(10) }
+            assertEquals("Player process failed", engine.state.value.error)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun gaplessSwitchPreservesProcessAndRejectsOldEventsAfterRestart() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
