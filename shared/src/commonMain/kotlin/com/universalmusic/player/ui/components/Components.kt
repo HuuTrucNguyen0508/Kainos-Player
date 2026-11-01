@@ -39,6 +39,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import coil3.size.Precision
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.data.cache.TrackAvailability
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
@@ -68,13 +71,18 @@ fun ArtworkImage(
     modifier: Modifier = Modifier,
     seed: String = contentDescription,
     shape: Shape = artShape(),
+    precision: Precision? = null,
 ) {
     // Failed Coil loads used to leave a blank area; letter tile is only for null Artwork.
     // Treat load errors like missing art so Now Playing never shows an empty square.
     var loadFailed by remember(artwork?.url) { mutableStateOf(false) }
     if (artwork != null && !loadFailed) {
+        val context = LocalPlatformContext.current
+        val model = if (precision == null) artwork.url else remember(artwork.url, context, precision) {
+            ImageRequest.Builder(context).data(artwork.url).precision(precision).build()
+        }
         AsyncImage(
-            model = artwork.url,
+            model = model,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = modifier.clip(shape),
