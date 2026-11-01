@@ -74,3 +74,11 @@ class NowPlayingPaneStateTest {
         }
     }
 }
+
+class NowPlayingPaneFirstRunTest {
+    @Test fun thePaneWaitsForTheFirstTrackWithoutChangingTheListenersChoice() {
+        assertFalse(nowPlayingPaneShown(expanded = true, nothingEverPlayed = true))
+        assertTrue(nowPlayingPaneShown(expanded = true, nothingEverPlayed = false))
+        assertFalse(nowPlayingPaneShown(expanded = false, nothingEverPlayed = false), "A hidden pane stays hidden")
+    }
+}

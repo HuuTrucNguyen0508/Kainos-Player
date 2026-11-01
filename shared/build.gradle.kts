@@ -61,6 +61,7 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(compose.desktop.currentOs)
+            implementation(compose.desktop.uiTestJUnit4)
         }
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
