@@ -118,6 +118,15 @@ class PlayerSession(
         heldAtTrackEnd = { naturalCompletionGate != null },
         scope, sessionContext, clock,
     )
+    private val starter = TrackStarter(
+        engine, sources, preferences, volume, _nowPlaying, turn, prefetcher, isFavorite,
+        onEngineStarted = { target -> if (startupTarget === target) startupTarget = null },
+        onSpeculativeUrlRejected = { resumeAt ->
+            pendingResumePositionMs = resumeAt
+            startCurrent(ListeningChange.AUTOMATIC, applyResumePosition = true)
+        },
+        onTerminalFailure = { generation -> advanceAfterTerminalFailure(generation) },
+    )
     private val remoteLoader = RemoteSessionLoader(
         engine, persistence, ledger, nowPlaying, confineTo, clock,
         captureLocal = { captureLocalListening() },
@@ -133,8 +142,6 @@ class PlayerSession(
      * Cleared on a normal track start that is not a resume-from-restore.
      */
     private var pendingResumePositionMs: Long? = null
-    private class StartupTarget(var positionMs: Long?)
-
     private var startupTarget: StartupTarget? = null
 
     /**
@@ -157,9 +164,6 @@ class PlayerSession(
     private var naturalCompletionGate: (() -> Boolean)? = null
 
     private fun trace(message: String) = PlaybackTrace.log("Session", message)
-
-    private fun Track?.label(): String =
-        if (this == null) "<none>" else "'$title' [${sources.firstOrNull()?.provider}] $canonicalId"
 
     init {
         scope.launch(sessionContext) {
@@ -257,7 +261,7 @@ class PlayerSession(
                         }
                         if (eventGeneration != turn.generation) return@collectLatest
                         turn.disarm()
-                        trace("natural completion of ${_nowPlaying.value.track.label()}")
+                        trace("natural completion of ${_nowPlaying.value.track.traceLabel()}")
                         handleNaturalCompletion(eventGeneration)
                     }
                     EngineStatus.FAILED -> {
@@ -277,7 +281,7 @@ class PlayerSession(
                         turn.disarm()
                         val current = _nowPlaying.value.resolved ?: return@collectLatest
                         val reason = engineState.error
-                        trace("engine FAILED for ${current.track.label()}: $reason -> fallback")
+                        trace("engine FAILED for ${current.track.traceLabel()}: $reason -> fallback")
                         startFallback(current, reason, eventGeneration)
                     }
                     else -> Unit
@@ -405,7 +409,7 @@ class PlayerSession(
         trace(
             "installPaused items=${restored.items.size} index=${restored.currentIndex} " +
                 "pos=${snapshot.positionMs} shuffle=${restored.shuffle} repeat=${restored.repeat} " +
-                "track=${item?.track.label()}",
+                "track=${item?.track.traceLabel()}",
         )
     }
 
@@ -585,7 +589,7 @@ class PlayerSession(
         val engineStatus = engine.state.value.status
         if (now.buffering && !(now.resolved != null && turn.completionArmed)) {
             trace(
-                "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.label()} " +
+                "pauseTransport while buffering -> cancel start of ${_nowPlaying.value.track.traceLabel()} " +
                     "(engine=$engineStatus gen=${turn.generation})",
             )
             pendingResumePositionMs = startupTarget?.positionMs ?: now.positionMs.takeIf { it > 0 }
@@ -597,7 +601,7 @@ class PlayerSession(
             ledger.record(change, playing = false)
             return
         }
-        trace("pauseTransport engine=$engineStatus gen=${turn.generation} track=${_nowPlaying.value.track.label()}")
+        trace("pauseTransport engine=$engineStatus gen=${turn.generation} track=${_nowPlaying.value.track.traceLabel()}")
         pausePending = true
         _nowPlaying.update { it.copy(isPlaying = false, buffering = false) }
         engine.pause()
@@ -761,7 +765,7 @@ class PlayerSession(
     private fun freezeAfterNaturalEnd() {
         val position = _nowPlaying.value.durationMs?.takeIf { it > 0 }
             ?: _nowPlaying.value.positionMs
-        trace("freezeAfterNaturalEnd track=${_nowPlaying.value.track.label()} pos=$position")
+        trace("freezeAfterNaturalEnd track=${_nowPlaying.value.track.traceLabel()} pos=$position")
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -851,7 +855,7 @@ class PlayerSession(
         startupTarget = target
         val generation = turn.generation
         if (ready != null) prefetcher.markSpeculativeStart(generation)
-        trace("startCurrent ${item.track.label()} gen=$generation (cancel previous job + engine.stopForTransition)")
+        trace("startCurrent ${item.track.traceLabel()} gen=$generation (cancel previous job + engine.stopForTransition)")
         playJob?.cancel()
         engine.stopForTransition()
         _nowPlaying.update {
@@ -873,129 +877,12 @@ class PlayerSession(
         refiller.refillIfLow()
         playJob = scope.launch(sessionContext) {
             try {
-                playTrack(item.track, item.id, generation, target, ready)
+                starter.start(item.track, item.id, generation, target, ready)
             } finally {
                 if (startupTarget === target) startupTarget = null
             }
         }
         return playJob
-    }
-
-    private suspend fun playTrack(
-        track: Track,
-        queueItemId: String,
-        generation: Long,
-        target: StartupTarget,
-        ready: ResolvedPlayback? = null,
-    ) {
-        currentCoroutineContext().ensureActive()
-        if (generation != turn.generation) return
-        if (ready != null) {
-            startResolved(ready, fallback = null, generation = generation, target = target, alreadyEnriched = true)
-            return
-        }
-        val playable = withContext(sources.workContext) { sources.prepareTrack(track) }
-        if (generation != turn.generation) return
-        _nowPlaying.update {
-            it.copy(
-                track = playable,
-                queueItemId = queueItemId,
-                resolved = null,
-                isPlaying = false,
-                positionMs = target.positionMs?.coerceAtLeast(0L) ?: 0,
-                durationMs = playable.durationMs,
-                buffering = true,
-                error = null,
-                fallback = null,
-                favorite = isFavorite(playable.canonicalId),
-                syncWarning = null,
-            )
-        }
-        val preferences = _preferences.value
-        val resolved = runCatching { withContext(sources.workContext) { sources.resolve(playable, preferences) } }
-            .getOrElse { error ->
-                if (error is CancellationException) throw error
-                if (generation != turn.generation) return
-                currentCoroutineContext().ensureActive()
-                trace("resolve failed for ${playable.label()} gen=$generation: ${error.message}")
-                _nowPlaying.update { it.copy(buffering = false, error = error.message, isPlaying = false) }
-                advanceAfterTerminalFailure(generation)
-                return
-            }
-        if (generation != turn.generation) return
-        currentCoroutineContext().ensureActive()
-        startResolved(resolved, fallback = null, generation = generation, target = target)
-    }
-
-    private suspend fun startResolved(
-        resolved: ResolvedPlayback,
-        fallback: SourceFallbackEvent?,
-        generation: Long,
-        target: StartupTarget?,
-        alreadyEnriched: Boolean = false,
-    ) {
-        if (generation != turn.generation) return
-        currentCoroutineContext().ensureActive()
-        val enrichedSource = runCatching { withContext(sources.workContext) { if (alreadyEnriched) resolved.source else sources.enrich(resolved.track, resolved.source) } }
-            .getOrElse { error ->
-                if (error is CancellationException) throw error
-                if (generation != turn.generation) return
-                currentCoroutineContext().ensureActive()
-                trace("enrich failed for ${resolved.track.label()} via ${resolved.source.provider}: ${error.message}")
-                tryFallback(resolved, error.message, generation, target)
-                return
-            }
-        if (generation != turn.generation) {
-            trace("startResolved dropped after enrich: gen=$generation current=${turn.generation}")
-            return
-        }
-        val playable = resolved.copy(source = enrichedSource)
-        currentCoroutineContext().ensureActive()
-        _nowPlaying.update {
-            it.copy(
-                track = playable.track,
-                resolved = playable,
-                durationMs = playable.track.durationMs ?: it.durationMs,
-                buffering = true,
-                fallback = fallback,
-                error = null,
-                favorite = isFavorite(playable.track.canonicalId),
-            )
-        }
-        trace("engine.play ${playable.track.label()} via ${playable.source.provider} gen=$generation")
-        runCatching {
-            withContext(sources.workContext) {
-                val handle = playable.source.handle.let { handle ->
-                    if (handle is PlaybackHandle.Url)
-                        handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
-                }
-                engine.configureGapless(_preferences.value.gapless && playable.source.provider == ProviderId.LOCAL)
-                engine.play(handle, playable.source.quality, playGeneration = generation)
-            }
-            if (generation == turn.generation) {
-                engine.setVolume(_volume.value)
-                target?.positionMs?.let(engine::seekTo)
-                if (startupTarget === target) startupTarget = null
-            }
-        }.onFailure { error ->
-            if (error is CancellationException) {
-                trace("engine.play cancelled gen=$generation (current=${turn.generation})")
-                throw error
-            }
-            if (generation != turn.generation) return
-            currentCoroutineContext().ensureActive()
-            trace("engine.play failed gen=$generation: ${error.message}")
-            tryFallback(playable, error.message, generation, target)
-            return
-        }
-        if (generation != turn.generation) {
-            trace("engine.play returned for superseded gen=$generation current=${turn.generation}; not arming")
-            return
-        }
-        turn.arm()
-        trace("engine.play ok gen=$generation; completion armed")
-        prefetcher.schedule(generation)
-
     }
 
     private fun startFallback(current: ResolvedPlayback, reason: String?, generation: Long) {
@@ -1004,53 +891,11 @@ class PlayerSession(
         startupTarget = target
         playJob = scope.launch(sessionContext) {
             try {
-                tryFallback(current, reason, generation, target)
+                starter.tryFallback(current, reason, generation, target)
             } finally {
                 if (startupTarget === target) startupTarget = null
             }
         }
-    }
-
-    private suspend fun tryFallback(
-        current: ResolvedPlayback,
-        reason: String?,
-        generation: Long,
-        target: StartupTarget?,
-    ) {
-        if (generation != turn.generation) return
-        if (prefetcher.consumeRejectedStart(generation)) {
-            // A speculative URL can be rejected early. Resolve this same entry normally once.
-            pendingResumePositionMs = target?.positionMs ?: _nowPlaying.value.positionMs.takeIf { it > 0 }
-            startCurrent(ListeningChange.AUTOMATIC, applyResumePosition = true)
-            return
-        }
-        trace(
-            "tryFallback from ${current.source.provider} reason=$reason remaining=" +
-                current.fallbacks.map { it.provider },
-        )
-        val next = current.fallbacks.firstOrNull() ?: run {
-            _nowPlaying.update {
-                it.copy(
-                    buffering = false,
-                    isPlaying = false,
-                    error = reason ?: "Playback failed and no fallback is available",
-                )
-            }
-            advanceAfterTerminalFailure(generation)
-            return
-        }
-        val remaining = current.fallbacks.drop(1)
-        val event = SourceFallbackEvent(
-            from = current.source.provider,
-            to = next.provider,
-            message = "${current.source.provider.displayName} unavailable → ${next.provider.displayName}",
-        )
-        startResolved(
-            resolved = current.copy(source = next, fallbacks = remaining, reason = event.message),
-            fallback = event,
-            generation = generation,
-            target = target,
-        )
     }
 
     /** Skip a dead track when the queue still has something after it. */
