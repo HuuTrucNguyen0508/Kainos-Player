@@ -20,6 +20,27 @@ Platform expects and actuals are split into `PlatformCoremodel`, `PlatformCoreda
 
 `build-logic` supplies `kainos.kmp.library`: JVM and Android targets, SDK levels from the version catalog, serialization/coroutines, and common test dependencies. SQLDelight belongs only to `core:data`; Compose belongs to `shared` and app entry points. Shared test helpers are compiled from `test-fixtures/kotlin` into test source sets, without becoming production API. Tests otherwise moved with their subjects; repository/protocol integration tests live in `sync` where needed.
 
+## Playback units
+
+`PlayerSession` keeps the public transport calls and coordinates transitions. `DesktopPlaybackEngine` keeps mpv start and restart decisions. Each unit below owns its state and is reached only through its own methods. None starts a thread or scope of its own.
+
+| Unit | Owns | Change it for |
+| --- | --- | --- |
+| `ListeningLedger` | Revision, publication origin, last-active time, remote session, checkpoint timer | What gets recorded and when |
+| `QueueRefiller` | The continuation and its refill job | Radio and other queue continuations |
+| `RemoteSessionLoader` | The claim, deadline and rollback sequence (no state between calls) | Installing another device's session |
+| `SuccessorPrefetcher` | Prefetch target and job, gapless successor, short-lived YouTube result | Getting the next entry ready |
+| `TrackStarter` | Nothing between calls; walks prepare, resolve, enrich, engine start and fallback | A track failing to start |
+| `PlaybackTurn` | Play generation and completion-armed flag | The guard asynchronous session work re-checks |
+| `DesktopTransport` | The engine lock, published state, current handle, start token, user pause | State both engine paths share |
+| `MpvSlot` | Active process, transport epoch, IPC FIFO, process termination | Reaching mpv |
+| `PositionTicker` | Position anchor, running timestamp, sampling job | Published position |
+| `SpotifyConnectPath` | Command queue, pause guard, receiver events, reconcile loop | Spotify transport |
+| `GaplessBoundary` | Prepared successor, mpv playlist bindings, crossing state | Local gapless joins |
+| `DesktopPlaybackRuntime` | Nothing; the process and socket seam tests fake | Talking to the OS |
+
+The confinement rules do not change with these units. Session units run on the session thread and leave it only through `workContext`, re-checking `PlaybackTurn.generation` on return. Engine units hold `DesktopTransport.lock` for decisions, never across socket I/O, and enqueue IPC while holding it so FIFO order matches decision order.
+
 ## Verification
 
 Use JDK 17 and run builds serially to avoid memory pressure:
