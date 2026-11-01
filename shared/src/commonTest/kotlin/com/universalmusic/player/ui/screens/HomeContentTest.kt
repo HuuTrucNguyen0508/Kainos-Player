@@ -247,7 +247,7 @@ class HomeContentTest {
             listOf("kainos:playlist:a", "/music/Playlist", "album:a"),
             suggestions.map { it.targetId },
         )
-        assertEquals("Kainos · 1 tracks", suggestions[0].subtitle)
+        assertEquals("Kainos · 1 track", suggestions[0].subtitle)
         assertEquals("p.png", suggestions[0].artwork?.url)
         assertEquals("Folder · 3 tracks", suggestions[1].subtitle)
         assertEquals("Album · 2 tracks", suggestions[2].subtitle)

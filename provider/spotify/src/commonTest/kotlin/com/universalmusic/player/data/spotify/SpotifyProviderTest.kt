@@ -487,7 +487,7 @@ class SpotifyProviderTest {
             provider.startConnectPlayback("track")
         }
 
-        assertTrue(failure.message.orEmpty().contains("Settings"))
+        assertTrue(failure.message.orEmpty().contains("Spotify output"))
         assertEquals(0, requests)
     }
 
