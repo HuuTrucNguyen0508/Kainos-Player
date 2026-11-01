@@ -33,6 +33,7 @@ import com.universalmusic.player.platform.supportsMusicFolderPicker
 internal fun SettingsFoldersSection(
     presenter: SettingsFoldersPresenter,
     readiness: SourceReadiness,
+    audioPlayerMissing: Boolean,
     onRecheck: () -> Unit,
 ) {
     val ui by presenter.state.collectAsState()
@@ -131,8 +132,7 @@ internal fun SettingsFoldersSection(
             }
         }
     }
-    val needs = readiness.needs
-    if (SourceNeed.AudioPlayer in needs) {
+    if (audioPlayerMissing) {
         val recheckFocus = remember { FocusRequester() }
         SettingsSpot(SettingsTarget.AudioPlayer, focus = recheckFocus) {
             Text("Install mpv", style = MaterialTheme.typography.titleSmall)

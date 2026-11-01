@@ -82,7 +82,12 @@ internal fun SettingsSourcesSection(
     fun of(source: MusicSource) = readiness.first { it.source == source }
     // Setup is read closely, so it keeps a readable measure however wide the window gets.
     Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SettingsFoldersSection(folders, of(MusicSource.Local), sources::recheck)
+        SettingsFoldersSection(
+            folders,
+            of(MusicSource.Local),
+            audioPlayerMissing = readiness.any { SourceNeed.AudioPlayer in it.needs },
+            sources::recheck,
+        )
         SettingsSpotifySection(connect, of(MusicSource.Spotify), sources::recheck)
         SettingsYouTubeSection(connect, of(MusicSource.YouTube), sources::recheck)
     }

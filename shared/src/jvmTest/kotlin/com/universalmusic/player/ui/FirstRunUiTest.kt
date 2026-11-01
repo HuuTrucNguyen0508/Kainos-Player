@@ -305,6 +305,18 @@ class FirstRunUiTest {
         onNodeWithText("Check again").assertIsDisplayed().assertIsFocused()
     }
 
+    @Test fun aMissingPlayerOpensItsNoteEvenWhenLocalCannotAskForIt() = runComposeUiTest {
+        showApp(
+            FakeDevice(
+                youtube = ProviderState.AVAILABLE,
+                tools = SourceTools(audioPlayer = false),
+            ).also { it.local.value = ProviderState.UNAVAILABLE },
+        )
+        node("Install mpv").performClick()
+        waitForIdle()
+        onNodeWithTag("settings-spot-AudioPlayer").assertIsDisplayed()
+    }
+
     @Test fun aConfiguredSourceStopsAskingForSetup() = runComposeUiTest {
         val device = FakeDevice(youtube = ProviderState.AVAILABLE, settings = AppSettings(youtubeDataApiKey = "key"))
         showApp(device)
