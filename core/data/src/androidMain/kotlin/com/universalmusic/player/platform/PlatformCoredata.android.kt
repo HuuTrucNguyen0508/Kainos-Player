@@ -11,6 +11,7 @@ import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.DefaultMetadataArtworkCache
 import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.MetadataArtworkCache
+import com.universalmusic.player.data.cache.readBoundedArtwork
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.db.AndroidLegacyJsonSource
 import com.universalmusic.player.data.db.DbKainosPlaylistStore
@@ -97,8 +98,8 @@ private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
     java.net.URI(url).toURL().openConnection().apply {
         connectTimeout = 10_000
         readTimeout = 15_000
-    }.getInputStream().use { it.readBytes() }
-}.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
+    }.getInputStream().use { readBoundedArtwork(it::read) }
+}.getOrNull()
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? =
     DbLocalLibraryScanCache(kainosStorage)
