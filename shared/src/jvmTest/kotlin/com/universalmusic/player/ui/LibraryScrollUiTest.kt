@@ -8,17 +8,17 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.ComposeUiTest
-import androidx.compose.ui.test.ScrollWheel
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.test.swipe
 import com.universalmusic.player.data.cache.PlaybackSourceKind
 import com.universalmusic.player.data.cache.TrackAvailability
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
@@ -85,13 +85,12 @@ class LibraryScrollUiTest {
         onNodeWithText("Song 000", useUnmergedTree = true).assertDoesNotExist()
     }
 
-    /** Real wheel input, because the regression lived in the nested scroll the wheel goes through. */
-    private fun ComposeUiTest.wheel(rows: Float) {
-        songList().performMouseInput {
-            moveTo(center)
-            scroll(rows, ScrollWheel.Vertical)
+    /** A slow real drag, because the regression lived in the nested scroll that semantics scrolling skips. */
+    private fun ComposeUiTest.drag(pixels: Float) {
+        songList().performTouchInput {
+            swipe(center, center.copy(y = center.y + pixels), durationMillis = 800)
         }
-        mainClock.advanceTimeBy(600)
+        mainClock.advanceTimeBy(1_000)
         waitForIdle()
     }
 
@@ -100,25 +99,29 @@ class LibraryScrollUiTest {
 
     @Test fun aShortFavoritesListScrollsBothWays() = runDesktopComposeUiTest(width = 800, height = 480) {
         val library = localTracks(40)
-        showLibrary(library, favorites = library.take(12).map { it.canonicalId }.toSet())
+        showLibrary(library, favorites = library.take(20).map { it.canonicalId }.toSet())
         onNodeWithText("Favorites only", useUnmergedTree = true).performClick()
         waitForIdle()
-        val resting = topOf("Song 000")
 
-        // Down: the header collapses first, then the rows move.
-        wheel(4f)
-        wheel(4f)
-        val scrolledDown = onAllNodesWithText("Song 000", useUnmergedTree = true).fetchSemanticsNodes().isEmpty() ||
-            topOf("Song 000") < resting
-        assertTrue(scrolledDown, "Wheel down moves the list")
+        // Down: the header collapses, then the rows move.
+        val rowBefore = topOf("Song 001")
+        drag(-120f)
+        assertTrue(topOf("Song 001") < rowBefore, "Dragging moves the list")
+        repeat(3) { drag(-120f) }
+        onNodeWithText("Search library", useUnmergedTree = true).assertIsNotDisplayed()
 
-        // Up: the first row comes back, and nothing yanks the list on a later frame.
-        repeat(6) { wheel(-4f) }
+        // Back a little: the rows move. The chrome must not steal this motion to reopen itself.
+        val tabsWhileCollapsed = topOf("Songs")
+        drag(150f)
+        assertEquals(tabsWhileCollapsed, topOf("Songs"), "The chrome stays closed while the rows have room to move")
+
+        // All the way up: the first row returns, and nothing yanks the list on a later frame.
+        repeat(5) { drag(120f) }
         onNodeWithText("Song 000", useUnmergedTree = true).assertIsDisplayed()
         val back = topOf("Song 000")
         mainClock.advanceTimeBy(1_000)
         waitForIdle()
-        assertEquals(back, topOf("Song 000"), "The list stays where the wheel left it")
+        assertEquals(back, topOf("Song 000"), "The list stays where it was left")
     }
 
     @Test fun comingBackKeepsTheScrollPosition() = runDesktopComposeUiTest(width = 800, height = 700) {
