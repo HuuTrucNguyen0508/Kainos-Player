@@ -21,6 +21,8 @@ import com.universalmusic.player.data.db.DbLocalLibraryScanCache
 import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.KainosDatabase
 import com.universalmusic.player.data.db.KainosStorage
+import com.universalmusic.player.data.db.storageRead
+import com.universalmusic.player.data.db.storageWrite
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -29,6 +31,7 @@ import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.settings.decodeAppSettings
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.domain.model.ProviderId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -136,13 +139,15 @@ private class PrefsSettingsStore(context: Context) : SettingsStore {
 
     override suspend fun read(): AppSettings {
         val raw = prefs.getString("settings", null) ?: return AppSettings()
-        return decodeAppSettings(raw)
+        return storageRead(StorageArea.SETTINGS) { decodeAppSettings(raw) }
     }
 
     override suspend fun write(settings: AppSettings) {
-        withContext(Dispatchers.IO) {
-            check(prefs.edit().putString("settings", json.encodeToString(settings)).commit()) {
-                "Could not persist app settings"
+        storageWrite(StorageArea.SETTINGS) {
+            withContext(Dispatchers.IO) {
+                check(prefs.edit().putString("settings", json.encodeToString(settings)).commit()) {
+                    "Could not persist app settings"
+                }
             }
         }
     }

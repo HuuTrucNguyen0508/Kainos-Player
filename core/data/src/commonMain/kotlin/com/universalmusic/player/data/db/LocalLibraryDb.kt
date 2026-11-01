@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.local.StoredLocalTrack
@@ -35,8 +36,10 @@ internal fun KainosDatabase.writeLocalScan(configKey: String, tracks: List<Local
 }
 
 class DbLocalLibraryScanCache(
-    private val storage: KainosStorage,
+    storage: KainosStorage,
 ) : LocalLibraryScanCache {
+    private val storage = AreaStorage(storage, StorageArea.LOCAL_SCAN)
+
     override suspend fun read(configKey: String): List<LocalTrack>? =
         storage.read { it.readLocalScan(configKey) }
 

@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import com.universalmusic.player.domain.failure.StorageFailure
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -30,6 +31,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -136,7 +138,8 @@ class AppSettingsCancellationTest {
             f.initialize()
             f.service.startHubIfNeeded()
             f.makeSettingsUnwritable()
-            assertFailsWith<IOException> { f.service.enable(false) }
+            val failure = assertFailsWith<StorageFailure> { f.service.enable(false) }
+            assertIs<IOException>(failure.cause)
             f.assertEnabled(true)
         }
     }

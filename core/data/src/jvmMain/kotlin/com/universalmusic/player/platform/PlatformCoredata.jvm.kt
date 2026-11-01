@@ -18,6 +18,8 @@ import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.JvmLegacyJsonSource
 import com.universalmusic.player.data.db.KainosDatabase
 import com.universalmusic.player.data.db.KainosStorage
+import com.universalmusic.player.data.db.storageRead
+import com.universalmusic.player.data.db.storageWrite
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -26,6 +28,9 @@ import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.settings.decodeAppSettings
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.StorageFailure
 import com.universalmusic.player.domain.model.ProviderId
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.ktor.client.HttpClient
@@ -180,11 +185,11 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
 
     override suspend fun read(): AppSettings = mutex.withLock {
         if (!path.exists()) return@withLock AppSettings()
-        readOrQuarantine(path, ::decodeAppSettings) ?: AppSettings()
+        storageRead(StorageArea.SETTINGS) { readOrQuarantine(path, ::decodeAppSettings) } ?: AppSettings()
     }
 
     override suspend fun write(settings: AppSettings) = mutex.withLock {
-        writeAtomicOwnerOnly(path, json.encodeToString(settings))
+        storageWrite(StorageArea.SETTINGS) { writeAtomicOwnerOnly(path, json.encodeToString(settings)) }
     }
 }
 
@@ -199,6 +204,7 @@ private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
     } catch (e: java.io.IOException) {
         // Unreadable (not malformed): leave the file alone.
         System.err.println("WARN Kainos: could not read $path (${e.message}); using defaults")
+        AppFailures.report(StorageFailure(StorageArea.SETTINGS, e))
         return null
     }
     val failure = try {
@@ -212,6 +218,7 @@ private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
         "WARN Kainos: could not read $path (${failure::class.simpleName}: ${failure.message}); " +
             if (moved) "moved it to ${quarantine.fileName} and using defaults" else "using defaults",
     )
+    AppFailures.report(StorageFailure(StorageArea.SETTINGS, failure))
     return null
 }
 

@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.USER_LIBRARY_FORMAT_VERSION
@@ -76,8 +77,10 @@ internal fun <T> syncOrderedRows(
 }
 
 class DbUserLibraryStore(
-    private val storage: KainosStorage,
+    storage: KainosStorage,
 ) : UserLibraryStore {
+    private val storage = AreaStorage(storage, StorageArea.LIBRARY)
+
     override suspend fun read(): UserLibrarySnapshot = storage.read { it.readUserLibrary() }
 
     override suspend fun write(snapshot: UserLibrarySnapshot) {

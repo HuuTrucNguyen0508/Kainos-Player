@@ -2,6 +2,8 @@ package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.model.ProviderId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -43,6 +45,34 @@ class FileStoresTest {
         assertFalse(path.readText().contains("colorScheme"))
         assertFalse(path.readText().contains("dynamicColor"))
         assertEquals(migrated, store.read())
+    }
+
+    @Test
+    fun corruptSettingsShowTheStorageMessageUntilTheyAreSavedAgain() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        path.writeText("{ not json")
+        val store = FileSettingsStore(path)
+        val settings = store.read()
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        store.write(settings)
+        assertNull(AppFailures.open.value.shown)
+    }
+
+    @Test
+    fun unreadableSettingsShowTheStorageMessageInsteadOfSilentDefaults() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        Files.createDirectory(path)
+        assertEquals(AppSettings(), FileSettingsStore(path).read())
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        AppFailures.dismiss()
     }
 
     @Test

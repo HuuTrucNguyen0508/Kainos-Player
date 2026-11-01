@@ -2,12 +2,16 @@ package com.universalmusic.player.data.db
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.data.library.UserLibrarySnapshot
 import com.universalmusic.player.data.playlist.KainosPlaylistsSnapshot
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class AuditCorruptRowsTest {
+    @BeforeTest @AfterTest fun clearFailures() = AppFailures.dismiss()
+
     @Test fun badRememberedRowDoesNotHideGoodRowsOrGetOverwritten() {
         JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).use { driver ->
             KainosDatabase.Schema.create(driver)
@@ -15,7 +19,10 @@ class AuditCorruptRowsTest {
             db.writeUserLibrary(UserLibrarySnapshot(remembered = listOf(PersistedTrack("yt:ok", "OK"))))
             db.userLibraryQueries.insertRemembered(1, "yt:bad", "not json")
             assertEquals(listOf("yt:ok"), db.readUserLibrary().remembered.map { it.canonicalId })
-            assertNotNull(StorageErrors.message.value)
+            assertEquals(
+                "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+                AppFailures.open.value.shown?.message,
+            )
             assertFails { db.writeUserLibrary(UserLibrarySnapshot()) }
             assertEquals(2, db.userLibraryQueries.selectRemembered().executeAsList().size)
         }

@@ -23,6 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
+import com.universalmusic.player.domain.failure.AppFailure
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.ui.FailureNotice
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
@@ -144,7 +147,16 @@ internal val galleryEntries = listOf(
     GalleryEntry("seek", height = 760) { SeekSpecimens() },
     GalleryEntry("marks", width = 1200, height = 640) { MarkSpecimens() },
     GalleryEntry("rows", height = 1000) { RowSpecimens() },
+    GalleryEntry("failures", width = 560, height = 220) { FailureSpecimens() },
 )
+
+@Composable
+private fun FailureSpecimens() {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        FailureNotice(AppFailure.Storage(StorageArea.LIBRARY).message, onDismiss = {})
+        FailureNotice(AppFailure.Unexpected.message, onDismiss = {})
+    }
+}
 
 private data class GalleryCase(val id: String, val palette: KainosPalette)
 
