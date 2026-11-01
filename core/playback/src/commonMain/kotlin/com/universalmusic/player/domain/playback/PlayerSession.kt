@@ -1,12 +1,8 @@
 package com.universalmusic.player.domain.playback
 
-import com.universalmusic.player.domain.model.PlaybackHandle
 
-import com.universalmusic.player.data.session.HandoffClaim
-import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.session.PublicationRevision
-import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.toPlaybackQueue
@@ -18,7 +14,6 @@ import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.ResolvedPlayback
-import com.universalmusic.player.domain.model.SourceFallbackEvent
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.queue.QueueController
 import com.universalmusic.player.platform.PlaybackTrace
@@ -26,15 +21,9 @@ import com.universalmusic.player.platform.currentTimeMillis
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,22 +32,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-
-data class NowPlayingState(
-    val track: Track? = null,
-    val queueItemId: String? = null,
-    val resolved: ResolvedPlayback? = null,
-    val isPlaying: Boolean = false,
-    val positionMs: Long = 0,
-    val durationMs: Long? = null,
-    val buffering: Boolean = false,
-    val favorite: Boolean = false,
-    val fallback: SourceFallbackEvent? = null,
-    val error: String? = null,
-    /** Set when Spotify playback cannot be confirmed against the receiver. */
-    val syncWarning: String? = null,
-)
 
 /**
  * Owns queue mutations and playback transitions. Engines report status; this session decides
@@ -172,122 +145,129 @@ class PlayerSession(
             }
         }
         scope.launch(sessionContext) {
-            engine.state.collectLatest { engineState ->
-                val eventGeneration = engineState.playGeneration
-                if (engineState.previousGeneration == turn.generation && eventGeneration == turn.generation + 1) {
-                    val ready = prefetcher.seamlessArrival(engineState.seamlessItemId)
-                    if (ready != null && turn.completionArmed) {
-                        val wrap = queueState.value.shuffle && queue.isWrapToStart(respectRepeatOne = true)
-                        val next = queue.nextIndex() ?: return@collectLatest
-                        prefetcher.clearSeamless()
-                        turn.adoptSeamless(eventGeneration)
-                        queue.jumpTo(next, reshuffle = wrap)
-                        val item = queueState.value.current ?: return@collectLatest
-                        val resolved = ready.copy(track = ready.track.copy(durationMs = engineState.durationMs))
-                        _nowPlaying.update { it.copy(track = resolved.track, queueItemId = item.id,
-                            resolved = resolved, positionMs = engineState.positionMs, durationMs = engineState.durationMs,
-                            isPlaying = engineState.status == EngineStatus.PLAYING, buffering = false,
-                            error = null, fallback = null, favorite = isFavorite(item.track.canonicalId)) }
-                        ledger.record(ListeningChange.AUTOMATIC)
-                        refiller.refillIfLow()
-                        prefetcher.schedule(turn.generation)
-                    } else {
-                        // The queue changed after mpv crossed the boundary but before this event
-                        // reached the session. Restart the newly selected successor normally.
-                        trace("seamless target superseded at boundary")
-                        handleNaturalCompletion(turn.generation)
-                        return@collectLatest
-                    }
-                }
-                if (engineState.status != lastTracedStatus) {
-                    lastTracedStatus = engineState.status
-                    trace(
-                        "engine -> ${engineState.status} gen=$eventGeneration (session gen=${turn.generation} " +
-                            "armed=${turn.completionArmed}) pos=${engineState.positionMs} dur=${engineState.durationMs}" +
-                            (engineState.error?.let { " error=$it" } ?: ""),
-                    )
-                }
-                // Reject stale engine events before touching nowPlaying.
-                if (eventGeneration != turn.generation) {
-                    if (engineState.status == EngineStatus.ENDED || engineState.status == EngineStatus.FAILED) {
-                        trace("dropped stale ${engineState.status} gen=$eventGeneration current=${turn.generation}")
-                    }
-                    return@collectLatest
-                }
-
-                val learnedDuration = engineState.durationMs?.takeIf { it > 0 }
-                val item = queue.queue.value.current
-                if (learnedDuration != null && item != null && item.track.durationMs == null &&
-                    _nowPlaying.value.queueItemId == item.id
-                ) {
-                    val updated = item.track.copy(durationMs = learnedDuration)
-                    queue.replaceCurrentTrack(updated)
-                    _nowPlaying.update { it.copy(track = it.track?.copy(durationMs = learnedDuration)) }
-                }
-
-                if (engineState.status != EngineStatus.PLAYING && engineState.status != EngineStatus.BUFFERING) {
-                    pausePending = false
-                }
-                val playing = engineState.status == EngineStatus.PLAYING && !pausePending
-                _nowPlaying.update { current ->
-                    current.copy(
-                        isPlaying = playing,
-                        positionMs = startupTarget?.positionMs ?: pausedSeekTargetMs.takeUnless { playing }
-                            ?: engineState.positionMs,
-                        durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
-                        buffering = !pausePending && (engineState.status == EngineStatus.BUFFERING ||
-                            (current.buffering && current.resolved == null &&
-                                engineState.status == EngineStatus.IDLE)),
-                        error = if (engineState.status == EngineStatus.FAILED) {
-                            engineState.error
-                        } else {
-                            current.error
-                        },
-                        syncWarning = engineState.syncWarning,
-                    )
-                }
-                if (playing) pausedSeekTargetMs = null
-                if (_nowPlaying.value.isPlaying != ledger.lastRecordedPlaying && queue.queue.value.items.isNotEmpty()) {
-                    ledger.record(ListeningChange.AUTOMATIC)
-                }
-
-                if (eventGeneration != turn.generation) return@collectLatest
-                when (engineState.status) {
-                    EngineStatus.PLAYING -> if (turn.completionArmed) failedItemIds.clear()
-                    EngineStatus.ENDED -> {
-                        if (!turn.completionArmed) {
-                            trace("ENDED ignored: completion not armed gen=$eventGeneration")
-                            return@collectLatest
-                        }
-                        if (eventGeneration != turn.generation) return@collectLatest
-                        turn.disarm()
-                        trace("natural completion of ${_nowPlaying.value.track.traceLabel()}")
-                        handleNaturalCompletion(eventGeneration)
-                    }
-                    EngineStatus.FAILED -> {
-                        if (eventGeneration != turn.generation) return@collectLatest
-                        if (!turn.completionArmed && _nowPlaying.value.resolved == null) {
-                            trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
-                            return@collectLatest
-                        }
-                        val retryAt = engineState.retryAtPositionMs
-                        val currentItemId = queue.queue.value.current?.id
-                        if (retryAt != null && currentItemId != truncatedRetryItemId) {
-                            truncatedRetryItemId = currentItemId
-                            pendingResumePositionMs = retryAt
-                            startCurrent(ListeningChange.AUTOMATIC, applyResumePosition = true)
-                            return@collectLatest
-                        }
-                        turn.disarm()
-                        val current = _nowPlaying.value.resolved ?: return@collectLatest
-                        val reason = engineState.error
-                        trace("engine FAILED for ${current.track.traceLabel()}: $reason -> fallback")
-                        startFallback(current, reason, eventGeneration)
-                    }
-                    else -> Unit
-                }
-            }
+            engine.state.collectLatest { onEngineState(it) }
         }
+    }
+
+    private fun onEngineState(engineState: EngineState) {
+        val eventGeneration = engineState.playGeneration
+        if (engineState.previousGeneration == turn.generation && eventGeneration == turn.generation + 1) {
+            if (!crossSeamlessBoundary(engineState)) return
+        }
+        if (engineState.status != lastTracedStatus) {
+            lastTracedStatus = engineState.status
+            trace(
+                "engine -> ${engineState.status} gen=$eventGeneration (session gen=${turn.generation} " +
+                    "armed=${turn.completionArmed}) pos=${engineState.positionMs} dur=${engineState.durationMs}" +
+                    (engineState.error?.let { " error=$it" } ?: ""),
+            )
+        }
+        // Reject stale engine events before touching nowPlaying.
+        if (eventGeneration != turn.generation) {
+            if (engineState.status == EngineStatus.ENDED || engineState.status == EngineStatus.FAILED) {
+                trace("dropped stale ${engineState.status} gen=$eventGeneration current=${turn.generation}")
+            }
+            return
+        }
+
+        val learnedDuration = engineState.durationMs?.takeIf { it > 0 }
+        val item = queue.queue.value.current
+        if (learnedDuration != null && item != null && item.track.durationMs == null &&
+            _nowPlaying.value.queueItemId == item.id
+        ) {
+            val updated = item.track.copy(durationMs = learnedDuration)
+            queue.replaceCurrentTrack(updated)
+            _nowPlaying.update { it.copy(track = it.track?.copy(durationMs = learnedDuration)) }
+        }
+
+        if (engineState.status != EngineStatus.PLAYING && engineState.status != EngineStatus.BUFFERING) {
+            pausePending = false
+        }
+        val playing = engineState.status == EngineStatus.PLAYING && !pausePending
+        _nowPlaying.update { current ->
+            current.copy(
+                isPlaying = playing,
+                positionMs = startupTarget?.positionMs ?: pausedSeekTargetMs.takeUnless { playing }
+                    ?: engineState.positionMs,
+                durationMs = engineState.durationMs ?: current.track?.durationMs ?: current.durationMs,
+                buffering = !pausePending && (engineState.status == EngineStatus.BUFFERING ||
+                    (current.buffering && current.resolved == null &&
+                        engineState.status == EngineStatus.IDLE)),
+                error = if (engineState.status == EngineStatus.FAILED) {
+                    engineState.error
+                } else {
+                    current.error
+                },
+                syncWarning = engineState.syncWarning,
+            )
+        }
+        if (playing) pausedSeekTargetMs = null
+        if (_nowPlaying.value.isPlaying != ledger.lastRecordedPlaying && queue.queue.value.items.isNotEmpty()) {
+            ledger.record(ListeningChange.AUTOMATIC)
+        }
+
+        if (eventGeneration != turn.generation) return
+        when (engineState.status) {
+            EngineStatus.PLAYING -> if (turn.completionArmed) failedItemIds.clear()
+            EngineStatus.ENDED -> {
+                if (!turn.completionArmed) {
+                    trace("ENDED ignored: completion not armed gen=$eventGeneration")
+                    return
+                }
+                if (eventGeneration != turn.generation) return
+                turn.disarm()
+                trace("natural completion of ${_nowPlaying.value.track.traceLabel()}")
+                handleNaturalCompletion(eventGeneration)
+            }
+            EngineStatus.FAILED -> {
+                if (eventGeneration != turn.generation) return
+                if (!turn.completionArmed && _nowPlaying.value.resolved == null) {
+                    trace("FAILED ignored: nothing resolved gen=$eventGeneration error=${engineState.error}")
+                    return
+                }
+                val retryAt = engineState.retryAtPositionMs
+                val currentItemId = queue.queue.value.current?.id
+                if (retryAt != null && currentItemId != truncatedRetryItemId) {
+                    truncatedRetryItemId = currentItemId
+                    pendingResumePositionMs = retryAt
+                    startCurrent(ListeningChange.AUTOMATIC, applyResumePosition = true)
+                    return
+                }
+                turn.disarm()
+                val current = _nowPlaying.value.resolved ?: return
+                val reason = engineState.error
+                trace("engine FAILED for ${current.track.traceLabel()}: $reason -> fallback")
+                startFallback(current, reason, eventGeneration)
+            }
+            else -> Unit
+        }
+    }
+
+    /** Moves the session across a boundary the engine already crossed. False when this event is finished. */
+    private fun crossSeamlessBoundary(engineState: EngineState): Boolean {
+        val ready = prefetcher.seamlessArrival(engineState.seamlessItemId)
+        if (ready != null && turn.completionArmed) {
+            val wrap = queueState.value.shuffle && queue.isWrapToStart(respectRepeatOne = true)
+            val next = queue.nextIndex() ?: return false
+            prefetcher.clearSeamless()
+            turn.adoptSeamless(engineState.playGeneration)
+            queue.jumpTo(next, reshuffle = wrap)
+            val item = queueState.value.current ?: return false
+            val resolved = ready.copy(track = ready.track.copy(durationMs = engineState.durationMs))
+            _nowPlaying.update { it.copy(track = resolved.track, queueItemId = item.id,
+                resolved = resolved, positionMs = engineState.positionMs, durationMs = engineState.durationMs,
+                isPlaying = engineState.status == EngineStatus.PLAYING, buffering = false,
+                error = null, fallback = null, favorite = isFavorite(item.track.canonicalId)) }
+            ledger.record(ListeningChange.AUTOMATIC)
+            refiller.refillIfLow()
+            prefetcher.schedule(turn.generation)
+            return true
+        }
+        // The queue changed after mpv crossed the boundary but before this event
+        // reached the session. Restart the newly selected successor normally.
+        trace("seamless target superseded at boundary")
+        handleNaturalCompletion(turn.generation)
+        return false
     }
 
     fun updatePreferences(preferences: PlaybackPreferences) {
@@ -937,5 +917,3 @@ class PlayerSession(
         startCurrent(ListeningChange.AUTOMATIC)
     }
 }
-
-fun PlaybackSource.providerOrNull(): ProviderId = provider
