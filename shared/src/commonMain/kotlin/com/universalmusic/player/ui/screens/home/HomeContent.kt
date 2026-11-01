@@ -202,42 +202,46 @@ internal fun homeEyebrow(favorites: Int, localTracks: Int): String {
 /** Rows of the "Your library" ledger. Each opens the place where the listener acts on it. */
 internal enum class LibraryMark { LOCAL, HEARTS, PLAYLISTS, SPOTIFY, YOUTUBE }
 
-internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH }
+internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH, PICK_FOLDER }
 
 internal data class LibraryLine(
     val mark: LibraryMark,
     val title: String,
     val detail: String,
     val door: LibraryDoor,
+    val settingsTarget: SettingsTarget? = null,
 )
 
+private fun tracksLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
+
 internal fun libraryLines(
-    localTrackCount: Int,
-    folderCount: Int,
-    localState: ProviderState,
+    sources: List<SourceReadiness>,
     favorites: FavoritesSummary,
     kainosPlaylistCount: Int,
-    spotifyState: ProviderState,
-    spotifyPlaylistCount: Int,
-    youtubeState: ProviderState,
 ): List<LibraryLine> = buildList {
-    add(
-        when {
-            localTrackCount > 0 -> LibraryLine(
-                LibraryMark.LOCAL,
-                "Local files",
-                "$localTrackCount songs in $folderCount ${if (folderCount == 1) "folder" else "folders"}",
-                LibraryDoor.LIBRARY,
-            )
-            localState == ProviderState.LOADING -> LibraryLine(LibraryMark.LOCAL, "Local files", "Scanning folders…", LibraryDoor.LIBRARY)
-            else -> LibraryLine(LibraryMark.LOCAL, "Local files", "Add a music folder", LibraryDoor.SETTINGS)
-        },
-    )
+    fun sourceLine(source: MusicSource, mark: LibraryMark): LibraryLine {
+        val readiness = sources.first { it.source == source }
+        val action = readiness.step?.action
+        return LibraryLine(
+            mark,
+            source.title,
+            if (source == MusicSource.Local && readiness.status == SourceStatus.Ready) readiness.detail.removeSuffix(".")
+            else listOfNotNull(readiness.statusLabel, readiness.step?.label).joinToString(" · "),
+            when (action) {
+                SourceAction.PickMusicFolder -> LibraryDoor.PICK_FOLDER
+                SourceAction.OpenLibrary, null -> LibraryDoor.LIBRARY
+                SourceAction.OpenSearch -> LibraryDoor.SEARCH
+                is SourceAction.OpenSettings -> LibraryDoor.SETTINGS
+            },
+            (action as? SourceAction.OpenSettings)?.target,
+        )
+    }
+    add(sourceLine(MusicSource.Local, LibraryMark.LOCAL))
     add(
         if (favorites.count > 0) {
-            LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} songs · Play favorites", LibraryDoor.FAVORITES)
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} ${if (favorites.count == 1) "song" else "songs"} · Play favorites", LibraryDoor.FAVORITES)
         } else {
-            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Library to build favorites", LibraryDoor.LIBRARY)
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Now Playing to build favorites", LibraryDoor.LIBRARY)
         },
     )
     if (kainosPlaylistCount > 0) {
@@ -250,32 +254,8 @@ internal fun libraryLines(
             ),
         )
     }
-    add(
-        when (spotifyState) {
-            ProviderState.AVAILABLE -> LibraryLine(
-                LibraryMark.SPOTIFY,
-                "Spotify",
-                if (spotifyPlaylistCount > 0) "Connected · $spotifyPlaylistCount playlists" else "Connected",
-                LibraryDoor.LIBRARY,
-            )
-            ProviderState.RATE_LIMITED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Limited · Try again soon", LibraryDoor.SETTINGS)
-            ProviderState.LOADING -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Connecting…", LibraryDoor.SETTINGS)
-            ProviderState.AUTH_REQUIRED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Needs sign-in · Open Settings", LibraryDoor.SETTINGS)
-            ProviderState.NOT_CONFIGURED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Not set up · Open Settings", LibraryDoor.SETTINGS)
-            ProviderState.UNAVAILABLE -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Offline · Open Settings", LibraryDoor.SETTINGS)
-        },
-    )
-    add(
-        when (youtubeState) {
-            ProviderState.AVAILABLE -> LibraryLine(LibraryMark.YOUTUBE, "YouTube", "Search anything and play it", LibraryDoor.SEARCH)
-            else -> LibraryLine(
-                LibraryMark.YOUTUBE,
-                "YouTube",
-                "${legendStateWord(youtubeState)} · Open Settings",
-                LibraryDoor.SETTINGS,
-            )
-        },
-    )
+    add(sourceLine(MusicSource.Spotify, LibraryMark.SPOTIFY))
+    add(sourceLine(MusicSource.YouTube, LibraryMark.YOUTUBE))
 }
 
 /** Something from the library the listener could pin, offered on Home while pins are few. */
@@ -331,7 +311,7 @@ internal fun pinSuggestions(
                         HomePinKind.KAINOS_PLAYLIST,
                         playlist.id,
                         playlist.title,
-                        "Kainos · ${playlist.entries.size} tracks",
+                        "Kainos · ${tracksLabel(playlist.entries.size)}",
                         art,
                     ),
                 )
@@ -339,7 +319,7 @@ internal fun pinSuggestions(
         folders.forEach { folder ->
             val count = folderTrackCounts[folder] ?: 0
             if (count > 0) {
-                add(PinSuggestion(HomePinKind.LOCAL_FOLDER, folder, folderPinDisplayName(folder), "Folder · $count tracks", null))
+                add(PinSuggestion(HomePinKind.LOCAL_FOLDER, folder, folderPinDisplayName(folder), "Folder · ${tracksLabel(count)}", null))
             }
         }
         localTracks
@@ -440,7 +420,7 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = kainosTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Kainos · $count tracks",
+                    "Kainos · ${tracksLabel(count)}",
                 )
             }
         }
@@ -476,7 +456,7 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = albumTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Album · $count tracks",
+                    "Album · ${tracksLabel(count)}",
                 )
             }
         }
@@ -493,7 +473,7 @@ internal fun resolveHomePin(
                 if (count == 0) {
                     ResolvedHomePin(pin.copy(title = title), PinStatus.EMPTY, "Folder · no tracks yet")
                 } else {
-                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · $count tracks")
+                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · ${tracksLabel(count)}")
                 }
             }
         }

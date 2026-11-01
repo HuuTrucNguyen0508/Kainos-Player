@@ -69,6 +69,12 @@ internal class JvmLibrespotPlaybackHost(
         null
     }
 
+    override fun receiverSetup(): SpotifyReceiverSetup = when {
+        runtime.findExecutable() == null -> SpotifyReceiverSetup.NOT_INSTALLED
+        hasCachedCredentials() -> SpotifyReceiverSetup.READY
+        else -> SpotifyReceiverSetup.NEEDS_SIGN_IN
+    }
+
     override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = mutex.withLock {
         ensureStarted(interactive = false)
     }

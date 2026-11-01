@@ -2,6 +2,7 @@ package com.universalmusic.player.ui.screens
 
 import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.reportsTextInputFocus
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -21,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import com.universalmusic.player.platform.openUrl
@@ -51,6 +54,7 @@ internal fun SearchScreen(
     presenter: SearchPresenter,
     onPlayTrackInList: (List<Track>, Int) -> Unit,
     requestFocus: Boolean = false,
+    onOpenSettings: (SettingsTarget) -> Unit = {},
 ) {
     val state by presenter.state.collectAsState()
     val query = state.query
@@ -62,7 +66,6 @@ internal fun SearchScreen(
     val spotify = state.spotify
     val youtube = state.youtube
     val downloads = state.downloads
-    val providersConfigured = state.providersConfigured
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -81,7 +84,7 @@ internal fun SearchScreen(
                 .reportsTextInputFocus(),
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-            placeholder = { Text("Search Spotify and YouTube") },
+            placeholder = { Text(state.searchHint) },
             trailingIcon = {
                 if (query.isNotEmpty()) {
                     IconButton(onClick = { presenter.setQuery("") }) {
@@ -119,10 +122,23 @@ internal fun SearchScreen(
         val playlists = state.playlists
         val tracks = state.tracks
         when {
-            !providersConfigured -> EmptyState(
-                "Connect a provider",
-                "Search uses Spotify and YouTube only. Add a Spotify Client ID and/or YouTube Data API key in Settings. Local files stay in Library.",
-            )
+            state.searchable.isEmpty() -> Column {
+                EmptyState(
+                    "Search needs Spotify or YouTube",
+                    "Search covers those two services. Your local files have their own search in Library.",
+                )
+                Row(
+                    Modifier.padding(horizontal = 32.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = { onOpenSettings(SettingsTarget.YouTubeKey) }) { Text("Set up YouTube") }
+                    OutlinedButton(onClick = {
+                        onOpenSettings(
+                            if (spotify == ProviderState.NOT_CONFIGURED) SettingsTarget.SpotifyClientId else SettingsTarget.SpotifySignIn,
+                        )
+                    }) { Text("Set up Spotify") }
+                }
+            }
             loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
             error != null -> Text(
                 error,
@@ -130,21 +146,21 @@ internal fun SearchScreen(
                 modifier = Modifier.padding(20.dp),
             )
             query.isBlank() -> EmptyState(
-                "Search Spotify and YouTube",
-                "Local files are not included here — use Library search for your folders.",
+                state.searchHint,
+                "Your local files are not included here. Library has its own search for those.",
             )
             tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
                 CircularProgressIndicator(Modifier.padding(24.dp))
             } else {
                 EmptyState(
                     "No matches for \"${query.trim()}\"",
-                    "Nothing matched on Spotify or YouTube. Try a different title or artist, or check provider status above.",
+                    "Nothing matched on ${state.searchable.joinToString(" or ") { it.title }}. Try a different title or artist.",
                 )
             }
             else -> LazyColumn(state = listState) {
                 val trackList = tracks.orEmpty()
                 item(key = "results-heading") {
-                    SectionRule("Spotify and YouTube", Modifier.padding(horizontal = 20.dp))
+                    SectionRule(state.searchable.joinToString(" and ") { it.title }, Modifier.padding(horizontal = 20.dp))
                 }
                 itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)

@@ -187,7 +187,7 @@ fun NowPlayingScreen(
                             track?.artistLine ?: "Pick a track from Home, Search, or Library",
                             style = MaterialTheme.typography.bodyLarge,
                             color = scheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = if (track == null) 2 else 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -118,8 +118,11 @@ class HomeLayoutTest {
 
     @Test
     fun wideCardsSupportIntrinsicMeasurementWithDiscoverInBothSkins() {
-        val lines = libraryLines(42, 1, ProviderState.AVAILABLE, FavoritesSummary(8, 8, 0, 0, emptyList()), 2,
-            ProviderState.AVAILABLE, 3, ProviderState.AVAILABLE)
+        val lines = libraryLines(sourceReadiness(SourceFacts(
+            desktop = true, tools = com.universalmusic.player.app.SourceTools(),
+            local = ProviderState.AVAILABLE, localTrackCount = 42, musicFolders = listOf("/music"),
+            folderPicker = true, spotify = ProviderState.AVAILABLE, youtube = ProviderState.AVAILABLE,
+        )), FavoritesSummary(8, 8, 0, 0, emptyList()), 2)
         for (skin in Skin.entries) for (dark in listOf(false, true)) {
             withScene(skin, 900, dark) { inspect ->
                 inspect {

@@ -188,16 +188,12 @@ class HomeContentTest {
 
     @Test
     fun libraryLedgerNamesEachSourceAndItsDoor() {
-        val lines = libraryLines(
-            localTrackCount = 512,
-            folderCount = 1,
-            localState = ProviderState.AVAILABLE,
-            favorites = FavoritesSummary(95, 94, 0, 1, emptyList()),
-            kainosPlaylistCount = 0,
-            spotifyState = ProviderState.RATE_LIMITED,
-            spotifyPlaylistCount = 0,
-            youtubeState = ProviderState.AVAILABLE,
+        val facts = SourceFacts(
+            desktop = true, tools = com.universalmusic.player.app.SourceTools(),
+            local = ProviderState.AVAILABLE, localTrackCount = 512, musicFolders = listOf("/music"),
+            folderPicker = false, spotify = ProviderState.RATE_LIMITED, youtube = ProviderState.AVAILABLE,
         )
+        val lines = libraryLines(sourceReadiness(facts), FavoritesSummary(95, 94, 0, 1, emptyList()), 0)
         assertEquals(
             listOf(LibraryMark.LOCAL, LibraryMark.HEARTS, LibraryMark.SPOTIFY, LibraryMark.YOUTUBE),
             lines.map { it.mark },
@@ -205,14 +201,14 @@ class HomeContentTest {
         assertEquals("512 songs in 1 folder", lines[0].detail)
         assertEquals(LibraryDoor.LIBRARY, lines[0].door)
         assertEquals(LibraryDoor.FAVORITES, lines[1].door)
-        assertEquals("Limited · Try again soon", lines[2].detail)
+        assertEquals("Limited · Open Spotify settings", lines[2].detail)
         assertEquals(LibraryDoor.SETTINGS, lines[2].door)
         assertEquals(LibraryDoor.SEARCH, lines[3].door)
 
-        val empty = libraryLines(0, 0, ProviderState.AVAILABLE, FavoritesSummary.EMPTY, 2, ProviderState.NOT_CONFIGURED, 0, ProviderState.UNAVAILABLE)
+        val empty = libraryLines(sourceReadiness(facts.copy(localTrackCount = 0, musicFolders = emptyList(), spotify = ProviderState.NOT_CONFIGURED, youtube = ProviderState.UNAVAILABLE)), FavoritesSummary.EMPTY, 2)
         assertEquals(LibraryDoor.SETTINGS, empty[0].door)
         assertEquals("2 Kainos playlists", empty[2].detail)
-        assertEquals("Offline · Open Settings", empty.last().detail)
+        assertEquals("Offline · Open YouTube settings", empty.last().detail)
     }
 
     @Test
@@ -247,7 +243,7 @@ class HomeContentTest {
             listOf("kainos:playlist:a", "/music/Playlist", "album:a"),
             suggestions.map { it.targetId },
         )
-        assertEquals("Kainos · 1 tracks", suggestions[0].subtitle)
+        assertEquals("Kainos · 1 track", suggestions[0].subtitle)
         assertEquals("p.png", suggestions[0].artwork?.url)
         assertEquals("Folder · 3 tracks", suggestions[1].subtitle)
         assertEquals("Album · 2 tracks", suggestions[2].subtitle)
@@ -314,7 +310,7 @@ class HomePresenterTest {
         empty.playFavorites {}
         assertEquals(1, failed)
         assertEquals(
-            "Heart tracks in Library to build favorites.",
+            "Heart a track in Now Playing to build favorites.",
             empty.state.value.actionMessage,
         )
     }
@@ -349,6 +345,13 @@ class HomePresenterTest {
         spotifyPlaylists = spotifyPlaylists,
         nowPlaying = nowPlaying,
         settings = settings,
+        ready = MutableStateFlow(true),
+        sources = SourcesPresenter(
+            settings, MutableStateFlow(com.universalmusic.player.app.SourceTools()),
+            localState, localTracks, spotifyState, youtubeState,
+            desktop = true, folderPicker = true, defaultMusicFolder = { "" }, recheckTools = {}, scope = scope,
+        ).state,
+        pickFolder = {},
         defaultMusicFolder = { "" },
         tracksInLocalFolder = { emptyList() },
         loadSpotifyPlaylistTracks = { emptyList() },

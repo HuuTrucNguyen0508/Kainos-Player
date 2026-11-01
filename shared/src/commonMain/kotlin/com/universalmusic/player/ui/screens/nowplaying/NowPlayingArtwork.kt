@@ -3,6 +3,7 @@ package com.universalmusic.player.ui.screens
 import androidx.compose.ui.graphics.Color
 import com.universalmusic.player.ui.components.AlbumLightCover
 import com.universalmusic.player.ui.theme.LocalSkinTokens
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.aspectRatio
@@ -12,6 +13,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -85,13 +89,24 @@ private fun NowPlayingArtworkFrame(
             shadowElevation = 3.dp,
             color = MaterialTheme.colorScheme.surfaceContainerHighest,
         ) {
-            ArtworkImage(
-                artwork = artwork,
-                contentDescription = title ?: "Artwork",
-                modifier = Modifier.fillMaxSize(),
-                seed = title ?: "U",
-                shape = corner,
-            )
+            if (title == null) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxSize(0.3f),
+                    )
+                }
+            } else {
+                ArtworkImage(
+                    artwork = artwork,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                    seed = title,
+                    shape = corner,
+                )
+            }
         }
     }
 }

@@ -38,6 +38,9 @@ internal class AndroidLibrespotPlaybackHost(
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
 
+    override fun receiverSetup(): SpotifyReceiverSetup =
+        if (hasCachedCredentials()) SpotifyReceiverSetup.READY else SpotifyReceiverSetup.NEEDS_SIGN_IN
+
     private val receiverFlow = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
     override val receiverEvents = object : SpotifyReceiverEvents {
         override val events = receiverFlow

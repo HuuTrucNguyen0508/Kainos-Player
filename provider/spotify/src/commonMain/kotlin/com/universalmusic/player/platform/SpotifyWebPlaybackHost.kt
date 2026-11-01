@@ -84,8 +84,13 @@ internal fun isRetryableLibrespotConnectFailure(failure: Throwable): Boolean {
         message.contains("timed out")
 }
 
+/** How far the in-app receiver is from playing, judged without starting it. */
+enum class SpotifyReceiverSetup { READY, NEEDS_SIGN_IN, NOT_INSTALLED }
+
 interface SpotifyWebPlaybackHost {
     val state: StateFlow<SpotifyWebPlaybackState>
+    /** Blocking file checks: call off the main thread. */
+    fun receiverSetup(): SpotifyReceiverSetup = SpotifyReceiverSetup.READY
     val receiverEvents: SpotifyReceiverEvents? get() = null
     val requiresStreamingScope: Boolean get() = true
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?

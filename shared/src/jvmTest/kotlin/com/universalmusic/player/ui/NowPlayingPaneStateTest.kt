@@ -74,3 +74,17 @@ class NowPlayingPaneStateTest {
         }
     }
 }
+
+class NowPlayingPaneFirstRunTest {
+    @Test fun pairedControlsAndExplicitOpeningWorkBeforeLocalPlayback() {
+        assertTrue(nowPlayingPaneShown(true, true, remoteAvailable = true), "Paired controls are reachable before local playback")
+        assertFalse(nowPlayingPaneShown(false, true, remoteAvailable = true), "Compact preference still hides the pane")
+        assertTrue(nowPlayingPaneShown(true, true, explicitlyOpened = true), "Open Now Playing opens the pane")
+    }
+
+    @Test fun thePaneWaitsForTheFirstTrackWithoutChangingTheListenersChoice() {
+        assertFalse(nowPlayingPaneShown(expanded = true, nothingEverPlayed = true))
+        assertTrue(nowPlayingPaneShown(expanded = true, nothingEverPlayed = false))
+        assertFalse(nowPlayingPaneShown(expanded = false, nothingEverPlayed = false), "A hidden pane stays hidden")
+    }
+}

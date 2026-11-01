@@ -89,6 +89,7 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
+import com.universalmusic.player.ui.screens.SettingsTarget
 import com.universalmusic.player.ui.theme.KainosTheme
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -130,6 +131,7 @@ private fun AppScaffold(
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    var settingsTarget by remember { mutableStateOf<SettingsTarget?>(null) }
     var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer)
     var nowPlayingPaneWidthDp by rememberSaveable {
         mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
@@ -143,6 +145,10 @@ private fun AppScaffold(
     val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
+    val appReady by container.ready.collectAsState()
+    val recentlyPlayed by container.library.recentlyPlayed.collectAsState()
+    val remote by container.remoteControl.state.collectAsState()
+    val nothingEverPlayed = appReady && recentlyPlayed.isEmpty() && currentTrack == null
     val imageContext = LocalPlatformContext.current
     LaunchedEffect(queue, imageContext) {
         container.player.nowPlaying.map { it.isPlaying }.distinctUntilChanged().collectLatest { playing ->
@@ -185,7 +191,6 @@ private fun AppScaffold(
             wasNarrow && !isNarrow -> {
                 if (showNowPlaying) {
                     nowPlayingPaneExpanded = true
-                    showNowPlaying = false
                 }
             }
         }
@@ -195,7 +200,7 @@ private fun AppScaffold(
     // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
     val showWideQueueColumn = desktop && showQueue && wide
     val queueReplacesSidePane = desktop && showQueue && !wide
-    val showSideNowPlaying = desktop && nowPlayingPaneExpanded && !queueReplacesSidePane
+    val showSideNowPlaying = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
     val showDesktopMiniBar = desktop &&
         currentTrack != null &&
         !showSideNowPlaying &&
@@ -244,10 +249,15 @@ private fun AppScaffold(
         return false
     }
 
+    fun openSettings(target: SettingsTarget) {
+        settingsTarget = target
+        navigateToTab(AppDestination.Settings)
+    }
+
     fun openNowPlaying() {
         if (desktop) {
             nowPlayingPaneExpanded = true
-            showNowPlaying = false
+            showNowPlaying = true
             if (!wide) showQueue = false
         } else {
             showQueue = false
@@ -279,6 +289,11 @@ private fun AppScaffold(
             tabBackStackNames.isNotEmpty(),
     ) {
         handleSystemBack()
+    }
+
+    // The arrival mark belongs to one visit; leaving Settings lets the same spot be opened again.
+    LaunchedEffect(destination) {
+        if (destination != AppDestination.Settings) settingsTarget = null
     }
 
     val handleUiRequest by rememberUpdatedState<(UiRequest) -> Unit> { request ->
@@ -329,7 +344,7 @@ private fun AppScaffold(
                     selected = destination,
                     onSelect = ::navigateToTab,
                     footer = {
-                        if (!nowPlayingPaneExpanded) {
+                        if (!showSideNowPlaying && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
                             IconButton(onClick = { openNowPlaying() }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -349,7 +364,7 @@ private fun AppScaffold(
 
             // Main content column: tabs stay composed across resize so Library scroll survives.
             Column(Modifier.weight(1f).fillMaxSize()) {
-                FailureBar(container)
+                FailureBar(container.failures)
                 HandoffNoticeBar(container)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxSize()) {
@@ -366,7 +381,7 @@ private fun AppScaffold(
                                         container,
                                         onPlayTracks = ::playTracks,
                                         onOpenNowPlaying = { openNowPlaying() },
-                                        onOpenSettings = { navigateToTab(AppDestination.Settings) },
+                                        onOpenSettings = ::openSettings,
                                         onOpenSearch = { navigateToTab(AppDestination.Search) },
                                         onOpenLibrary = { navigateToTab(AppDestination.Library) },
                                         // The side pane already shows the session, so Home skips its session card.
@@ -376,9 +391,15 @@ private fun AppScaffold(
                                         presenter = searchPresenter,
                                         onPlayTrackInList = ::playSearchTracks,
                                         requestFocus = true,
+                                        onOpenSettings = ::openSettings,
                                     )
-                                    AppDestination.Library -> LibraryScreen(container, libraryPresenter, ::playTracks)
-                                    AppDestination.Settings -> SettingsScreen(container)
+                                    AppDestination.Library -> LibraryScreen(
+                                        container.libraryTypeAhead,
+                                        container::consumeLibraryTypeAhead,
+                                        libraryPresenter,
+                                        ::playTracks,
+                                    )
+                                    AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                                 }
                             }
                         }
@@ -517,8 +538,8 @@ private fun HandoffNoticeBar(container: AppContainer) {
 }
 
 @Composable
-private fun FailureBar(container: AppContainer) {
-    val failure = container.failures.collectAsState().value.shown
+internal fun FailureBar(failures: StateFlow<Set<AppFailure>>) {
+    val failure = failures.collectAsState().value.shown
     var last by remember { mutableStateOf<AppFailure?>(null) }
     failure?.let { last = it }
     LaunchedEffect(failure) { AppFailures.holdOnScreen(failure) }

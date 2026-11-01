@@ -15,11 +15,11 @@ Supported when `SPOTIFY_CLIENT_ID` is configured and the user signs in:
 
 Playback uses **Spotify Connect** for play, pause, resume, and seek. Premium is required.
 
-On **Linux desktop**, Kainos starts a headless [librespot](https://github.com/librespot-org/librespot) Connect receiver named `Kainos Player` that decodes audio on the machine. Setup is one-time OAuth via Settings → Set up in-app Spotify playback.
+On **Linux desktop**, Kainos starts a headless [librespot](https://github.com/librespot-org/librespot) Connect receiver named `Kainos Player` that decodes audio on the machine. librespot must be installed. Setup is one-time OAuth via Settings → Music sources → Set up in-app Spotify playback.
 
-On **Android**, Kainos embeds [librespot-java](https://github.com/librespot-org/librespot-java) 0.2.0 (via `lib-librespot-android` sink/decoder modules) as the same Connect receiver. First setup uses browser OAuth with loopback redirect `http://127.0.0.1:5588/login`; credentials are stored under the app private files and reused on later launches. Audio is decoded on-device through `AndroidSinkOutput`. This is personal / unofficial use; Spotify may break or revoke access.
+On **Android**, Kainos embeds [librespot-java](https://github.com/librespot-org/librespot-java) 0.2.0 (via `lib-librespot-android` sink/decoder modules) as a Connect receiver named `Kainos Player Android`. First setup uses browser OAuth with loopback redirect `http://127.0.0.1:5588/login`; credentials are stored under the app private files and reused on later launches. Audio is decoded on-device through `AndroidSinkOutput`. This is personal / unofficial use; Spotify may break or revoke access.
 
-If no Kainos receiver is ready and no other Connect device is listed, Linux may try to launch the Spotify client as a fallback. Remote player state is not polled, so changes made directly in Spotify are not synchronized into Kainos Player.
+If no Kainos receiver is ready and no other Connect device is listed, Linux may try to launch the Spotify client as a fallback.
 
 Quality: The Web API does not report per-track source format. Kainos labels Spotify quality **Unknown** and does not treat Connect output as lossless. A typical decode is still 16-bit / 44.1 kHz; that figure is output format, shown in Audio details, not a source badge. The app does not invent a lossy bitrate such as 320 kbps.
 
@@ -39,9 +39,11 @@ On Android, [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor)
 
 Save a YouTube Data API key in Settings or set `YOUTUBE_DATA_API_KEY` to enable search. Install yt-dlp with `scripts/install-yt-dlp.sh` (or your package manager) for desktop playback.
 
-## Sample catalog
+## Gapless playback and volume
 
-A small demo catalog can still exist in the domain model for tests and empty-library exercises. It is labeled as a sample catalog, it is not a connected Spotify or YouTube Music session, and Search does not include it. Library empty states do not invent sample albums or playlists.
+Gapless playback covers local files on Linux only, where mpv plays one straight into the next. Spotify and YouTube tracks have a short gap on Linux, and every track does on Android.
+
+The Spotify receiver applies Spotify Loud normalization at +3 dB on both platforms, with no switch. Local files and YouTube play at their own level; there is no volume normalization for them.
 
 ## Adding another provider
 

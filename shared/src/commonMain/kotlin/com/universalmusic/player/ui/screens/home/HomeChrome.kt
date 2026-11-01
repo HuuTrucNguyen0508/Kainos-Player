@@ -1,7 +1,6 @@
 package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,14 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.Playlist
-import com.universalmusic.player.domain.model.ProviderId
-import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.components.Slip
@@ -59,7 +54,6 @@ import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
-import com.universalmusic.player.ui.theme.providerColor
 
 @Composable
 internal fun FavoritesHero(
@@ -140,7 +134,7 @@ private fun FavoritesHeadline(favorites: FavoritesSummary, stacked: Boolean, mod
         )
         if (favorites.count == 0) {
             Text(
-                "Heart songs in Library and they gather here.",
+                "Heart songs in Now Playing and they gather here.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -209,7 +203,7 @@ private val LibraryMark.icon: ImageVector
 @Composable
 internal fun LibraryCard(
     lines: List<LibraryLine>,
-    onOpen: (LibraryDoor) -> Unit,
+    onOpen: (LibraryLine) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalKainosPalette.current
@@ -224,7 +218,7 @@ internal fun LibraryCard(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(rounding.small))
-                        .clickable { onOpen(line.door) }
+                        .clickable { onOpen(line) }
                         .padding(vertical = 7.dp, horizontal = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -302,105 +296,5 @@ internal fun DiscoverBlock(
         if (busy) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         }
-    }
-}
-
-@Composable
-internal fun EmptyDoors(
-    localState: ProviderState,
-    spotifyState: ProviderState,
-    youtubeState: ProviderState,
-    onOpenSettings: (() -> Unit)?,
-    onOpenSearch: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier) {
-        Text("Nothing to play yet", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Kainos plays from three places. Open one.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(24.dp))
-        EmptyDoor(
-            provider = ProviderId.LOCAL,
-            state = localState,
-            name = "Local library",
-            action = "Add a music folder in Settings",
-            onClick = onOpenSettings,
-        )
-        EmptyDoor(
-            provider = ProviderId.SPOTIFY,
-            state = spotifyState,
-            name = "Spotify",
-            action = "Connect in Settings",
-            onClick = onOpenSettings,
-        )
-        EmptyDoor(
-            provider = ProviderId.YOUTUBE_MUSIC,
-            state = youtubeState,
-            name = "YouTube Music",
-            action = "Search for anything and play it",
-            onClick = onOpenSearch,
-        )
-    }
-}
-
-@Composable
-private fun EmptyDoor(
-    provider: ProviderId,
-    state: ProviderState,
-    name: String,
-    action: String,
-    onClick: (() -> Unit)?,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .semantics { contentDescription = "$name. $action" },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LegendDot(provider, state)
-        Spacer(Modifier.width(14.dp))
-        Column {
-            Text(name, style = MaterialTheme.typography.titleSmall)
-            Text(
-                action,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun LegendDot(provider: ProviderId, state: ProviderState) {
-    when (state) {
-        ProviderState.AVAILABLE -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(providerColor(provider.displayName)),
-        )
-        ProviderState.LOADING -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary),
-        )
-        ProviderState.RATE_LIMITED -> Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.error),
-        )
-        else -> Box(
-            Modifier
-                .size(8.dp)
-                .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
-        )
     }
 }
