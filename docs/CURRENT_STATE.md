@@ -49,9 +49,11 @@ More detail is in [provider limitations](LIMITATIONS.md).
 
 ## How this was verified
 
-**Automated, on every change.** `./gradlew jvmTest` runs the unit tests of every module and the Compose UI tests in `shared/src/jvmTest`, which drive real screens with clicks and mouse-wheel input without a display. CI also runs `:core:data:verifyCommonMainKainosDatabaseMigration`, `:desktopApp:createDistributable`, `:androidApp:assembleDebug` and `:androidApp:lintDebug`.
+**Automated, on every change.** `./gradlew jvmTest` runs the unit tests of every module and the Compose UI tests in `shared/src/jvmTest`, which drive real screens with clicks and mouse-wheel input without a display. CI also runs `:core:data:verifyCommonMainKainosDatabaseMigration`, `:desktopApp:createDistributable`, `:androidApp:assembleDebug`, `:androidApp:assembleOptimized`, `:androidApp:lintDebug` and the gapless stress test against real mpv. Other tests that need real tools or a harness report as skipped, not passed. There is no emulator job.
 
 **Automated, with a device attached.** `./gradlew :androidApp:connectedDebugAndroidTest` covers local scanning and playback, controls, completion, missing-file recovery, background service behaviour and simulated Spotify-to-local transitions.
+
+**Release gate.** `scripts/android-release-gate.py --serial <emulator>` builds the optimized APK, verifies its signature and contents, smoke-tests that exact APK, runs the instrumented classes and the first-run journey against an R8 build, and lists the manual checks it cannot do. Releases still publish the debug APK: the optimized build becomes the default only after the owner has run that list on the phone. `androidApp/README.md` covers versions, rollback, signing and adopting a release key.
 
 **By hand on real hardware.** On a Poco F7 Ultra running HyperOS: local playback, embedded artwork, notification actions, cold launch from the notification, and media island behaviour. On Linux: librespot sign-in, headless restart and audio start. Legacy JSON data imported into the database with matching counts.
 

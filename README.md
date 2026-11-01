@@ -101,6 +101,16 @@ Choose music folders in **Settings → Music sources → Add folder**. Android k
 
 Playback uses a foreground media service. System pause, seek, skip, and Bluetooth controls drive the shared in-app session. Tapping the music notification opens Now Playing. Back dismisses Now Playing/Queue first, then follows main-tab history; playback continues while navigating.
 
+### Android releases
+
+Published releases are `kainos-player-linux-*.tar.gz` plus an Android debug APK, tagged `linux-android-YYYY-MM-DD`, and only when the owner asks. The debug APK stays the default until the owner has accepted the optimized build on the phone. Check a candidate with the release gate on an emulator:
+
+```bash
+scripts/android-release-gate.py --serial emulator-5554
+```
+
+The app's version is in **Settings → Advanced**. An older version can't be installed over a newer one with a plain `install -r`, and a build signed by a different key can't update the app at all. See [androidApp/README.md](androidApp/README.md) for rollback and for adopting a release key without uninstalling.
+
 ## Local library
 
 Add, remove, refresh, and pin folders in **Settings → Music sources** on both platforms. Linux scans `~/Music` until you configure folders. An explicitly empty folder list stays empty.
@@ -244,14 +254,18 @@ Run the checks used by CI (`jvmTest` covers every module):
 
 ```bash
 export JAVA_HOME="$HOME/.jdks/temurin-17"
-./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:lintDebug
+./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug
 ```
+
+Real-engine tests are reported as skipped unless enabled. `KAINOS_GAPLESS_STRESS=1` runs the gapless stress test against real mpv and ffmpeg, as CI does.
 
 With a connected Android device/emulator:
 
 ```bash
 ./gradlew :androidApp:connectedDebugAndroidTest
 ```
+
+`AndroidFirstRunProofTest` depends on app state, so run it through the [release gate](androidApp/README.md#release-gate).
 
 Instrumented tests cover local scanning/playback, controls, completion, missing-file recovery, background service behavior, and simulated Spotify-to-local transitions. They do not authenticate with Spotify or test physical Bluetooth hardware.
 
