@@ -862,10 +862,11 @@ class AppContainer(
         scope.launch {
             val picked = pickMusicFolder() ?: return@launch
             updateSettings { current ->
-                val base = if (current.localMusicFoldersConfigured) {
-                    current.localMusicFolders
-                } else {
-                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                val base = when {
+                    current.localMusicFoldersConfigured -> current.localMusicFolders
+                    // A default folder that gave us nothing should not linger beside the listener's choice.
+                    local.libraryTracks.value.isEmpty() -> emptyList()
+                    else -> listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
                 val nextFolders = (base + picked).distinct()
                 current.copy(
@@ -912,10 +913,11 @@ class AppContainer(
                 pickingMusicFolder.value = false
             } ?: return@launch
             updateSettings { current ->
-                val base = if (current.localMusicFoldersConfigured) {
-                    current.localMusicFolders
-                } else {
-                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                val base = when {
+                    current.localMusicFoldersConfigured -> current.localMusicFolders
+                    // A default folder that gave us nothing should not linger beside the listener's choice.
+                    local.libraryTracks.value.isEmpty() -> emptyList()
+                    else -> listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
                 val nextFolders = (base + picked).distinct()
                 val firstExplicitRoot = !current.localMusicFoldersConfigured ||

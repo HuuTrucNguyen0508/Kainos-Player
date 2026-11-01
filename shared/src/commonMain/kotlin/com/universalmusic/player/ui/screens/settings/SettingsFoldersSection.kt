@@ -51,7 +51,7 @@ internal fun SettingsFoldersSection(
     SettingsSpot(SettingsTarget.MusicFolders, focus = addFolderFocus) {
         SetupNote(readiness.detail)
         if (canPickFolders) {
-            localLibraryMessage?.let { message ->
+            localLibraryMessage?.takeIf { local == ProviderState.UNAVAILABLE || ui.trackCount > 0 }?.let { message ->
                 Text(
                     message,
                     style = MaterialTheme.typography.bodySmall,

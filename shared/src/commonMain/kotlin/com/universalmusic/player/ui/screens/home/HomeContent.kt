@@ -212,6 +212,8 @@ internal data class LibraryLine(
     val settingsTarget: SettingsTarget? = null,
 )
 
+private fun tracksLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
+
 internal fun libraryLines(
     localTrackCount: Int,
     folderCount: Int,
@@ -228,7 +230,7 @@ internal fun libraryLines(
             localTrackCount > 0 -> LibraryLine(
                 LibraryMark.LOCAL,
                 "Local files",
-                "$localTrackCount songs in $folderCount ${if (folderCount == 1) "folder" else "folders"}",
+                "$localTrackCount ${if (localTrackCount == 1) "song" else "songs"} in $folderCount ${if (folderCount == 1) "folder" else "folders"}",
                 LibraryDoor.LIBRARY,
             )
             localState == ProviderState.LOADING -> LibraryLine(LibraryMark.LOCAL, "Local files", "Scanning folders…", LibraryDoor.LIBRARY)
@@ -237,7 +239,7 @@ internal fun libraryLines(
     )
     add(
         if (favorites.count > 0) {
-            LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} songs · Play favorites", LibraryDoor.FAVORITES)
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} ${if (favorites.count == 1) "song" else "songs"} · Play favorites", LibraryDoor.FAVORITES)
         } else {
             LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Now Playing to build favorites", LibraryDoor.LIBRARY)
         },
@@ -341,7 +343,7 @@ internal fun pinSuggestions(
                         HomePinKind.KAINOS_PLAYLIST,
                         playlist.id,
                         playlist.title,
-                        "Kainos · ${playlist.entries.size} tracks",
+                        "Kainos · ${tracksLabel(playlist.entries.size)}",
                         art,
                     ),
                 )
@@ -349,7 +351,7 @@ internal fun pinSuggestions(
         folders.forEach { folder ->
             val count = folderTrackCounts[folder] ?: 0
             if (count > 0) {
-                add(PinSuggestion(HomePinKind.LOCAL_FOLDER, folder, folderPinDisplayName(folder), "Folder · $count tracks", null))
+                add(PinSuggestion(HomePinKind.LOCAL_FOLDER, folder, folderPinDisplayName(folder), "Folder · ${tracksLabel(count)}", null))
             }
         }
         localTracks
@@ -450,7 +452,7 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = kainosTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Kainos · $count tracks",
+                    "Kainos · ${tracksLabel(count)}",
                 )
             }
         }
@@ -486,7 +488,7 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = albumTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Album · $count tracks",
+                    "Album · ${tracksLabel(count)}",
                 )
             }
         }
@@ -503,7 +505,7 @@ internal fun resolveHomePin(
                 if (count == 0) {
                     ResolvedHomePin(pin.copy(title = title), PinStatus.EMPTY, "Folder · no tracks yet")
                 } else {
-                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · $count tracks")
+                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · ${tracksLabel(count)}")
                 }
             }
         }
