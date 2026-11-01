@@ -70,7 +70,7 @@ internal class PositionTicker(
                         // while the read was in flight. Do not publish it.
                         return@synchronized false
                     }
-                    if (sample != null && active?.crossing == null) {
+                    if (sample != null && active?.playlist?.crossing == null) {
                         if (sample.eof && !active.gapless) {
                             cancelLocked()
                             val current = transport.current

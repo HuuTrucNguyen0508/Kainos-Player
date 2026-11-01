@@ -1,6 +1,5 @@
 package com.universalmusic.player.platform
 
-import com.universalmusic.player.domain.playback.PreparedPlayback
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
@@ -94,16 +93,5 @@ internal class ActiveProcess(
     val socket: Path,
     val gapless: Boolean = false,
     var events: MpvEventStream? = null,
-    var loaded: Boolean = false,
-    var entryId: Long? = null,
-    var decodingEntryId: Long? = null,
-    var crossingEntryId: Long? = null,
-    val entries: MutableMap<Long, Pair<PreparedPlayback, Long?>> = mutableMapOf(),
-    var nextDuration: Long? = null,
-    var crossing: PreparedPlayback? = null,
-    var crossingRunning: Boolean = false,
-    var outputDrained: Boolean = false,
-    var endedAfterCrossing: Boolean = false,
-    var crossingFailed: Boolean = false,
-    var awaitingSuccessor: Boolean = false,
+    val playlist: GaplessPlaylist = GaplessPlaylist(),
 )

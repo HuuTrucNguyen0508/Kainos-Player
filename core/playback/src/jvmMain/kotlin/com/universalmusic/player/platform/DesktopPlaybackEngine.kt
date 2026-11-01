@@ -1,7 +1,5 @@
 package com.universalmusic.player.platform
 
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
@@ -17,7 +15,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -50,71 +47,16 @@ class DesktopPlaybackEngine internal constructor(
     private val slot = MpvSlot(runtime, transport.lock, scope)
     private val ticker = PositionTicker(transport, slot, runtime, scope) { spotifyPath.receiverOwnsPlaybackLocked() }
     private val spotifyPath: SpotifyConnectPath = SpotifyConnectPath(spotify, transport, ticker, scope, spotifyObserveIntervalMs)
+    private val gapless = GaplessBoundary(transport, slot, ticker, runtime, scope) {
+        val handle = transport.handle as? PlaybackHandle.Url ?: return@GaplessBoundary
+        ticker.hold(transport.current.positionMs)
+        seekRestartLocked(handle, transport.current)?.let(::launchRestart)
+    }
     override val state: StateFlow<EngineState> = transport.state
     override val supportsGapless: Boolean get() = runtime.supportsEvents
-    private var gaplessEnabled = false
-    private var preparedNext: PreparedPlayback? = null
+    override fun configureGapless(enabled: Boolean) = gapless.configure(enabled)
 
-    override fun configureGapless(enabled: Boolean) {
-        synchronized(transport.lock) { gaplessEnabled = enabled }
-        if (!enabled) prepareNext(null)
-    }
-
-    override fun prepareNext(next: PreparedPlayback?) {
-        synchronized(transport.lock) {
-            val candidate = next?.takeIf { gaplessEnabled && it.generation == transport.activeGeneration && localFile(it.handle.url) }
-            preparedNext = candidate
-            val active = slot.active ?: return
-            if (!active.gapless) return
-            if (active.crossing != null && candidate !== active.crossing) {
-                val handle = transport.handle as? PlaybackHandle.Url ?: return
-                ticker.hold(transport.current.positionMs)
-                seekRestartLocked(handle, transport.current)?.let(::launchRestart)
-                return
-            }
-            preparedNext = candidate
-            slot.enqueueLocked {
-                if (!slot.isActive(active)) return@enqueueLocked
-                // Remove the old successor before probing a potentially incompatible replacement.
-                runtime.sendIpc("""["playlist-clear"]""", active.socket)
-                val currentUrl = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url }
-                val compatible = candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url))
-                if (!compatible) {
-                    synchronized(transport.lock) { if (preparedNext === candidate) preparedNext = null }
-                    runtime.sendIpc("""["set_property","gapless-audio","no"]""", active.socket)
-                    synchronized(transport.lock) {
-                        if (slot.active === active && active.awaitingSuccessor) {
-                            active.awaitingSuccessor = false
-                            transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                        }
-                    }
-                    return@enqueueLocked
-                }
-                runtime.sendIpc("""["set_property","gapless-audio","${if (candidate == null) "no" else "yes"}"]""", active.socket)
-                if (candidate == null) synchronized(transport.lock) {
-                    if (slot.active === active && active.awaitingSuccessor) {
-                        active.awaitingSuccessor = false
-                        transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                    }
-                }
-                if (candidate != null) {
-                    val duration = runtime.probeDurationMs(candidate.handle.url)
-                    synchronized(transport.lock) {
-                        if (preparedNext !== candidate || slot.active !== active) return@enqueueLocked
-                        active.nextDuration = duration
-                    }
-                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
-                    synchronized(transport.lock) {
-                        if (id != null) active.entries[id] = candidate to duration
-                        else if (preparedNext === candidate) preparedNext = null
-                    }
-                }
-            }
-        }
-    }
-
-    private fun localFile(url: String): Boolean = url.startsWith("file:") || !url.contains("://")
-
+    override fun prepareNext(next: PreparedPlayback?) = gapless.prepareNext(next)
 
     private var seekSequence = 0L
     @Volatile
@@ -142,7 +84,7 @@ class DesktopPlaybackEngine internal constructor(
         val token = synchronized(transport.lock) {
             val retry = transport.current.status == EngineStatus.FAILED && transport.current.retryAtPositionMs != null &&
                 (transport.handle as? PlaybackHandle.Url)?.url == (handle as? PlaybackHandle.Url)?.url
-            preparedNext = if (retry) preparedNext?.copy(generation = playGeneration) else null
+            gapless.adoptGenerationLocked(playGeneration, keepPrepared = retry)
             transport.activeGeneration = playGeneration
             transport.invalidatePendingStartLocked()
             ticker.cancelLocked()
@@ -289,12 +231,12 @@ class DesktopPlaybackEngine internal constructor(
             slot.epoch++
             val seekId = ++seekSequence
             val active = slot.active
-            if (active?.crossing != null) preparedNext = active.crossing
+            gapless.keepCrossingPreparedLocked(active)
             if (active?.process?.isAlive == true) {
                 val seconds = ticker.anchorMs / 1000.0
                 slot.enqueueLocked {
                     if (synchronized(transport.lock) { seekSequence != seekId || transport.handle !== handle || slot.active !== active }) return@enqueueLocked
-                    val ok = if (active.gapless) seekGapless(active, handle, seconds) else
+                    val ok = if (active.gapless) gapless.seek(active, handle, seconds) else
                         slot.sendIfActive(active, """["set_property","time-pos",$seconds]""")
                     val fallback = synchronized(transport.lock) {
                         // A newer transport command (or track) owns the state now.
@@ -314,42 +256,6 @@ class DesktopPlaybackEngine internal constructor(
             seekRestartLocked(handle, current) ?: return
         }
         launchRestart(restart)
-    }
-
-    /** Runs in the IPC FIFO. With no successor, EOF can only enter idle, never another file. */
-    private fun seekGapless(active: ActiveProcess, handle: PlaybackHandle.Url, seconds: Double): Boolean {
-        if (!slot.isActive(active)) return false
-        val playlist = runCatching {
-            Json.parseToJsonElement(runtime.readProperty("playlist", active.socket) ?: return false)
-                as kotlinx.serialization.json.JsonArray
-        }.getOrNull() ?: return false
-        // mpv accepts playlist indices, not IDs. Resolve the bound IDs from this snapshot and
-        // remove backwards so earlier indices remain stable. Automatic advance retains indices.
-        var index = playlist.size - 1
-        while (index >= 0) {
-            val id = playlist[index].jsonObject["id"]?.jsonPrimitive?.content?.toLongOrNull()
-            val successor = synchronized(transport.lock) { id in active.entries }
-            if (successor && !runtime.sendIpc("""["playlist-remove",$index]""", active.socket)) return false
-            index--
-        }
-        val playing = runCatching {
-            (Json.parseToJsonElement(runtime.readProperty("playlist", active.socket) ?: return false)
-                as kotlinx.serialization.json.JsonArray).firstOrNull {
-                it.jsonObject["playing"]?.jsonPrimitive?.content == "true"
-            }?.jsonObject?.get("id")?.jsonPrimitive?.content?.toLongOrNull()
-        }.getOrNull()
-        val ownsFile = synchronized(transport.lock) {
-            slot.active === active && transport.handle === handle && active.crossing == null &&
-                playing != null && playing == active.entryId
-        }
-        if (!ownsFile || !runtime.sendIpc("""["set_property","time-pos",$seconds]""", active.socket)) return false
-        synchronized(transport.lock) {
-            if (slot.active !== active || transport.handle !== handle) return true
-            active.entries.clear()
-            active.awaitingSuccessor = false
-            preparedNext?.let { prepareNext(it) }
-        }
-        return true
     }
 
     private fun seekRestartLocked(handle: PlaybackHandle.Url, current: EngineState): Restart? {
@@ -396,7 +302,7 @@ class DesktopPlaybackEngine internal constructor(
                 ))
                 return
             }
-            preparedNext = null
+            gapless.clearPreparedLocked()
             ticker.hold(0)
             transport.handle = null
             transport.quality = null
@@ -432,7 +338,7 @@ class DesktopPlaybackEngine internal constructor(
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val active = synchronized(transport.lock) {
             if (token != transport.requestToken) return
-            val seamless = gaplessEnabled && localFile(url) && runtime.supportsEvents
+            val seamless = gapless.canJoin(url)
             val warm = if (seamless && runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.take() else null
             val socket = warm?.second ?: runtime.createIpcPath()
             val command = buildList {
@@ -485,7 +391,7 @@ class DesktopPlaybackEngine internal constructor(
                     try {
                         while (true) {
                             val line = events.readLine() ?: break
-                            synchronized(transport.lock) { slot.enqueueLocked { handleMpvEvent(active, line) } }
+                            synchronized(transport.lock) { slot.enqueueLocked { gapless.onEvent(active, line) } }
                         }
                     } catch (_: Exception) {
                         // Closing the channel during stop wakes this blocking reader.
@@ -501,7 +407,7 @@ class DesktopPlaybackEngine internal constructor(
                 }
                 check(slot.awaitIpc {
                     val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(url)},"replace",-1,{"start":"$startSeconds"}]""", active.socket)
-                    synchronized(transport.lock) { active.entryId = id }
+                    synchronized(transport.lock) { active.playlist.entryId = id }
                     id != null
                 })
             }
@@ -536,145 +442,7 @@ class DesktopPlaybackEngine internal constructor(
                 durationMs = durationMs,
             ))
             if (targetStatus == EngineStatus.PLAYING) ticker.startLocked()
-            preparedNext?.takeIf { gaplessEnabled && it.generation == transport.activeGeneration }?.let(::prepareNext)
-        }
-    }
-
-    private fun handleMpvEvent(active: ActiveProcess, line: String) {
-        val event = runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull() ?: return
-        synchronized(transport.lock) {
-            if (slot.active !== active) return
-            when (event["event"]?.jsonPrimitive?.content) {
-                "idle" -> active.outputDrained = true
-                "start-file" -> {
-                    active.outputDrained = false
-                    active.decodingEntryId = event["playlist_entry_id"]?.jsonPrimitive?.content?.toLongOrNull()
-                }
-                "file-loaded" -> {
-                    if (!active.loaded && (active.decodingEntryId == null || active.decodingEntryId == active.entryId)) {
-                        active.loaded = true
-                        return
-                    }
-                    val binding = active.entries[active.decodingEntryId]
-                    val next = binding?.first?.takeIf { it === preparedNext } ?: run {
-                        // Cancellation raced an already decoded file. Let the session select the
-                        // current successor again rather than playing an unowned queue item.
-                        ticker.cancelLocked()
-                        slot.stopLocked()
-                        transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                        return
-                    }
-                    if (next.generation != transport.activeGeneration) return
-                    preparedNext = null
-                    active.awaitingSuccessor = false
-                    active.crossing = next
-                    active.crossingEntryId = active.decodingEntryId
-                    active.nextDuration = binding.second
-                }
-                "playback-restart" -> {
-                    val next = active.crossing ?: return
-                    if (active.crossingRunning) return
-                    active.crossingRunning = true
-                    scope.launch {
-                        // file-loaded means decoding changed, possibly while the previous audio
-                        // is still buffered. audio-pts includes the output driver delay.
-                        var unresolvedMs = 0L
-                        var lastSample = System.nanoTime()
-                        while (true) {
-                            val pts = slot.awaitIpc { runtime.readProperty("audio-pts", active.socket)?.toDoubleOrNull() }
-                            val now = System.nanoTime()
-                            val crossed = synchronized(transport.lock) {
-                                if (slot.active !== active || active.crossing !== next) return@launch
-                                if (!transport.userPaused) unresolvedMs += (now - lastSample) / 1_000_000
-                                active.outputDrained || (pts != null && pts.isFinite() && pts >= 0)
-                            }
-                            if (crossed) break
-                            if (unresolvedMs >= 2_000) {
-                                synchronized(transport.lock) {
-                                    if (slot.active !== active || active.crossing !== next) return@launch
-                                    // No output evidence: discard lookahead and let the session
-                                    // resolve the selected successor normally, without claiming it played.
-                                    slot.stopLocked()
-                                    ticker.cancelLocked()
-                                    transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                                }
-                                return@launch
-                            }
-                            lastSample = now
-                            delay(10)
-                        }
-                        synchronized(transport.lock) {
-                            if (slot.active !== active || active.crossing !== next || next.generation != transport.activeGeneration) return@synchronized
-                            active.entryId = active.crossingEntryId
-                            active.entries.remove(active.entryId)
-                            active.crossing = null
-                            active.crossingRunning = false
-                            val previous = transport.activeGeneration++
-                            transport.handle = next.handle
-                            transport.quality = next.quality
-                            ticker.anchor(0)
-                            slot.epoch++
-                            transport.publish(EngineState(status = if (active.crossingFailed) EngineStatus.FAILED else if (active.endedAfterCrossing) EngineStatus.ENDED else
-                                if (transport.userPaused) EngineStatus.PAUSED else EngineStatus.PLAYING,
-                                error = if (active.crossingFailed) "Local file playback failed" else null,
-                                durationMs = active.nextDuration, seamlessItemId = next.itemId, previousGeneration = previous))
-                            active.endedAfterCrossing = false
-                            active.crossingFailed = false
-                        }
-                    }
-                }
-                "end-file" -> {
-                    val reason = event["reason"]?.jsonPrimitive?.content
-                    val id = event["playlist_entry_id"]?.jsonPrimitive?.content?.toLongOrNull()
-                    if (id != null && id != active.entryId && id != active.crossingEntryId && id !in active.entries) return
-                    if (reason != "eof" && reason != "error") return
-                    if (active.crossing != null && (id == null || id == active.crossingEntryId)) {
-                        active.endedAfterCrossing = true
-                        active.crossingFailed = reason == "error"
-                        return
-                    }
-                    if (reason == "eof" && preparedNext != null && (id == null || id == active.entryId)) {
-                        active.awaitingSuccessor = true
-                        return
-                    }
-                    if (reason == "error" && active.awaitingSuccessor && (id == null || id != active.entryId)) {
-                        active.awaitingSuccessor = false
-                        preparedNext = null
-                        val generation = transport.activeGeneration
-                        // The outgoing decoder reached EOF but its tail may still be in the AO.
-                        // A broken successor must not cause session teardown to discard that tail.
-                        scope.launch {
-                            var remaining = (transport.current.durationMs?.minus(transport.current.positionMs) ?: 0).coerceAtLeast(0)
-                            var last = System.nanoTime()
-                            while (remaining > 0) {
-                                delay(10)
-                                val now = System.nanoTime()
-                                val valid = synchronized(transport.lock) {
-                                    if (!transport.userPaused) remaining -= (now - last) / 1_000_000
-                                    slot.active === active && transport.activeGeneration == generation
-                                }
-                                if (!valid) return@launch
-                                last = now
-                            }
-                            synchronized(transport.lock) {
-                                if (slot.active === active && transport.activeGeneration == generation) {
-                                    ticker.cancelLocked()
-                                    transport.publish(transport.current.copy(status = EngineStatus.ENDED))
-                                }
-                            }
-                        }
-                        return
-                    }
-                    // Errors on the outgoing entry must also cancel any pending boundary.
-                    active.crossing = null
-                    active.crossingRunning = false
-                    preparedNext = null
-                    ticker.cancelLocked()
-                    transport.publish(transport.current.copy(status = if (reason == "error")
-                        EngineStatus.FAILED else EngineStatus.ENDED, error = if (reason == "error")
-                        "Local file playback failed" else null))
-                }
-            }
+            gapless.reprepareLocked()
         }
     }
 
@@ -685,7 +453,7 @@ class DesktopPlaybackEngine internal constructor(
             synchronized(transport.lock) {
                 if (slot.active !== active) return@synchronized
                 slot.active = null
-                if (preparedNext == null) preparedNext = active.crossing
+                gapless.keepCrossingPreparedAfterExitLocked(active)
                 if (transport.userPaused) return@synchronized
                 val position = transport.current.positionMs
                 val truncated = code == 0 && mpvEndedEarly(position, if (active.gapless) transport.current.durationMs else durationMs)
