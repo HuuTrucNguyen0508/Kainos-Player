@@ -31,6 +31,7 @@ import com.universalmusic.player.platform.desktopHubOwnership
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.DesktopIsolation
+import com.universalmusic.player.platform.installCrashLogging
 import com.universalmusic.player.platform.mprisBusName
 import com.universalmusic.player.platform.unbindPlatformMediaControls
 import com.universalmusic.player.ui.UniversalMusicApp
@@ -46,6 +47,7 @@ import java.util.concurrent.CompletableFuture
 import com.universalmusic.player.platform.createHttpClient
 
 fun main(args: Array<String>) {
+    installCrashLogging()
     if (args.firstOrNull() == "--perf-storage") {
         require(DesktopIsolation.current.isIsolated)
         runStorageProbe()
