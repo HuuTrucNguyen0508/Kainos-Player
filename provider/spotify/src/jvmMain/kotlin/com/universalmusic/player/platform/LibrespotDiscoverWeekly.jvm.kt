@@ -45,6 +45,7 @@ private val discoverJson = Json { ignoreUnknownKeys = true }
 
 actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? =
     runCatching { runLibrespotHelper(playlistId?.trim()?.takeIf { it.isNotEmpty() }) }
+        .logged("Spotify", "librespot helper failed")
         .getOrNull()
         ?.takeIf { it.ok && !it.id.isNullOrBlank() }
         ?.toPlaylist()

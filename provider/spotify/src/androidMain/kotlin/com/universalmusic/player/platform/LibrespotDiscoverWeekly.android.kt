@@ -15,6 +15,7 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import xyz.gianlu.librespot.core.Session
@@ -53,8 +54,10 @@ actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? 
                 source = ProviderEntityRef(ProviderId.SPOTIFY, id),
             )
         }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (failure: Throwable) {
-        Log.w(TAG, "Discover Weekly librespot fetch failed: ${failure.message}")
+        PlaybackTrace.failure("Spotify", "Discover Weekly librespot fetch failed", failure)
         null
     }
 }

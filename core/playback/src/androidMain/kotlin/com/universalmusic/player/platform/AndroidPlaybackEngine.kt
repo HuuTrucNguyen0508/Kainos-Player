@@ -534,7 +534,7 @@ class AndroidPlaybackEngine(
             delay(250)
             if (activeBackend == ActiveBackend.SPOTIFY) {
                 runCatching { spotify.setVolume(volume.coerceIn(0f, 1f)) }
-                    .onFailure { PlaybackTrace.log("Engine", "Spotify volume update failed") }
+                    .logged("Engine", "Spotify volume update failed")
             }
         }
 

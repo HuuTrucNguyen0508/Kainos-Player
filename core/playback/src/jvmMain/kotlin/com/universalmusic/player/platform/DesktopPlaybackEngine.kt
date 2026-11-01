@@ -558,7 +558,7 @@ class DesktopPlaybackEngine internal constructor(
             delay(250)
             if (spotifyIsActive()) {
                 runCatching { spotify.setVolume(volume.coerceIn(0f, 1f)) }
-                    .onFailure { PlaybackTrace.log("Engine", "Spotify volume update failed") }
+                    .logged("Engine", "Spotify volume update failed")
             }
         }
 

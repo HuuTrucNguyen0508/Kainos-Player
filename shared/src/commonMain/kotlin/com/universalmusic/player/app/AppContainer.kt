@@ -88,6 +88,7 @@ import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
 import com.universalmusic.player.platform.createLocalTrackSource
@@ -649,7 +650,8 @@ class AppContainer(
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }.getOrNull()
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
+            .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
         if (fromLibrespot != null) return fromLibrespot
         return findDiscoverWeekly(playlists)
     }
@@ -662,9 +664,10 @@ class AppContainer(
         if (cached?.source?.providerEntityId == id && cached.tracks.isNotEmpty()) {
             return cached.tracks
         }
-        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.getOrElse { emptyList() }
-        if (webTracks.isNotEmpty()) return webTracks
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }.getOrNull()
+        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
+        webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
+            .logged("Spotify", "playlist load through librespot failed").getOrNull()
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
             if (cached?.source?.providerEntityId == id || configured == id) {
@@ -672,7 +675,7 @@ class AppContainer(
             }
             return fromLibrespot.tracks
         }
-        return emptyList()
+        return webTracks.getOrThrow()
     }
 
     private var volumePersistJob: Job? = null
@@ -735,10 +738,8 @@ class AppContainer(
                 if (failure is CancellationException) throw failure
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"
             }
-        runCatching { local.enrichContentKeys() }
-            .onFailure { if (it is CancellationException) throw it }
-        runCatching { local.enrichEmbeddedArtwork() }
-            .onFailure { if (it is CancellationException) throw it }
+        runCatching { local.enrichContentKeys() }.logged("Local", "content key pass failed")
+        runCatching { local.enrichEmbeddedArtwork() }.logged("Local", "embedded artwork pass failed")
     }
 
     /**

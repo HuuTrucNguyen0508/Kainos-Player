@@ -64,7 +64,7 @@ class JvmDeviceIdentity(private val directory: File) : DeviceIdentity {
         val password = passwordFile.readText().trim().toCharArray()
         val keyStore = runCatching {
             KeyStore.getInstance("PKCS12").apply { keyStoreFile.inputStream().use { load(it, password) } }
-        }.getOrNull() ?: return null
+        }.logged("HomeSync", "device identity unreadable; a new one will replace it").getOrNull() ?: return null
         val cert = keyStore.getCertificate(KEY_ALIAS) as? X509Certificate ?: return null
         return Material(keyStore, password, CertFingerprint.ofCertificate(cert.encoded))
     }
