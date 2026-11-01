@@ -22,18 +22,23 @@ jobs:
           # v3 still defaults to the removed "tools" package. Gradle installs the SDK packages it needs.
           packages: platform-tools
 
-      - name: All JVM tests, database migrations, desktop packaging, Android build and lint
+      - name: Install ffmpeg and mpv for real-engine and Echo gateway tests
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv
+
+      - name: All JVM tests, database migrations, desktop packaging, Android builds and lint
+        env:
+          KAINOS_GAPLESS_STRESS: "1"
         run: |
           chmod +x gradlew
-          ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:lintDebug --stacktrace
+          # The shallow checkout counts one commit. CI artifacts are never shipped.
+          ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug -PkainosVersionCode=${{ github.run_number }} --stacktrace
 
-      - name: Launcher tests
-        run: python3 scripts/tests/test_launcher.py
+      - name: Launcher and release gate tests
+        run: |
+          python3 scripts/tests/test_launcher.py
+          python3 scripts/tests/test_android_release_gate.py
 
       - uses: astral-sh/setup-uv@v6
-
-      - name: Install ffmpeg for Echo gateway tests
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Echo gateway tests in isolated environment
         working-directory: tools/echo-gateway
@@ -44,12 +49,12 @@ jobs:
 
       - name: Secret scan
         run: |
-          if git ls-files | grep -qx 'secrets.properties'; then
-            echo "secrets.properties must stay gitignored"
+          if git ls-files | grep -qxE 'secrets\.properties|signing\.properties|.*\.(jks|keystore|p12)'; then
+            echo "secrets.properties, signing.properties and keystores must stay gitignored"
             exit 1
           fi
           if git grep -nE 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' -- . ':!.github' ; then
             echo "Private key material is checked in"
             exit 1
           fi
-          echo "No tracked secrets.properties or private keys"
+          echo "No tracked secrets, signing keys or private keys"

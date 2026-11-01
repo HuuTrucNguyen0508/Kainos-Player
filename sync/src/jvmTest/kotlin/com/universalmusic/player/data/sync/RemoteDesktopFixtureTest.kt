@@ -10,12 +10,15 @@ import java.io.File
 import kotlin.test.Test
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.junit.Assume.assumeTrue
 
 /** Seeds only fresh, explicitly named perf profiles. The real GUI processes own playback. */
 class RemoteDesktopFixtureTest {
     @Test
     fun prepare() {
-        val root = System.getenv("KAINOS_REMOTE_DESKTOP_SETUP")?.let(::File) ?: return
+        val rootPath = System.getenv("KAINOS_REMOTE_DESKTOP_SETUP")
+        assumeTrue("Run through the remote desktop proof harness", rootPath != null)
+        val root = File(rootPath!!)
         require(!root.exists()) { "Refuse to overwrite a profile" }
         val pc = root.resolve("pc").apply { mkdirs() }
         val phone = root.resolve("phone").apply { mkdirs() }

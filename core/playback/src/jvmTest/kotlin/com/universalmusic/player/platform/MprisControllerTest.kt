@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.Assume.assumeTrue
 
 /**
  * MPRIS registration is best-effort against the session bus. Wiring tests do not require D-Bus;
@@ -86,10 +87,11 @@ class MprisControllerTest {
 
     @Test
     fun livePlayerctlSeesSessionMetadata() = runBlocking(Dispatchers.Default) {
-        if (System.getenv("DBUS_SESSION_BUS_ADDRESS").isNullOrBlank()) return@runBlocking
-        if (runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() != 0) {
-            return@runBlocking
-        }
+        assumeTrue("Needs a D-Bus session bus", !System.getenv("DBUS_SESSION_BUS_ADDRESS").isNullOrBlank())
+        assumeTrue(
+            "Needs playerctl",
+            runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() == 0,
+        )
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), scope)

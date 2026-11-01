@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <!-- Spotify OAuth redirects, http://127.0.0.1:5588/login and :43821/callback. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+    <!-- Spotify's storage resolver chooses CDN URLs at runtime, and the audio on them is encrypted. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">scdn.co</domain>
+        <domain includeSubdomains="true">pscdn.co</domain>
+        <domain includeSubdomains="true">spotifycdn.com</domain>
+        <domain includeSubdomains="false">audio-ak-spotify-com.akamaized.net</domain>
+    </domain-config>
+</network-security-config>

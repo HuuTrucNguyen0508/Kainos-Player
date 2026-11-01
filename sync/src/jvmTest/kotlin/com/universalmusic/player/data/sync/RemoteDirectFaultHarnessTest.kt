@@ -16,11 +16,13 @@ import kotlin.time.TimeMark
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import org.junit.Assume.assumeTrue
 
 /** Same source runs on b3a3d80 and head. HTTP faults apply below the real client, including retries. */
 class RemoteDirectFaultHarnessTest {
     @Test fun measureFinalState() = runBlocking {
-        val output = System.getenv("KAINOS_REMOTE_DIRECT_OUTPUT") ?: return@runBlocking
+        val output = System.getenv("KAINOS_REMOTE_DIRECT_OUTPUT")
+        assumeTrue("Run through scripts/perf/remote-direct", output != null)
         val baseline = System.getenv("KAINOS_REMOTE_DIRECT_BASELINE") == "1"
         val file = File(output)
         file.writeText("arm\tscenario\trun\tcorrect\tfinal_ms\tapplications\n")

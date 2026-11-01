@@ -16,6 +16,7 @@ import kotlin.time.TimeMark
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import org.junit.Assume.assumeTrue
 
 /** Opt in with scripts/perf/remote-faults. Real host, client, routes and pinned mutual TLS.
  * Faults sit outside HTTP: a dropped reply still reached the real server. No fake acknowledgements.
@@ -23,7 +24,8 @@ import kotlinx.coroutines.flow.first
 class RemoteFaultHarnessTest {
     @Test
     fun measure() = runBlocking {
-        val output = System.getenv("KAINOS_REMOTE_PERF_OUTPUT") ?: return@runBlocking
+        val output = System.getenv("KAINOS_REMOTE_PERF_OUTPUT")
+        assumeTrue("Run through scripts/perf/remote-faults", output != null)
         val scenarios = (System.getenv("KAINOS_REMOTE_SCENARIOS") ?: "held,reply-flight,gap,repost,double,five,loss2-request,loss2-reply,loss10-request,loss10-reply,latency200,latency1000,blip2000,blip10000,restart,suspend60000,duplicate,artwork,position,direct").split(',')
         val file = File(output)
         file.writeText("scenario\trun\tpress\tapplied_ms\toutcome\tapplications\trequest_drops\treply_drops\n")

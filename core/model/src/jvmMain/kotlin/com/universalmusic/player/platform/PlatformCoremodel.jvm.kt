@@ -38,3 +38,6 @@ actual fun openUrl(url: String) {
 }
 
 actual fun platformLabel(): String = "Linux"
+
+actual fun appVersionLabel(): String =
+    object {}.javaClass.getResource("/kainos-version.txt")?.readText() ?: "dev"

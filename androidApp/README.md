@@ -1,10 +1,142 @@
 # Android optimized candidate
 
-Recommend `optimized` for the next personal-use APK after the phone checks below.
-On the emulator it starts faster and uses less idle RSS than debug; it is 80.10%
-smaller. Keep debug as rollback. No release or physical-phone install was made.
-The application ID, versionCode, database schema and debug signing identity are
-unchanged. Compare certificates before installing an APK built on another machine.
+Debug stays the published default until the owner has run the manual checks the
+[release gate](#release-gate) prints on the phone. No agent can run them. After that,
+`optimized` is the recommended build: on the emulator it starts faster, uses less
+idle RSS and is about 80% smaller. No release or physical-phone install was made.
+
+## Version
+
+`versionCode` is the commit count and `versionName` is the commit date, so
+`2026-11-01` matches the tag `linux-android-2026-11-01`. Both appear in
+**Settings → Advanced**. Override them with `-PkainosVersionCode` and
+`-PkainosVersionName`, for example for a second release on one day.
+
+A shallow clone counts only its fetched commits and yields a low code, so CI passes
+the override and the release gate rejects a code of 1. The count falls after a
+rebase or squash, so build shipped APKs from `main`.
+
+## Rolling back
+
+Android refuses an older `versionCode`, so a retained APK can no longer simply be
+reinstalled with `-r`. Every row was run on the emulator (API 37).
+
+| Installed | Installing | Command | Result |
+| --- | --- | --- | --- |
+| Debug | Older debug or older optimized | `adb install -r -d` | Works: `-d` needs a debuggable installed app |
+| Optimized | Anything with an older code | `adb install -r -d` | Refused, `INSTALL_FAILED_VERSION_DOWNGRADE` |
+| Optimized | Debug or optimized rebuilt with a higher code | `adb install -r` | Works |
+| Rotated key | Debug certificate, same or higher code | `adb install -r` | Works only with rollback capability in the lineage |
+
+To leave an optimized build, build the known-good commit with a code above the
+installed one, then update normally. Debug and optimized both work:
+
+```bash
+./gradlew :androidApp:assembleDebug -PkainosVersionCode=<installed + 1>
+adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+```
+
+Commits before this scheme have no override, so edit their `versionCode` by hand.
+An older database schema still fails at launch with "Can't downgrade database";
+no data is lost, and installing a newer build recovers it. Never uninstall.
+
+## Signing
+
+`optimized` uses the debug certificate unless a release key is configured. Configure
+one through a gitignored `signing.properties` (see `signing.properties.example`) or
+the `KAINOS_SIGNING_STORE_FILE`, `KAINOS_SIGNING_STORE_PASSWORD`,
+`KAINOS_SIGNING_KEY_ALIAS` and `KAINOS_SIGNING_KEY_PASSWORD` variables. Partial
+configuration fails the build. Keep keystores outside this repository.
+
+**A release key alone cannot update the phone.** Android rejects it with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and uninstalling deletes the library, hearts
+and folder grants. Follow the steps below instead.
+
+### Adopting a release key
+
+Rotation adds a v3 proof, signed by the old key, that the new key succeeds it. Gradle
+cannot apply a lineage, so `scripts/android-sign-rotated.py` does.
+
+1. Back up `~/.android/debug.keystore`, alias `androiddebugkey`, password `android`.
+   Its SHA-256 is `780b3387b1f828858b3e3c27e59117a5ab24f171bc27db17055f2d3a93961895`.
+   This key is the root of the lineage. **Keep it, and the lineage file, for as long
+   as the app exists.** Losing them means no more updates on API 26-27 and no way to
+   rebuild the rotation.
+2. Create the release key, outside the repository:
+
+   ```bash
+   keytool -genkeypair -keystore ~/keys/kainos-release.jks -alias kainos-release \
+     -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Kainos Player"
+   ```
+
+3. Prove the rotation once. `--set-rollback true` keeps debug-certificate APKs
+   installable as a rollback; without it they are refused after the first rotated
+   install, and only an uninstall gets back.
+
+   ```bash
+   apksigner rotate --out ~/keys/kainos.lineage \
+     --old-signer --ks ~/.android/debug.keystore --ks-key-alias androiddebugkey \
+       --ks-pass pass:android --key-pass pass:android --set-rollback true \
+     --new-signer --ks ~/keys/kainos-release.jks --ks-key-alias kainos-release
+   ```
+
+4. Write `signing.properties`, build, sign and update:
+
+   ```bash
+   ./gradlew :androidApp:assembleOptimized
+   scripts/android-sign-rotated.py --lineage ~/keys/kainos.lineage
+   adb install -r androidApp/build/outputs/apk/optimized/androidApp-optimized-rotated.apk
+   ```
+
+Ship the script's output, never Gradle's new-key APK. The script prints each API
+range's signer and fails if rotation did not apply.
+
+**API 28 and later** read the v3 block and accept the new key through the lineage,
+keeping app data, SAF grants and Keystore identities. **API 26-27 ignore v3.** They
+verify the v2 signature, which the script makes with the old debug key, so those
+devices keep updating in place but stay on the debug certificate. The new key adds
+nothing there, and every release must carry the old signer while minSdk is below 28.
+
+Proof on the emulator, API 37, using a throwaway key since deleted: a debug-certificate
+optimized build stored a heart; `adb install -r` of the rotated APK succeeded;
+`firstInstallTime` was unchanged; the signature moved to v3 with the debug certificate
+in `past signatures`; `RuntimeSmoke#verifyRetainedFavorite` then passed. With rollback
+capability the debug-certificate APK updated back in place and the heart survived.
+Without it, and for a new key with no lineage, Android refused the install and the
+data stayed intact. API 26-27 is verified with `apksigner verify`, which reports the
+debug certificate for that range; it has not been run on such a device.
+
+## Network security
+
+`src/main/res/xml/network_security_config.xml` denies cleartext everywhere except
+`127.0.0.1`, which the Spotify OAuth redirects use, and Spotify's audio CDN hosts. Library code has no fixed `http://`
+endpoints: librespot's only literal is that redirect, and NewPipe's are scheme checks.
+`AndroidCleartextPolicyTest` proves the policy with live requests, through both the
+network stack and WebView. It failed as expected when the policy was opened.
+
+Spotify picks its audio CDN URLs at runtime and the audio on them is encrypted, so
+those hosts are allowed without having been tested on an account. If live playback
+fails with a `CLEARTEXT` error in logcat, the named host needs an entry in that file. `http://` artwork URLs now fail quietly and fall back.
+
+## Release gate
+
+```bash
+export JAVA_HOME="$HOME/.jdks/temurin-17"
+scripts/android-release-gate.py --serial emulator-5554
+```
+
+The gate refuses a physical device. With `--allow-physical` it checks the certificate
+and runs `adb install -r`, nothing else: its other stages clear data and revoke
+grants. It writes `logs/android-release-gate-<time>/summary.txt`, exits non-zero on
+any failure, and ends with the manual checks as an unchecked list.
+
+On an emulator it regenerates the baseline profile (`--skip-profile` keeps the
+committed one and reports how stale it is), builds, verifies the APK, installs it,
+smoke-tests that exact APK, then runs each instrumented class and first-run stage.
+Commit regenerated profiles. Instrumented classes use `-PandroidTestTarget=optimized`,
+whose APK has extra test-only keep rules; only the smoke stage proves the shipped APK.
+Those runs overwrite `androidApp-optimized.apk`, so ship the verified copy the gate
+keeps beside its summary, or rebuild without `androidTestTarget`.
 
 ## Measured results, 2026-10-31
 
@@ -40,18 +172,19 @@ The lane ledger is `docs/perf/android.tsv`; `self` means the commit adding the r
 
 ## Profiles and runtime proof
 
-The generated baseline has 35,501 rules including startup rules. Startup has
-23,730 rules, with 3,288 Kainos entries in AGP's merged startup input. Sources are
+On 2026-10-31 the generated baseline had 35,501 rules including startup rules and
+startup had 23,730, with 3,288 Kainos entries in AGP's merged startup input. The
+2026-11-01 regeneration has 36,663 and 23,984. The measured results above predate it. Sources are
 `src/main/baseline-prof.txt` and `src/main/baselineProfiles/startup-prof.txt`.
 Collection covers Home, Library fast scroll, local Now Playing and Search typing.
 The non-minified `profile` target is profileable; optimized is profileable too.
 BaselineProfileRule generates the files; no profile rules were invented.
 
-The normal APK is 6,328,389 bytes versus debug's 31,795,904. It contains
+The measured normal APK was 6,328,389 bytes versus debug's 31,795,904. It contained
 `assets/dexopt/baseline.prof` at 16,760 bytes and `.profm` at 1,111 bytes.
-Its SHA-256 is `eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28`.
-After app-module tests, rebuilding the normal APK reproduced this measured hash.
-[APK inspection](optimized-apk-check.json) confirms matching signing identity and version.
+Its SHA-256 was `eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28`.
+After app-module tests, rebuilding the normal APK reproduced that hash.
+[APK inspection](optimized-apk-check.json) confirmed the signing identity and version of that build.
 
 The original optimized startup crashed before Activity creation. R8's usage file
 showed Room's `WorkDatabase_Impl` no-argument constructor removed. A focused
@@ -109,7 +242,8 @@ first launch after sideload separately from later idle-compiled launches. See
 
 Only when explicitly asked to use the phone:
 
-- Back up and compare the installed certificate. Update with `install -r`.
+- Back up and compare the installed certificate (the gate does this with
+  `--allow-physical`). Update with `install -r`.
   Verify hearts, SAF folders, playlists, settings, logs and paused-session restore.
 - Play SAF audio, pause, seek and skip. Check notification, lock-screen, Bluetooth
   and HyperOS island controls through several transitions.
@@ -119,10 +253,10 @@ Only when explicitly asked to use the phone:
   with real artwork and the user's actual library size.
 - Test actual phone/PC sync only when both are available at home. Opening the
   Devices and sync screen is not an interoperability test.
-- Roll back with the retained matching debug APK using `install -r` if necessary.
-  Verify the same data. Never uninstall or use version-downgrade flags to hide failure.
+- If it fails, follow [Rolling back](#rolling-back) and verify the same data.
+  Never uninstall.
 
 When explicitly asked to ship, build without `androidTestTarget`, retain mapping
 files, copy the chosen APK to repo-root `release/`, and publish an official GitHub
-Release marked Latest with both the Android APK and Linux tarball. Keep debug
-available until phone acceptance. This lane neither copied a release nor published one.
+Release marked Latest with both the Android APK and Linux tarball. Debug stays the
+published APK until phone acceptance. This lane neither copied a release nor published one.

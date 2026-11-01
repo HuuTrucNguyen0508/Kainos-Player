@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
-export ANDROID_SERIAL=emulator-5554
+export ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"
 mode=${1:-measure}
 variant=${2:-optimized}
 case "$mode" in
@@ -15,8 +15,9 @@ case "$mode" in
   *) echo 'Usage: android-runtime seed|profile|measure|smoke|network [debug|optimized]' >&2; exit 2 ;;
 esac
 if [[ -n "${3:-}" ]]; then klass="$klass#$3"; fi
-# Only this AVD may be targeted; physical phones are never selected.
-[[ "$($ANDROID_HOME/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+# Only an emulator may be targeted; physical phones are never selected.
+[[ "$ANDROID_SERIAL" == emulator-* ]]
+[[ "$($ANDROID_HOME/platform-tools/adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
 flock "$lock" /tmp/kainos-perf.lock bash -c '
   uptime
   nproc

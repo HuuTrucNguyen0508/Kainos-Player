@@ -51,3 +51,6 @@ data class SpotifyReceiverEvent(
 expect fun openUrl(url: String)
 
 expect fun platformLabel(): String
+
+/** "<versionName> (<versionCode>)", or "dev" when run outside a packaged build. */
+expect fun appVersionLabel(): String
