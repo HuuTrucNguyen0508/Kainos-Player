@@ -131,9 +131,7 @@ class AndroidHomeLanVaultStore(
                         digest.update(buffer, 0, count)
                     }
                 }
-                check(digest.digest().joinToString("") { "%02x".format(it) } == expectedHash) {
-                    "Vault content hash mismatch for $relPath"
-                }
+                check(digest.digest().toHex() == expectedHash) { "Source $relPath changed during download; sync again" }
             }
             publishStaged(tree, parentId, stagingUri, stagingName, fileName, totalSize)
             true

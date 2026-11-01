@@ -12,6 +12,7 @@ const val HOME_LAN_SYNC_PATH_V2_PLAYLISTS = "/kainos-sync/v2/playlists"
 const val HOME_LAN_SYNC_PATH_V2_VAULT_INDEX = "/kainos-sync/v2/vault/index"
 
 const val HOME_LAN_SYNC_PATH_VAULT_BLOB = "/kainos-sync/v1/vault/blob"
+const val HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH = "/kainos-sync/v2/vault/blob-hash"
 
 const val HOME_LAN_MDNS_SERVICE_TYPE = "_kainos-sync._tcp"
 const val HOME_LAN_MDNS_TXT_FP = "fp"
@@ -72,5 +73,9 @@ interface HomeLanSyncClient : AutoCloseable {
     suspend fun probeHub(): Result<HomeLanHealthResponse>
     suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument>
     suspend fun downloadBlob(relPath: String, offset: Long, length: Int): Result<ByteArray>
+
+    /** SHA-256 of the whole file as the hub reads it now; null when the hub predates this route. */
+    suspend fun fetchBlobHash(relPath: String): Result<String?> = Result.success(null)
+
     suspend fun uploadBlob(relPath: String, offset: Long, totalSize: Long, chunk: ByteArray): Result<Unit>
 }

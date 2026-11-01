@@ -94,6 +94,21 @@ class HttpHomeLanSyncClientTest {
         )
 
     @Test
+    fun blobHashReadsTheHubAnswerAndTreatsNotFoundAsAnOldHub() = runTest {
+        val hash = client { request ->
+            assertEquals(HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH, request.url.encodedPath)
+            assertEquals("a.flac", request.url.parameters["path"])
+            respond("abc123", HttpStatusCode.OK)
+        }.use { it.fetchBlobHash("a.flac") }
+        assertEquals("abc123", hash.getOrThrow())
+
+        assertEquals(null, client { respond("missing", HttpStatusCode.NotFound) }
+            .use { it.fetchBlobHash("a.flac") }.getOrThrow())
+        assertTrue(client { respond("broken", HttpStatusCode.InternalServerError) }
+            .use { it.fetchBlobHash("a.flac") }.isFailure)
+    }
+
+    @Test
     fun uploadFailsOnNon2xxPut() = runTest {
         val result = client { respond("disk full", HttpStatusCode.InternalServerError) }
             .use { it.uploadBlob("a.flac", 0L, 3L, byteArrayOf(1, 2, 3)) }

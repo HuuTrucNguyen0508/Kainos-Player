@@ -16,6 +16,7 @@ import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -117,18 +118,7 @@ class JvmHomeLanVaultStore(
             if (received != totalSize) return@withContext false
             beforePublish()
             if (expectedHash.isNotBlank()) {
-                val digest = java.security.MessageDigest.getInstance("SHA-256")
-                Files.newInputStream(staging, java.nio.file.LinkOption.NOFOLLOW_LINKS).use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        digest.update(buffer, 0, count)
-                    }
-                }
-                check(digest.digest().joinToString("") { "%02x".format(it) } == expectedHash) {
-                    "Vault content hash mismatch for $relPath"
-                }
+                check(sha256Hex(staging) == expectedHash) { "Source $relPath changed during download; sync again" }
             }
             check(resolve(relPath) == target) { "Vault parent changed" }
             stagingPath(target)
@@ -144,6 +134,24 @@ class JvmHomeLanVaultStore(
             }
             true
         }
+
+    override suspend fun contentSha256(relPath: String): String? = withContext(Dispatchers.IO) {
+        val file = resolve(relPath) ?: return@withContext null
+        if (Files.isRegularFile(file, NOFOLLOW_LINKS)) sha256Hex(file) else null
+    }
+
+    private fun sha256Hex(file: Path): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        Files.newInputStream(file, NOFOLLOW_LINKS).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().toHex()
+    }
 
     override suspend fun stagedSize(relPath: String): Long? = withContext(Dispatchers.IO) {
         val target = resolve(relPath) ?: return@withContext null

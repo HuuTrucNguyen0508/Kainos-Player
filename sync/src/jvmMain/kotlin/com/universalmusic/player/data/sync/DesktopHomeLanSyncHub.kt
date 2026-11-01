@@ -297,6 +297,22 @@ class DesktopHomeLanSyncHub(
                     call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
                     call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
                 }
+                get(HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH) {
+                    call.pairedPeer() ?: return@get
+                    touchActivity()
+                    val store = vault
+                    if (store == null || !store.isConfigured()) {
+                        call.respondText("Vault not configured", status = HttpStatusCode.BadRequest)
+                        return@get
+                    }
+                    val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
+                    val hash = store.contentSha256(rel)
+                    if (hash == null) {
+                        call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    call.respondText(hash)
+                }
                 put(HOME_LAN_SYNC_PATH_VAULT_BLOB) {
                     call.pairedPeer() ?: return@put
                     touchActivity()

@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.platform.sha256Bytes
+
 /** Stores that can validate a completed stage before replacing the destination. */
 interface CheckedVaultStore : HomeLanVaultStore {
     suspend fun writeCheckedRange(
@@ -75,6 +77,10 @@ suspend fun planVaultTransfers(
  * requested size: an empty or short chunk (peer file changed, truncated read, bad response) fails
  * the transfer instead of silently reporting success.
  *
+ * A source that changes mid-transfer fails before anything publishes. Downloads check the staged
+ * file against the hub's whole-file hash, or only the hub's index when the hub predates that
+ * route. Uploads re-read the source before sending the final chunk, because that chunk publishes.
+ *
  * Downloads always restart because legacy peers lack immutable range tokens.
  * [replaceExisting] is retained for callers confirming a conflict replacement.
  */
@@ -105,12 +111,15 @@ suspend fun executeVaultTransfer(
                 ) { "Source ${transfer.relPath} changed; sync again" }
             }
             checkSource()
+            val expectedHash = transfer.contentHash.ifBlank {
+                client.fetchBlobHash(transfer.relPath).getOrThrow().orEmpty()
+            }
             suspend fun write(offset: Long, chunk: ByteArray): Boolean {
                 val checked = store as? CheckedVaultStore
                 if (checked != null) return checked.writeCheckedRange(
-                    transfer.relPath, offset, chunk, size, transfer.contentHash, ::checkSource,
+                    transfer.relPath, offset, chunk, size, expectedHash, ::checkSource,
                 )
-                check(transfer.contentHash.isBlank()) { "Vault store cannot verify content hash" }
+                check(expectedHash.isBlank()) { "Vault store cannot verify content hash" }
                 checkSource()
                 return store.writeRange(transfer.relPath, offset, chunk, size)
             }
@@ -138,31 +147,58 @@ suspend fun executeVaultTransfer(
                 "Download of ${transfer.relPath} did not publish a complete file"
             }
         }
-        VaultCopyDirection.TO_REMOTE -> {
-            if (size == 0L) {
-                client.uploadBlob(transfer.relPath, 0L, 0L, ByteArray(0)).getOrThrow()
-                return
-            }
-            val localSize = store.localSize(transfer.relPath)
-                ?: error("Local file missing for ${transfer.relPath}")
-            check(localSize == size) {
-                "Local ${transfer.relPath} changed size ($localSize, expected $size); sync again"
-            }
-            var offset = 0L
-            while (offset < size) {
-                val end = minOf(offset + VAULT_BLOB_CHUNK_BYTES - 1, size - 1)
-                val expected = (end - offset + 1).toInt()
-                val chunk = store.readRange(transfer.relPath, offset, end)
-                if (chunk.isEmpty()) error("Cannot read ${transfer.relPath} at $offset")
-                if (chunk.size != expected) {
-                    error("Short read for ${transfer.relPath} at $offset (${chunk.size} of $expected bytes)")
-                }
-                client.uploadBlob(transfer.relPath, offset, size, chunk).getOrThrow()
-                offset += chunk.size
-                onProgress("Uploading ${transfer.relPath}", offset, total)
-            }
-        }
+        VaultCopyDirection.TO_REMOTE -> uploadVaultFile(store, client, transfer, onProgress)
     }
+}
+
+private suspend fun uploadVaultFile(
+    store: HomeLanVaultStore,
+    client: HomeLanSyncClient,
+    transfer: PendingVaultTransfer,
+    onProgress: suspend (detail: String, transferred: Long, total: Long) -> Unit,
+) {
+    val path = transfer.relPath
+    val size = transfer.sizeBytes
+    val total = size.coerceAtLeast(1L)
+    fun changed() = "Local $path changed during upload; sync again"
+    suspend fun checkSize() {
+        val localSize = store.localSize(path) ?: error("Local file missing for $path")
+        check(localSize == size) { changed() }
+    }
+    suspend fun readChunk(offset: Long): ByteArray {
+        val end = minOf(offset + VAULT_BLOB_CHUNK_BYTES - 1, size - 1)
+        val chunk = store.readRange(path, offset, end)
+        check(chunk.size.toLong() == end - offset + 1) { changed() }
+        return chunk
+    }
+    checkSize()
+    if (size == 0L) {
+        client.uploadBlob(path, 0L, 0L, ByteArray(0)).getOrThrow()
+        return
+    }
+    val finalOffset = (size - 1) / VAULT_BLOB_CHUNK_BYTES * VAULT_BLOB_CHUNK_BYTES
+    val sentHashes = ArrayList<ByteArray>()
+    var offset = 0L
+    while (offset < finalOffset) {
+        val chunk = readChunk(offset)
+        sentHashes += sha256Bytes(chunk)
+        client.uploadBlob(path, offset, size, chunk).getOrThrow()
+        offset += chunk.size
+        onProgress("Uploading $path", offset, total)
+    }
+    val finalChunk = readChunk(finalOffset)
+    sentHashes += sha256Bytes(finalChunk)
+
+    // The final chunk makes the hub publish. Size and mtime can survive a rewrite (SAF mtimes are
+    // often whole seconds, and Android never hashes its index), so compare the bytes themselves.
+    onProgress("Verifying $path", finalOffset, total)
+    sentHashes.forEachIndexed { index, sentHash ->
+        check(sha256Bytes(readChunk(index.toLong() * VAULT_BLOB_CHUNK_BYTES)).contentEquals(sentHash)) { changed() }
+    }
+    checkSize()
+
+    client.uploadBlob(path, finalOffset, size, finalChunk).getOrThrow()
+    onProgress("Uploading $path", size, total)
 }
 
 /**
