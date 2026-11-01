@@ -54,7 +54,7 @@ actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTr
                 }
             }
         }
-        if (merged.isEmpty() && revoked.isNotEmpty()) {
+        if (revoked.isNotEmpty()) {
             throw IllegalStateException(
                 "Lost access to music folder(s): ${revoked.joinToString()}. " +
                     "Remove them in Settings or re-add the folder to restore access.",

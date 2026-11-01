@@ -59,6 +59,7 @@ internal sealed interface SourceStatus {
 }
 
 internal sealed interface SourceAction {
+    data object RetryLocal : SourceAction
     data object PickMusicFolder : SourceAction
     data object OpenLibrary : SourceAction
     data object OpenSearch : SourceAction
@@ -113,8 +114,9 @@ private fun localReadiness(facts: SourceFacts): SourceReadiness {
         facts.local == ProviderState.UNAVAILABLE -> readiness(
             SourceStatus.Trouble,
             "Could not read",
-            "Kainos could not read your music folders.",
-            SourceStep("Check music folders", SourceAction.OpenSettings(SettingsTarget.MusicFolders)),
+            if (facts.musicFolders.isEmpty()) "Kainos could not read your music folders. Check folder access and retry."
+            else "Cannot read music folders: ${facts.musicFolders.joinToString { folderPinDisplayName(it) }}. Reconnect the drive or check folder access, then retry.",
+            SourceStep("Retry", SourceAction.RetryLocal),
         )
         facts.localTrackCount > 0 && player.isNotEmpty() -> readiness(
             SourceStatus.NeedsSetup(player),

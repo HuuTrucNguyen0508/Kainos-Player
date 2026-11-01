@@ -8,6 +8,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class SourceReadinessTest {
+    @Test fun disconnectedFolderIsNamedAndOffersRetry() {
+        val missing = fresh.copy(local = ProviderState.UNAVAILABLE, musicFolders = listOf("/media/External Music"), localTrackCount = 12).local()
+        assertEquals(SourceStatus.Trouble, missing.status)
+        assertTrue("External Music" in missing.detail)
+        assertEquals("Retry", missing.step?.label)
+    }
+
     private val fresh = SourceFacts(
         desktop = true,
         tools = SourceTools(),
@@ -36,8 +43,8 @@ class SourceReadinessTest {
     @Test fun revokedPhoneFolderAccessDoesNotTrustCachedTracks() {
         val missing = fresh.copy(desktop = false, local = ProviderState.UNAVAILABLE, localTrackCount = 12).local()
         assertEquals("Could not read", missing.statusLabel)
-        assertEquals("Check music folders", missing.step?.label)
-        assertEquals(SourceAction.OpenSettings(SettingsTarget.MusicFolders), missing.step?.action)
+        assertEquals("Retry", missing.step?.label)
+        assertEquals(SourceAction.RetryLocal, missing.step?.action)
         assertEquals(SourceStatus.Trouble, missing.status)
     }
 
@@ -62,7 +69,7 @@ class SourceReadinessTest {
         assertEquals(SourceStatus.Checking, fresh.copy(local = ProviderState.LOADING).local().status)
         val failed = fresh.copy(local = ProviderState.UNAVAILABLE).local()
         assertEquals(SourceStatus.Trouble, failed.status)
-        assertEquals(SettingsTarget.MusicFolders, failed.settingsTarget())
+        assertEquals(SourceAction.RetryLocal, failed.step?.action)
     }
 
     @Test fun localTracksAreReadyOnlyWithAnAudioPlayer() {

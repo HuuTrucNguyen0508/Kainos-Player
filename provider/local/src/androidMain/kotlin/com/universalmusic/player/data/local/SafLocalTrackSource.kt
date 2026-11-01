@@ -88,7 +88,8 @@ internal class SafLocalTrackSource(
     ) {
         coroutineContext.ensureActive()
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
-        val children = queryChildren(childrenUri) ?: return
+        val children = queryChildren(childrenUri)
+            ?: error("Cannot read music folder: ${displayName ?: displayName(treeUri)}. Check folder access and retry.")
 
         val directories = mutableListOf<ChildDoc>()
         val files = mutableListOf<ChildDoc>()

@@ -11,6 +11,21 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class JvmLocalTrackSourceTest {
+    @Test fun disconnectedRootKeepsCachedTracksAndReportsUnavailable() = withTempDirectory { root ->
+        val folder = Files.createDirectory(root.resolve("External Music"))
+        val source = JvmLocalTrackSource(listOf(folder))
+        val provider = LocalMusicProvider(source)
+        provider.applyCachedTracks(listOf(LocalTrack("cached", "Remembered", location = folder.resolve("song.flac").toUri().toString())))
+        Files.delete(folder)
+        val failure = runCatching { provider.refresh() }.exceptionOrNull()
+        assertTrue(failure?.message?.contains("External Music") == true, "missing folder must be named")
+        assertEquals(com.universalmusic.player.domain.model.ProviderState.UNAVAILABLE, provider.state.value)
+        assertEquals("Remembered", provider.libraryTracks.value.single().title)
+        Files.createDirectory(folder)
+        assertTrue(provider.refresh().isEmpty(), "a reachable empty folder is empty")
+        assertEquals(com.universalmusic.player.domain.model.ProviderState.AVAILABLE, provider.state.value)
+    }
+
     @Test
     fun scansSupportedFilesAndDerivesDirectoryMetadata() = withTempDirectory { root ->
         val album = Files.createDirectories(root.resolve("Signal_Club/City_Lines"))
@@ -45,13 +60,12 @@ class JvmLocalTrackSourceTest {
     }
 
     @Test
-    fun skipsMissingRootsAndDeduplicatesNormalizedPaths() = withTempDirectory { root ->
+    fun deduplicatesNormalizedPaths() = withTempDirectory { root ->
         Files.write(root.resolve("track.ogg"), byteArrayOf())
         val source = JvmLocalTrackSource(
             listOf(
                 root,
                 root.resolve("."),
-                root.resolve("missing"),
             ),
         )
 

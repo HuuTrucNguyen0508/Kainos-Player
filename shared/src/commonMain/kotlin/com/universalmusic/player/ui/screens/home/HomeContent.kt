@@ -202,7 +202,7 @@ internal fun homeEyebrow(favorites: Int, localTracks: Int): String {
 /** Rows of the "Your library" ledger. Each opens the place where the listener acts on it. */
 internal enum class LibraryMark { LOCAL, HEARTS, PLAYLISTS, SPOTIFY, YOUTUBE }
 
-internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH, PICK_FOLDER }
+internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH, PICK_FOLDER, RETRY_LOCAL }
 
 internal data class LibraryLine(
     val mark: LibraryMark,
@@ -225,9 +225,11 @@ internal fun libraryLines(
         return LibraryLine(
             mark,
             source.title,
-            if (source == MusicSource.Local && readiness.status == SourceStatus.Ready) readiness.detail.removeSuffix(".")
+            if (source == MusicSource.Local && readiness.status == SourceStatus.Trouble) "${readiness.detail} · Retry"
+            else if (source == MusicSource.Local && readiness.status == SourceStatus.Ready) readiness.detail.removeSuffix(".")
             else listOfNotNull(readiness.statusLabel, readiness.step?.label).joinToString(" · "),
             when (action) {
+                SourceAction.RetryLocal -> LibraryDoor.RETRY_LOCAL
                 SourceAction.PickMusicFolder -> LibraryDoor.PICK_FOLDER
                 SourceAction.OpenLibrary, null -> LibraryDoor.LIBRARY
                 SourceAction.OpenSearch -> LibraryDoor.SEARCH

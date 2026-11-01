@@ -26,11 +26,12 @@ class JvmLocalTrackSource(
 
     override suspend fun scanReusing(previous: List<LocalTrack>): IncrementalScan = withContext(Dispatchers.IO) {
         val discovered = linkedMapOf<Path, Path>()
-        rootsProvider()
-            .mapNotNull(::normalizedPathOrNull)
-            .distinct()
-            .forEach { root -> scanRoot(root, discovered) }
+        val roots = rootsProvider().map { it.toAbsolutePath().normalize() }.distinct()
+        roots.forEach { root -> scanRoot(root, discovered) }
 
+        roots.forEach { root ->
+            check(isReadableDirectory(root)) { "Cannot read music folder: $root. Reconnect the drive and retry." }
+        }
         val previousByLocation = previous.associateBy(LocalTrack::location)
         var reused = 0
         var probed = 0
@@ -57,7 +58,7 @@ class JvmLocalTrackSource(
     }
 
     private fun scanRoot(root: Path, discovered: MutableMap<Path, Path>) {
-        if (!isReadableDirectory(root)) return
+        check(isReadableDirectory(root)) { "Cannot read music folder: $root. Reconnect the drive and retry." }
         try {
             Files.walkFileTree(
                 root,
@@ -72,14 +73,16 @@ class JvmLocalTrackSource(
                         return FileVisitResult.CONTINUE
                     }
 
-                    override fun visitFileFailed(file: Path, error: IOException): FileVisitResult =
-                        FileVisitResult.CONTINUE
+                    override fun visitFileFailed(file: Path, error: IOException): FileVisitResult {
+                        if (file == root) throw error
+                        return FileVisitResult.CONTINUE
+                    }
                 },
             )
         } catch (_: IOException) {
-            // A disappearing or unreadable root contributes no more files to this snapshot.
+            throw IllegalStateException("Cannot read music folder: $root. Reconnect the drive and retry.")
         } catch (_: SecurityException) {
-            // Security policy failures are treated like unreadable roots.
+            throw IllegalStateException("Cannot read music folder: $root. Check folder access and retry.")
         }
     }
 }
