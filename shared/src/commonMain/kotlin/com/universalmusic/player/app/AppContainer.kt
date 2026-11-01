@@ -896,6 +896,8 @@ class AppContainer(
     /** The listener can install a tool while the app runs, so this runs again on request. */
     fun recheckSourceTools() {
         scope.launch(Dispatchers.IO) {
+            // NewPipe initialises on first probe; that cost must stay out of cold start.
+            _ready.first { it }
             _sourceTools.value = SourceTools(
                 audioPlayer = audioPlayerInstalled(),
                 youtubeExtractor = youtubeStreams.isAvailable(),
