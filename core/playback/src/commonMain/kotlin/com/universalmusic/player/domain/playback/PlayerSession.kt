@@ -310,7 +310,7 @@ class PlayerSession(
     suspend fun flushPersistence(): FlushResult {
         val recorder = persistence ?: return FlushResult.Committed()
         val sequence = withContext(sessionContext) { if (ledger.persistenceReady) ledger.checkpoint() else null }
-            ?: return FlushResult.Failed(IllegalStateException("Listening persistence has not initialized"))
+            ?: return FlushResult.Failed(ListeningNotReady())
         return recorder.awaitCommitted(sequence)
     }
 

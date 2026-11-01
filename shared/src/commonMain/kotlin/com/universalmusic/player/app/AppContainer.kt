@@ -23,6 +23,7 @@ import com.universalmusic.player.data.local.cacheKey
 import com.universalmusic.player.data.local.createLocalContentKeyReader
 import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
 import com.universalmusic.player.data.local.isLocationInFolder
+import com.universalmusic.player.domain.playback.ListeningNotReady
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -721,7 +722,10 @@ class AppContainer(
             is FlushResult.Committed -> result.exportUnavailable?.let {
                 PlaybackTrace.log("Recorder", "flushed; local listening export unavailable: $it")
             }
-            is FlushResult.Failed -> AppFailures.report(result.cause)
+            is FlushResult.Failed -> when (result.cause) {
+                is ListeningNotReady -> PlaybackTrace.log("Recorder", "flush skipped: startup restore still running")
+                else -> AppFailures.report(result.cause)
+            }
         }
     }
 
