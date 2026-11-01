@@ -29,6 +29,44 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopPlaybackEngineTest {
+    @Test fun seekDiscardsTheFirstOfTwoSuccessorProbes() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val completed = CountDownLatch(1)
+        val probes = AtomicInteger()
+        val runtime = FakeDesktopPlaybackRuntime().apply {
+            supportsEvents = true
+            sendIpcResult.set(true)
+            properties = { _, name -> if (name == "playlist") """[{"id":1,"playing":true}]""" else null }
+            compatibility = { _, _ ->
+                if (probes.incrementAndGet() == 1) {
+                    entered.countDown()
+                    release.await(5, TimeUnit.SECONDS)
+                    completed.countDown()
+                }
+                true
+            }
+        }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/a.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.prepareNext(com.universalmusic.player.domain.playback.PreparedPlayback("b", PlaybackHandle.Url("/b.flac"), null, 1))
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            engine.seekTo(12_000)
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("append-play") }) delay(5) }
+            assertEquals(2, probes.get())
+            release.countDown()
+            assertTrue(completed.await(2, TimeUnit.SECONDS))
+            // Let the stale result re-enter the FIFO, then flush it with a transport command.
+            delay(100)
+            engine.pause()
+            withTimeout(2_000) { while (runtime.sentIpc.none { it.contains("pause") && it.contains("true") }) delay(5) }
+            assertEquals(1, runtime.sentIpc.count { it.contains("append-play") })
+        } finally { release.countDown(); engine.stop(); runtime.destroyAll() }
+    }
+
     @Test fun pauseReachesMpvWhileCompatibilityProbeIsBlocked() = runBlocking {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)

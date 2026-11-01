@@ -47,14 +47,17 @@ internal class GaplessBoundary(
 ) {
     private var enabled = false
     private var prepared: PreparedPlayback? = null
+    private var preparationRevision = 0L
 
     fun canJoin(url: String): Boolean = enabled && localFile(url) && runtime.supportsEvents
 
     fun adoptGenerationLocked(generation: Long, keepPrepared: Boolean) {
+        preparationRevision++
         prepared = if (keepPrepared) prepared?.copy(generation = generation) else null
     }
 
     fun clearPreparedLocked() {
+        preparationRevision++
         prepared = null
     }
 
@@ -79,6 +82,7 @@ internal class GaplessBoundary(
 
     fun prepareNext(next: PreparedPlayback?) {
         synchronized(transport.lock) {
+            val revision = ++preparationRevision
             val candidate = next?.takeIf { enabled && it.generation == transport.activeGeneration && localFile(it.handle.url) }
             prepared = candidate
             val active = slot.active ?: return
@@ -99,9 +103,9 @@ internal class GaplessBoundary(
                     val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
                     val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
                     synchronized(transport.lock) {
-                        if (prepared !== candidate || slot.active !== active) return@launch
+                        if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@launch
                         slot.enqueueLocked apply@{
-                            if (!synchronized(transport.lock) { prepared === candidate && slot.active === active }) return@apply
+                            if (!synchronized(transport.lock) { preparationRevision == revision && prepared === candidate && slot.active === active }) return@apply
                             if (!compatible) {
                                 synchronized(transport.lock) { if (prepared === candidate) prepared = null }
                                 runtime.sendIpc("""["set_property","gapless-audio","no"]""", active.socket)
@@ -122,7 +126,7 @@ internal class GaplessBoundary(
                             }
                             if (candidate != null) {
                                 synchronized(transport.lock) {
-                                    if (prepared !== candidate || slot.active !== active) return@apply
+                                    if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@apply
                                     playlist.nextDuration = duration
                                 }
                                 val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
@@ -142,6 +146,7 @@ internal class GaplessBoundary(
 
     /** Runs in the IPC FIFO. With no successor, EOF can only enter idle, never another file. */
     fun seek(active: ActiveProcess, handle: PlaybackHandle.Url, seconds: Double): Boolean {
+        synchronized(transport.lock) { preparationRevision++ }
         val playlist = active.playlist
         if (!slot.isActive(active)) return false
         val entries = runCatching {
