@@ -29,39 +29,45 @@ actual fun defaultLocalMusicFolder(): String =
 actual fun supportsMusicFolderPicker(): Boolean = true
 
 actual suspend fun pickMusicFolder(): String? {
-    pickWithZenity()?.let { return it }
-    pickWithKdialog()?.let { return it }
-    return pickWithSwing()
+    val answer = askZenity() ?: askKdialog() ?: return pickWithSwing()
+    return answer.folder
 }
 
 actual fun releaseMusicFolderAccess(folder: String) = Unit
 
-private fun pickWithZenity(): String? {
-    val zenity = findExecutable("zenity") ?: return null
-    return runCatching {
-        val process = ProcessBuilder(
-            zenity,
-            "--file-selection",
-            "--directory",
-            "--title=Choose music folder",
-        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-        val stdout = process.inputStream.bufferedReader().readText()
-        if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
-    }.logged("Local", "folder picker failed").getOrNull()
+/** A dialog ran and the listener answered; a null [folder] means they cancelled, so no other dialog follows. */
+internal data class FolderPickerAnswer(val folder: String?)
+
+private const val DIALOG_CANCELLED = 1
+
+/** Null when the dialog itself failed and the next one should be tried. */
+internal fun folderPickerAnswer(exitCode: Int, stdout: String): FolderPickerAnswer? = when (exitCode) {
+    0 -> FolderPickerAnswer(parsePickedDirectory(stdout))
+    DIALOG_CANCELLED -> FolderPickerAnswer(null)
+    else -> null
 }
 
-private fun pickWithKdialog(): String? {
-    val kdialog = findExecutable("kdialog") ?: return null
+private fun askZenity(): FolderPickerAnswer? = runDialog(
+    "zenity",
+    "--file-selection",
+    "--directory",
+    "--title=Choose music folder",
+)
+
+private fun askKdialog(): FolderPickerAnswer? = runDialog(
+    "kdialog",
+    "--getexistingdirectory",
+    System.getProperty("user.home", "."),
+    "--title",
+    "Choose music folder",
+)
+
+private fun runDialog(tool: String, vararg arguments: String): FolderPickerAnswer? {
+    val executable = findExecutable(tool) ?: return null
     return runCatching {
-        val process = ProcessBuilder(
-            kdialog,
-            "--getexistingdirectory",
-            System.getProperty("user.home", "."),
-            "--title",
-            "Choose music folder",
-        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val process = ProcessBuilder(executable, *arguments).redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val stdout = process.inputStream.bufferedReader().readText()
-        if (process.waitFor() != 0) null else parsePickedDirectory(stdout)
+        folderPickerAnswer(process.waitFor(), stdout)
     }.logged("Local", "folder picker failed").getOrNull()
 }
 
