@@ -42,6 +42,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Precision
+import com.universalmusic.player.platform.isNetworkAvailable
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.data.cache.TrackAvailability
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
@@ -161,7 +162,8 @@ fun TrackRow(
     val artSize = if (compact) 40.dp else 48.dp
     val folio = LocalSkinTokens.current.skin == Skin.FOLIO
     val status = availability?.status?.takeIf { it != TrackAvailability.AVAILABLE_LOCALLY && it != TrackAvailability.STREAMABLE }
-    val needsNetwork = availability == null && track.requiresNetworkToPlay() && track.playableSources().isEmpty()
+    val needsNetwork = availability == null && track.requiresNetworkToPlay() &&
+        remember(track.canonicalId) { !isNetworkAvailable() }
     val source = (track.playableSources().firstOrNull() ?: track.sources.firstOrNull())?.provider
     LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted) {
         Box {
