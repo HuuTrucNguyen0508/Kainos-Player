@@ -17,6 +17,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import com.universalmusic.player.domain.model.RepeatMode
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -32,6 +34,23 @@ import org.junit.Assume.assumeTrue
 class MprisControllerTest {
     private val busName = mprisBusName("test${ProcessHandle.current().pid()}")
     private val playerName = busName.removePrefix("org.mpris.MediaPlayer2.")
+    @Test
+    fun loopStatusWritesSetRequestedModeOnConfinedSession() = runTest {
+        val session = PlayerSession(
+            RecordingEngineForMpris(), DefaultSourceResolver(), backgroundScope,
+            confineTo = StandardTestDispatcher(testScheduler),
+        )
+        val facade = MprisFacade(session) {}
+        for ((value, mode) in listOf(
+            "Track" to RepeatMode.ONE, "Playlist" to RepeatMode.ALL, "None" to RepeatMode.OFF,
+            "Track" to RepeatMode.ONE, "Track" to RepeatMode.ONE,
+        )) {
+            facade.Set(MprisController.IFACE_PLAYER, "LoopStatus", value)
+            runCurrent()
+            assertEquals(mode, session.queueState.value.repeat, value)
+        }
+    }
+
     @Test
     fun stopKeepsQueueAndPositionForResume() = runTest {
         val engine = RecordingEngineForMpris()

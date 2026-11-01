@@ -665,6 +665,8 @@ class PlayerSession(
         editQueue { setShuffle(enabled) }
     }
 
+    fun setRepeat(mode: RepeatMode) = onSession { setRepeatNow(mode) }
+
     internal fun setRepeatNow(mode: RepeatMode) {
         editQueue { setRepeat(mode) }
     }
