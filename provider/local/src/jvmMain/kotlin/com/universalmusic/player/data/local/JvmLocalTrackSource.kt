@@ -18,19 +18,29 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runInterruptible
 
 class JvmLocalTrackSource(
+    private val optionalRootsProvider: () -> Set<Path> = { setOf(Paths.get(System.getProperty("user.home", "."), "Music")) },
     private val rootsProvider: () -> List<Path> = { defaultMusicRoots() },
 ) : IncrementalLocalTrackSource {
-    constructor(roots: List<Path>) : this({ roots })
+    constructor(roots: List<Path>) : this(optionalRootsProvider = { emptySet() }, rootsProvider = { roots })
 
     override suspend fun scan(): List<LocalTrack> = scanReusing(emptyList()).tracks
 
-    override suspend fun scanReusing(previous: List<LocalTrack>): IncrementalScan = withContext(Dispatchers.IO) {
+    override suspend fun scanReusing(previous: List<LocalTrack>): LocalScanResult = withContext(Dispatchers.IO) {
         val discovered = linkedMapOf<Path, Path>()
         val roots = rootsProvider().map { it.toAbsolutePath().normalize() }.distinct()
-        roots.forEach { root -> scanRoot(root, discovered) }
-
+        val optional = optionalRootsProvider().map { it.toAbsolutePath().normalize() }.toSet()
+        val unavailable = mutableListOf<Path>()
+        var readable = 0
         roots.forEach { root ->
-            check(isReadableDirectory(root)) { "Cannot read music folder: $root. Reconnect the drive and retry." }
+            val found = linkedMapOf<Path, Path>()
+            try {
+                scanRoot(root, found)
+                check(isReadableDirectory(root))
+                discovered.putAll(found)
+                readable++
+            } catch (_: IllegalStateException) {
+                if (root !in optional) unavailable += listOf(root)
+            }
         }
         val previousByLocation = previous.associateBy(LocalTrack::location)
         var reused = 0
@@ -54,7 +64,14 @@ class JvmLocalTrackSource(
                     runInterruptible { file.toLocalTrack(root, fingerprint) }
                 }
             }
-        IncrementalScan(tracks = tracks, reused = reused, probed = probed)
+        val retained = previous.filter { track ->
+            val path = runCatching { Paths.get(java.net.URI(track.location)).toAbsolutePath().normalize() }.getOrNull()
+            path != null && unavailable.any { path.startsWith(it) }
+        }
+        LocalScanResult(
+            tracks = (tracks + retained).distinctBy(LocalTrack::location), reused = reused, probed = probed,
+            unavailableRoots = unavailable.map(Path::toString), readableRootCount = readable,
+        )
     }
 
     private fun scanRoot(root: Path, discovered: MutableMap<Path, Path>) {

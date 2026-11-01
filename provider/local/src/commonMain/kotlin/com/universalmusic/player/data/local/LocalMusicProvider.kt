@@ -37,6 +37,9 @@ class LocalMusicProvider(
     private val mutableState = MutableStateFlow(ProviderState.AVAILABLE)
     override val state: StateFlow<ProviderState> = mutableState.asStateFlow()
 
+    private val mutableScanResult = MutableStateFlow<LocalScanResult?>(null)
+    val scanResult: StateFlow<LocalScanResult?> = mutableScanResult.asStateFlow()
+
     /** Latest platform snapshot; embedded artwork is filled in here and persisted back to [cache]. */
     private val scanned = MutableStateFlow<List<LocalTrack>>(emptyList())
     var lastScanStats: LocalScanStats? = null
@@ -171,7 +174,6 @@ class LocalMusicProvider(
 
     private suspend fun persistScanned() {
         val snapshot = scanned.value
-        if (snapshot.isEmpty()) return
         runCatching { cache?.write(configKey(), snapshot) }.logged("Local", "scan snapshot write failed")
     }
 
@@ -182,15 +184,15 @@ class LocalMusicProvider(
         applyCachedTracks(cached)
     }
 
-    /** Replaces the cached library with the latest complete platform snapshot. */
+    /** Publishes the scan, including retained rows for unavailable configured roots. */
     suspend fun refresh(): List<Track> {
         mutableState.value = ProviderState.LOADING
         return try {
             val started = currentTimeMillis()
             val previous = scanned.value
-            val incremental = (source as? IncrementalLocalTrackSource)?.scanReusing(previous)
+            val result = source.scanResult(previous)
             val previousById = previous.associateBy(LocalTrack::id)
-            val raw = (incremental?.tracks ?: source.scan()).map { track ->
+            val raw = result.tracks.map { track ->
                 val old = previousById[track.id]?.takeIf { it.location == track.location }
                 if (track.contentKey == null && old?.contentKey != null &&
                     track.contentLength != null && track.fileModifiedEpochMs != null &&
@@ -201,11 +203,12 @@ class LocalMusicProvider(
                 .let(::publish)
                 .also { published ->
                     persistScanned()
-                    mutableState.value = ProviderState.AVAILABLE
+                    mutableScanResult.value = result
+                    mutableState.value = if (result.unavailableRoots.isNotEmpty() && result.readableRootCount == 0) ProviderState.UNAVAILABLE else ProviderState.AVAILABLE
                     lastScanStats = LocalScanStats(
                         trackCount = published.size,
-                        reused = incremental?.reused ?: 0,
-                        probed = incremental?.probed ?: published.size,
+                        reused = result.reused,
+                        probed = result.probed,
                         elapsedMs = (currentTimeMillis() - started).coerceAtLeast(0),
                     )
                 }

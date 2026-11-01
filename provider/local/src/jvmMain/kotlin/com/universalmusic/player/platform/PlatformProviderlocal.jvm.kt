@@ -10,7 +10,9 @@ import java.nio.file.Paths
 import kotlin.io.path.readText
 
 actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource =
-    JvmLocalTrackSource {
+    JvmLocalTrackSource(optionalRootsProvider = {
+        if (config().mode == LocalLibraryRootMode.USE_DEFAULTS) setOf(Paths.get(defaultLocalMusicFolder())) else emptySet()
+    }) {
         val scan = config()
         resolveMusicRoots(
             homeDirectory = Paths.get(System.getProperty("user.home", ".")),

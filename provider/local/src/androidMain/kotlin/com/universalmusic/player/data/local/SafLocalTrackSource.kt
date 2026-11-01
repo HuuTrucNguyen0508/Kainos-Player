@@ -9,6 +9,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.QualityTier
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -19,54 +20,51 @@ import kotlin.coroutines.coroutineContext
  *
  * Uses [DocumentsContract] child cursors (one query per directory) instead of
  * [DocumentFile.listFiles] / per-property binder calls, which are prohibitively
- * slow on large trees. Throws [IllegalStateException] when a configured tree URI
- * is revoked.
+ * slow on large trees. Unavailable trees retain only their own previous tracks.
  */
 internal class SafLocalTrackSource(
     context: Context,
     private val treeUris: () -> List<String>,
-) : LocalTrackSource {
+) : IncrementalLocalTrackSource {
     private val appContext = context.applicationContext
     private val contentResolver: ContentResolver = appContext.contentResolver
 
-    override suspend fun scan(): List<LocalTrack> = withContext(Dispatchers.IO) {
+    override suspend fun scan(): List<LocalTrack> = scanReusing(emptyList()).tracks
+
+    override suspend fun scanReusing(previous: List<LocalTrack>): LocalScanResult = withContext(Dispatchers.IO) {
         val uris = treeUris().map(String::trim).filter(String::isNotEmpty).distinct()
-        if (uris.isEmpty()) return@withContext emptyList()
+        if (uris.isEmpty()) return@withContext LocalScanResult(emptyList(), readableRootCount = 0)
 
         val tracks = linkedMapOf<String, LocalTrack>()
         val revoked = mutableListOf<String>()
         for (raw in uris) {
             coroutineContext.ensureActive()
-            val treeUri = runCatching { Uri.parse(raw) }.getOrNull()
-            if (treeUri == null) {
+            val found = linkedMapOf<String, LocalTrack>()
+            try {
+                val treeUri = Uri.parse(raw)
+                check(hasPersistedReadGrant(treeUri))
+                val root = DocumentFile.fromTreeUri(appContext, treeUri)
+                check(root != null && root.canRead())
+                walkDocuments(
+                    treeUri = treeUri,
+                    documentId = DocumentsContract.getTreeDocumentId(treeUri),
+                    albumGroupKey = treeUri.toString(),
+                    displayName = root.name,
+                    into = found,
+                )
+                tracks.putAll(found)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
                 revoked += raw
-                continue
             }
-            if (!hasPersistedReadGrant(treeUri)) {
-                revoked += displayName(treeUri)
-                continue
-            }
-            val root = DocumentFile.fromTreeUri(appContext, treeUri)
-            if (root == null || !root.canRead()) {
-                revoked += displayName(treeUri)
-                continue
-            }
-            val documentId = DocumentsContract.getTreeDocumentId(treeUri)
-            walkDocuments(
-                treeUri = treeUri,
-                documentId = documentId,
-                albumGroupKey = treeUri.toString(),
-                displayName = root.name,
-                into = tracks,
-            )
         }
-        lastRevokedFolders = revoked.toList()
-        tracks.values.toList()
+        val retained = previous.filter { track -> revoked.any { track.location.startsWith(it.trimEnd('/') + "/document/") } }
+        LocalScanResult(
+            tracks = (tracks.values + retained).distinctBy(LocalTrack::location),
+            unavailableRoots = revoked, readableRootCount = uris.size - revoked.size,
+        )
     }
-
-    @Volatile
-    var lastRevokedFolders: List<String> = emptyList()
-        private set
 
     private fun hasPersistedReadGrant(treeUri: Uri): Boolean {
         return contentResolver.persistedUriPermissions.any { permission ->

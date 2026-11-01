@@ -11,14 +11,55 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class JvmLocalTrackSourceTest {
+    @Test fun absentDefaultMusicIsAnEmptySuccessfulScan() = withTempDirectory { home ->
+        val oldHome = System.getProperty("user.home")
+        try {
+            System.setProperty("user.home", home.toString())
+            val provider = LocalMusicProvider(com.universalmusic.player.platform.createLocalTrackSource {
+                LocalLibraryScanConfig()
+            })
+            assertTrue(provider.refresh().isEmpty())
+            assertEquals(com.universalmusic.player.domain.model.ProviderState.AVAILABLE, provider.state.value)
+        } finally { System.setProperty("user.home", oldHome) }
+    }
+
+    @Test fun missingDefaultDoesNotHideAnExtraRoot() = withTempDirectory { home ->
+        val extra = Files.createDirectory(home.resolve("Extra"))
+        Files.write(extra.resolve("track.mp3"), byteArrayOf())
+        val source = JvmLocalTrackSource(optionalRootsProvider = { setOf(home.resolve("Music")) }) { resolveMusicRoots(home, additionalRoots = extra.toString()) }
+        assertEquals(1, source.scan().size)
+    }
+
+    @Test fun connectedRootsRefreshWhileDisconnectedRootsKeepOnlyTheirOwnCache() = withTempDirectory { home ->
+        val a = Files.createDirectory(home.resolve("A"))
+        val b = Files.createDirectory(home.resolve("B"))
+        val aSong = Files.write(a.resolve("old.mp3"), byteArrayOf())
+        Files.write(b.resolve("kept.mp3"), byteArrayOf())
+        var roots = listOf(a, b)
+        val provider = LocalMusicProvider(JvmLocalTrackSource { roots })
+        assertEquals(2, provider.refresh().size)
+        b.toFile().deleteRecursively()
+        Files.delete(aSong)
+        Files.write(a.resolve("new.mp3"), byteArrayOf())
+        assertEquals(setOf("new", "kept"), provider.refresh().map { it.title }.toSet())
+        assertEquals(listOf(b.toString()), provider.scanResult.value!!.unavailableRoots)
+        assertEquals(1, provider.scanResult.value!!.readableRootCount)
+        assertEquals(com.universalmusic.player.domain.model.ProviderState.AVAILABLE, provider.state.value)
+        roots = listOf(b)
+        assertEquals(listOf("kept"), provider.refresh().map { it.title })
+        Files.createDirectory(b)
+        Files.write(b.resolve("kept.mp3"), byteArrayOf())
+        assertEquals(listOf("kept"), provider.refresh().map { it.title })
+    }
+
     @Test fun disconnectedRootKeepsCachedTracksAndReportsUnavailable() = withTempDirectory { root ->
         val folder = Files.createDirectory(root.resolve("External Music"))
         val source = JvmLocalTrackSource(listOf(folder))
         val provider = LocalMusicProvider(source)
         provider.applyCachedTracks(listOf(LocalTrack("cached", "Remembered", location = folder.resolve("song.flac").toUri().toString())))
         Files.delete(folder)
-        val failure = runCatching { provider.refresh() }.exceptionOrNull()
-        assertTrue(failure?.message?.contains("External Music") == true, "missing folder must be named")
+        provider.refresh()
+        assertTrue(provider.scanResult.value!!.unavailableRoots.single().contains("External Music"), "missing folder must be named")
         assertEquals(com.universalmusic.player.domain.model.ProviderState.UNAVAILABLE, provider.state.value)
         assertEquals("Remembered", provider.libraryTracks.value.single().title)
         Files.createDirectory(folder)

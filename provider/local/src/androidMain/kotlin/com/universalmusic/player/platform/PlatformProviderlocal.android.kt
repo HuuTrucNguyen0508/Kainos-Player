@@ -7,6 +7,8 @@ import com.universalmusic.player.data.local.LocalLibraryRootMode
 import com.universalmusic.player.data.local.LocalLibraryScanConfig
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.local.LocalTrackSource
+import com.universalmusic.player.data.local.IncrementalLocalTrackSource
+import com.universalmusic.player.data.local.LocalScanResult
 import com.universalmusic.player.data.local.MediaStoreLocalTrackSource
 import com.universalmusic.player.data.local.SafLocalTrackSource
 import com.universalmusic.player.data.local.dedupeKey
@@ -28,39 +30,20 @@ object MusicFolderPickerRelay {
 }
 
 actual fun createLocalTrackSource(config: () -> LocalLibraryScanConfig): LocalTrackSource =
-    LocalTrackSource {
-        val scan = config()
-        val merged = linkedMapOf<String, LocalTrack>()
-        fun ingest(tracks: List<LocalTrack>) {
-            for (track in tracks) {
-                merged.putIfAbsent(track.dedupeKey(), track)
-            }
-        }
-        val revoked = mutableListOf<String>()
-        when (scan.mode) {
-            LocalLibraryRootMode.USE_DEFAULTS -> {
-                if (scan.includeMediaStore) {
-                    ingest(MediaStoreLocalTrackSource(androidContext).scan())
-                }
-            }
-            LocalLibraryRootMode.EXPLICIT -> {
-                if (scan.folders.isNotEmpty()) {
-                    val saf = SafLocalTrackSource(androidContext) { scan.folders }
-                    ingest(saf.scan())
-                    revoked += saf.lastRevokedFolders
-                }
-                if (scan.includeMediaStore) {
-                    ingest(MediaStoreLocalTrackSource(androidContext).scan())
-                }
-            }
-        }
-        if (revoked.isNotEmpty()) {
-            throw IllegalStateException(
-                "Lost access to music folder(s): ${revoked.joinToString()}. " +
-                    "Remove them in Settings or re-add the folder to restore access.",
+    object : IncrementalLocalTrackSource {
+        override suspend fun scan(): List<LocalTrack> = scanReusing(emptyList()).tracks
+
+        override suspend fun scanReusing(previous: List<LocalTrack>): LocalScanResult {
+            val settings = config()
+            val saf = if (settings.mode == LocalLibraryRootMode.EXPLICIT) {
+                SafLocalTrackSource(androidContext) { settings.folders }.scanReusing(previous)
+            } else LocalScanResult(emptyList(), readableRootCount = 0)
+            val media = if (settings.includeMediaStore) MediaStoreLocalTrackSource(androidContext).scan() else emptyList()
+            return saf.copy(
+                tracks = (saf.tracks + media).distinctBy { it.dedupeKey() },
+                readableRootCount = saf.readableRootCount + if (settings.includeMediaStore) 1 else 0,
             )
         }
-        merged.values.toList()
     }
 
 actual fun defaultLocalMusicFolder(): String = ""

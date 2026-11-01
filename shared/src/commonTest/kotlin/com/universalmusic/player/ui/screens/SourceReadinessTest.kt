@@ -8,6 +8,30 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class SourceReadinessTest {
+    @Test fun partlyConnectedLibraryNamesOnlyTheMissingFolder() {
+        val local = fresh.copy(
+            musicFolders = listOf("/media/A", "/media/B"), localTrackCount = 3,
+            localScan = com.universalmusic.player.data.local.LocalScanResult(
+                emptyList(), unavailableRoots = listOf("/media/B"), readableRootCount = 1,
+            ),
+        ).local()
+        assertEquals(SourceStatus.Ready, local.status)
+        assertEquals("Folder disconnected", local.statusLabel)
+        assertTrue("B" in local.detail)
+        assertTrue("A" !in local.detail)
+        assertEquals(SourceAction.RetryLocal, local.step?.action)
+    }
+
+    @Test fun missingDefaultMusicKeepsFirstRunFolderChoice() {
+        val local = fresh.copy(
+            musicFolders = listOf("/home/a/Music"),
+            localScan = com.universalmusic.player.data.local.LocalScanResult(emptyList(), readableRootCount = 0),
+        ).local()
+        assertEquals(listOf(SourceNeed.MusicFolder), local.needs())
+        assertEquals("Choose a music folder", local.step?.label)
+        assertEquals(SourceAction.PickMusicFolder, local.step?.action)
+    }
+
     @Test fun disconnectedFolderIsNamedAndOffersRetry() {
         val missing = fresh.copy(local = ProviderState.UNAVAILABLE, musicFolders = listOf("/media/External Music"), localTrackCount = 12).local()
         assertEquals(SourceStatus.Trouble, missing.status)
