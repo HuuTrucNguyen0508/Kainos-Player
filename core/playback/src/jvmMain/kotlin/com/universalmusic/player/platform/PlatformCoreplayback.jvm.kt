@@ -5,6 +5,8 @@ import com.universalmusic.player.domain.playback.PlaybackEngine
 actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine =
     DesktopPlaybackEngine(spotify)
 
+actual fun audioPlayerInstalled(): Boolean = SystemDesktopPlaybackRuntime.findOnPath("mpv") != null
+
 private var mprisController: MprisController? = null
 
 actual fun bindPlatformMediaControls(

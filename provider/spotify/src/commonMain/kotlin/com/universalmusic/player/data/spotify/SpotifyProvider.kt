@@ -400,7 +400,7 @@ class SpotifyProvider(
         if (currentTimeMillis() > deadlineMs) {
             error(
                 "Spotify playback timed out while starting the in-app receiver or Connect transfer. " +
-                    "Check Settings → Connect, then try again.",
+                    "Check Settings → Music sources, then try again.",
             )
         }
     }
@@ -569,7 +569,7 @@ class SpotifyProvider(
         val selectedId = selectedPlaybackDeviceId()?.trim().orEmpty()
         if (selectedId.isEmpty()) {
             error(
-                "Choose a Spotify Connect device in Settings → Spotify output before playing. " +
+                "Choose a Spotify Connect device in Now Playing → Spotify output before playing. " +
                     "Pick this phone, a computer, a speaker, or any other available device.",
             )
         }
@@ -600,7 +600,7 @@ class SpotifyProvider(
         if (device.isRestricted) {
             error(
                 "${device.displayName()} cannot be controlled through Spotify. " +
-                    "Choose another Spotify device in Settings → Spotify output.",
+                    "Choose another Spotify device in Now Playing → Spotify output.",
             )
         }
 
@@ -638,7 +638,7 @@ class SpotifyProvider(
         error(
             "Spotify playback on $label was not confirmed. " +
                 "Open Spotify on that device, check its volume and output, then try again. " +
-                "Or pick a different Connect device in Settings → Spotify output.",
+                "Or pick a different Connect device in Now Playing → Spotify output.",
         )
     }
 
@@ -696,7 +696,7 @@ class SpotifyProvider(
             SpotifyWebPlaybackFailure.LibrespotNotFound ->
                 "librespot is not installed. Run scripts/install-librespot.sh, then try again."
             SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
-                "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
+                "Spotify in-app playback needs a one-time librespot sign-in. Open Settings → Music sources and choose Set up in-app Spotify playback."
             is SpotifyWebPlaybackFailure.LibrespotExited ->
                 describeLibrespotConnectionFailure(reason.detail)
                     ?: reason.detail
@@ -988,10 +988,10 @@ private fun selectedDeviceMissingMessage(
     val available = alternatives.joinToString { "${it.name} (${it.type})" }
     return if (available.isNotEmpty()) {
         "The Spotify device saved in Settings is offline (id ${selectedId.take(8)}…). " +
-            "Choose another device under Settings → Spotify output. Available now: $available."
+            "Choose another device under Now Playing → Spotify output. Available now: $available."
     } else {
         "The Spotify device saved in Settings is offline. Open Spotify on this phone or another " +
-            "Premium device, then refresh devices in Settings → Spotify output and select one."
+            "Premium device, then refresh devices in Now Playing → Spotify output and select one."
     }
 }
 

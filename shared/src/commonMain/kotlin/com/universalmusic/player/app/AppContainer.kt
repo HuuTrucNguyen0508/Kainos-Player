@@ -53,6 +53,7 @@ import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeAudioDownloader
+import com.universalmusic.player.platform.audioPlayerInstalled
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import com.universalmusic.player.platform.createHeartedAudioCache
 import kotlinx.coroutines.CancellationException
@@ -181,6 +182,7 @@ class AppContainer(
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
     private var localLibraryRefreshJob: Job? = null
+    private val pickingMusicFolder = MutableStateFlow(false)
     private lateinit var spotifyProvider: SpotifyProvider
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
@@ -192,6 +194,8 @@ class AppContainer(
     ).also {
         spotifyProvider = it
     }
+    private val _sourceTools = MutableStateFlow(SourceTools())
+    val sourceTools: StateFlow<SourceTools> = _sourceTools.asStateFlow()
     val youtubeStreams = createYouTubeStreamResolver()
     val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
     val heartedAudio = HeartedAudioCacheService(
@@ -468,6 +472,10 @@ class AppContainer(
         scope.launch {
             _ready.first { it }
             for (request in handoffRequests) runHandoff()
+        }
+        scope.launch {
+            _ready.first { it }
+            spotifyWebPlayback.state.collect { recheckSourceTools() }
         }
     }
 
@@ -884,10 +892,25 @@ class AppContainer(
         return listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
     }
 
+    /** The listener can install a tool while the app runs, so this runs again on request. */
+    fun recheckSourceTools() {
+        scope.launch(Dispatchers.IO) {
+            _sourceTools.value = SourceTools(
+                audioPlayer = audioPlayerInstalled(),
+                youtubeExtractor = youtubeStreams.isAvailable(),
+                spotifyReceiver = spotifyWebPlayback.receiverSetup(),
+            )
+        }
+    }
+
     fun addLocalMusicFolderFromPicker() {
-        if (!supportsMusicFolderPicker()) return
+        if (!supportsMusicFolderPicker() || !pickingMusicFolder.compareAndSet(false, true)) return
         scope.launch {
-            val picked = pickMusicFolder() ?: return@launch
+            val picked = try {
+                pickMusicFolder()
+            } finally {
+                pickingMusicFolder.value = false
+            } ?: return@launch
             updateSettings { current ->
                 val base = if (current.localMusicFoldersConfigured) {
                     current.localMusicFolders
