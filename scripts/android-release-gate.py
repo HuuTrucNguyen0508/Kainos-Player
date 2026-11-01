@@ -111,7 +111,7 @@ class Gate:
             f"-Pandroid.testInstrumentationRunnerArguments.class={TESTS}{klass}", *extra,
         ), self.gradle_env)
         total, bad, skipped = junit_counts(RESULTS)
-        ok = passed and total > 0 and bad == 0
+        ok = passed and total > skipped and bad == 0
         self.record(name, "PASS" if ok else "FAIL", started, f"{total} tests, {bad} failed, {skipped} skipped; {log}")
         return ok
 
