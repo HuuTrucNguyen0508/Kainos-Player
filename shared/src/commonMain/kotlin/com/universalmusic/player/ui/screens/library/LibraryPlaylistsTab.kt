@@ -39,6 +39,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.TrackRow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -385,6 +386,8 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                                                 } else {
                                                     onPlayTracks(tracks, 0)
                                                 }
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
                                             } catch (failure: Exception) {
                                                 onPlaylistError(
                                                     failure.message ?: "Could not load \"${playlist.title}\".",

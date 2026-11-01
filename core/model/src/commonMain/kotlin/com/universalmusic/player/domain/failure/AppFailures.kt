@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /** A later successful write clears its own area. Nothing clears [CORRUPT_ROWS]: the row stays unreadable. */
-enum class StorageArea { SETTINGS, LIBRARY, PLAYLISTS, LISTENING, LOCAL_SCAN, CORRUPT_ROWS }
+enum class StorageArea { SETTINGS, TOKENS, LIBRARY, PLAYLISTS, LISTENING, LOCAL_SCAN, CORRUPT_ROWS }
 
 /** Thrown at the storage boundary, so the app scope can tell saved-data failures from every other bug. */
 class StorageFailure(val area: StorageArea, cause: Throwable) : Exception(cause.message, cause)

@@ -145,6 +145,21 @@ class AppFailuresTest {
         assertFalse("SECRET" in log)
     }
 
+    @Test fun loggedFailuresDropCredentialsFromDecoderErrors() {
+        val decoderError = IllegalStateException(
+            "Unexpected JSON token at offset 12\nJSON input: {\"accessToken\":\"SECRET-1\",\n\"refresh\":\"SECRET-2\"}",
+        )
+        val fieldError = IllegalStateException("""bad body {"client_secret":"SECRET-3"} Bearer SECRET-4""")
+        val log = capturedLog {
+            PlaybackTrace.failure("Test", "decode failed", decoderError)
+            PlaybackTrace.failure("Test", "request failed", fieldError)
+        }
+        assertContains(log, "JSON input: <redacted>")
+        assertContains(log, "at com.universalmusic")
+        assertContains(log, "\"client_secret\":\"<redacted>\"")
+        assertFalse("SECRET" in log)
+    }
+
     @Test fun loggedResultKeepsTheCauseInTheLogAndTheFailureInTheResult() {
         val cause = IllegalStateException("helper exited 3")
         var result: Result<Int>? = null

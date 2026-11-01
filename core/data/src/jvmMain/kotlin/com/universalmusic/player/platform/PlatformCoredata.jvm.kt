@@ -158,19 +158,19 @@ internal class FileTokenStore(private val path: Path) : TokenStore {
     override suspend fun write(provider: ProviderId, tokens: AuthTokens) = mutex.withLock {
         val all = readAll().toMutableMap()
         all[provider.name] = tokens
-        writeAtomicOwnerOnly(path, json.encodeToString(all))
+        storageWrite(StorageArea.TOKENS) { writeAtomicOwnerOnly(path, json.encodeToString(all)) }
     }
 
     override suspend fun clear(provider: ProviderId) = mutex.withLock {
         val all = readAll().toMutableMap()
         if (all.remove(provider.name) != null || path.exists()) {
-            writeAtomicOwnerOnly(path, json.encodeToString(all))
+            storageWrite(StorageArea.TOKENS) { writeAtomicOwnerOnly(path, json.encodeToString(all)) }
         }
     }
 
     private fun readAll(): Map<String, AuthTokens> {
         if (!path.exists()) return emptyMap()
-        return readOrQuarantine(path) { json.decodeFromString<Map<String, AuthTokens>>(it) } ?: emptyMap()
+        return readOrQuarantine(path, StorageArea.TOKENS) { json.decodeFromString<Map<String, AuthTokens>>(it) } ?: emptyMap()
     }
 }
 
@@ -185,7 +185,7 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
 
     override suspend fun read(): AppSettings = mutex.withLock {
         if (!path.exists()) return@withLock AppSettings()
-        storageRead(StorageArea.SETTINGS) { readOrQuarantine(path, ::decodeAppSettings) } ?: AppSettings()
+        storageRead(StorageArea.SETTINGS) { readOrQuarantine(path, StorageArea.SETTINGS, ::decodeAppSettings) } ?: AppSettings()
     }
 
     override suspend fun write(settings: AppSettings) = mutex.withLock {
@@ -198,13 +198,13 @@ internal class FileSettingsStore(private val path: Path) : SettingsStore {
  * evidence) and returns null so the caller falls back to defaults.
  */
 
-private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
+private fun <T> readOrQuarantine(path: Path, area: StorageArea, decode: (String) -> T): T? {
     val text = try {
         path.readText()
     } catch (e: java.io.IOException) {
         // Unreadable (not malformed): leave the file alone.
         System.err.println("WARN Kainos: could not read $path (${e.message}); using defaults")
-        AppFailures.report(StorageFailure(StorageArea.SETTINGS, e))
+        AppFailures.report(StorageFailure(area, e))
         return null
     }
     val failure = try {
@@ -215,10 +215,10 @@ private fun <T> readOrQuarantine(path: Path, decode: (String) -> T): T? {
     val quarantine = path.resolveSibling("${path.fileName}.corrupt-${System.currentTimeMillis()}")
     val moved = runCatching { Files.move(path, quarantine) }.isSuccess
     System.err.println(
-        "WARN Kainos: could not read $path (${failure::class.simpleName}: ${failure.message}); " +
+        "WARN Kainos: could not read $path (${failure::class.simpleName}); " +
             if (moved) "moved it to ${quarantine.fileName} and using defaults" else "using defaults",
     )
-    AppFailures.report(StorageFailure(StorageArea.SETTINGS, failure))
+    AppFailures.report(StorageFailure(area, failure))
     return null
 }
 
