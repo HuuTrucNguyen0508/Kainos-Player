@@ -26,10 +26,10 @@ CLEAR_ENQUEUED = {"type": "AudioPlayer.ClearQueue", "clearBehavior": "CLEAR_ENQU
 
 SPEECH_FRESH_START = "Lecture aléatoire du dossier Playlist."
 SPEECH_NEW_SHUFFLE = "Nouvelle lecture aléatoire."
-SPEECH_NOTHING_PLAYING = "Rien en cours. Dis lance test."
+SPEECH_NOTHING_PLAYING = "Rien en cours. Dis lance aden."
 SPEECH_EMPTY_LIBRARY = "Je ne trouve aucun fichier audio dans le dossier musique."
 SPEECH_HELP = (
-    "Dis lance test pour jouer le dossier Playlist dans un ordre aléatoire. "
+    "Dis lance aden pour jouer le dossier Playlist dans un ordre aléatoire. "
     "Pendant la lecture, tu peux dire pause, reprends, suivant, précédent, aléatoire ou répète."
 )
 SPEECH_NOT_UNDERSTOOD = "Je n'ai pas compris."
