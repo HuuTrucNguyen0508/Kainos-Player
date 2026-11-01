@@ -7,11 +7,14 @@ import kotlinx.coroutines.flow.first
 import java.io.File
 import java.util.concurrent.Executors
 import kotlin.test.*
+import org.junit.Assume.assumeTrue
 
 /** Opt-in real-engine proof. scripts/perf/gapless-pcm.py supplies synthetic files and PCM output. */
 class GaplessPcmTest {
     @Test fun renderContinuousFiles() = runBlocking {
-        val root = System.getenv("KAINOS_GAPLESS_PCM")?.let(::File) ?: return@runBlocking
+        val rootPath = System.getenv("KAINOS_GAPLESS_PCM")
+        assumeTrue("Run through scripts/perf/gapless-pcm.py", rootPath != null)
+        val root = File(rootPath!!)
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         try {
             for (pair in listOf("same")) repeat(10) { run ->

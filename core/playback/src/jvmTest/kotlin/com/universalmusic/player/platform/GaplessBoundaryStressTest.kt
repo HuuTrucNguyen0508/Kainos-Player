@@ -7,11 +7,12 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.random.Random
 import kotlin.test.*
+import org.junit.Assume.assumeTrue
 
 /** Opt in with KAINOS_GAPLESS_STRESS=1; private null output, synthetic files only. */
 class GaplessBoundaryStressTest {
     @Test fun shortSuccessorCannotPublishBeforeOutgoingOutput() = runBlocking {
-        if (System.getenv("KAINOS_GAPLESS_STRESS") != "1") return@runBlocking
+        assumeTrue("Set KAINOS_GAPLESS_STRESS=1 to run against real mpv", System.getenv("KAINOS_GAPLESS_STRESS") == "1")
         val root = Files.createTempDirectory("kainos-short-proof-")
         fun tone(name: String, seconds: String): Path = root.resolve("$name.wav").also {
             check(ProcessBuilder("ffmpeg", "-v", "error", "-f", "lavfi", "-i",
@@ -38,7 +39,7 @@ class GaplessBoundaryStressTest {
     }
 
     @Test fun randomizedBoundaryTransport() = runBlocking {
-        if (System.getenv("KAINOS_GAPLESS_STRESS") != "1") return@runBlocking
+        assumeTrue("Set KAINOS_GAPLESS_STRESS=1 to run against real mpv", System.getenv("KAINOS_GAPLESS_STRESS") == "1")
         val root = Files.createTempDirectory("kainos-stress-")
         val files = listOf("0.2", "0.35", "0.7", "1.1", "2").mapIndexed { i, duration ->
             root.resolve("$i.wav").also {

@@ -25,6 +25,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.Assume.assumeTrue
 
 class FileStoresTest {
     private val dir: Path = Files.createTempDirectory("kainos-file-stores")
@@ -147,7 +148,7 @@ class FileStoresTest {
 
     @Test
     fun writtenTokenFileIsOwnerOnly() = runBlocking {
-        if (!posix) return@runBlocking
+        assumeTrue("Needs POSIX file permissions", posix)
         val path = dir.resolve("tokens.json")
         val store = FileTokenStore(path)
 
@@ -161,7 +162,7 @@ class FileStoresTest {
 
     @Test
     fun existingWorldReadableFilesAreTightenedOnCreation() {
-        if (!posix) return
+        assumeTrue("Needs POSIX file permissions", posix)
         val tokens = dir.resolve("tokens.json")
         val settings = dir.resolve("settings.json")
         tokens.writeText("{}")
