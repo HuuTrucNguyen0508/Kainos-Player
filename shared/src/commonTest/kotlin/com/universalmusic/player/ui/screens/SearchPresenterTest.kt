@@ -87,7 +87,7 @@ class SearchPresenterTest {
         advanceTimeBy(220)
         runCurrent()
         assertEquals(1, requests)
-        assertTrue(presenter.state.value.providersConfigured)
+        assertTrue(presenter.state.value.searchable.isNotEmpty())
 
         prefs.value = prefs.value.copy(themeMode = ThemeMode.DARK)
         spotify.value = ProviderState.RATE_LIMITED

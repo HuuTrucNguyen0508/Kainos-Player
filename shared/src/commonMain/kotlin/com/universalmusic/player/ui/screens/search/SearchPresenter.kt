@@ -34,8 +34,15 @@ internal data class SearchUiState(
     val youtube: ProviderState = ProviderState.NOT_CONFIGURED,
     val downloads: Map<String, DownloadItemState> = emptyMap(),
 ) {
-    val providersConfigured: Boolean
-        get() = spotify != ProviderState.NOT_CONFIGURED || youtube != ProviderState.NOT_CONFIGURED
+    /** Sources a search can reach now, not merely ones with a saved key. */
+    val searchable: List<MusicSource>
+        get() = buildList {
+            if (spotify.canSearch) add(MusicSource.Spotify)
+            if (youtube.canSearch) add(MusicSource.YouTube)
+        }
+
+    val searchHint: String
+        get() = "Search ${searchable.ifEmpty { listOf(MusicSource.Spotify, MusicSource.YouTube) }.joinToString(" and ") { it.title }}"
 
     val tracks: List<Track>?
         get() = result?.tracks?.filter { track ->
@@ -50,6 +57,9 @@ internal data class SearchUiState(
                 it.canonicalId.isNotBlank() && it.source.providerEntityId.isNotBlank()
         }.distinctBy { it.canonicalId }
 }
+
+private val ProviderState.canSearch: Boolean
+    get() = this != ProviderState.NOT_CONFIGURED && this != ProviderState.AUTH_REQUIRED
 
 /** Lives with AppScaffold so results survive tab changes; scrolling stays in Compose. */
 internal class SearchPresenter(
@@ -78,9 +88,8 @@ internal class SearchPresenter(
         scope.launch {
             val credentials = settings.map { it.spotifyClientId to it.youtubeDataApiKey }
                 .distinctUntilChanged()
-            val configured = combine(spotify, youtube) { sp, yt ->
-                sp != ProviderState.NOT_CONFIGURED || yt != ProviderState.NOT_CONFIGURED
-            }.distinctUntilChanged()
+            val configured = combine(spotify, youtube) { sp, yt -> sp.canSearch || yt.canSearch }
+                .distinctUntilChanged()
             combine(query, credentials, configured) { text, keys, enabled ->
                 SearchRequest(text, keys, enabled)
             }.collectLatest { request ->

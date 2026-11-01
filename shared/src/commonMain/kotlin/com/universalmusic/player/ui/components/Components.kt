@@ -52,6 +52,7 @@ import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.Skin
+import com.universalmusic.player.ui.screens.legendStateWord
 import com.universalmusic.player.ui.theme.providerColor
 
 @Composable
@@ -125,7 +126,7 @@ fun ProviderStatusRow(
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     SourceMark(SourceKind.of(provider), provider.displayName, showIcon = true)
                     Text(
-                        text = state.name.lowercase().replace('_', ' '),
+                        text = legendStateWord(state) ?: "Ready",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (state == ProviderState.RATE_LIMITED) tone else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
