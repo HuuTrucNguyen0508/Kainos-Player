@@ -108,6 +108,9 @@ class PlayerSession(
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
     private val ledger = ListeningLedger(persistence, queueState, nowPlaying, scope, sessionContext, clock)
+    private val refiller = QueueRefiller(queue, scope, sessionContext, workContext) {
+        ledger.record(ListeningChange.AUTOMATIC)
+    }
 
     private var playJob: Job? = null
     private var prefetchJob: Job? = null
@@ -133,9 +136,6 @@ class PlayerSession(
     private var prefetched: Prefetched? = null
     private var prefetchedStartGeneration: Long? = null
 
-    /** Refills the tail of the queue it was started with; dropped when other playback replaces it. */
-    private var continuation: QueueContinuation? = null
-    private var continuationJob: Job? = null
     /** Bumped on every play/stop transition so late ENDED/FAILED from a prior track are ignored. */
     private var playGeneration: Long = 0L
     /** True only after the current generation has successfully started engine playback. */
@@ -201,7 +201,7 @@ class PlayerSession(
                             isPlaying = engineState.status == EngineStatus.PLAYING, buffering = false,
                             error = null, fallback = null, favorite = isFavorite(item.track.canonicalId)) }
                         ledger.record(ListeningChange.AUTOMATIC)
-                        refillIfLow()
+                        refiller.refillIfLow()
                         schedulePrefetch(playGeneration)
                     } else {
                         // The queue changed after mpv crossed the boundary but before this event
@@ -463,7 +463,7 @@ class PlayerSession(
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
-        dropContinuation()
+        refiller.drop()
         val restored = snapshot.toPlaybackQueue()
         failedItemIds.clear()
         ledger.markPausedInstall()
@@ -501,7 +501,7 @@ class PlayerSession(
 
     fun play(track: Track) = onSession {
         beginUserPlay()
-        dropContinuation()
+        refiller.drop()
         queue.playNow(track)
         startCurrent(ListeningChange.LOCAL_INTENT)
     }
@@ -509,7 +509,7 @@ class PlayerSession(
     suspend fun playAwait(track: Track) {
         val job = withContext(sessionContext) {
             beginUserPlay()
-            dropContinuation()
+            refiller.drop()
             queue.playNow(track)
             startCurrent(ListeningChange.LOCAL_INTENT)
         }
@@ -519,9 +519,9 @@ class PlayerSession(
     /** [continuation] keeps appending to this queue until other playback replaces it or it is cleared. */
     fun play(tracks: List<Track>, startIndex: Int = 0, continuation: QueueContinuation? = null) = onSession {
         beginUserPlay()
-        dropContinuation()
+        refiller.drop()
         queue.playNow(tracks, startIndex)
-        this.continuation = continuation
+        refiller.attach(continuation)
         startCurrent(ListeningChange.LOCAL_INTENT)
     }
 
@@ -558,7 +558,7 @@ class PlayerSession(
 
     private fun clearQueueNow(recorded: Boolean) {
         trace("clearQueue")
-        dropContinuation()
+        refiller.drop()
         beginTransition()
         playJob?.cancel()
         playJob = null
@@ -583,7 +583,7 @@ class PlayerSession(
         val currentId = _nowPlaying.value.queueItemId
         when {
             snapshot.items.isEmpty() -> {
-                dropContinuation()
+                refiller.drop()
                 beginTransition()
                 playJob?.cancel()
                 playJob = null
@@ -881,7 +881,7 @@ class PlayerSession(
                 "repeat=${snapshot.repeat} shuffle=${snapshot.shuffle}",
         )
         if (next == null) {
-            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            val refill = refiller.pendingRefill()
             if (refill != null) {
                 val generationAtExhaustion = playGeneration
                 playJob?.cancel()
@@ -909,46 +909,6 @@ class PlayerSession(
         }
         queue.jumpTo(next)
         startCurrent(ListeningChange.AUTOMATIC)
-    }
-
-    /** Start a refill once the queue is down to the continuation's low-water mark. Session thread only. */
-    private fun refillIfLow() {
-        val source = continuation ?: return
-        if (continuationJob?.isActive == true) return
-        val snapshot = queue.queue.value
-        if (snapshot.repeat == RepeatMode.ALL || snapshot.upcoming.size > source.lowWater) return
-        refillQueue()
-    }
-
-    /** Ask the continuation for a batch and append it at the tail. Null when there is no continuation. */
-    private fun refillQueue(): Job? {
-        val source = continuation ?: return null
-        val snapshot = queue.queue.value
-        return scope.launch(sessionContext) {
-            val batch = try {
-                withContext(workContext) { source.nextBatch(snapshot) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                trace("continuation failed: ${error.message}")
-                return@launch
-            }
-            if (continuation !== source) return@launch
-            if (batch.isEmpty()) {
-                trace("continuation finished")
-                continuation = null
-                return@launch
-            }
-            queue.appendTracks(batch)
-            trace("continuation appended ${batch.size}; queue size=${queue.queue.value.items.size}")
-            ledger.record(ListeningChange.AUTOMATIC)
-        }.also { continuationJob = it }
-    }
-
-    private fun dropContinuation() {
-        continuation = null
-        continuationJob?.cancel()
-        continuationJob = null
     }
 
     private fun stopAtQueueEnd(change: ListeningChange) {
@@ -1013,7 +973,7 @@ class PlayerSession(
             )
         }
         ledger.record(change)
-        refillIfLow()
+        refiller.refillIfLow()
         playJob = scope.launch(sessionContext) {
             try {
                 playTrack(item.track, item.id, generation, target, ready)
@@ -1262,7 +1222,7 @@ class PlayerSession(
         // Ignore Repeat One here: re-queuing the same dead item would never reach a healthy one.
         val next = queue.nextIndex(respectRepeatOne = false)
         if (next == null) {
-            val refill = continuationJob?.takeIf { it.isActive } ?: refillQueue()
+            val refill = refiller.pendingRefill()
             if (refill != null) {
                 engine.stop()
                 playJob = scope.launch(sessionContext) {
