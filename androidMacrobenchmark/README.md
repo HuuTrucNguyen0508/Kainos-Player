@@ -3,7 +3,7 @@
 Use JDK 17 and the Pixel_10_Pro AVD. The driver is a self-instrumenting
 `com.android.test` module, so killing the target does not kill the runner.
 Every launch and interaction is executed by a Gradle-run test. The host script
-refuses any device other than emulator-5554. Do not target a physical phone.
+refuses any serial that is not an emulator. Do not target a physical phone.
 
 ```bash
 export JAVA_HOME="$HOME/.jdks/temurin-17"

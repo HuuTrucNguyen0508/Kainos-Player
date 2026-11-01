@@ -172,17 +172,18 @@ The lane ledger is `docs/perf/android.tsv`; `self` means the commit adding the r
 
 ## Profiles and runtime proof
 
-The generated baseline has 35,501 rules including startup rules. Startup has
-23,730 rules, with 3,288 Kainos entries in AGP's merged startup input. Sources are
+On 2026-10-31 the generated baseline had 35,501 rules including startup rules and
+startup had 23,730, with 3,288 Kainos entries in AGP's merged startup input. The
+2026-11-01 regeneration has 36,663 and 23,984. The measured results above predate it. Sources are
 `src/main/baseline-prof.txt` and `src/main/baselineProfiles/startup-prof.txt`.
 Collection covers Home, Library fast scroll, local Now Playing and Search typing.
 The non-minified `profile` target is profileable; optimized is profileable too.
 BaselineProfileRule generates the files; no profile rules were invented.
 
-The normal APK is 6,328,389 bytes versus debug's 31,795,904. It contains
+The measured normal APK was 6,328,389 bytes versus debug's 31,795,904. It contained
 `assets/dexopt/baseline.prof` at 16,760 bytes and `.profm` at 1,111 bytes.
-Its SHA-256 is `eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28`.
-After app-module tests, rebuilding the normal APK reproduced this measured hash.
+Its SHA-256 was `eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28`.
+After app-module tests, rebuilding the normal APK reproduced that hash.
 [APK inspection](optimized-apk-check.json) confirmed the signing identity and version of that build.
 
 The original optimized startup crashed before Activity creation. R8's usage file
