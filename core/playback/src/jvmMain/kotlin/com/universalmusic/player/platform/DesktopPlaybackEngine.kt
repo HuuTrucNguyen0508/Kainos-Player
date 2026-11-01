@@ -378,38 +378,60 @@ class DesktopPlaybackEngine internal constructor(
                 startSeconds > 0 || targetStatus == EngineStatus.PAUSED
             }
             if (active.gapless) {
-                slot.sendIfActive(active, """["set_property","volume",$volumePercent]""")
-                if (targetStatus == EngineStatus.PAUSED) {
-                    check(slot.sendIfActive(active, """["set_property","pause",true]"""))
-                }
-                val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
-                synchronized(transport.lock) {
-                    if (slot.active !== active) { events.close(); return@withContext false }
-                    active.events = events
-                }
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        while (true) {
-                            val line = events.readLine() ?: break
-                            synchronized(transport.lock) { slot.enqueueLocked { gapless.onEvent(active, line) } }
-                        }
-                    } catch (_: Exception) {
-                        // Closing the channel during stop wakes this blocking reader.
-                    } finally {
-                        synchronized(transport.lock) {
-                            if (slot.active === active && active.process.isAlive) {
-                                transport.publish(transport.current.copy(status = EngineStatus.FAILED,
-                                    retryAtPositionMs = transport.current.positionMs,
-                                    error = "Player event connection lost"))
+                try {
+                    slot.sendIfActive(active, """["set_property","volume",$volumePercent]""")
+                    if (targetStatus == EngineStatus.PAUSED) {
+                        check(slot.sendIfActive(active, """["set_property","pause",true]"""))
+                    }
+                    val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
+                    synchronized(transport.lock) {
+                        if (slot.active !== active) { events.close(); return@withContext false }
+                        active.events = events
+                    }
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            while (true) {
+                                val line = events.readLine() ?: break
+                                synchronized(transport.lock) { slot.enqueueLocked { gapless.onEvent(active, line) } }
+                            }
+                        } catch (_: Exception) {
+                            // Closing the channel during stop wakes this blocking reader.
+                        } finally {
+                            synchronized(transport.lock) {
+                                if (slot.active === active && active.process.isAlive) {
+                                    transport.publish(transport.current.copy(status = EngineStatus.FAILED,
+                                        retryAtPositionMs = transport.current.positionMs,
+                                        error = "Player event connection lost"))
+                                }
                             }
                         }
                     }
+                    check(slot.awaitIpc {
+                        // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                        val id = runtime.loadEntry(
+                            """{"name":"loadfile","url":${Json.encodeToString(url)},"flags":"replace","options":{"start":"$startSeconds"}}""",
+                            active.socket,
+                        )
+                        synchronized(transport.lock) { active.playlist.entryId = id }
+                        id != null
+                    })
+                } catch (failure: IllegalStateException) {
+                    synchronized(transport.lock) {
+                        // A newer play or stop superseded this request, so its failure means nothing.
+                        if (token != transport.requestToken) return@withContext false
+                        if (slot.active === active && active.process.isAlive) throw failure
+                        // The watcher stays quiet while paused, so nothing else ends this request.
+                        // Clearing the process keeps startUrl's final publish from overwriting this.
+                        slot.active = null
+                        ticker.cancelLocked()
+                        transport.publish(transport.current.copy(
+                            status = EngineStatus.FAILED,
+                            retryAtPositionMs = transport.current.positionMs,
+                            error = "Player process failed",
+                        ))
+                    }
+                    return@withContext false
                 }
-                check(slot.awaitIpc {
-                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(url)},"replace",-1,{"start":"$startSeconds"}]""", active.socket)
-                    synchronized(transport.lock) { active.playlist.entryId = id }
-                    id != null
-                })
             }
             if (!needsIpc) return@withContext true
             slot.awaitIpc {
