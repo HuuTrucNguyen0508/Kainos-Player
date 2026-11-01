@@ -670,6 +670,9 @@ class DesktopPlaybackEngine internal constructor(
                         if (token != requestToken) return@withContext false
                         if (isActiveProcess(active) && active.process.isAlive) throw failure
                         // The watcher stays quiet while paused, so nothing else ends this request.
+                        // Clearing the process keeps startUrl's final publish from overwriting this.
+                        activeProcess = null
+                        cancelTickerLocked()
                         publishState(_state.value.copy(
                             status = EngineStatus.FAILED,
                             retryAtPositionMs = _state.value.positionMs,

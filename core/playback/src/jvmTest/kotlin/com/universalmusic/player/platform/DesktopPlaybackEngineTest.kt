@@ -214,6 +214,34 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun pausedPlayerDyingBeforeItsWatcherNoticesStaysFailed() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        val watcher = CountDownLatch(1)
+        try {
+            engine.configureGapless(true)
+            engine.play(PlaybackHandle.Url("/first.flac"), null, 1)
+            runtime.events.put("""{"event":"file-loaded"}""")
+            engine.pause()
+            runtime.destroyAll()
+            withTimeout(2_000) { while (runtime.liveUrls().isNotEmpty()) delay(10) }
+            delay(50)
+            val load = runtime.blockNextIpc { it.contains("loadfile") }
+            engine.seekTo(5_000)
+            assertTrue(load.entered.await(2, TimeUnit.SECONDS))
+            runtime.holdProcessWatcher = watcher
+            runtime.sendIpcResult.set(false)
+            runtime.destroyAll()
+            load.release.countDown()
+            withTimeout(8_000) { while (engine.state.value.status != EngineStatus.FAILED) delay(10) }
+            delay(200)
+            watcher.countDown()
+            delay(100)
+            assertEquals(EngineStatus.FAILED, engine.state.value.status)
+        } finally { watcher.countDown(); engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun gaplessSwitchPreservesProcessAndRejectsOldEventsAfterRestart() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
@@ -1126,7 +1154,12 @@ private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         return properties(url, name)
     }
 
-    override fun deleteIpcPath(path: Path) = Unit
+    /** Holds a process watcher here, before it can clear the active process. */
+    @Volatile var holdProcessWatcher: CountDownLatch? = null
+
+    override fun deleteIpcPath(path: Path) {
+        holdProcessWatcher?.await(5, TimeUnit.SECONDS)
+    }
 
     fun liveUrls(): List<String> = synchronized(processes) {
         processes.filter { it.isAlive }.map { it.url }
