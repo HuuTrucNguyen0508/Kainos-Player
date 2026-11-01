@@ -111,6 +111,11 @@ class PlayerSession(
     private val refiller = QueueRefiller(queue, scope, sessionContext, workContext) {
         ledger.record(ListeningChange.AUTOMATIC)
     }
+    private val remoteLoader = RemoteSessionLoader(
+        engine, persistence, ledger, nowPlaying, confineTo, clock,
+        captureLocal = { captureLocalListening() },
+        installPaused = { installPaused(it) },
+    )
 
     private var playJob: Job? = null
     private var prefetchJob: Job? = null
@@ -374,92 +379,18 @@ class PlayerSession(
         expected: SessionRevision,
         exchange: ListeningExchangeStore,
         expectedPublication: PublicationRevision?,
-    ): HandoffDecision {
-        val recorder = persistence ?: return HandoffDecision.Skip(HandoffSkipReason.PERSISTENCE_UNAVAILABLE)
-        val earlySkip = withContext(sessionContext) {
-            when {
-                _nowPlaying.value.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
-                _nowPlaying.value.buffering -> HandoffSkipReason.LOCAL_BUFFERING
-                ledger.revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
-                else -> null
-            }
-        }
-        if (earlySkip != null) return HandoffDecision.Skip(earlySkip)
-        var decision: HandoffDecision = HandoffDecision.Skip(HandoffSkipReason.SESSION_BUSY)
-        var rollback: (() -> Unit)? = null
-        var finalized = false
-        try {
-            val claim = recorder.finalizeHandoff(exchange, HandoffRequest(peer.deviceId, peer.revision, expectedPublication)) {
-                installWithinDeadline {
-                    val now = _nowPlaying.value
-                    val skip = when {
-                        now.isPlaying -> HandoffSkipReason.LOCAL_PLAYING
-                        now.buffering -> HandoffSkipReason.LOCAL_BUFFERING
-                        ledger.revision != expected.value -> HandoffSkipReason.LOCAL_CHANGED
-                        clock() - peer.lastActiveAtMs > HANDOFF_MAX_AGE_MS -> HandoffSkipReason.TOO_OLD
-                        ledger.lastActiveAtMs != null && peer.lastActiveAtMs <= ledger.lastActiveAtMs!! -> HandoffSkipReason.NOT_NEWER
-                        ledger.remoteSession != null && peer.lastActiveAtMs <= ledger.remoteSession!!.lastActiveAtMs -> HandoffSkipReason.NOT_NEWER
-                        else -> null
-                    }
-                    if (skip != null) {
-                        decision = HandoffDecision.Skip(skip)
-                        return@installWithinDeadline null
-                    }
-                    val oldQueue = queue.queue.value
-                    val oldNow = _nowPlaying.value
-                    val oldResume = pendingResumePositionMs
-                    rollback = ledger.beginRemoteInstall {
-                        queue.restore(oldQueue)
-                        _nowPlaying.value = oldNow
-                        pendingResumePositionMs = oldResume
-                    }
-                    val remoteSnapshot = snapshot.copy(remoteSession = RemoteSession(peer.deviceId, peer.revision.value, peer.lastActiveAtMs))
-                    installPaused(remoteSnapshot)
-                    ledger.adoptRemote(remoteSnapshot.remoteSession)
-                    decision = HandoffDecision.Load(peer)
-                    recorder.remoteCommit(remoteSnapshot)
-                }
-            }
-            return when (claim) {
-                HandoffClaim.CLAIMED -> {
-                    finalized = true
-                    withContext(sessionContext) {
-                        if (ledger.revision == expected.value + 1) engine.stopForTransition()
-                    }
-                    decision
-                }
-                HandoffClaim.INSTALL_REJECTED -> decision
-                HandoffClaim.PEER_CHANGED -> HandoffDecision.Skip(HandoffSkipReason.PEER_CHANGED)
-                HandoffClaim.ALREADY_APPLIED -> HandoffDecision.Skip(HandoffSkipReason.ALREADY_APPLIED)
-                HandoffClaim.LOCAL_CHANGED -> HandoffDecision.Skip(HandoffSkipReason.LOCAL_CHANGED)
-                HandoffClaim.NOT_NEWER -> HandoffDecision.Skip(HandoffSkipReason.NOT_NEWER)
-            }
-        } catch (error: Exception) {
-            if (!finalized) withContext(NonCancellable + sessionContext) { rollback?.invoke() }
-            throw error
-        }
-    }
+    ): HandoffDecision = remoteLoader.load(snapshot, peer, expected, exchange, expectedPublication)
 
-    private enum class InstallDispatch { PENDING, RUNNING, ABANDONED }
-
-    private suspend fun <T> installWithinDeadline(block: () -> T): T? {
-        if (confineTo == null || !confineTo.isDispatchNeeded(currentCoroutineContext())) return block()
-        val phase = MutableStateFlow(InstallDispatch.PENDING)
-        val result = CompletableDeferred<T>()
-        val job = CoroutineScope(NonCancellable + sessionContext).launch {
-            if (!phase.compareAndSet(InstallDispatch.PENDING, InstallDispatch.RUNNING)) return@launch
-            try {
-                result.complete(block())
-            } catch (error: Throwable) {
-                result.completeExceptionally(error)
-            }
+    /** Captures what a remote install replaces; the result puts it back. */
+    private fun captureLocalListening(): () -> Unit {
+        val oldQueue = queue.queue.value
+        val oldNow = _nowPlaying.value
+        val oldResume = pendingResumePositionMs
+        return {
+            queue.restore(oldQueue)
+            _nowPlaying.value = oldNow
+            pendingResumePositionMs = oldResume
         }
-        val finished = withTimeoutOrNull(HANDOFF_INSTALL_DEADLINE_MS) { result.await(); true } == true
-        if (!finished && phase.compareAndSet(InstallDispatch.PENDING, InstallDispatch.ABANDONED)) {
-            job.cancel()
-            return null
-        }
-        return result.await()
     }
 
     private fun installPaused(snapshot: SessionSnapshot) {
@@ -1252,10 +1183,6 @@ class PlayerSession(
         val wrapReshuffle = snapshot.shuffle && queue.isWrapToStart(respectRepeatOne = false)
         queue.jumpTo(next, reshuffle = wrapReshuffle)
         startCurrent(ListeningChange.AUTOMATIC)
-    }
-
-    private companion object {
-        const val HANDOFF_INSTALL_DEADLINE_MS = 500L
     }
 }
 
