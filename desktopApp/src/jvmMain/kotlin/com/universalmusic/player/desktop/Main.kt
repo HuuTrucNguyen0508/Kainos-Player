@@ -62,7 +62,7 @@ fun main(args: Array<String>) {
     val isolation = try {
         DesktopIsolation.current
     } catch (e: IllegalArgumentException) {
-        System.err.println("kainos-player: ${e.message}")
+        com.universalmusic.player.platform.PlaybackTrace.log("Warning", "kainos-player: ${e.message}")
         exitProcess(2)
     }
     println("Kainos data dir ${isolation.dataDir}, hub port ${isolation.hubPort}, MPRIS ${mprisBusName(isolation.instance)}")

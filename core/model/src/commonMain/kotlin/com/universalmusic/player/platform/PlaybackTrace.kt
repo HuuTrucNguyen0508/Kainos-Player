@@ -8,7 +8,7 @@ import kotlinx.coroutines.CancellationException
  * Android writes logcat plus a rotating file; desktop prints to the run log.
  */
 object PlaybackTrace {
-    fun log(tag: String, message: String) = writePlaybackTrace(tag, message)
+    fun log(tag: String, message: String) = writePlaybackTrace(tag, redactCredentials(message))
 
     /** The log is shared by hand, and exception messages quote request URLs and the JSON being decoded. */
     fun failure(tag: String, message: String, cause: Throwable) =

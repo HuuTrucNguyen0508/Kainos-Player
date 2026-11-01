@@ -95,7 +95,7 @@ class HubOwnership(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
-        System.err.println("Kainos hub service unavailable: ${error.message}")
+        com.universalmusic.player.platform.PlaybackTrace.log("Warning", "Kainos hub service unavailable: ${error.message}")
         false
     }
 
@@ -103,7 +103,7 @@ class HubOwnership(
         val probe = try {
             HubOwnerLock.acquire(isolation.dataDir, 0)
         } catch (error: IOException) {
-            System.err.println("Kainos hub recovery cannot open lock: ${error.message}")
+            com.universalmusic.player.platform.PlaybackTrace.log("Warning", "Kainos hub recovery cannot open lock: ${error.message}")
             return true
         }
         if (probe == null) return false

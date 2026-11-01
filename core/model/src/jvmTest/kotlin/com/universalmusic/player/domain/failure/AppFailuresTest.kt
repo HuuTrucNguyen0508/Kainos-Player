@@ -185,14 +185,15 @@ class AppFailuresTest {
         try {
             installCrashLogging()
             installCrashLogging()
-            val crash = IllegalStateException("window blew up", IllegalArgumentException("root cause"))
+            val crash = IllegalStateException("window blew up", IllegalArgumentException("https://example.invalid/?token=FAKE_PREVIOUS_SECRET"))
             val log = capturedLog {
                 Thread({ throw crash }, "kainos-crash-test").apply { start(); join() }
             }
-            assertSame(crash, forwarded)
+            assertContains(forwarded!!.stackTraceToString(), "IllegalStateException: window blew up")
+            assertFalse(forwarded!!.stackTraceToString().contains("FAKE_PREVIOUS_SECRET"))
             assertContains(log, "kainos-crash-test")
             assertContains(log, "IllegalStateException: window blew up")
-            assertContains(log, "Caused by: java.lang.IllegalArgumentException: root cause")
+            assertContains(log, "Caused by: java.lang.IllegalArgumentException: https://example.invalid/?<redacted>")
             assertEquals(1, Regex("window blew up").findAll(log).count())
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(original)

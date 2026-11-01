@@ -63,7 +63,7 @@ class MprisController(
                 },
             )?.cancel()
         }.onFailure { error ->
-            System.err.println("MprisController failed to start: ${error.message}")
+            com.universalmusic.player.platform.PlaybackTrace.log("Warning", "MprisController failed to start: ${error.message}")
             stop()
         }
     }

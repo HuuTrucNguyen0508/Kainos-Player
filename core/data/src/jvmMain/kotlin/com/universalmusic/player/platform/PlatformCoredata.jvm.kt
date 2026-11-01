@@ -203,7 +203,7 @@ private fun <T> readOrQuarantine(path: Path, area: StorageArea, decode: (String)
         path.readText()
     } catch (e: java.io.IOException) {
         // Unreadable (not malformed): leave the file alone.
-        System.err.println("WARN Kainos: could not read $path (${e.message}); using defaults")
+        com.universalmusic.player.platform.PlaybackTrace.log("Warning", "WARN Kainos: could not read $path (${e.message}); using defaults")
         AppFailures.report(StorageFailure(area, e))
         return null
     }
