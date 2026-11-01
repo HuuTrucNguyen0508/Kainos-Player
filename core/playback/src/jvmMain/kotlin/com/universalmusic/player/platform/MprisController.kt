@@ -260,10 +260,7 @@ internal class MprisFacade(
                     "Playlist" -> RepeatMode.ALL
                     else -> return
                 }
-                var guard = 0
-                while (session.queueState.value.repeat != target && guard++ < 3) {
-                    session.cycleRepeat()
-                }
+                session.setRepeat(target)
             }
             "Volume" -> {
                 val want = when (raw) {

@@ -26,6 +26,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.size.Precision
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.ui.components.ArtworkImage
 
@@ -105,6 +106,8 @@ private fun NowPlayingArtworkFrame(
                     modifier = Modifier.fillMaxSize(),
                     seed = title,
                     shape = corner,
+                    // INEXACT may reuse an unsampled thumbnail regardless of these larger bounds.
+                    precision = Precision.EXACT,
                 )
             }
         }
