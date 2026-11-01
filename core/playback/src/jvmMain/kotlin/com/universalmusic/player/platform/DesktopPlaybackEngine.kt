@@ -655,7 +655,11 @@ class DesktopPlaybackEngine internal constructor(
                     }
                 }
                 check(awaitIpc {
-                    val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(url)},"replace",-1,{"start":"$startSeconds"}]""", active.socket)
+                    // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                    val id = runtime.loadEntry(
+                        """{"name":"loadfile","url":${Json.encodeToString(url)},"flags":"replace","options":{"start":"$startSeconds"}}""",
+                        active.socket,
+                    )
                     synchronized(lifecycleLock) { active.entryId = id }
                     id != null
                 })
