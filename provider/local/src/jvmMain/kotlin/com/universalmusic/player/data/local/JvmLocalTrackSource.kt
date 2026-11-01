@@ -15,6 +15,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
 
 class JvmLocalTrackSource(
     private val rootsProvider: () -> List<Path> = { defaultMusicRoots() },
@@ -49,7 +50,7 @@ class JvmLocalTrackSource(
                     if (cached.contentKey == null) cached.copy(contentKey = file.readLocalContentKey()) else cached
                 } else {
                     probed++
-                    file.toLocalTrack(root, fingerprint)
+                    runInterruptible { file.toLocalTrack(root, fingerprint) }
                 }
             }
         IncrementalScan(tracks = tracks, reused = reused, probed = probed)
