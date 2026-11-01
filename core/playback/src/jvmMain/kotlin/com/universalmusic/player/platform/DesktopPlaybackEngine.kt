@@ -59,6 +59,7 @@ class DesktopPlaybackEngine internal constructor(
     private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
     private val transport = DesktopTransport()
     private val slot = MpvSlot(runtime, transport.lock, scope)
+    private val ticker = PositionTicker(transport, slot, runtime, scope) { receiverOwnsPlaybackLocked() }
     override val state: StateFlow<EngineState> = transport.state
     override val supportsGapless: Boolean get() = runtime.supportsEvents
     private var gaplessEnabled = false
@@ -77,7 +78,7 @@ class DesktopPlaybackEngine internal constructor(
             if (!active.gapless) return
             if (active.crossing != null && candidate !== active.crossing) {
                 val handle = transport.handle as? PlaybackHandle.Url ?: return
-                elapsedOffset = transport.current.positionMs
+                ticker.hold(transport.current.positionMs)
                 seekRestartLocked(handle, transport.current)?.let(::launchRestart)
                 return
             }
@@ -130,7 +131,6 @@ class DesktopPlaybackEngine internal constructor(
     private var spotifyPauseCommandCompleted = false
     private var spotifyObservationsSincePause = 0
     private var transportGeneration = 0L
-    private var ticker: Job? = null
     private var spotifyReconcile: Job? = null
     private var spotifyReceiver: Job? = null
     private var spotifyReceiverEndTimeout: Job? = null
@@ -138,9 +138,6 @@ class DesktopPlaybackEngine internal constructor(
     private var spotifyReceiverEndPending = false
     private var spotifyReceiverStopped = false
     private var spotifyMisses = 0
-    private var tickerToken = 0L
-    private var startedAt = 0L
-    private var elapsedOffset = 0L
     private var seekSequence = 0L
     @Volatile
     private var volumePercent: Int = 100
@@ -189,7 +186,7 @@ class DesktopPlaybackEngine internal constructor(
             preparedNext = if (retry) preparedNext?.copy(generation = playGeneration) else null
             transport.activeGeneration = playGeneration
             transport.invalidatePendingStartLocked()
-            cancelTickerLocked()
+            ticker.cancelLocked()
             cancelSpotifyReceiverLocked()
             if (!slot.stopLocked()) {
                 transport.publish(EngineState(
@@ -205,7 +202,7 @@ class DesktopPlaybackEngine internal constructor(
             clearPauseGuardLocked()
             noteLocalTransportLocked()
             slot.epoch++
-            elapsedOffset = (handle as? PlaybackHandle.Url)?.startPositionMs ?: 0
+            ticker.hold((handle as? PlaybackHandle.Url)?.startPositionMs ?: 0)
             transport.publish(EngineState(status = EngineStatus.BUFFERING))
             transport.requestToken
         }
@@ -225,13 +222,13 @@ class DesktopPlaybackEngine internal constructor(
                 synchronized(transport.lock) {
                     if (token != transport.requestToken) return
                     if (transport.current.status == EngineStatus.BUFFERING) {
-                        startedAt = System.currentTimeMillis()
+                        ticker.markRunning()
                         transport.publish(EngineState(
                             status = EngineStatus.PLAYING,
                             positionMs = 0,
                             durationMs = handle.durationMs,
                         ))
-                        startTickerLocked()
+                        ticker.startLocked()
                     }
                     startSpotifyReconcileLocked(token)
                 }
@@ -245,8 +242,8 @@ class DesktopPlaybackEngine internal constructor(
                 if (transport.current.status != EngineStatus.PLAYING &&
                     transport.current.status != EngineStatus.BUFFERING
                 ) return
-                elapsedOffset = transport.current.positionMs
-                cancelTickerLocked()
+                ticker.hold(transport.current.positionMs)
+                ticker.cancelLocked()
                 transport.userPaused = true
                 spotifyPauseAcknowledged = false
                 clearPauseGuardLocked()
@@ -265,8 +262,8 @@ class DesktopPlaybackEngine internal constructor(
                 return
             }
             transport.invalidatePendingStartLocked()
-            elapsedOffset = transport.current.positionMs
-            cancelTickerLocked()
+            ticker.hold(transport.current.positionMs)
+            ticker.cancelLocked()
             transport.userPaused = true
             slot.epoch++
             val active = slot.active
@@ -304,9 +301,9 @@ class DesktopPlaybackEngine internal constructor(
                     else transport.publish(transport.current.copy(status = EngineStatus.PLAYING))
                     return
                 }
-                startedAt = System.currentTimeMillis()
+                ticker.markRunning()
                 transport.publish(transport.current.copy(status = EngineStatus.PLAYING, error = null))
-                startTickerLocked()
+                ticker.startLocked()
             }
             enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
             return
@@ -320,14 +317,14 @@ class DesktopPlaybackEngine internal constructor(
             if (active?.process?.isAlive == true) {
                 // Optimistically resume so a quick pause() after resume() is honoured; if mpv does
                 // not acknowledge, the worker falls back to the restart path below.
-                startedAt = System.currentTimeMillis()
+                ticker.markRunning()
                 transport.publish(current.copy(status = EngineStatus.PLAYING, error = null))
-                startTickerLocked()
+                ticker.startLocked()
                 slot.enqueueLocked {
                     if (slot.sendIfActive(active, """["set_property","pause",false]""")) return@enqueueLocked
                     val fallback = synchronized(transport.lock) {
                         if (slot.epoch != epoch || slot.active !== active) return@enqueueLocked
-                        cancelTickerLocked()
+                        ticker.cancelLocked()
                         resumeRestartLocked(transport.current)
                     } ?: return@enqueueLocked
                     launchRestart(fallback)
@@ -350,7 +347,7 @@ class DesktopPlaybackEngine internal constructor(
         val handle = transport.handle ?: return null
         transport.invalidatePendingStartLocked()
         transport.publish(current.copy(status = EngineStatus.BUFFERING, error = null))
-        return Restart(handle, transport.quality, elapsedOffset / 1000.0, transport.requestToken, EngineStatus.PLAYING)
+        return Restart(handle, transport.quality, ticker.anchorMs / 1000.0, transport.requestToken, EngineStatus.PLAYING)
     }
 
     private fun launchRestart(restart: Restart) {
@@ -371,8 +368,7 @@ class DesktopPlaybackEngine internal constructor(
         if (transport.spotifyIsActive()) {
             val target = positionMs.coerceAtLeast(0)
             synchronized(transport.lock) {
-                elapsedOffset = target
-                startedAt = System.currentTimeMillis()
+                ticker.anchor(target)
                 noteLocalTransportLocked()
                 transport.publish(transport.current.copy(positionMs = target, error = null))
             }
@@ -380,10 +376,9 @@ class DesktopPlaybackEngine internal constructor(
             return
         }
         val restart = synchronized(transport.lock) {
-            elapsedOffset = positionMs.coerceAtLeast(0)
-            startedAt = System.currentTimeMillis()
+            ticker.anchor(positionMs.coerceAtLeast(0))
             val current = transport.current
-            transport.publish(current.copy(positionMs = elapsedOffset))
+            transport.publish(current.copy(positionMs = ticker.anchorMs))
             val handle = transport.handle
             if (handle !is PlaybackHandle.Url) return
             slot.epoch++
@@ -391,7 +386,7 @@ class DesktopPlaybackEngine internal constructor(
             val active = slot.active
             if (active?.crossing != null) preparedNext = active.crossing
             if (active?.process?.isAlive == true) {
-                val seconds = elapsedOffset / 1000.0
+                val seconds = ticker.anchorMs / 1000.0
                 slot.enqueueLocked {
                     if (synchronized(transport.lock) { seekSequence != seekId || transport.handle !== handle || slot.active !== active }) return@enqueueLocked
                     val ok = if (active.gapless) seekGapless(active, handle, seconds) else
@@ -401,7 +396,7 @@ class DesktopPlaybackEngine internal constructor(
                         if (seekSequence != seekId || transport.handle !== handle || slot.active !== active) return@enqueueLocked
                         if (ok) {
                             if (transport.current.status == EngineStatus.PLAYING) {
-                                startedAt = System.currentTimeMillis()
+                                ticker.markRunning()
                             }
                             return@enqueueLocked
                         }
@@ -465,7 +460,7 @@ class DesktopPlaybackEngine internal constructor(
         val targetStatus = current.status
         transport.userPaused = targetStatus == EngineStatus.PAUSED
         transport.publish(transport.current.copy(status = EngineStatus.BUFFERING))
-        return Restart(handle, transport.quality, elapsedOffset / 1000.0, transport.requestToken, targetStatus)
+        return Restart(handle, transport.quality, ticker.anchorMs / 1000.0, transport.requestToken, targetStatus)
     }
 
     override fun stopForTransition() {
@@ -488,7 +483,7 @@ class DesktopPlaybackEngine internal constructor(
             clearPauseGuardLocked()
             noteLocalTransportLocked()
             slot.epoch++
-            cancelTickerLocked()
+            ticker.cancelLocked()
             cancelSpotifyReconcileLocked()
             cancelSpotifyReceiverLocked()
             if (!slot.stopLocked()) {
@@ -499,7 +494,7 @@ class DesktopPlaybackEngine internal constructor(
                 return
             }
             preparedNext = null
-            elapsedOffset = 0
+            ticker.hold(0)
             transport.handle = null
             transport.quality = null
             transport.publish(EngineState())
@@ -630,7 +625,7 @@ class DesktopPlaybackEngine internal constructor(
                     if (!slot.stopLocked()) {
                         transport.publish(EngineState(
                             status = EngineStatus.FAILED,
-                            positionMs = elapsedOffset,
+                            positionMs = ticker.anchorMs,
                             durationMs = durationMs,
                             error = "Player could not be paused or stopped",
                         ))
@@ -640,13 +635,13 @@ class DesktopPlaybackEngine internal constructor(
             } else {
                 transport.userPaused = false
             }
-            startedAt = System.currentTimeMillis()
+            ticker.markRunning()
             transport.publish(EngineState(
                 status = targetStatus,
-                positionMs = elapsedOffset,
+                positionMs = ticker.anchorMs,
                 durationMs = durationMs,
             ))
-            if (targetStatus == EngineStatus.PLAYING) startTickerLocked()
+            if (targetStatus == EngineStatus.PLAYING) ticker.startLocked()
             preparedNext?.takeIf { gaplessEnabled && it.generation == transport.activeGeneration }?.let(::prepareNext)
         }
     }
@@ -670,7 +665,7 @@ class DesktopPlaybackEngine internal constructor(
                     val next = binding?.first?.takeIf { it === preparedNext } ?: run {
                         // Cancellation raced an already decoded file. Let the session select the
                         // current successor again rather than playing an unowned queue item.
-                        cancelTickerLocked()
+                        ticker.cancelLocked()
                         slot.stopLocked()
                         transport.publish(transport.current.copy(status = EngineStatus.ENDED))
                         return
@@ -706,7 +701,7 @@ class DesktopPlaybackEngine internal constructor(
                                     // No output evidence: discard lookahead and let the session
                                     // resolve the selected successor normally, without claiming it played.
                                     slot.stopLocked()
-                                    cancelTickerLocked()
+                                    ticker.cancelLocked()
                                     transport.publish(transport.current.copy(status = EngineStatus.ENDED))
                                 }
                                 return@launch
@@ -723,8 +718,7 @@ class DesktopPlaybackEngine internal constructor(
                             val previous = transport.activeGeneration++
                             transport.handle = next.handle
                             transport.quality = next.quality
-                            elapsedOffset = 0
-                            startedAt = System.currentTimeMillis()
+                            ticker.anchor(0)
                             slot.epoch++
                             transport.publish(EngineState(status = if (active.crossingFailed) EngineStatus.FAILED else if (active.endedAfterCrossing) EngineStatus.ENDED else
                                 if (transport.userPaused) EngineStatus.PAUSED else EngineStatus.PLAYING,
@@ -770,7 +764,7 @@ class DesktopPlaybackEngine internal constructor(
                             }
                             synchronized(transport.lock) {
                                 if (slot.active === active && transport.activeGeneration == generation) {
-                                    cancelTickerLocked()
+                                    ticker.cancelLocked()
                                     transport.publish(transport.current.copy(status = EngineStatus.ENDED))
                                 }
                             }
@@ -781,7 +775,7 @@ class DesktopPlaybackEngine internal constructor(
                     active.crossing = null
                     active.crossingRunning = false
                     preparedNext = null
-                    cancelTickerLocked()
+                    ticker.cancelLocked()
                     transport.publish(transport.current.copy(status = if (reason == "error")
                         EngineStatus.FAILED else EngineStatus.ENDED, error = if (reason == "error")
                         "Local file playback failed" else null))
@@ -815,98 +809,9 @@ class DesktopPlaybackEngine internal constructor(
                             code?.let { "Player exited with $it" } ?: "Player process failed",
                     )
                 })
-                cancelTickerLocked()
+                ticker.cancelLocked()
             }
         }
-    }
-
-    private fun startTickerLocked() {
-        cancelTickerLocked()
-        val token = ++tickerToken
-        ticker = scope.launch {
-            while (true) {
-                val snapshot = synchronized(transport.lock) {
-                    if (token != tickerToken || transport.current.status != EngineStatus.PLAYING) {
-                        return@launch
-                    }
-                    TickerSnapshot(slot.active, slot.epoch)
-                }
-                // Socket reads happen on the IPC worker, outside the lock.
-                val sample = snapshot.active?.let { active -> slot.awaitIpc { readTickerSample(active) } }
-                val ended = synchronized(transport.lock) {
-                    if (token != tickerToken || transport.current.status != EngineStatus.PLAYING) {
-                        return@launch
-                    }
-                    val active = snapshot.active
-                    if (active != null && (slot.active !== active || slot.epoch != snapshot.epoch)) {
-                        // Stale sample: the process was replaced or a seek/pause/resume happened
-                        // while the read was in flight. Do not publish it.
-                        return@synchronized false
-                    }
-                    if (sample != null && active?.crossing == null) {
-                        if (sample.eof && !active.gapless) {
-                            cancelTickerLocked()
-                            val current = transport.current
-                            val truncated = mpvEndedEarly(current.positionMs, current.durationMs)
-                            transport.publish(current.copy(
-                                status = if (truncated) EngineStatus.FAILED else EngineStatus.ENDED,
-                                positionMs = if (truncated) current.positionMs else current.durationMs ?: current.positionMs,
-                                retryAtPositionMs = current.positionMs.takeIf { truncated },
-                                error = if (truncated) "Stream ended before the track finished" else null,
-                            ))
-                            return@synchronized true
-                        }
-                        val timePos = sample.timePosSeconds
-                        if (timePos != null) {
-                            val position = (timePos * 1000.0).toLong().coerceAtLeast(0)
-                            elapsedOffset = position
-                            startedAt = System.currentTimeMillis()
-                            transport.publish(transport.current.copy(positionMs = position))
-                            return@synchronized false
-                        }
-                    }
-                    val position = elapsedOffset + (System.currentTimeMillis() - startedAt)
-                    val duration = transport.current.durationMs
-                        ?: (transport.handle as? PlaybackHandle.ProviderPlayback)?.durationMs
-                    val capped = if (duration != null) position.coerceAtMost(duration) else position
-                    transport.publish(transport.current.copy(
-                        positionMs = capped,
-                        durationMs = duration ?: transport.current.durationMs,
-                    ))
-                    if (duration != null && position >= duration && active?.gapless != true && !receiverOwnsPlaybackLocked()) {
-                        cancelTickerLocked()
-                        transport.publish(transport.current.copy(
-                            status = EngineStatus.ENDED,
-                            positionMs = duration,
-                        ))
-                        true
-                    } else {
-                        false
-                    }
-                }
-                if (ended) return@launch
-                delay(400)
-            }
-        }
-    }
-
-    private class TickerSnapshot(val active: ActiveProcess?, val epoch: Long)
-
-    private class TickerSample(val eof: Boolean, val timePosSeconds: Double?)
-
-    /** Runs on the IPC worker. Returns null when [active] is no longer the current process. */
-    private fun readTickerSample(active: ActiveProcess): TickerSample? {
-        if (!slot.isActive(active)) return null
-        val eof = runtime.readProperty("eof-reached", active.socket)
-        if (eof == "yes" || eof == "true") return TickerSample(eof = true, timePosSeconds = null)
-        val timePos = runtime.readProperty("time-pos", active.socket)?.toDoubleOrNull()
-        return TickerSample(eof = false, timePosSeconds = timePos)
-    }
-
-    private fun cancelTickerLocked() {
-        tickerToken++
-        ticker?.cancel()
-        ticker = null
     }
 
     private fun cancelSpotifyReconcileLocked() {
@@ -957,7 +862,7 @@ class DesktopPlaybackEngine internal constructor(
                             if (spotifyReceiverEndPending) return@synchronized
                             spotifyReceiverEndPending = true
                             spotifyReceiverStopped = false
-                            cancelTickerLocked()
+                            ticker.cancelLocked()
                             // SPIRC handles EndOfTrack independently of --onevent. Its following
                             // Stopped event confirms handle_stop's queue/position reset has run.
                             // Bound the wait in case the event helper or receiver dies in between.
@@ -975,12 +880,12 @@ class DesktopPlaybackEngine internal constructor(
                             if (spotifyReceiverEndPending) {
                                 if (!transport.userPaused) finishSpotifyReceiverTrackLocked()
                             } else if (!transport.userPaused) {
-                                cancelTickerLocked()
+                                ticker.cancelLocked()
                                 transport.publish(current.copy(status = EngineStatus.PAUSED))
                             }
                         }
                         SpotifyReceiverEvent.Kind.UNAVAILABLE -> {
-                            cancelTickerLocked()
+                            ticker.cancelLocked()
                             transport.publish(current.copy(status = EngineStatus.FAILED, error = "Spotify track is unavailable"))
                         }
                         else -> {
@@ -1014,16 +919,15 @@ class DesktopPlaybackEngine internal constructor(
                             } else if (transport.userPaused) spotifyObservationsSincePause++
                             val eventPosition = event.positionMs
                             if (decision.snapClock || eventPosition != null && !transport.userPaused) {
-                                elapsedOffset = if (decision.snapClock) decision.positionMs else eventPosition ?: elapsedOffset
-                                startedAt = System.currentTimeMillis()
+                                ticker.anchor(if (decision.snapClock) decision.positionMs else eventPosition ?: ticker.anchorMs)
                             }
                             transport.publish(current.copy(
                                 status = decision.status,
-                                positionMs = elapsedOffset,
+                                positionMs = ticker.anchorMs,
                                 durationMs = handle.durationMs,
                                 syncWarning = null,
                             ))
-                            if (decision.status == EngineStatus.PLAYING) startTickerLocked() else cancelTickerLocked()
+                            if (decision.status == EngineStatus.PLAYING) ticker.startLocked() else ticker.cancelLocked()
                         }
                     }
                 }
@@ -1049,7 +953,7 @@ class DesktopPlaybackEngine internal constructor(
         spotifyReceiverEndPending = false
         spotifyReceiverEndTimeout?.cancel()
         spotifyReceiverEndTimeout = null
-        cancelTickerLocked()
+        ticker.cancelLocked()
         val current = transport.current
         transport.publish(current.copy(
             status = EngineStatus.ENDED,
@@ -1120,8 +1024,7 @@ class DesktopPlaybackEngine internal constructor(
                     }
                     spotifyMisses = decision.misses
                     if (decision.snapClock) {
-                        elapsedOffset = decision.positionMs
-                        startedAt = System.currentTimeMillis()
+                        ticker.anchor(decision.positionMs)
                     }
                     val previous = transport.current.status
                     transport.publish(transport.current.copy(
@@ -1130,8 +1033,8 @@ class DesktopPlaybackEngine internal constructor(
                         syncWarning = decision.syncWarning,
                     ))
                     when (decision.status) {
-                        EngineStatus.PLAYING -> if (previous != EngineStatus.PLAYING) startTickerLocked()
-                        EngineStatus.PAUSED, EngineStatus.ENDED, EngineStatus.FAILED -> cancelTickerLocked()
+                        EngineStatus.PLAYING -> if (previous != EngineStatus.PLAYING) ticker.startLocked()
+                        EngineStatus.PAUSED, EngineStatus.ENDED, EngineStatus.FAILED -> ticker.cancelLocked()
                         else -> Unit
                     }
                 }
@@ -1196,7 +1099,7 @@ class DesktopPlaybackEngine internal constructor(
     private fun shutdown() {
         synchronized(transport.lock) {
             transport.invalidatePendingStartLocked()
-            cancelTickerLocked()
+            ticker.cancelLocked()
             cancelSpotifyReconcileLocked()
             cancelSpotifyReceiverLocked()
             slot.stopLocked()
