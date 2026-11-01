@@ -147,6 +147,7 @@ private fun AppScaffold(
     val queue by container.player.queueState.collectAsState()
     val appReady by container.ready.collectAsState()
     val recentlyPlayed by container.library.recentlyPlayed.collectAsState()
+    val remote by container.remoteControl.state.collectAsState()
     val nothingEverPlayed = appReady && recentlyPlayed.isEmpty() && currentTrack == null
     val imageContext = LocalPlatformContext.current
     LaunchedEffect(queue, imageContext) {
@@ -190,7 +191,6 @@ private fun AppScaffold(
             wasNarrow && !isNarrow -> {
                 if (showNowPlaying) {
                     nowPlayingPaneExpanded = true
-                    showNowPlaying = false
                 }
             }
         }
@@ -200,7 +200,7 @@ private fun AppScaffold(
     // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
     val showWideQueueColumn = desktop && showQueue && wide
     val queueReplacesSidePane = desktop && showQueue && !wide
-    val showSideNowPlaying = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed)
+    val showSideNowPlaying = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
     val showDesktopMiniBar = desktop &&
         currentTrack != null &&
         !showSideNowPlaying &&
@@ -257,7 +257,7 @@ private fun AppScaffold(
     fun openNowPlaying() {
         if (desktop) {
             nowPlayingPaneExpanded = true
-            showNowPlaying = false
+            showNowPlaying = true
             if (!wide) showQueue = false
         } else {
             showQueue = false
@@ -344,7 +344,7 @@ private fun AppScaffold(
                     selected = destination,
                     onSelect = ::navigateToTab,
                     footer = {
-                        if (!nowPlayingPaneExpanded && !nothingEverPlayed) {
+                        if (!showSideNowPlaying && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
                             IconButton(onClick = { openNowPlaying() }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.KeyboardArrowLeft,

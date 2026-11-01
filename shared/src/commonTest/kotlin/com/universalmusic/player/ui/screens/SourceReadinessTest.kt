@@ -25,6 +25,22 @@ class SourceReadinessTest {
     private fun SourceReadiness.settingsTarget() = (step?.action as? SourceAction.OpenSettings)?.target
     private fun SourceReadiness.needs() = (status as SourceStatus.NeedsSetup).needs
 
+    @Test fun youtubeWithExtractorStillNeedsTheAudioPlayer() {
+        val missing = fresh.copy(youtube = ProviderState.AVAILABLE, tools = SourceTools(audioPlayer = false)).youtube()
+        assertEquals("Needs mpv", missing.statusLabel)
+        assertEquals("Install mpv", missing.step?.label)
+        assertEquals(SourceAction.OpenSettings(SettingsTarget.AudioPlayer), missing.step?.action)
+        assertEquals(listOf(SourceNeed.AudioPlayer), missing.needs())
+    }
+
+    @Test fun revokedPhoneFolderAccessDoesNotTrustCachedTracks() {
+        val missing = fresh.copy(desktop = false, local = ProviderState.UNAVAILABLE, localTrackCount = 12).local()
+        assertEquals("Could not read", missing.statusLabel)
+        assertEquals("Check music folders", missing.step?.label)
+        assertEquals(SourceAction.OpenSettings(SettingsTarget.MusicFolders), missing.step?.action)
+        assertEquals(SourceStatus.Trouble, missing.status)
+    }
+
     @Test fun sourcesLeadWithLocal() {
         assertEquals(listOf(MusicSource.Local, MusicSource.Spotify, MusicSource.YouTube), sourceReadiness(fresh).map { it.source })
     }

@@ -202,7 +202,7 @@ internal fun homeEyebrow(favorites: Int, localTracks: Int): String {
 /** Rows of the "Your library" ledger. Each opens the place where the listener acts on it. */
 internal enum class LibraryMark { LOCAL, HEARTS, PLAYLISTS, SPOTIFY, YOUTUBE }
 
-internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH }
+internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH, PICK_FOLDER }
 
 internal data class LibraryLine(
     val mark: LibraryMark,
@@ -215,28 +215,28 @@ internal data class LibraryLine(
 private fun tracksLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
 
 internal fun libraryLines(
-    localTrackCount: Int,
-    folderCount: Int,
-    localState: ProviderState,
+    sources: List<SourceReadiness>,
     favorites: FavoritesSummary,
     kainosPlaylistCount: Int,
-    spotifyState: ProviderState,
-    spotifyPlaylistCount: Int,
-    youtubeState: ProviderState,
-    youtubePlayable: Boolean = true,
 ): List<LibraryLine> = buildList {
-    add(
-        when {
-            localTrackCount > 0 -> LibraryLine(
-                LibraryMark.LOCAL,
-                "Local files",
-                "$localTrackCount ${if (localTrackCount == 1) "song" else "songs"} in $folderCount ${if (folderCount == 1) "folder" else "folders"}",
-                LibraryDoor.LIBRARY,
-            )
-            localState == ProviderState.LOADING -> LibraryLine(LibraryMark.LOCAL, "Local files", "Scanning folders…", LibraryDoor.LIBRARY)
-            else -> LibraryLine(LibraryMark.LOCAL, "Local files", "Add a music folder", LibraryDoor.SETTINGS, SettingsTarget.MusicFolders)
-        },
-    )
+    fun sourceLine(source: MusicSource, mark: LibraryMark): LibraryLine {
+        val readiness = sources.first { it.source == source }
+        val action = readiness.step?.action
+        return LibraryLine(
+            mark,
+            source.title,
+            if (source == MusicSource.Local && readiness.status == SourceStatus.Ready) readiness.detail.removeSuffix(".")
+            else listOfNotNull(readiness.statusLabel, readiness.step?.label).joinToString(" · "),
+            when (action) {
+                SourceAction.PickMusicFolder -> LibraryDoor.PICK_FOLDER
+                SourceAction.OpenLibrary, null -> LibraryDoor.LIBRARY
+                SourceAction.OpenSearch -> LibraryDoor.SEARCH
+                is SourceAction.OpenSettings -> LibraryDoor.SETTINGS
+            },
+            (action as? SourceAction.OpenSettings)?.target,
+        )
+    }
+    add(sourceLine(MusicSource.Local, LibraryMark.LOCAL))
     add(
         if (favorites.count > 0) {
             LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} ${if (favorites.count == 1) "song" else "songs"} · Play favorites", LibraryDoor.FAVORITES)
@@ -254,40 +254,8 @@ internal fun libraryLines(
             ),
         )
     }
-    add(
-        when (spotifyState) {
-            ProviderState.AVAILABLE -> LibraryLine(
-                LibraryMark.SPOTIFY,
-                "Spotify",
-                if (spotifyPlaylistCount > 0) "Connected · $spotifyPlaylistCount playlists" else "Connected",
-                LibraryDoor.LIBRARY,
-            )
-            ProviderState.RATE_LIMITED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Limited · Try again soon", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
-            ProviderState.LOADING -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Connecting…", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
-            ProviderState.AUTH_REQUIRED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Needs sign-in · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
-            ProviderState.NOT_CONFIGURED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Not set up · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifyClientId)
-            ProviderState.UNAVAILABLE -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Offline · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
-        },
-    )
-    add(
-        when {
-            youtubeState != ProviderState.AVAILABLE -> LibraryLine(
-                LibraryMark.YOUTUBE,
-                "YouTube",
-                "${legendStateWord(youtubeState)} · Open Settings",
-                LibraryDoor.SETTINGS,
-                SettingsTarget.YouTubeKey,
-            )
-            youtubePlayable -> LibraryLine(LibraryMark.YOUTUBE, "YouTube", "Search anything and play it", LibraryDoor.SEARCH)
-            else -> LibraryLine(
-                LibraryMark.YOUTUBE,
-                "YouTube",
-                "Search works · Playback needs yt-dlp",
-                LibraryDoor.SETTINGS,
-                SettingsTarget.YouTubePlayback,
-            )
-        },
-    )
+    add(sourceLine(MusicSource.Spotify, LibraryMark.SPOTIFY))
+    add(sourceLine(MusicSource.YouTube, LibraryMark.YOUTUBE))
 }
 
 /** Something from the library the listener could pin, offered on Home while pins are few. */

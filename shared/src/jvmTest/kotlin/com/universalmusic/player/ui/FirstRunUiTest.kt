@@ -9,6 +9,7 @@ import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsSelected
@@ -17,6 +18,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
@@ -201,6 +205,21 @@ private fun ComposeUiTest.assertAbsent(text: String) = onNodeWithText(text, subs
 class FirstRunUiTest {
     @AfterTest fun clearFailures() = AppFailures.dismiss()
 
+    @Test fun populatedHomeRoutesSpotifyToPlaybackSetup() = runComposeUiTest {
+        val device = FakeDevice(
+            tracks = localTracks(3),
+            spotify = ProviderState.AVAILABLE,
+            tools = SourceTools(spotifyReceiver = SpotifyReceiverSetup.NOT_INSTALLED),
+        )
+        showApp(device)
+        node("Needs librespot · Install librespot").assertIsDisplayed()
+        device.tools.value = SourceTools(spotifyReceiver = SpotifyReceiverSetup.NEEDS_SIGN_IN)
+        waitForIdle()
+        node("One step left · Set up playback").assertIsDisplayed().performClick()
+        waitForIdle()
+        onNodeWithTag("settings-spot-SpotifyPlayback").assertIsDisplayed()
+    }
+
     @Test fun aFreshInstallStatesWhatEachSourceStillNeeds() = runComposeUiTest {
         showApp(FakeDevice())
         node("Where does your music live?").assertIsDisplayed()
@@ -240,6 +259,14 @@ class FirstRunUiTest {
     @Test fun choosingAFolderGoesStraightToThePicker() = runComposeUiTest {
         val device = FakeDevice()
         showApp(device)
+        node("Choose a music folder").assertIsEnabled()
+        val layouts = mutableListOf<TextLayoutResult>()
+        node("Choose a music folder").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val scheme = com.universalmusic.player.ui.theme.folioPalette(com.universalmusic.player.data.settings.FolioTint.FOLIO, false).scheme
+        val color = layouts.single().layoutInput.style.color
+        assertEquals(scheme.onPrimary, color)
+        assertEquals(1f, color.alpha)
+        println("Folder CTA: enabled, color=$color, primary=${scheme.primary}, contrast=${com.universalmusic.player.ui.theme.contrastRatio(color, scheme.primary)}")
         node("Choose a music folder").performClick()
         waitForIdle()
         assertEquals(1, device.folderPicks)

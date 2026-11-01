@@ -55,9 +55,13 @@ internal fun rememberNowPlayingPaneExpanded(compactPlayer: Boolean): MutableStat
         mutableStateOf(!compactPlayer)
     }
 
-/** The pane holds nothing until the first track, so it waits without touching the listener's [expanded] choice. */
-internal fun nowPlayingPaneShown(expanded: Boolean, nothingEverPlayed: Boolean): Boolean =
-    expanded && !nothingEverPlayed
+/** First-run suppression never blocks paired controls or an explicit request to open the pane. */
+internal fun nowPlayingPaneShown(
+    expanded: Boolean,
+    nothingEverPlayed: Boolean,
+    remoteAvailable: Boolean = false,
+    explicitlyOpened: Boolean = false,
+): Boolean = expanded && (!nothingEverPlayed || remoteAvailable || explicitlyOpened)
 
 @Composable
 fun DesktopResizeHandle(

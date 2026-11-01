@@ -110,7 +110,7 @@ private fun localReadiness(facts: SourceFacts): SourceReadiness {
             if (folderName != null) "Looking for music in $folderName." else "Looking for music on $here.",
             null,
         )
-        facts.local == ProviderState.UNAVAILABLE && facts.localTrackCount == 0 -> readiness(
+        facts.local == ProviderState.UNAVAILABLE -> readiness(
             SourceStatus.Trouble,
             "Could not read",
             "Kainos could not read your music folders.",
@@ -202,17 +202,19 @@ private fun spotifyReadiness(facts: SourceFacts): SourceReadiness {
 }
 
 private fun youtubeReadiness(facts: SourceFacts): SourceReadiness {
+    val player = if (facts.tools.audioPlayer) emptyList() else listOf(SourceNeed.AudioPlayer)
     val extractor = if (facts.tools.youtubeExtractor) emptyList() else listOf(SourceNeed.YouTubeExtractor)
     fun readiness(status: SourceStatus, label: String, detail: String, step: SourceStep?) =
         SourceReadiness(MusicSource.YouTube, status, label, detail, step)
     fun settings(label: String, target: SettingsTarget) = SourceStep(label, SourceAction.OpenSettings(target))
     return when (facts.youtube) {
         ProviderState.NOT_CONFIGURED, ProviderState.AUTH_REQUIRED -> readiness(
-            SourceStatus.NeedsSetup(listOf(SourceNeed.YouTubeKey) + extractor),
+            SourceStatus.NeedsSetup(listOf(SourceNeed.YouTubeKey) + extractor + player),
             "Needs a key",
             buildString {
                 append("Search needs your own free YouTube Data API key.")
                 if (extractor.isNotEmpty()) append(" Playback also needs yt-dlp.")
+                if (player.isNotEmpty()) append(" Playback also needs mpv.")
             },
             settings("Set up YouTube", SettingsTarget.YouTubeKey),
         )
@@ -231,10 +233,17 @@ private fun youtubeReadiness(facts: SourceFacts): SourceReadiness {
         )
         ProviderState.AVAILABLE -> if (extractor.isNotEmpty()) {
             readiness(
-                SourceStatus.NeedsSetup(extractor),
+                SourceStatus.NeedsSetup(extractor + player),
                 "Needs yt-dlp",
                 "Search works. Playing audio needs yt-dlp, which is not installed.",
                 settings("Install yt-dlp", SettingsTarget.YouTubePlayback),
+            )
+        } else if (player.isNotEmpty()) {
+            readiness(
+                SourceStatus.NeedsSetup(player),
+                "Needs mpv",
+                "Search works. Playing audio needs mpv, which is not installed.",
+                settings("Install mpv", SettingsTarget.AudioPlayer),
             )
         } else {
             readiness(

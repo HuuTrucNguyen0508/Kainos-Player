@@ -70,6 +70,7 @@ internal fun HomeContent(
             LibraryDoor.FAVORITES -> presenter.playFavorites(onOpenNowPlaying = onOpenNowPlaying)
             LibraryDoor.SETTINGS -> line.settingsTarget?.let(onOpenSettings)
             LibraryDoor.SEARCH -> onOpenSearch()
+            LibraryDoor.PICK_FOLDER -> presenter.pickMusicFolder()
         }
     }
     val act: (SourceAction) -> Unit = { action ->

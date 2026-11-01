@@ -335,17 +335,7 @@ internal class HomePresenter(
             firstSound = playback.sources.firstOrNull { it.source == MusicSource.Local }
                 ?.takeIf { playback.ready && providers.localTracks.isNotEmpty() && library.recent.isEmpty() && now.track == null },
             favorites = favorites,
-            libraryLines = libraryLines(
-                localTrackCount = providers.localTracks.size,
-                folderCount = folders.size,
-                localState = providers.localState,
-                favorites = favorites,
-                kainosPlaylistCount = library.kainos.size,
-                spotifyState = providers.spotifyState,
-                spotifyPlaylistCount = library.spotifyPlaylists.size,
-                youtubeState = providers.youtubeState,
-                youtubePlayable = playback.sources.none { SourceNeed.YouTubeExtractor in it.needs },
-            ),
+            libraryLines = libraryLines(playback.sources, favorites, library.kainos.size),
             localTrackCount = providers.localTracks.size,
             discoverBusy = action.discoverBusy,
             discoverError = action.discoverError,
