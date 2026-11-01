@@ -30,12 +30,14 @@ internal data class HomeUiState(
     val pinSuggestions: List<PinSuggestion>,
     val loadedDiscover: Playlist?,
     val empty: Boolean,
+    /** False until saved data has loaded, so a returning listener never sees the first-run screen. */
+    val ready: Boolean,
+    val sources: List<SourceReadiness>,
+    /** Music is here but nothing has played yet; the local source says whether it can. */
+    val firstSound: SourceReadiness?,
     val favorites: FavoritesSummary,
     val libraryLines: List<LibraryLine>,
     val localTrackCount: Int,
-    val localState: ProviderState,
-    val spotifyState: ProviderState,
-    val youtubeState: ProviderState,
     val discoverBusy: Boolean,
     val discoverError: String?,
     val pinError: String?,
@@ -65,6 +67,9 @@ internal class HomePresenter(
     private val spotifyPlaylists: StateFlow<List<Playlist>>,
     private val nowPlaying: StateFlow<NowPlayingState>,
     private val settings: StateFlow<AppSettings>,
+    private val ready: StateFlow<Boolean>,
+    private val sources: StateFlow<List<SourceReadiness>>,
+    private val pickFolder: () -> Unit,
     private val defaultMusicFolder: () -> String,
     private val tracksInLocalFolder: (String) -> List<Track>,
     private val loadSpotifyPlaylistTracks: suspend (String) -> List<Track>,
@@ -105,12 +110,18 @@ internal class HomePresenter(
             ProviderSlice(spotify, youtube, local, tracks, discover)
         },
         combine(savedTracks, spotifyTracks) { saved, spotify -> CatalogSlice(saved, spotify) },
-        combine(stableNow, settings, actions) { now, appSettings, action ->
-            PlaybackSlice(now, appSettings, action)
+        combine(stableNow, settings, actions, ready, sources) { now, appSettings, action, loaded, readiness ->
+            PlaybackSlice(now, appSettings, action, loaded, readiness)
         },
     ) { library, providers, catalog, playback ->
         derive(library, providers, catalog, playback)
     }.stateIn(scope, SharingStarted.Eagerly, snapshot())
+
+    fun pickMusicFolder() = pickFolder()
+
+    fun playLocalLibrary(onPlayTracks: (List<Track>, Int) -> Unit) {
+        onPlayTracks(localTracks.value, 0)
+    }
 
     fun clearActionMessage() {
         actions.update { it.copy(actionMessage = null) }
@@ -140,7 +151,7 @@ internal class HomePresenter(
             onOpenNowPlaying()
         } else {
             val message = if (favoriteIds.value.isEmpty()) {
-                "Heart tracks in Library to build favorites."
+                "Heart a track in Now Playing to build favorites."
             } else {
                 "Favorites need a connection or local file to play."
             }
@@ -162,7 +173,7 @@ internal class HomePresenter(
                     actions.update {
                         it.copy(
                             discoverError =
-                                "Discover Weekly has no playable tracks. Paste your share link in Settings → Spotify, then refresh.",
+                                "Discover Weekly has no playable tracks. Paste your share link in Settings → Music sources, then refresh.",
                         )
                     }
                 } else {
@@ -262,6 +273,8 @@ internal class HomePresenter(
             nowPlaying.value.copy(positionMs = 0),
             settings.value,
             actions.value,
+            ready.value,
+            sources.value,
         ),
     )
 
@@ -317,6 +330,10 @@ internal class HomePresenter(
                 library.favorites,
                 now.track,
             ),
+            ready = playback.ready,
+            sources = playback.sources,
+            firstSound = playback.sources.firstOrNull { it.source == MusicSource.Local }
+                ?.takeIf { playback.ready && providers.localTracks.isNotEmpty() && library.recent.isEmpty() && now.track == null },
             favorites = favorites,
             libraryLines = libraryLines(
                 localTrackCount = providers.localTracks.size,
@@ -327,11 +344,9 @@ internal class HomePresenter(
                 spotifyState = providers.spotifyState,
                 spotifyPlaylistCount = library.spotifyPlaylists.size,
                 youtubeState = providers.youtubeState,
+                youtubePlayable = playback.sources.none { SourceNeed.YouTubeExtractor in it.needs },
             ),
             localTrackCount = providers.localTracks.size,
-            localState = providers.localState,
-            spotifyState = providers.spotifyState,
-            youtubeState = providers.youtubeState,
             discoverBusy = action.discoverBusy,
             discoverError = action.discoverError,
             pinError = action.pinError,
@@ -364,6 +379,8 @@ internal class HomePresenter(
         val now: NowPlayingState,
         val settings: AppSettings,
         val action: HomeActionUi,
+        val ready: Boolean,
+        val sources: List<SourceReadiness>,
     )
 
     companion object {
@@ -382,6 +399,9 @@ internal class HomePresenter(
             spotifyPlaylists = container.spotifyPlaylists,
             nowPlaying = container.player.nowPlaying,
             settings = container.settings,
+            ready = container.ready,
+            sources = SourcesPresenter.from(container, scope).state,
+            pickFolder = container::addLocalMusicFolderFromPicker,
             defaultMusicFolder = ::defaultLocalMusicFolder,
             tracksInLocalFolder = container::tracksInLocalFolder,
             loadSpotifyPlaylistTracks = container::loadSpotifyPlaylistTracks,

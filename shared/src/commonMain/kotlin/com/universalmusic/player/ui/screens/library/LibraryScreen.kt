@@ -41,15 +41,16 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.domain.model.Track
+import kotlinx.coroutines.flow.StateFlow
 
 internal enum class LibraryTab { Songs, Albums, Artists, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LibraryScreen(
-    container: AppContainer,
+    typeAhead: StateFlow<String>,
+    consumeTypeAhead: () -> String,
     presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
 ) {
@@ -102,11 +103,11 @@ internal fun LibraryScreen(
     }
 
     // Desktop type-to-search: keys typed with nothing focused land here (see Main.kt).
-    LaunchedEffect(container) {
-        container.libraryTypeAhead.collect { pending ->
+    LaunchedEffect(typeAhead) {
+        typeAhead.collect { pending ->
             if (pending.isEmpty()) return@collect
             while (true) {
-                val typed = container.consumeLibraryTypeAhead()
+                val typed = consumeTypeAhead()
                 if (typed.isEmpty()) break
                 val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
                 queryField = TextFieldValue(next, selection = TextRange(next.length))

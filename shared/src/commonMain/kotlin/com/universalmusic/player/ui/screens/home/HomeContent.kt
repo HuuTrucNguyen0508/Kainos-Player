@@ -209,6 +209,7 @@ internal data class LibraryLine(
     val title: String,
     val detail: String,
     val door: LibraryDoor,
+    val settingsTarget: SettingsTarget? = null,
 )
 
 internal fun libraryLines(
@@ -220,6 +221,7 @@ internal fun libraryLines(
     spotifyState: ProviderState,
     spotifyPlaylistCount: Int,
     youtubeState: ProviderState,
+    youtubePlayable: Boolean = true,
 ): List<LibraryLine> = buildList {
     add(
         when {
@@ -230,14 +232,14 @@ internal fun libraryLines(
                 LibraryDoor.LIBRARY,
             )
             localState == ProviderState.LOADING -> LibraryLine(LibraryMark.LOCAL, "Local files", "Scanning folders…", LibraryDoor.LIBRARY)
-            else -> LibraryLine(LibraryMark.LOCAL, "Local files", "Add a music folder", LibraryDoor.SETTINGS)
+            else -> LibraryLine(LibraryMark.LOCAL, "Local files", "Add a music folder", LibraryDoor.SETTINGS, SettingsTarget.MusicFolders)
         },
     )
     add(
         if (favorites.count > 0) {
             LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} songs · Play favorites", LibraryDoor.FAVORITES)
         } else {
-            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Library to build favorites", LibraryDoor.LIBRARY)
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Now Playing to build favorites", LibraryDoor.LIBRARY)
         },
     )
     if (kainosPlaylistCount > 0) {
@@ -258,21 +260,29 @@ internal fun libraryLines(
                 if (spotifyPlaylistCount > 0) "Connected · $spotifyPlaylistCount playlists" else "Connected",
                 LibraryDoor.LIBRARY,
             )
-            ProviderState.RATE_LIMITED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Limited · Try again soon", LibraryDoor.SETTINGS)
-            ProviderState.LOADING -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Connecting…", LibraryDoor.SETTINGS)
-            ProviderState.AUTH_REQUIRED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Needs sign-in · Open Settings", LibraryDoor.SETTINGS)
-            ProviderState.NOT_CONFIGURED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Not set up · Open Settings", LibraryDoor.SETTINGS)
-            ProviderState.UNAVAILABLE -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Offline · Open Settings", LibraryDoor.SETTINGS)
+            ProviderState.RATE_LIMITED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Limited · Try again soon", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
+            ProviderState.LOADING -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Connecting…", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
+            ProviderState.AUTH_REQUIRED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Needs sign-in · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
+            ProviderState.NOT_CONFIGURED -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Not set up · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifyClientId)
+            ProviderState.UNAVAILABLE -> LibraryLine(LibraryMark.SPOTIFY, "Spotify", "Offline · Open Settings", LibraryDoor.SETTINGS, SettingsTarget.SpotifySignIn)
         },
     )
     add(
-        when (youtubeState) {
-            ProviderState.AVAILABLE -> LibraryLine(LibraryMark.YOUTUBE, "YouTube", "Search anything and play it", LibraryDoor.SEARCH)
-            else -> LibraryLine(
+        when {
+            youtubeState != ProviderState.AVAILABLE -> LibraryLine(
                 LibraryMark.YOUTUBE,
                 "YouTube",
                 "${legendStateWord(youtubeState)} · Open Settings",
                 LibraryDoor.SETTINGS,
+                SettingsTarget.YouTubeKey,
+            )
+            youtubePlayable -> LibraryLine(LibraryMark.YOUTUBE, "YouTube", "Search anything and play it", LibraryDoor.SEARCH)
+            else -> LibraryLine(
+                LibraryMark.YOUTUBE,
+                "YouTube",
+                "Search works · Playback needs yt-dlp",
+                LibraryDoor.SETTINGS,
+                SettingsTarget.YouTubePlayback,
             )
         },
     )

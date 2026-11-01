@@ -314,7 +314,7 @@ class HomePresenterTest {
         empty.playFavorites {}
         assertEquals(1, failed)
         assertEquals(
-            "Heart tracks in Library to build favorites.",
+            "Heart a track in Now Playing to build favorites.",
             empty.state.value.actionMessage,
         )
     }
@@ -349,6 +349,9 @@ class HomePresenterTest {
         spotifyPlaylists = spotifyPlaylists,
         nowPlaying = nowPlaying,
         settings = settings,
+        ready = MutableStateFlow(true),
+        sources = MutableStateFlow(emptyList()),
+        pickFolder = {},
         defaultMusicFolder = { "" },
         tracksInLocalFolder = { emptyList() },
         loadSpotifyPlaylistTracks = { emptyList() },

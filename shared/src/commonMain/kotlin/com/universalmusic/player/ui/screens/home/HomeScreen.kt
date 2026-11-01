@@ -17,6 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.domain.model.Track
@@ -33,32 +35,55 @@ import com.universalmusic.player.ui.components.Slip
 import com.universalmusic.player.ui.theme.Accents
 
 @Composable
-fun HomeScreen(
+internal fun HomeScreen(
     container: AppContainer,
     onPlayTracks: (List<Track>, Int) -> Unit,
     onOpenNowPlaying: () -> Unit,
-    onOpenSettings: (() -> Unit)? = null,
-    onOpenSearch: (() -> Unit)? = null,
-    onOpenLibrary: (() -> Unit)? = null,
+    onOpenSettings: (SettingsTarget) -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenLibrary: () -> Unit,
     playerPaneVisible: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { HomePresenter.from(container, scope) }
+    LaunchedEffect(container) { container.recheckSourceTools() }
+    HomeContent(presenter, onPlayTracks, onOpenNowPlaying, onOpenSettings, onOpenSearch, onOpenLibrary, playerPaneVisible)
+}
+
+@Composable
+internal fun HomeContent(
+    presenter: HomePresenter,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    onOpenNowPlaying: () -> Unit,
+    onOpenSettings: (SettingsTarget) -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenLibrary: () -> Unit,
+    playerPaneVisible: Boolean = false,
+) {
     val ui by presenter.state.collectAsState()
     var editingPins by remember { mutableStateOf(false) }
     val sessionFocus = ui.sessionFocus
     val showSessionCard = homeSessionCardVisible(playerPaneVisible, sessionFocus)
-    val openDoor: (LibraryDoor) -> Unit = { door ->
-        when (door) {
-            LibraryDoor.LIBRARY -> onOpenLibrary?.invoke()
+    val openDoor: (LibraryLine) -> Unit = { line ->
+        when (line.door) {
+            LibraryDoor.LIBRARY -> onOpenLibrary()
             LibraryDoor.FAVORITES -> presenter.playFavorites(onOpenNowPlaying = onOpenNowPlaying)
-            LibraryDoor.SETTINGS -> onOpenSettings?.invoke()
-            LibraryDoor.SEARCH -> onOpenSearch?.invoke()
+            LibraryDoor.SETTINGS -> line.settingsTarget?.let(onOpenSettings)
+            LibraryDoor.SEARCH -> onOpenSearch()
+        }
+    }
+    val act: (SourceAction) -> Unit = { action ->
+        when (action) {
+            SourceAction.PickMusicFolder -> presenter.pickMusicFolder()
+            SourceAction.OpenLibrary -> onOpenLibrary()
+            SourceAction.OpenSearch -> onOpenSearch()
+            is SourceAction.OpenSettings -> onOpenSettings(action.target)
         }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 900.dp
+        val firstRunTop = (maxHeight * .1f).coerceIn(28.dp, 96.dp)
         val sidePad = if (wide) 28.dp else 20.dp
         val columns = continueListeningColumns((maxWidth - sidePad * 2).value.toInt())
         val continueListening = remember(ui.recent, ui.sessionFocus, playerPaneVisible, columns) {
@@ -76,6 +101,12 @@ fun HomeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(start = sidePad, end = sidePad, bottom = 24.dp),
         ) {
+            // Until saved data loads, an empty Home could still be a returning listener's.
+            if (ui.empty) {
+                if (ui.ready) FirstRun(ui.sources, act, Modifier.padding(top = firstRunTop))
+                return@Column
+            }
+
             DisplayHero(
                 title = "Home",
                 eyebrow = homeEyebrow(ui.favorites.count, ui.localTrackCount),
@@ -98,16 +129,9 @@ fun HomeScreen(
                 )
             }
 
-            if (ui.empty) {
-                EmptyDoors(
-                    localState = ui.localState,
-                    spotifyState = ui.spotifyState,
-                    youtubeState = ui.youtubeState,
-                    onOpenSettings = onOpenSettings,
-                    onOpenSearch = onOpenSearch,
-                    modifier = Modifier.padding(vertical = 40.dp),
-                )
-                return@Column
+            ui.firstSound?.let { local ->
+                Spacer(Modifier.height(16.dp))
+                FirstSoundCard(local, onPlay = { presenter.playLocalLibrary(onPlayTracks) }, onAct = act)
             }
 
             Spacer(Modifier.height(16.dp))
