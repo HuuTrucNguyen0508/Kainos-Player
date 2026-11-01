@@ -143,6 +143,7 @@ private fun AccentTick(color: Color) {
 
 val TrackAvailability.slot: AccentSlot
     get() = when (this) {
+        TrackAvailability.STREAMABLE -> Accents.availableLocal
         TrackAvailability.AVAILABLE_LOCALLY -> Accents.availableLocal
         TrackAvailability.CACHED -> Accents.cached
         TrackAvailability.DOWNLOADING -> Accents.downloading
@@ -153,6 +154,7 @@ val TrackAvailability.slot: AccentSlot
 
 private val TrackAvailability.icon: ImageVector
     get() = when (this) {
+        TrackAvailability.STREAMABLE -> Icons.Default.PlayArrow
         TrackAvailability.AVAILABLE_LOCALLY -> Icons.Default.SdStorage
         TrackAvailability.CACHED -> Icons.Default.OfflinePin
         TrackAvailability.DOWNLOADING -> Icons.Default.Downloading
@@ -169,6 +171,7 @@ fun AvailabilityMark(
     modifier: Modifier = Modifier,
     on: Color = LocalKainosPalette.current.ground,
 ) {
+    if (status == TrackAvailability.STREAMABLE) return
     val palette = LocalKainosPalette.current
     val mark = palette.accent(status.slot, AccentUse.Mark, on)
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

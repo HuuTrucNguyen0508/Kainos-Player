@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.model.Track
  */
 enum class TrackAvailability {
     AVAILABLE_LOCALLY,
+    STREAMABLE,
     CACHED,
     DOWNLOADING,
     WAITING_FOR_NETWORK,
@@ -159,7 +160,7 @@ fun resolveTrackAvailability(
     if (!networkAvailable && track.requiresNetworkForStreaming()) {
         return TrackAvailabilityInfo(
             status = TrackAvailability.WAITING_FOR_NETWORK,
-            label = "Waiting for network",
+            label = "Needs connection",
             playbackSource = streamingKind(track),
             playbackSourceLabel = streamingLabel(track, networkAvailable = false),
             isSpotifyViaYouTubeMatch = false,
@@ -175,14 +176,14 @@ fun resolveTrackAvailability(
         )
     }
 
-    // Online, streamable, not downloading: no offline package; still report honest stream source.
+    // Streaming availability does not imply a downloaded offline package.
     return TrackAvailabilityInfo(
         status = if (track.isLocallyPlayable()) {
             TrackAvailability.AVAILABLE_LOCALLY
         } else {
-            TrackAvailability.WAITING_FOR_NETWORK
+            TrackAvailability.STREAMABLE
         },
-        label = if (track.isLocallyPlayable()) "Available locally" else "Needs connection",
+        label = if (track.isLocallyPlayable()) "Available locally" else "Streamable",
         playbackSource = streamingKind(track),
         playbackSourceLabel = streamingLabel(track, networkAvailable),
     )
@@ -199,6 +200,7 @@ fun playbackSourceKindLabel(kind: PlaybackSourceKind): String = when (kind) {
 }
 
 fun TrackAvailability.shortLabel(): String = when (this) {
+    TrackAvailability.STREAMABLE -> "Streamable"
     TrackAvailability.AVAILABLE_LOCALLY -> "Local"
     TrackAvailability.CACHED -> "Cached"
     TrackAvailability.DOWNLOADING -> "Downloading"

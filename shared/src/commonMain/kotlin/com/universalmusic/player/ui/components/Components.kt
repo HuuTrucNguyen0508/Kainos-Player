@@ -152,8 +152,8 @@ fun TrackRow(
 ) {
     val artSize = if (compact) 40.dp else 48.dp
     val folio = LocalSkinTokens.current.skin == Skin.FOLIO
-    val status = availability?.status?.takeIf { it != TrackAvailability.AVAILABLE_LOCALLY }
-    val needsNetwork = availability == null && track.requiresNetworkToPlay()
+    val status = availability?.status?.takeIf { it != TrackAvailability.AVAILABLE_LOCALLY && it != TrackAvailability.STREAMABLE }
+    val needsNetwork = availability == null && track.requiresNetworkToPlay() && track.playableSources().isEmpty()
     val source = (track.playableSources().firstOrNull() ?: track.sources.firstOrNull())?.provider
     LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted) {
         Box {

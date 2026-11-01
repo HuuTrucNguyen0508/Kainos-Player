@@ -12,6 +12,21 @@ import kotlin.test.assertTrue
 
 class TrackAvailabilityTest {
     @Test
+    fun onlineStreamsDoNotWarnButOfflineStreamsNeedConnection() {
+        for (provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC)) {
+            val track = Track("${provider.name}:1", "Song", emptyList(), sources = listOf(
+                PlaybackSource(provider, "1", isPlayable = true, handle = PlaybackHandle.ProviderPlayback(provider, "1")),
+            ))
+            val online = resolveTrackAvailability(track, networkAvailable = true)
+            assertFalse(online.status == TrackAvailability.WAITING_FOR_NETWORK, "$provider is online")
+            assertEquals("Streamable", online.label)
+            val offline = resolveTrackAvailability(track, networkAvailable = false)
+            assertEquals(TrackAvailability.WAITING_FOR_NETWORK, offline.status)
+            assertEquals("Needs connection", offline.label)
+        }
+    }
+
+    @Test
     fun pendingKeyedLocalTrackReportsMissingFileInLibraryAndPlaylist() {
         val track = Track("localkey:lc1:" + "a".repeat(64), "Song", emptyList())
         assertEquals("Local file missing", resolveTrackAvailability(track).label)
