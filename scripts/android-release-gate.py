@@ -277,7 +277,6 @@ def main() -> int:
 
     sdk = Path(os.environ.get("ANDROID_HOME", Path.home() / "Android/Sdk"))
     logs = ROOT / "logs" / f"android-release-gate-{datetime.now():%Y%m%d-%H%M%S}"
-    logs.mkdir(parents=True)
     gate = Gate(args, sdk, logs)
 
     started = time.monotonic()
@@ -289,6 +288,7 @@ def main() -> int:
         print(f"{args.serial} is a physical device. Instrumented stages clear app data, so the gate "
               "refuses it. --allow-physical only updates it with install -r.", file=sys.stderr)
         return 2
+    logs.mkdir(parents=True)
     gate.record("Device", "PASS", started, f"{gate.prop('ro.product.model')}, API {gate.prop('ro.build.version.sdk')}, "
                 f"{'emulator' if emulator else 'physical'}")
 
