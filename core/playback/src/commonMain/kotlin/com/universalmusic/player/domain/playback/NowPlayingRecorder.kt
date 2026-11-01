@@ -45,6 +45,9 @@ sealed interface FlushResult {
     data class Failed(val cause: Throwable) : FlushResult
 }
 
+/** Backgrounding during startup flushes before restore finishes. Not durable yet, but nothing went wrong. */
+class ListeningNotReady : IllegalStateException("Listening persistence has not initialized")
+
 internal class SessionCapture(
     val sequence: Long,
     val queue: PlaybackQueue,

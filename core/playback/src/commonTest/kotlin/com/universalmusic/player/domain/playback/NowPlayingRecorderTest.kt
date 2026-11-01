@@ -929,6 +929,13 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun flushDuringStartupIsMarkedNotReadyInsteadOfAnError() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL)))
+        val result = assertIs<FlushResult.Failed>(rig.session.flushPersistence())
+        assertIs<ListeningNotReady>(result.cause)
+    }
+
+    @Test
     fun flushBeforeAndDuringInitializationReportsFailureUntilTheWorkerCanPersist() = runTest {
         val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
         val rig = rig(store)
