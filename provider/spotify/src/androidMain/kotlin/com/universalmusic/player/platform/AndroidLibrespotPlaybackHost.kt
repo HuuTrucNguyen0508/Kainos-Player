@@ -46,13 +46,14 @@ internal class AndroidLibrespotPlaybackHost(
         if (hasCachedCredentials()) SpotifyReceiverSetup.READY else SpotifyReceiverSetup.NEEDS_SIGN_IN
 
     private val receiverFlow = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
+    private val haltFilter = SpotifyHaltFilter(recoveryScope) { receiverFlow.tryEmit(it) }
     override val receiverEvents = object : SpotifyReceiverEvents {
         override val events = receiverFlow
         override val isAvailable get() = player != null
     }
     @Volatile private var receiverTrackId = ""
     private fun receiverEvent(kind: SpotifyReceiverEvent.Kind, position: Long? = null) {
-        receiverFlow.tryEmit(SpotifyReceiverEvent(kind, receiverTrackId, position))
+        haltFilter.accept(SpotifyReceiverEvent(kind, receiverTrackId, position))
     }
     private var session: Session? = null
     private var player: Player? = null
@@ -178,6 +179,7 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private fun shutdownLocked() {
+        haltFilter.reset()
         if (player != null || session != null) {
             Log.i(TAG, "shutdown session")
         }
@@ -273,6 +275,7 @@ internal class AndroidLibrespotPlaybackHost(
             metadata: MetadataWrapper?,
             userInitiated: Boolean,
         ) {
+            haltFilter.reset()
             receiverTrackId = id.toSpotifyUri().removePrefix("spotify:track:")
             lastHalted = null
             trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
