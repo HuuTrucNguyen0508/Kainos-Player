@@ -7,6 +7,9 @@ import com.universalmusic.player.platform.librespot.LibrespotOAuth
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +37,7 @@ internal class AndroidLibrespotPlaybackHost(
     private val filesDir: File = androidContext.filesDir,
 ) : SpotifyWebPlaybackHost {
     private val mutex = Mutex()
+    private val recoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
@@ -177,10 +181,12 @@ internal class AndroidLibrespotPlaybackHost(
         if (player != null || session != null) {
             Log.i(TAG, "shutdown session")
         }
-        runCatching { player?.close() }
-        runCatching { session?.close() }
+        val oldPlayer = player
+        val oldSession = session
         player = null
         session = null
+        runCatching { oldPlayer?.close() }
+        runCatching { oldSession?.close() }
     }
 
     private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
@@ -216,6 +222,23 @@ internal class AndroidLibrespotPlaybackHost(
                 Log.i(TAG, "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS")
                 val createdSession = builder.create()
                 Log.i(TAG, "AP connected")
+                createdSession.addReconnectionListener(object : Session.ReconnectionListener {
+                    override fun onConnectionDropped() {
+                        installLibrespotReconnectGuard(Thread.currentThread()) { error ->
+                            Log.w(TAG, "interrupted AP reconnect; recreating receiver", error)
+                            recoveryScope.launch {
+                                mutex.withLock {
+                                    // A shutdown or a replacement wins over recovery of the old session.
+                                    if (session !== createdSession) return@withLock
+                                    receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
+                                    shutdownLocked()
+                                    ensureStarted(interactive = false, oauthCredentials = null)
+                                }
+                            }
+                        }
+                    }
+                    override fun onConnectionEstablished() = Unit
+                })
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer

@@ -4,6 +4,8 @@ plugins {
 
 kotlin {
     sourceSets {
+        androidMain { kotlin.srcDir("src/jvmAndroidMain/kotlin") }
+        jvmMain { kotlin.srcDir("src/jvmAndroidMain/kotlin") }
         commonMain.dependencies {
             api(project(":core:model"))
             api(project(":core:data"))
