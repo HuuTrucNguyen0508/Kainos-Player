@@ -25,3 +25,10 @@ kotlin {
         }
     }
 }
+
+// Opting into native gapless stress must invalidate a cached non-stress test run.
+tasks.named<Test>("jvmTest") {
+    val stress = providers.environmentVariable("KAINOS_GAPLESS_STRESS").getOrElse("0")
+    inputs.property("gaplessStress", stress)
+    environment("KAINOS_GAPLESS_STRESS", stress)
+}
