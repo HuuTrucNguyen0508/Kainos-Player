@@ -108,7 +108,15 @@ class SpotifyProvider(
     private var pendingLogin: PendingLogin? = null
     private var premium: Boolean = false
     private var userId: String? = null
-    private var activePlaybackDeviceId: String? = null
+    private var playbackReceiverGeneration = 0L
+    private var playbackDeviceId: String? = null
+    private var playbackTrackId: String? = null
+    private var activePlaybackDeviceId: String?
+        get() = playbackDeviceId.takeIf { playbackReceiverGeneration == webPlayback.receiverGeneration }
+        set(value) {
+            playbackDeviceId = value
+            playbackReceiverGeneration = webPlayback.receiverGeneration
+        }
 
     /** Spotify user id for the signed-in account, when known. */
     fun currentUserId(): String? = userId
@@ -241,6 +249,7 @@ class SpotifyProvider(
         premium = false
         userId = null
         activePlaybackDeviceId = null
+        playbackTrackId = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }
 
@@ -405,10 +414,11 @@ class SpotifyProvider(
         }
     }
 
-    private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long) {
+    private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long, positionMs: Long = 0) {
         val token = accessToken()
         ensureWithinConnectDeadline(deadlineMs)
         val target = resolvePlaybackTarget(token, deadlineMs)
+        val targetGeneration = webPlayback.receiverGeneration
         // #region agent log
         debugSpotifyLog(
             "H1",
@@ -438,7 +448,7 @@ class SpotifyProvider(
                 bearerAuth(token)
                 parameter("device_id", target.deviceId)
                 contentType(ContentType.Application.Json)
-                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId")))
+                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId"), positionMs = positionMs.coerceAtLeast(0)))
             }
             if (response.status.isSuccess()) {
                 // #region agent log
@@ -452,7 +462,9 @@ class SpotifyProvider(
                 if (requireExplicitPlaybackDevice) {
                     confirmPlaybackOnTarget(token, target, spotifyTrackId)
                 }
+                playbackTrackId = spotifyTrackId
                 activePlaybackDeviceId = target.deviceId
+                playbackReceiverGeneration = targetGeneration
                 return
             }
             lastError = runCatching { response.bodyAsText() }.getOrNull()
@@ -745,10 +757,21 @@ class SpotifyProvider(
         response.requireSuccess("Spotify Connect pause")
     }
 
-    suspend fun resumeConnectPlayback() {
+    suspend fun resumeConnectPlayback() = resumeConnectPlayback(0)
+
+    suspend fun resumeConnectPlayback(positionMs: Long) {
+        val trackId = playbackTrackId
+        fun receiverReplaced() = trackId != null && playbackReceiverGeneration != webPlayback.receiverGeneration
+        // The token fetch can suspend across a receiver recovery, so check again before choosing the device.
+        val token = if (receiverReplaced()) null else accessToken()
+        if (token == null || receiverReplaced()) {
+            startConnectPlaybackLocked(checkNotNull(trackId), currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS, positionMs)
+            return
+        }
+        val device = activePlaybackDeviceId
         val response = http.put("$API/me/player/play") {
-            bearerAuth(accessToken())
-            activePlaybackDeviceId?.let { parameter("device_id", it) }
+            bearerAuth(token)
+            device?.let { parameter("device_id", it) }
         }
         response.requireSuccess("Spotify Connect resume")
     }

@@ -7,6 +7,9 @@ import com.universalmusic.player.platform.librespot.LibrespotOAuth
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +37,7 @@ internal class AndroidLibrespotPlaybackHost(
     private val filesDir: File = androidContext.filesDir,
 ) : SpotifyWebPlaybackHost {
     private val mutex = Mutex()
+    private val recoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
@@ -42,14 +46,17 @@ internal class AndroidLibrespotPlaybackHost(
         if (hasCachedCredentials()) SpotifyReceiverSetup.READY else SpotifyReceiverSetup.NEEDS_SIGN_IN
 
     private val receiverFlow = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
+    private val haltFilter = SpotifyHaltFilter(recoveryScope) { receiverFlow.tryEmit(it) }
     override val receiverEvents = object : SpotifyReceiverEvents {
         override val events = receiverFlow
         override val isAvailable get() = player != null
     }
     @Volatile private var receiverTrackId = ""
     private fun receiverEvent(kind: SpotifyReceiverEvent.Kind, position: Long? = null) {
-        receiverFlow.tryEmit(SpotifyReceiverEvent(kind, receiverTrackId, position))
+        haltFilter.accept(SpotifyReceiverEvent(kind, receiverTrackId, position))
     }
+    @Volatile override var receiverGeneration: Long = 0L
+        private set
     private var session: Session? = null
     private var player: Player? = null
     private val credentialsDir = File(filesDir, "librespot")
@@ -174,13 +181,16 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private fun shutdownLocked() {
+        haltFilter.reset()
         if (player != null || session != null) {
             Log.i(TAG, "shutdown session")
         }
-        runCatching { player?.close() }
-        runCatching { session?.close() }
+        val oldPlayer = player
+        val oldSession = session
         player = null
         session = null
+        runCatching { oldPlayer?.close() }
+        runCatching { oldSession?.close() }
     }
 
     private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
@@ -216,6 +226,24 @@ internal class AndroidLibrespotPlaybackHost(
                 Log.i(TAG, "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS")
                 val createdSession = builder.create()
                 Log.i(TAG, "AP connected")
+                createdSession.addReconnectionListener(object : Session.ReconnectionListener {
+                    override fun onConnectionDropped() {
+                        installLibrespotReconnectGuard(Thread.currentThread()) { error ->
+                            Log.w(TAG, "interrupted AP reconnect; recreating receiver", error)
+                            recoveryScope.launch {
+                                mutex.withLock {
+                                    // A shutdown or a replacement wins over recovery of the old session.
+                                    if (session !== createdSession) return@withLock
+                                    receiverGeneration++
+                                    receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
+                                    shutdownLocked()
+                                    ensureStarted(interactive = false, oauthCredentials = null)
+                                }
+                            }
+                        }
+                    }
+                    override fun onConnectionEstablished() = Unit
+                })
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer
@@ -250,6 +278,7 @@ internal class AndroidLibrespotPlaybackHost(
             metadata: MetadataWrapper?,
             userInitiated: Boolean,
         ) {
+            haltFilter.reset()
             receiverTrackId = id.toSpotifyUri().removePrefix("spotify:track:")
             lastHalted = null
             trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
@@ -282,7 +311,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
 
-        /** librespot fires this dozens of times per second while loading; only log the flips. */
+        /** Deduplicate before filtering; only reported stalls reach the trace file. */
         @Volatile private var lastHalted: Boolean? = null
 
         override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
@@ -293,7 +322,6 @@ internal class AndroidLibrespotPlaybackHost(
                 halted -> SpotifyReceiverEvent.Kind.BUFFERING
                 else -> SpotifyReceiverEvent.Kind.PLAYING
             }, trackTime)
-            trace("halted=$halted at $trackTime (true = buffer ran dry)")
         }
 
         override fun onInactiveSession(player: Player, timeout: Boolean) {

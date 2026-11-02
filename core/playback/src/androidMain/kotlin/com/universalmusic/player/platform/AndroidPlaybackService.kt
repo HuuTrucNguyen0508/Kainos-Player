@@ -1,5 +1,7 @@
 package com.universalmusic.player.platform
 
+import android.widget.Toast
+import androidx.media3.session.DefaultMediaNotificationProvider
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -38,6 +40,13 @@ class AndroidPlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate")
+        setListener(object : MediaSessionService.Listener {
+            override fun onForegroundServiceStartNotAllowedException() = foregroundPlaybackDenied()
+        })
+        setMediaNotificationProvider(ForegroundSafeNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build(),
+            ::foregroundPlaybackDenied,
+        ))
         silenceUri = ensureSilenceFile(this)
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -66,6 +75,12 @@ class AndroidPlaybackService : MediaSessionService() {
                 session.setMediaButtonPreferences(mediaButtonPreferences(next))
             }
         }
+    }
+
+    private fun foregroundPlaybackDenied() {
+        PlaybackTrace.log("Session3", "foreground promotion denied; pausing transport, reopen app to resume")
+        AndroidMediaControls.pause()
+        Toast.makeText(this, "Open Kainos Player and press Play to resume playback", Toast.LENGTH_LONG).show()
     }
 
     private fun trace(message: String) = PlaybackTrace.log("Exo", message)
