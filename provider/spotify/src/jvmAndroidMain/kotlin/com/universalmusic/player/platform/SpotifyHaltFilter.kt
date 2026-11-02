@@ -16,6 +16,7 @@ internal class SpotifyHaltFilter(
     private var generation = 0L
     private var absorbedUnderflows = 0
     private var last: Pair<String, SpotifyReceiverEvent.Kind>? = null
+    private var stallReported = false
 
     fun reset() = synchronized(lock) {
         if (absorbedUnderflows > 0) trace("start underflows absorbed=$absorbedUnderflows")
@@ -24,10 +25,12 @@ internal class SpotifyHaltFilter(
         pending?.cancel()
         pending = null
         last = null
+        stallReported = false
     }
 
     fun accept(event: SpotifyReceiverEvent) = synchronized(lock) {
-        if (event.kind == SpotifyReceiverEvent.Kind.BUFFERING && (event.positionMs ?: Long.MAX_VALUE) <= 1_000L) {
+        // librespot flips halted dozens of times whenever playback (re)starts, at any position.
+        if (event.kind == SpotifyReceiverEvent.Kind.BUFFERING) {
             absorbedUnderflows++
             if (pending != null || last == event.trackId to event.kind) return@synchronized
             val turn = generation
@@ -54,9 +57,11 @@ internal class SpotifyHaltFilter(
             event.kind == SpotifyReceiverEvent.Kind.BUFFERING || event.kind == SpotifyReceiverEvent.Kind.PAUSED
         if (status && last == identity) return
         if (event.kind == SpotifyReceiverEvent.Kind.BUFFERING) {
-            if ((event.positionMs ?: Long.MAX_VALUE) <= 1_000L) absorbedUnderflows--
+            absorbedUnderflows--
+            stallReported = true
             trace("stall at ${event.positionMs}")
-        } else if (event.kind == SpotifyReceiverEvent.Kind.PLAYING && last?.second == SpotifyReceiverEvent.Kind.BUFFERING) {
+        } else if (event.kind == SpotifyReceiverEvent.Kind.PLAYING && stallReported) {
+            stallReported = false
             trace("stall recovered at ${event.positionMs}")
         }
         last = identity

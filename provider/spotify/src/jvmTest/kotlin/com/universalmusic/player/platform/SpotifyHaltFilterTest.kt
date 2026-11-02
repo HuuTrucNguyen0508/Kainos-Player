@@ -28,9 +28,23 @@ class SpotifyHaltFilterTest {
         filter.reset()
         println("Phone replay trace lines: ${traces.size}")
         assertTrue(traces.size < 100, "raw underflows must not write trace lines: ${traces.size}")
-        assertEquals(9, traces.count { it.startsWith("stall at ") && it.substringAfter("stall at ").toLong() > 1_000 })
+        // The capture holds 18 halts that lasted over 250 ms; every shorter flip is start-up or end-of-track chatter.
+        assertEquals(18, traces.count { it.startsWith("stall at ") })
         assertTrue(output.size < 100, "start-of-track chatter must not reach transport: ${output.size}")
-        assertEquals(9, output.count { it.kind == Kind.BUFFERING && (it.positionMs ?: 0) > 1_000 }, "all nine real mid-track stalls remain visible immediately")
+        assertEquals(18, output.count { it.kind == Kind.BUFFERING }, "every sustained halt is still reported")
+    }
+
+    @Test fun resumingMidTrackDoesNotFloodPlaybackState() = runTest {
+        val output = mutableListOf<SpotifyReceiverEvent>()
+        val filter = SpotifyHaltFilter(backgroundScope, emit = output::add)
+        filter.accept(SpotifyReceiverEvent(Kind.PLAYING, "a", 4_376))
+        repeat(40) { i ->
+            filter.accept(SpotifyReceiverEvent(Kind.BUFFERING, "a", 4_376L + i))
+            advanceTimeBy(5); runCurrent()
+            filter.accept(SpotifyReceiverEvent(Kind.PLAYING, "a", 4_376L + i))
+        }
+        advanceTimeBy(300); runCurrent()
+        assertEquals(listOf(Kind.PLAYING), output.map { it.kind })
     }
 
     @Test fun traceContainsOnlyReportedStallsRecoveriesAndOneStartSummary() = runTest {
@@ -69,6 +83,8 @@ class SpotifyHaltFilterTest {
         event(Kind.SEEKED)
         assertEquals(listOf(Kind.PAUSED, Kind.END_OF_TRACK, Kind.SEEKED), output.takeLast(3).map { it.kind })
         filter.accept(SpotifyReceiverEvent(Kind.BUFFERING, "a", 5_000))
+        assertEquals(Kind.SEEKED, output.last().kind)
+        advanceTimeBy(251); runCurrent()
         assertEquals(Kind.BUFFERING, output.last().kind)
         filter.reset()
         event(Kind.PLAYING, "b")
