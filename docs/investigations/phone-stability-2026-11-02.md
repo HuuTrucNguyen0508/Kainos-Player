@@ -78,3 +78,47 @@ Read-only inspection used rg/nl/cat, artifact javap for Session and Receiver, an
 - Final validation/report commit records the stress environment as a test input so opting in cannot reuse cached skipped results.
 
 Each commit includes the requested Claude Opus 5.5 co-author trailer. Only this worktree was edited; parent owns pushing and phone installation. Latest authoritative Codex weekly usage: 39%, below pause threshold.
+
+
+## Follow-ups after phone verification
+
+The parent reported one session publication per Spotify start on the real phone, but 2,276 raw halt trace writes during a few minutes of skips. This follow-up did not access the phone.
+
+### Recovered receiver and explicit Play
+
+Root cause: AndroidLibrespotPlaybackHost.kt:237 previously recreated the Session after emitting PAUSED without invalidating SpotifyProvider's cached target. SpotifyProvider.kt:760 resumed that retired device without sending the current track URI or saved position. New receiver generations invalidate cached targets before PAUSED. AndroidPlaybackEngine.kt:449 captures its paused position and passes it through the existing media-command FIFO to resumeAt. Explicit Play rediscovers the named receiver, transfers paused, and starts the remembered track with position_ms in the same play request. Normal resumes retain the existing target without discovery. No observer loop, authentication refresh, or state polling was added.
+
+Regression: SpotifyProviderTest.explicitPlayAfterReceiverRecoveryRediscoversAndRestartsAtSavedPosition. Before implementation the test failed with expected replacement, actual retired. After implementation it passes, verifies restart at 12,345 ms, no autoplay on recovery, and no extra device discovery on the following ordinary resume. The JVM fake changes the same host generation property Android recovery changes; this is not an authenticated Android Session integration test.
+
+Commit: be102f5, fix(spotify): rediscover recovered receiver on explicit Play.
+
+### Halt trace writes
+
+Root cause: AndroidLibrespotPlaybackHost.kt:317 sent events through SpotifyHaltFilter but separately wrote every raw halt flip. Move trace emission into SpotifyHaltFilter.kt:56, after status filtering. Only reported stalls and their PLAYING recovery write immediately. Reset writes at most one absorbed-underflow summary per start, including on shutdown or the next track. Raw flips do no trace-file writes.
+
+The trace callback now runs in the JVM-tested filter. A mechanical move of the old raw logging into that callback first reproduced 3,740 writes from the committed fixture and failed the new less-than-100 assertion. Final replay produces 68 halt-related trace lines, with the same 63 transport events and 26 reported stalls as before. All nine mid-track stalls remain visible both as events and trace lines. This count covers halt logging for the fixture, not every category of app trace output, and is not a phone performance measurement. A separate test checks silent absorbed underflows, delayed reported stalls, recovery logging and only one summary across repeated reset calls.
+
+### Follow-up command ledger
+
+All shell commands ran in .claude/worktrees/stellar-astra. The Gradle prefix is the same JDK 17 / nice / dbus-run-session / max-workers=6 prefix documented above. Commands ran sequentially; no --stop, device, app launch, user mpv, user-data, .audit or other worktree access occurred.
+
+| Command or task arguments | Result / evidence |
+| --- | --- |
+| pwd; git log --oneline origin/main..HEAD; cat docs/investigations/phone-stability-2026-11-02.md | Confirmed assigned worktree and five existing commits; read investigation first. |
+| git status --short; rg / sed / cat / nl of touched source, tests, fixture references and HANDOVER.md | Read-only inspection; clean initial tree; located cached-device resume and raw Android logging. Read unslop, debugging, TDD and work-history skill instructions. |
+| Python edit scripts using absolute paths | Added regression and minimal API scaffolding first; then recovery fix; later moved logging, added replay assertions, and changed logging after red. All scripts exited zero. |
+| :provider:spotify:jvmTest --tests '*SpotifyProviderTest.explicitPlayAfterReceiverRecovery*' | Expected FAIL: retired device still targeted. logs/phone-followup1-red.log |
+| :provider:spotify:jvmTest --tests '*SpotifyProviderTest*' | PASS. logs/phone-followup1-green.log |
+| git diff --check; git add explicit recovery files; git commit with requested trailer; git commit --amend --no-edit | PASS; recovery commit be102f5. Amendment made all resume overloads use recovery handling. |
+| :provider:spotify:jvmTest --tests '*SpotifyHaltFilterTest.realPhoneHalts*' | Expected FAIL: 3,740 raw trace lines. logs/phone-followup2-red.log |
+| :provider:spotify:jvmTest --tests '*SpotifyHaltFilterTest*' --tests '*SpotifyProviderTest*' | PASS; replay 68 lines. logs/phone-followup2-green.log |
+| jvmTest :androidApp:assembleOptimized :androidApp:lintDebug | Final result recorded below. logs/phone-followups-required.log |
+
+Weekly Codex quota was freshly verified at 39% before work and before required validation, below the pause threshold. Reservation 34074742-ba26-4bfe-a8d5-0de267c745c2 was reused; no reservation or subagent was created. History-vault recording remains with the parent because this task authorizes writes only inside the assigned worktree.
+
+### Follow-up final verification
+
+- Required Gradle invocation passed in 1m 10s; 298 actionable tasks, 115 executed, 183 up-to-date. No retries were needed. JVM XML totals: 1,105 tests, zero failures/errors, nine skipped, 1,096 executed. Native stress tests stayed opt-in and were not enabled for this follow-up.
+- `python3` XML aggregation: PASS, counts above. `sha256sum androidApp/build/outputs/apk/optimized/androidApp-optimized.apk`: 101d2e74a591a839e91fdc5abcf684a78433a2f54a8fd263167c93e815babf77.
+- `git diff --check`: PASS. `git add` explicit logging/test/investigation files and `git commit` with the requested co-author trailer: PASS. Final `git status --short` is clean and `git log -2` shows the two separate follow-up commits.
+- Quota recheck after the build: Codex weekly 39%. No Gradle command or child process remains running; idle Gradle daemons were left alone. No push, install or phone verification performed. The work-history vault write is left to the parent under the worktree-only write constraint.

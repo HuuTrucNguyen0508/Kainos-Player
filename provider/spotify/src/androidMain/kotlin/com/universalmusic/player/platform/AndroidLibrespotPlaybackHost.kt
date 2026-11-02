@@ -311,7 +311,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
 
-        /** librespot fires this dozens of times per second while loading; only log the flips. */
+        /** Deduplicate before filtering; only reported stalls reach the trace file. */
         @Volatile private var lastHalted: Boolean? = null
 
         override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
@@ -322,7 +322,6 @@ internal class AndroidLibrespotPlaybackHost(
                 halted -> SpotifyReceiverEvent.Kind.BUFFERING
                 else -> SpotifyReceiverEvent.Kind.PLAYING
             }, trackTime)
-            trace("halted=$halted at $trackTime (true = buffer ran dry)")
         }
 
         override fun onInactiveSession(player: Player, timeout: Boolean) {
