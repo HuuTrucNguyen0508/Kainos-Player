@@ -93,6 +93,8 @@ interface SpotifyWebPlaybackHost {
     fun receiverSetup(): SpotifyReceiverSetup = SpotifyReceiverSetup.READY
     val receiverEvents: SpotifyReceiverEvents? get() = null
     val requiresStreamingScope: Boolean get() = true
+    /** Recreated receivers have new device IDs; cached Connect targets belong to this generation. */
+    val receiverGeneration: Long get() = 0L
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()

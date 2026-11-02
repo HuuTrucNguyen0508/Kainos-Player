@@ -446,12 +446,14 @@ class AndroidPlaybackEngine(
         transportIntent++
         trace("resume() status=${_state.value.status} pos=${_state.value.positionMs}")
         if (activeBackend == ActiveBackend.SPOTIFY) {
+            val resumePosition = _state.value.positionMs
+            spotifyOffset = resumePosition
             spotifyStartedAt = System.currentTimeMillis()
             _state.update { current -> current.copy(status = EngineStatus.PLAYING) }
             startTicker()
             launchMediaCommand {
                 spotifyFocus.play()
-                enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
+                enqueueSpotifyCommand("Spotify Connect resume") { spotify.resumeAt(resumePosition) }
             }
             return
         }

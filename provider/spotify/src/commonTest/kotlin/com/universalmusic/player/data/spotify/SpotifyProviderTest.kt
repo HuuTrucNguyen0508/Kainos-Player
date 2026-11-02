@@ -397,6 +397,47 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun explicitPlayAfterReceiverRecoveryRediscoversAndRestartsAtSavedPosition() = runTest {
+        var generation = 0L
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope = false
+            override val receiverGeneration get() = generation
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player Android")
+            override suspend fun shutdown() = Unit
+        }
+        val plays = mutableListOf<Pair<String?, String>>()
+        var discoveries = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { request ->
+            when (request.url.encodedPath) {
+                "/v1/me/player/devices" -> {
+                    discoveries++
+                    val id = if (generation == 0L) "retired" else "replacement"
+                    respondJson("""{"devices":[{"id":"$id","name":"Kainos Player Android","is_active":false}]}""")
+                }
+                "/v1/me/player/play" -> {
+                    val body = (request.body as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString().orEmpty()
+                    plays += request.url.parameters["device_id"] to body
+                    respond("", HttpStatusCode.NoContent)
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+        provider.startConnectPlayback("song")
+        generation++
+        assertEquals(1, plays.size, "recovery must not autoplay")
+        provider.resumeConnectPlayback(12_345)
+        assertEquals("replacement", plays.last().first, "Play must not target the retired receiver")
+        assertEquals(2, discoveries)
+        val restart = Json.parseToJsonElement(plays.last().second).toString()
+        assertTrue(restart.contains("spotify:track:song"))
+        assertTrue(restart.contains("\"position_ms\":12345"), restart)
+        provider.resumeConnectPlayback(15_000)
+        assertEquals(2, discoveries, "ordinary resume must not rediscover or poll")
+        assertEquals("", plays.last().second, "ordinary resume keeps the receiver's current track")
+    }
+
+    @Test
     fun connectControlsUsePlayerEndpoints() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val requests = mutableListOf<String>()

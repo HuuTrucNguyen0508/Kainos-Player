@@ -55,6 +55,8 @@ internal class AndroidLibrespotPlaybackHost(
     private fun receiverEvent(kind: SpotifyReceiverEvent.Kind, position: Long? = null) {
         haltFilter.accept(SpotifyReceiverEvent(kind, receiverTrackId, position))
     }
+    @Volatile override var receiverGeneration: Long = 0L
+        private set
     private var session: Session? = null
     private var player: Player? = null
     private val credentialsDir = File(filesDir, "librespot")
@@ -232,6 +234,7 @@ internal class AndroidLibrespotPlaybackHost(
                                 mutex.withLock {
                                     // A shutdown or a replacement wins over recovery of the old session.
                                     if (session !== createdSession) return@withLock
+                                    receiverGeneration++
                                     receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
                                     shutdownLocked()
                                     ensureStarted(interactive = false, oauthCredentials = null)
