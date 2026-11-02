@@ -761,13 +761,17 @@ class SpotifyProvider(
 
     suspend fun resumeConnectPlayback(positionMs: Long) {
         val trackId = playbackTrackId
-        if (trackId != null && playbackReceiverGeneration != webPlayback.receiverGeneration) {
-            startConnectPlaybackLocked(trackId, currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS, positionMs)
+        fun receiverReplaced() = trackId != null && playbackReceiverGeneration != webPlayback.receiverGeneration
+        // The token fetch can suspend across a receiver recovery, so check again before choosing the device.
+        val token = if (receiverReplaced()) null else accessToken()
+        if (token == null || receiverReplaced()) {
+            startConnectPlaybackLocked(checkNotNull(trackId), currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS, positionMs)
             return
         }
+        val device = activePlaybackDeviceId
         val response = http.put("$API/me/player/play") {
-            bearerAuth(accessToken())
-            activePlaybackDeviceId?.let { parameter("device_id", it) }
+            bearerAuth(token)
+            device?.let { parameter("device_id", it) }
         }
         response.requireSuccess("Spotify Connect resume")
     }

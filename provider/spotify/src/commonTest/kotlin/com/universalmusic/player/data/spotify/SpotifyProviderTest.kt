@@ -438,6 +438,42 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun recoveryDuringPlaysTokenFetchStillTargetsTheReplacementReceiver() = runTest {
+        var generation = 0L
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope = false
+            override val receiverGeneration get() = generation
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player Android")
+            override suspend fun shutdown() = Unit
+        }
+        var recoverOnNextRead = false
+        val tokens = TokenStoreFake(AuthTokens("access")).apply {
+            onRead = { if (recoverOnNextRead) { recoverOnNextRead = false; generation++ } }
+        }
+        val plays = mutableListOf<Pair<String?, String>>()
+        val provider = provider(tokens, host) { request ->
+            when (request.url.encodedPath) {
+                "/v1/me/player/devices" -> {
+                    val id = if (generation == 0L) "retired" else "replacement"
+                    respondJson("""{"devices":[{"id":"$id","name":"Kainos Player Android","is_active":false}]}""")
+                }
+                "/v1/me/player/play" -> {
+                    val body = (request.body as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString().orEmpty()
+                    plays += request.url.parameters["device_id"] to body
+                    respond("", HttpStatusCode.NoContent)
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+        provider.startConnectPlayback("song")
+        recoverOnNextRead = true
+        provider.resumeConnectPlayback(12_345)
+        assertEquals("replacement", plays.last().first, "Play must not go out without the replacement receiver")
+        assertTrue(plays.last().second.contains("spotify:track:song"), plays.last().second)
+    }
+
+    @Test
     fun connectControlsUsePlayerEndpoints() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val requests = mutableListOf<String>()
@@ -858,8 +894,9 @@ class SpotifyProviderTest {
 private class TokenStoreFake(initial: AuthTokens? = null) : TokenStore {
     var value: AuthTokens? = initial
     var writes = 0
+    var onRead: () -> Unit = {}
 
-    override suspend fun read(provider: ProviderId): AuthTokens? = value
+    override suspend fun read(provider: ProviderId): AuthTokens? = value.also { onRead() }
 
     override suspend fun write(provider: ProviderId, tokens: AuthTokens) {
         writes++
