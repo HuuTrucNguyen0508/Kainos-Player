@@ -40,6 +40,26 @@ class ListeningDeliveryLoopTest {
     )
 
     @Test
+    fun offlineDeliveryBacksOffDespitePositionPublicationsAndForegroundCanRetryNow() = runTest {
+        val attempts = mutableListOf<Long>()
+        val loop = ListeningDelivery(PendingStore(queue),
+            { DeliveryTarget(hubPeer, "kainos-phone", CertFingerprint.parse("bb".repeat(32))!!) },
+            { attempts += testScheduler.currentTime; throw IOException("hub off") })
+        val runner = ListeningDeliveryRunner(backgroundScope, loop, { true }, {}, isAppForeground = { true })
+        runner.request()
+        runCurrent()
+        repeat(12) {
+            advanceTimeBy(10_000)
+            runner.request()
+            runCurrent()
+        }
+        assertEquals(listOf(0L, 30_000, 90_000), attempts)
+        runner.request(exchangeOnForeground = true)
+        runCurrent()
+        assertEquals(120_000L, attempts.last())
+    }
+
+    @Test
     fun targetFailureBecomesARetry() = runBlocking {
         val loop = ListeningDelivery(PendingStore(queue), { throw IOException("settings unavailable") }, { FakeHub() })
         assertEquals(DeliveryOutcome.RETRY, loop.deliverPending())
@@ -389,7 +409,7 @@ class ListeningDeliveryLoopTest {
     }
 
     @Test
-    fun theRunnerRetriesEveryThirtySecondsInTheForegroundAndHandsOffInTheBackground() = runTest {
+    fun theRunnerBacksOffInTheForegroundAndHandsOffInTheBackground() = runTest {
         val store = PendingStore(queue)
         val hub = FakeHub { throw IOException("hub is off") }
         var foreground = true
@@ -403,7 +423,7 @@ class ListeningDeliveryLoopTest {
         assertEquals(2, hub.reports.size)
 
         foreground = false
-        advanceTimeBy(LISTENING_RETRY_MS + 1)
+        advanceTimeBy(2 * LISTENING_RETRY_MS + 1)
         assertEquals(3, hub.reports.size)
         assertEquals(1, scheduled)
         advanceTimeBy(10 * LISTENING_RETRY_MS)

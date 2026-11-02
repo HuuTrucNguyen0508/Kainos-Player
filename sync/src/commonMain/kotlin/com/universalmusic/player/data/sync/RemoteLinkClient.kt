@@ -466,7 +466,7 @@ const val REMOTE_DIRECT_LEASE_FRESH_MS = 3_000L
 
 // A single fast reconnect recovers a brief LAN failure inside the command deadline.
 // Sustained failures still back off to 30 seconds. Poll seq/epoch dedupe is unchanged.
-val REMOTE_BACKOFF_MS = listOf(200L, 2_000L, 5_000L, 10_000L, 20_000L, 30_000L)
+val REMOTE_BACKOFF_MS = listOf(200L, 2_000L, 5_000L, 10_000L, 20_000L, 30_000L, 60_000L, 120_000L, 300_000L)
 
 internal const val REMOTE_TARGET_WAIT_MS = 250L
 
