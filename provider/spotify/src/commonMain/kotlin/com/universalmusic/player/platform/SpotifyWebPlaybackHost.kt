@@ -99,6 +99,15 @@ interface SpotifyWebPlaybackHost {
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()
     suspend fun setVolume(volume: Float): Boolean = false
+    /**
+     * Starts [trackId] on an in-process receiver directly, skipping the Web API round trips
+     * through Spotify's servers. False when this host cannot, so the caller uses Connect.
+     */
+    suspend fun playTrack(trackId: String): Boolean = false
+    /** Transport for the track [playTrack] started. False falls back to the Web API. */
+    suspend fun pause(): Boolean = false
+    suspend fun resume(): Boolean = false
+    suspend fun seek(positionMs: Long): Boolean = false
     suspend fun shutdown()
 }
 
