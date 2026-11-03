@@ -118,6 +118,11 @@ class SpotifyProvider(
             playbackReceiverGeneration = webPlayback.receiverGeneration
         }
 
+    /** Receiver generation whose current track [webPlayback] loaded itself; null when Connect started it. */
+    private var directPlaybackGeneration: Long? = null
+    private val playingDirectly: Boolean
+        get() = directPlaybackGeneration == webPlayback.receiverGeneration
+
     /** Spotify user id for the signed-in account, when known. */
     fun currentUserId(): String? = userId
 
@@ -250,6 +255,7 @@ class SpotifyProvider(
         userId = null
         activePlaybackDeviceId = null
         playbackTrackId = null
+        directPlaybackGeneration = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }
 
@@ -415,6 +421,8 @@ class SpotifyProvider(
     }
 
     private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long, positionMs: Long = 0) {
+        if (positionMs <= 0 && !requireExplicitPlaybackDevice && startDirectPlayback(spotifyTrackId)) return
+        directPlaybackGeneration = null
         val token = accessToken()
         ensureWithinConnectDeadline(deadlineMs)
         val target = resolvePlaybackTarget(token, deadlineMs)
@@ -482,6 +490,20 @@ class SpotifyProvider(
             delay(250L * (attempt + 1))
         }
         error("Spotify Connect playback failed${lastError?.let { ": $it" }.orEmpty()}")
+    }
+
+    /**
+     * Every Connect start costs several sequential Web API calls plus Spotify's push back to the
+     * receiver, which is slow on mobile data. An in-process receiver can load the track itself.
+     */
+    private suspend fun startDirectPlayback(spotifyTrackId: String): Boolean {
+        val generation = webPlayback.receiverGeneration
+        // A receiver recovered mid-load is not the one that loaded the track.
+        if (!webPlayback.playTrack(spotifyTrackId) || generation != webPlayback.receiverGeneration) return false
+        playbackTrackId = spotifyTrackId
+        activePlaybackDeviceId = null
+        directPlaybackGeneration = generation
+        return true
     }
 
     suspend fun getConnectDevices(): List<SpotifyConnectDevice> =
@@ -748,6 +770,7 @@ class SpotifyProvider(
     }
 
     suspend fun pauseConnectPlayback() {
+        if (playingDirectly && webPlayback.pause()) return
         val response = http.put("$API/me/player/pause") {
             bearerAuth(accessToken())
             activePlaybackDeviceId?.let { parameter("device_id", it) }
@@ -762,6 +785,7 @@ class SpotifyProvider(
     suspend fun resumeConnectPlayback(positionMs: Long) {
         val trackId = playbackTrackId
         fun receiverReplaced() = trackId != null && playbackReceiverGeneration != webPlayback.receiverGeneration
+        if (!receiverReplaced() && playingDirectly && webPlayback.resume()) return
         // The token fetch can suspend across a receiver recovery, so check again before choosing the device.
         val token = if (receiverReplaced()) null else accessToken()
         if (token == null || receiverReplaced()) {
@@ -777,6 +801,7 @@ class SpotifyProvider(
     }
 
     suspend fun seekConnectPlayback(positionMs: Long) {
+        if (playingDirectly && webPlayback.seek(positionMs)) return
         val response = http.put("$API/me/player/seek") {
             bearerAuth(accessToken())
             parameter("position_ms", positionMs.coerceAtLeast(0))

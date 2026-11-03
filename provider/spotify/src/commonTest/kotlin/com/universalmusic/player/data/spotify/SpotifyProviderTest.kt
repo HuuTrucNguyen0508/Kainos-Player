@@ -65,6 +65,98 @@ class SpotifyProviderTest {
         assertEquals(listOf(0.4f), volumes)
     }
 
+    private class DirectReceiverFake(
+        private val loads: Boolean = true,
+        private val onLoad: DirectReceiverFake.() -> Unit = {},
+    ) : SpotifyWebPlaybackHost {
+        val calls = mutableListOf<String>()
+        override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+        override val requiresStreamingScope: Boolean = false
+        override var receiverGeneration: Long = 0L
+        override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player")
+        override suspend fun shutdown() = Unit
+        override suspend fun playTrack(trackId: String): Boolean {
+            calls += "load $trackId"
+            onLoad()
+            return loads
+        }
+        override suspend fun pause(): Boolean { calls += "pause"; return true }
+        override suspend fun resume(): Boolean { calls += "resume"; return true }
+        override suspend fun seek(positionMs: Long): Boolean { calls += "seek $positionMs"; return true }
+    }
+
+    private fun connectHandler(requests: MutableList<String>): suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData = { request ->
+        requests += request.method.value + " " + request.url.encodedPath
+        when (request.url.encodedPath) {
+            "/v1/me/player/devices" -> respondJson(
+                """{"devices":[{"id":"kainos-device","is_active":false,"is_restricted":false,"name":"Kainos Player","type":"Smartphone"}]}""",
+            )
+            else -> respond("", HttpStatusCode.NoContent)
+        }
+    }
+
+    @Test
+    fun inProcessReceiverLoadsAndControlsTheTrackWithoutHttp() = runTest {
+        val host = DirectReceiverFake()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { error("No HTTP expected: ${it.url}") }
+
+        provider.startConnectPlayback("song")
+        provider.pauseConnectPlayback()
+        provider.resumeConnectPlayback(42_000)
+        provider.seekConnectPlayback(90_000)
+
+        assertEquals(listOf("load song", "pause", "resume", "seek 90000"), host.calls)
+    }
+
+    @Test
+    fun failedDirectLoadFallsBackToConnectForStartAndTransport() = runTest {
+        val host = DirectReceiverFake(loads = false)
+        val requests = mutableListOf<String>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host, handler = connectHandler(requests))
+
+        provider.startConnectPlayback("song")
+        provider.pauseConnectPlayback()
+
+        assertEquals(listOf("load song"), host.calls)
+        assertEquals(
+            listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play", "PUT /v1/me/player/pause"),
+            requests,
+        )
+    }
+
+    @Test
+    fun receiverRecoveredDuringDirectLoadStartsThroughConnect() = runTest {
+        val host = DirectReceiverFake(onLoad = { receiverGeneration++ })
+        val requests = mutableListOf<String>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host, handler = connectHandler(requests))
+
+        provider.startConnectPlayback("song")
+
+        assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+    }
+
+    @Test
+    fun resumeAfterReceiverRecoveryRestartsAtThePausedPositionThroughConnect() = runTest {
+        val host = DirectReceiverFake()
+        val bodies = mutableListOf<String>()
+        val requests = mutableListOf<String>()
+        val handler = connectHandler(requests)
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { request ->
+            if (request.url.encodedPath == "/v1/me/player/play") {
+                bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            }
+            handler(request)
+        }
+
+        provider.startConnectPlayback("song")
+        host.receiverGeneration++
+        provider.resumeConnectPlayback(42_000)
+
+        assertEquals(listOf("load song"), host.calls)
+        assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+        assertTrue(bodies.single().contains("42000"))
+    }
+
     @Test
     fun spotifyQualityDescribesAssumedDecodeWithoutLossless() {
         val quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality

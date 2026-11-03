@@ -6,6 +6,7 @@ import com.spotify.connectstate.Connect
 import com.universalmusic.player.platform.librespot.LibrespotOAuth
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -31,12 +32,14 @@ import xyz.gianlu.librespot.player.PlayerConfiguration
 
 /**
  * In-process librespot-java Connect receiver for Android. Audio decodes on-device via
- * [AndroidSinkOutput]; Kainos still drives play/pause/seek through the Web API.
+ * [AndroidSinkOutput]. Kainos loads tracks and drives play/pause/seek on the player directly;
+ * the Web API path in SpotifyProvider is the fallback when that fails.
  */
 internal class AndroidLibrespotPlaybackHost(
     private val filesDir: File = androidContext.filesDir,
 ) : SpotifyWebPlaybackHost {
     private val mutex = Mutex()
+    private val directCommands = Mutex()
     private val recoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
@@ -125,6 +128,9 @@ internal class AndroidLibrespotPlaybackHost(
                     .setOutput(PlayerConfiguration.AudioOutput.CUSTOM)
                     .setOutputClass(AndroidSinkOutput::class.java.name)
                     .setPreferredQuality(AudioQuality.VERY_HIGH)
+                    // Kainos owns the queue. A directly loaded track is its own context, which
+                    // librespot would otherwise follow with a radio station of its own.
+                    .setAutoplayEnabled(false)
                     // Max Connect soft-volume (0–65536). Keep parity with local ExoPlayer at full gain.
                     .setInitialVolume(SPOTIFY_MAX_CONNECT_VOLUME)
                     // Match Spotify's Loud volume normalisation (+3 dB pregain).
@@ -173,6 +179,48 @@ internal class AndroidLibrespotPlaybackHost(
         val receiver = player ?: return@withLock false
         receiver.setVolume((volume.coerceIn(0f, 1f) * Player.VOLUME_MAX).toInt())
         true
+    }
+
+    override suspend fun playTrack(trackId: String): Boolean {
+        val receiver = mutex.withLock {
+            ensureStarted(interactive = false, oauthCredentials = null) ?: return false
+            player
+        } ?: return false
+        val uri = "spotify:track:$trackId"
+        return runDirect("load $uri") {
+            // A fresh player must finish registering with Spotify before it can load.
+            receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
+            // Synchronous: resolves the one-track context and starts loading its audio.
+            receiver.load(uri, true, false)
+            check(receiver.currentPlayable()?.toSpotifyUri() == uri) { "player did not take $uri" }
+        }
+    }
+
+    override suspend fun pause() = onReceiver("pause") { it.pause() }
+
+    override suspend fun resume() = onReceiver("resume") { it.play() }
+
+    override suspend fun seek(positionMs: Long) =
+        onReceiver("seek") { it.seek(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
+
+    private suspend fun onReceiver(action: String, command: (Player) -> Unit): Boolean {
+        val receiver = mutex.withLock { player } ?: return false
+        return runDirect(action) { command(receiver) }
+    }
+
+    /**
+     * Player calls block and ignore cancellation, so a skipped load still finishes. Running them
+     * one at a time keeps a stale load from landing after the next track's, or after a pause.
+     * Failures return false so the caller falls back to the Web API.
+     */
+    private suspend fun runDirect(action: String, command: () -> Unit): Boolean = try {
+        directCommands.withLock { withContext(Dispatchers.IO) { command() } }
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        PlaybackTrace.log("Librespot", "direct $action failed, using the Web API: $failure")
+        false
     }
 
     override suspend fun shutdown() = mutex.withLock {
@@ -348,6 +396,7 @@ internal class AndroidLibrespotPlaybackHost(
         private const val TAG = "KainosSpotify"
         private const val CONNECT_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 750L
+        private const val RECEIVER_READY_TIMEOUT_S = 10L
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
         /** librespot-java Connect volume scale; 65536 is unity / max. */
