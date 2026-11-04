@@ -36,13 +36,15 @@ import java.nio.file.Files
 import java.nio.file.Path
 import javax.imageio.ImageIO
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /** Search to an in-app Spotify playlist page and back, with a fake provider standing in for the network. */
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)
 class SearchPlaylistUiTest {
     private val playlist = Playlist(
         canonicalId = "spotify-playlist:night",
@@ -55,17 +57,24 @@ class SearchPlaylistUiTest {
     private val firstPage = List(50) { song(PAGE_ONE_TITLES[it % PAGE_ONE_TITLES.size] + " ${it + 1}", ARTISTS[it % ARTISTS.size]) }
     private val secondPage = List(10) { song("Late Track ${it + 51}", "Tide") }
     private val played = mutableListOf<String>()
-    private val requested = mutableListOf<String?>()
+    // Share Compose's virtual scheduler, including search debounce and provider dispatch.
+    private val providerDispatcher = StandardTestDispatcher()
+    private data class PageRequest(
+        val cursor: String?,
+        val response: CompletableDeferred<PlaylistTracksPage> = CompletableDeferred(),
+    )
+    private val pageRequests = mutableListOf<PageRequest>()
+    private val requested get() = pageRequests.map { it.cursor }
     private val opened = mutableListOf<String>()
 
     private fun song(title: String, artist: String): Track =
         track(title, artist, provider = ProviderId.SPOTIFY, canonicalId = "spotify:$title")
 
-    private fun ComposeUiTest.showSearch(secondPageFails: Boolean = false, firstPageEmpty: Boolean = false) {
+    private fun ComposeUiTest.showSearch() {
         setContent {
             TestTheme {
                 val scope = rememberCoroutineScope()
-                val presenter = remember { presenter(scope, secondPageFails, firstPageEmpty) }
+                val presenter = remember { presenter(scope) }
                 SearchScreen(
                     presenter = presenter,
                     onPlayTrackInList = { _, _ -> },
@@ -77,10 +86,10 @@ class SearchPlaylistUiTest {
             }
         }
         onNode(hasSetTextAction()).performTextInput("night")
-        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private fun presenter(scope: CoroutineScope, secondPageFails: Boolean, firstPageEmpty: Boolean) = SearchPresenter(
+    private fun presenter(scope: CoroutineScope) = SearchPresenter(
         settings = MutableStateFlow(AppSettings()),
         spotify = MutableStateFlow(ProviderState.AVAILABLE),
         youtube = MutableStateFlow(ProviderState.NOT_CONFIGURED),
@@ -88,20 +97,11 @@ class SearchPlaylistUiTest {
         search = { UnifiedSearchResult(results, emptyList(), emptyList(), listOf(playlist), emptyMap()) },
         availability = { TrackAvailabilityInfo(TrackAvailability.STREAMABLE, "Spotify", PlaybackSourceKind.SPOTIFY_STREAM, "Spotify") },
         loadPlaylistPage = { _, cursor ->
-            // A retry is asynchronous too; Compose idleness does not mean this request has run.
-            if (cursor != null) delay(1_000)
-            requested += cursor
-            when {
-                // Slow enough that the page is laid out, and near its end, while this page is still loading.
-                cursor == null && firstPageEmpty -> {
-                    delay(500)
-                    PlaylistTracksPage(emptyList(), next = "50", total = 62)
-                }
-                cursor == null -> PlaylistTracksPage(firstPage, next = "50", total = 62)
-                secondPageFails -> error("Spotify is rate-limiting right now. Wait a few minutes.")
-                else -> PlaylistTracksPage(secondPage, next = null, total = 62)
-            }
+            val request = PageRequest(cursor)
+            pageRequests += request
+            request.response.await()
         },
+        searchDispatcher = providerDispatcher,
         scope = scope,
     )
 
@@ -110,20 +110,37 @@ class SearchPlaylistUiTest {
     private fun ComposeUiTest.openPlaylistFromResults() {
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
         text("Night Ferry").performClick()
-        // The header comes from the search result; wait for the first page of songs.
-        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
+        awaitRequests(listOf(null))
+        releasePage(0, PlaylistTracksPage(firstPage, next = "50", total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    /** Reach the loaded page's end, wait for its successor, then find the target row. */
-    private fun ComposeUiTest.scrollToOnceLoaded(text: String, firstLoadedText: String = text) {
-        // The header is index 0, so the last loaded song is at firstPage.size.
-        onNode(hasScrollToIndexAction()).performScrollToIndex(firstPage.size)
-        // A full lazy-list search is an action, not a polling predicate: it resets to the top
-        // on each miss and can consume the entire wait deadline on a slower runner.
-        waitUntil(timeoutMillis = WAIT_MS) {
-            onAllNodes(hasText(firstLoadedText)).fetchSemanticsNodes().isNotEmpty()
+    private fun ComposeUiTest.awaitRequests(expected: List<String?>) {
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { requested.size >= expected.size }
+        assertEquals(expected, requested)
+    }
+
+    private fun ComposeUiTest.releasePage(index: Int, page: PlaylistTracksPage) {
+        runOnIdle { check(pageRequests[index].response.complete(page)) }
+    }
+
+    private fun ComposeUiTest.failPage(index: Int) {
+        runOnIdle {
+            check(pageRequests[index].response.completeExceptionally(
+                IllegalStateException("Spotify is rate-limiting right now. Wait a few minutes."),
+            ))
         }
-        onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) {
+            onAllNodes(hasText("Try again")).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun ComposeUiTest.requestNextPage() {
+        // Header is index 0; index 50 is the last song already loaded.
+        onNode(hasScrollToIndexAction()).performScrollToIndex(50)
+        awaitRequests(listOf(null, "50"))
+        // The provider remains suspended however many frames the layout needs.
+        text("Loading more songs").assertExists()
     }
 
     private fun ComposeUiTest.savePng(name: String) {
@@ -141,7 +158,7 @@ class SearchPlaylistUiTest {
         ImageIO.write(image, "png", directory.resolve(name).toFile())
     }
 
-    @Test fun aPlaylistResultOpensItsPageAndBackKeepsTheResultsScroll() = runDesktopComposeUiTest(width = 560, height = 900) {
+    @Test fun aPlaylistResultOpensItsPageAndBackKeepsTheResultsScroll() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
         showSearch()
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
         text("Spotify playlist by Harbour Radio, 62 songs").assertIsDisplayed()
@@ -162,7 +179,12 @@ class SearchPlaylistUiTest {
         assertEquals(listOf("https://open.spotify.com/playlist/night"), opened)
 
         // The second page loads once the list nears the end of the first.
-        scrollToOnceLoaded("Late Track 60", firstLoadedText = "Late Track 51")
+        requestNextPage()
+        releasePage(1, PlaylistTracksPage(secondPage, next = null, total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) {
+            onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Late Track 60"))
         waitForIdle()
         assertEquals(listOf(null, "50"), requested, "Scrolling near the end loads the next page")
         text("2 songs in this playlist are unavailable on Spotify and not shown.").assertIsDisplayed()
@@ -175,25 +197,30 @@ class SearchPlaylistUiTest {
         text("Spotify playlist by Harbour Radio, 62 songs").assertIsDisplayed()
     }
 
-    @Test fun playAndARowQueueTheWholePlaylist() = runDesktopComposeUiTest(width = 560, height = 900) {
+    @Test fun playAndARowQueueTheWholePlaylist() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
         showSearch()
         openPlaylistFromResults()
         text("Play").performClick()
-        waitUntil(timeoutMillis = WAIT_MS) { played.isNotEmpty() }
+        awaitRequests(listOf(null, "50"))
+        assertEquals(emptyList(), played, "Play waits for the whole playlist")
+        releasePage(1, PlaylistTracksPage(secondPage, next = null, total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { played.isNotEmpty() }
         assertEquals(listOf("60|0|false"), played)
 
         text("Shuffle").performClick()
-        waitUntil(timeoutMillis = WAIT_MS) { played.size == 2 }
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { played.size == 2 }
         text("Moonlit Quay 6").performClick()
-        waitUntil(timeoutMillis = WAIT_MS) { played.size == 3 }
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { played.size == 3 }
         assertEquals(listOf("60|0|false", "60|0|true", "60|5|false"), played)
         assertEquals(listOf(null, "50"), requested, "Pages already in are not fetched again")
     }
 
-    @Test fun aFailedPageKeepsTheSongsAndOffersTryAgain() = runDesktopComposeUiTest(width = 560, height = 900) {
-        showSearch(secondPageFails = true)
+    @Test fun aFailedPageKeepsTheSongsAndOffersTryAgain() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
+        showSearch()
         openPlaylistFromResults()
-        scrollToOnceLoaded("Try again")
+        requestNextPage()
+        failPage(1)
+        onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Try again"))
         waitForIdle()
         text("Showing the first 50 songs. The next page did not load. Spotify is rate-limiting right now. Wait a few minutes.")
             .assertIsDisplayed()
@@ -202,24 +229,26 @@ class SearchPlaylistUiTest {
         assertEquals(listOf(null, "50"), requested, "A failed page is not retried on its own")
 
         text("Try again").performClick()
-        // waitForIdle can return while the provider coroutine is suspended. Wait for the
-        // retry to run and finish, rather than asserting against the previous failure.
-        waitUntil(timeoutMillis = WAIT_MS) {
-            requested.size == 3 && onAllNodes(hasText("Try again")).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitRequests(listOf(null, "50", "50"))
+        text("Try again").assertDoesNotExist()
+        failPage(2)
         assertEquals(listOf(null, "50", "50"), requested)
     }
 
-    @Test fun aFirstPageWithNoPlayableSongsStillLoadsTheNext() = runDesktopComposeUiTest(width = 560, height = 900) {
-        showSearch(firstPageEmpty = true)
+    @Test fun aFirstPageWithNoPlayableSongsStillLoadsTheNext() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
+        showSearch()
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
         text("Night Ferry").performClick()
-        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty() }
+        awaitRequests(listOf(null))
+        releasePage(0, PlaylistTracksPage(emptyList(), next = "50", total = 62))
+        awaitRequests(listOf(null, "50"))
+        releasePage(1, PlaylistTracksPage(secondPage, next = null, total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty() }
         assertEquals(listOf(null, "50"), requested)
     }
 
     private companion object {
-        /** Generous: these run beside other Gradle builds on the same machine and in CI. */
+        /** Virtual-time bound: a missing state fails without depending on runner speed. */
         const val WAIT_MS = 20_000L
         val PAGE_ONE_TITLES = listOf("Moonlit Quay", "Signal Fires", "Low Tide Waltz", "Gull Static", "Lantern Row")
         val ARTISTS = listOf("Neon Coast", "Tide", "The Breakwaters", "Mara Vell")
