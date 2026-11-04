@@ -93,6 +93,7 @@ class LibraryFoldersUiTest {
     @Test fun backGoesUpOneLevelAndLandsWhereTheListWas() = runDesktopComposeUiTest(width = 800, height = 700) {
         showFolders()
         assertNull(back, "Nothing to go back to at the list of music folders")
+        onNodeWithText("81 local", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithText("music").performClick()
         waitForIdle()
         onNodeWithText("40 folders, 81 tracks").assertIsDisplayed()

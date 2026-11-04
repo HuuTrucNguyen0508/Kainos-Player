@@ -89,7 +89,7 @@ internal fun ColumnScope.LibraryFoldersTab(
             if (trail == null || folder == null) {
                 LibraryLedger(
                     countLine = countNoun(state.folders.size, "music folder", "music folders"),
-                    localCount = 0,
+                    localCount = state.folders.flatMap { it.allTracks }.distinctBy { it.canonicalId }.size,
                     spotifyCount = 0,
                     localOnly = true,
                     favoritesOnly = state.favoritesOnly,
