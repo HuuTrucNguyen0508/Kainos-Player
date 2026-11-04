@@ -88,6 +88,8 @@ class SearchPlaylistUiTest {
         search = { UnifiedSearchResult(results, emptyList(), emptyList(), listOf(playlist), emptyMap()) },
         availability = { TrackAvailabilityInfo(TrackAvailability.STREAMABLE, "Spotify", PlaybackSourceKind.SPOTIFY_STREAM, "Spotify") },
         loadPlaylistPage = { _, cursor ->
+            // A retry is asynchronous too; Compose idleness does not mean this request has run.
+            if (cursor != null) delay(1_000)
             requested += cursor
             when {
                 // Slow enough that the page is laid out, and near its end, while this page is still loading.
@@ -97,11 +99,7 @@ class SearchPlaylistUiTest {
                 }
                 cursor == null -> PlaylistTracksPage(firstPage, next = "50", total = 62)
                 secondPageFails -> error("Spotify is rate-limiting right now. Wait a few minutes.")
-                else -> {
-                    // Keep page completion asynchronous, including when the UI has reached the end.
-                    delay(1_000)
-                    PlaylistTracksPage(secondPage, next = null, total = 62)
-                }
+                else -> PlaylistTracksPage(secondPage, next = null, total = 62)
             }
         },
         scope = scope,
@@ -204,7 +202,11 @@ class SearchPlaylistUiTest {
         assertEquals(listOf(null, "50"), requested, "A failed page is not retried on its own")
 
         text("Try again").performClick()
-        waitForIdle()
+        // waitForIdle can return while the provider coroutine is suspended. Wait for the
+        // retry to run and finish, rather than asserting against the previous failure.
+        waitUntil(timeoutMillis = WAIT_MS) {
+            requested.size == 3 && onAllNodes(hasText("Try again")).fetchSemanticsNodes().isNotEmpty()
+        }
         assertEquals(listOf(null, "50", "50"), requested)
     }
 
