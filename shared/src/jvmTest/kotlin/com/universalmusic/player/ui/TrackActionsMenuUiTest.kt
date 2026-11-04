@@ -7,6 +7,9 @@ import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -23,7 +26,6 @@ import com.universalmusic.player.ui.screens.ActionTrackRow
 import com.universalmusic.player.ui.screens.TrackMenuExtra
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import com.universalmusic.player.ui.components.TrackRow
 
 @OptIn(ExperimentalTestApi::class)
@@ -107,20 +109,16 @@ class TrackActionsMenuUiTest {
 
     @Test fun theMenuButtonDoesNotMakeRowsTaller() = runDesktopComposeUiTest(width = 600, height = 600) {
         val actions = RecordedTrackActions()
-        val first = track("Ferric", "Halden", provider = ProviderId.LOCAL, canonicalId = "local:2")
-        val last = track("Tideline", "Reyes", provider = ProviderId.LOCAL, canonicalId = "local:3")
+        val plain = track("Ferric", "Halden", provider = ProviderId.LOCAL, canonicalId = "local:2")
         setContent {
             TestTheme {
                 Column {
-                    TrackRow(first, onClick = {}, compact = true)
-                    ActionTrackRow(song, actions.presenter, onClick = {}, compact = true)
-                    TrackRow(last, onClick = {}, compact = true)
+                    TrackRow(plain, onClick = {}, compact = true, modifier = Modifier.testTag("plain"))
+                    ActionTrackRow(song, actions.presenter, onClick = {}, compact = true, modifier = Modifier.testTag("menu"))
                 }
             }
         }
-        fun top(title: String) = text(title).getBoundsInRoot().top.value
-        val plainRow = top("Glass Harbour") - top("Ferric")
-        val menuRow = top("Tideline") - top("Glass Harbour")
-        assertEquals(plainRow, menuRow, "A row with the ⋮ is as tall as one without")
+        fun height(tag: String) = onNodeWithTag(tag).getBoundsInRoot().let { it.bottom - it.top }.value
+        assertEquals(height("plain"), height("menu"), "A row with the ⋮ is as tall as one without")
     }
 }
