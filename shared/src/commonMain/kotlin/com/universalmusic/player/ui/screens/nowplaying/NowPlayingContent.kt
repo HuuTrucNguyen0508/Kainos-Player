@@ -148,10 +148,11 @@ internal fun shuffleDisplay(on: Boolean): ShuffleDisplay = ShuffleDisplay(
 
 internal fun sleepTimerRemainingLabel(state: SleepTimerState): String? {
     if (!state.active) return null
-    return when (val mode = state.mode) {
+    val lead = if (state.fading) "Fading out" else "Sleep"
+    return when (state.mode) {
         is SleepTimerMode.Duration ->
-            state.remainingMs?.let { "Sleep · ${formatSleepTimerRemaining(it)}" } ?: "Sleep timer"
-        is SleepTimerMode.EndOfTrack -> "Sleep · end of track"
+            state.remainingMs?.let { "$lead · ${formatSleepTimerRemaining(it)}" } ?: "Sleep timer"
+        is SleepTimerMode.EndOfTrack -> "$lead · end of track"
         null -> "Sleep timer"
     }
 }

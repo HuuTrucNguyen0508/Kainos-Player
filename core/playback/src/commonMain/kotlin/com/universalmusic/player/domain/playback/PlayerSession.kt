@@ -80,6 +80,13 @@ class PlayerSession(
     private val _volume = MutableStateFlow(1f)
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
+    /** Sleep-timer fade multiplier on the engine volume; [volume] itself never moves. Session thread only. */
+    private var sleepFadeGain = 1f
+    /** A fade ended; resend the volume on the next resume in case the restore was dropped (Spotify 429 cooldown). */
+    private var reapplyVolumeOnResume = false
+
+    private fun engineVolume(): Float = _volume.value * sleepFadeGain
+
     private val ledger = ListeningLedger(persistence, queueState, nowPlaying, scope, sessionContext, clock)
     private val refiller = QueueRefiller(queue, scope, sessionContext, workContext) {
         ledger.record(ListeningChange.AUTOMATIC)
@@ -92,7 +99,7 @@ class PlayerSession(
         scope, sessionContext, clock,
     )
     private val starter = TrackStarter(
-        engine, sources, preferences, volume, _nowPlaying, turn, prefetcher, isFavorite,
+        engine, sources, preferences, ::engineVolume, _nowPlaying, turn, prefetcher, isFavorite,
         onEngineStarted = { target -> if (startupTarget === target) startupTarget = null },
         onSpeculativeUrlRejected = { resumeAt ->
             pendingResumePositionMs = resumeAt
@@ -617,6 +624,10 @@ class PlayerSession(
         if (pausePending || engineStatus == EngineStatus.PAUSED) {
             pausePending = false
             _nowPlaying.update { it.copy(isPlaying = true) }
+            if (reapplyVolumeOnResume) {
+                reapplyVolumeOnResume = false
+                engine.setVolume(engineVolume())
+            }
             engine.resume()
             ledger.record(ListeningChange.LOCAL_INTENT)
         } else if (engineStatus == EngineStatus.IDLE || engineStatus == EngineStatus.ENDED || engineStatus == EngineStatus.FAILED) {
@@ -648,7 +659,21 @@ class PlayerSession(
     fun setVolume(volume: Float) {
         val next = volume.coerceIn(0f, 1f)
         _volume.value = next
-        onSession { engine.setVolume(next) }
+        onSession { engine.setVolume(engineVolume()) }
+    }
+
+    /**
+     * Sleep-timer fade: scales the engine volume by [gain] (0–1) without touching [volume],
+     * so the slider, MPRIS and the saved setting keep the user's level. 1 restores it.
+     */
+    internal fun setSleepFadeGain(gain: Float) = onSession {
+        val next = gain.coerceIn(0f, 1f)
+        if (next == sleepFadeGain) return@onSession
+        if (next == 1f) reapplyVolumeOnResume = true
+        sleepFadeGain = next
+        val applied = engineVolume()
+        trace("sleepFade gain=${(next * 1000).toInt() / 1000f} engineVolume=${(applied * 1000).toInt() / 1000f}")
+        engine.setVolume(applied)
     }
 
     /** Manual next: escapes Repeat One. */

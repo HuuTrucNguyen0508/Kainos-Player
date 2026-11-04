@@ -30,7 +30,7 @@ internal class TrackStarter(
     private val engine: PlaybackEngine,
     private val sources: TrackSources,
     private val currentPreferences: StateFlow<PlaybackPreferences>,
-    private val volume: StateFlow<Float>,
+    private val engineVolume: () -> Float,
     private val nowPlaying: MutableStateFlow<NowPlayingState>,
     private val turn: PlaybackTurn,
     private val prefetcher: SuccessorPrefetcher,
@@ -132,7 +132,7 @@ internal class TrackStarter(
                 engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == turn.generation) {
-                engine.setVolume(volume.value)
+                engine.setVolume(engineVolume())
                 target?.positionMs?.let(engine::seekTo)
                 onEngineStarted(target)
             }

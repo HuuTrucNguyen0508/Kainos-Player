@@ -188,7 +188,8 @@ class NowPlayingRecorderTest {
         monotonic = 5_000
         advanceTimeBy(1_000)
         settle(timed)
-        assertEquals(Row(timedId, "yt:a", 4_000, T0 + 4_000, false, T0 + 4_000), timed.store.latest.row())
+        // A 5 s timer is all fade, so it ticks every 250 ms and pauses on the first tick past its deadline.
+        assertEquals(Row(timedId, "yt:a", 4_000, T0 + 3_250, false, T0 + 3_250), timed.store.latest.row())
 
         val stopped = timed.session.localRevision
         timed.session.pauseForSleepTimer()
