@@ -3,6 +3,7 @@ package com.universalmusic.player.platform
 import com.universalmusic.player.data.auth.TokenStore
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.history.PlayHistoryStore
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -24,6 +25,8 @@ expect fun createKainosPlaylistStore(): KainosPlaylistStore
 expect fun createListeningStore(): ListeningStore
 
 expect fun createListeningExchangeStore(): ListeningExchangeStore
+
+expect fun createPlayHistoryStore(): PlayHistoryStore
 
 expect fun createMetadataArtworkCache(): MetadataArtworkCache
 

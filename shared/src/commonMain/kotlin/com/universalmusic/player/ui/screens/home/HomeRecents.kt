@@ -35,6 +35,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
 import com.universalmusic.player.ui.theme.LocalKainosPalette
@@ -49,26 +50,84 @@ internal fun ContinueListeningSection(
     modifier: Modifier = Modifier,
     trackActions: TrackActionsPresenter? = null,
 ) {
-    if (tracks.isEmpty()) return
+    LedgerShelf(
+        title = "Continue listening",
+        caption = "${tracks.size} recent",
+        accent = Accents.home,
+        rows = tracks.map { LedgerEntry(it) },
+        columns = columns,
+        onPlayTracks = onPlayTracks,
+        modifier = modifier,
+        trackActions = trackActions,
+    )
+}
+
+/** One of Home's history shelves; tapping a row plays the shelf from that row. */
+@Composable
+internal fun HistoryShelf(
+    shelf: HomeShelf,
+    columns: Int,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    modifier: Modifier = Modifier,
+    trackActions: TrackActionsPresenter? = null,
+) {
+    val (title, caption, accent) = when (shelf.kind) {
+        ShelfKind.ON_REPEAT -> Triple("On repeat", "Most played in the last 30 days", Accents.repeat)
+        ShelfKind.REDISCOVER -> Triple("Rediscover", "Hearted, last played over two months ago", Accents.heart)
+        ShelfKind.RECENTLY_ADDED -> Triple("Recently added", "Newest files in your music folders", Accents.local)
+    }
+    LedgerShelf(
+        title = title,
+        caption = caption,
+        accent = accent,
+        rows = shelf.rows.take(shelfRowLimit(columns)).map {
+            LedgerEntry(it.track, it.note, emphasized = shelf.kind == ShelfKind.ON_REPEAT)
+        },
+        columns = columns,
+        onPlayTracks = onPlayTracks,
+        modifier = modifier,
+        trackActions = trackActions,
+    )
+}
+
+/** [note] replaces the duration when set; [emphasized] draws it in the shelf's accent. */
+private data class LedgerEntry(val track: Track, val note: String? = null, val emphasized: Boolean = false)
+
+@Composable
+private fun LedgerShelf(
+    title: String,
+    caption: String,
+    accent: AccentSlot,
+    rows: List<LedgerEntry>,
+    columns: Int,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    modifier: Modifier = Modifier,
+    trackActions: TrackActionsPresenter? = null,
+) {
+    if (rows.isEmpty()) return
+    val tracks = rows.map { it.track }
+    val noteColor = LocalKainosPalette.current.accent(accent, AccentUse.Mark)
     Column(modifier) {
-        SectionRule("Continue listening", Modifier.padding(bottom = 4.dp), accent = Accents.home) {
+        SectionRule(title, Modifier.padding(bottom = 4.dp), accent = accent) {
             Text(
-                "${tracks.size} recent",
+                caption,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        tracks.chunked(columns).forEach { rowTracks ->
+        rows.withIndex().chunked(columns).forEach { line ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                rowTracks.forEach { track ->
+                line.forEach { (index, entry) ->
                     LedgerRow(
-                        track = track,
-                        onClick = { onPlayTracks(tracks, tracks.indexOf(track)) },
+                        track = entry.track,
+                        onClick = { onPlayTracks(tracks, index) },
                         modifier = Modifier.weight(1f),
                         trackActions = trackActions,
+                        note = entry.note,
+                        noteColor = if (entry.emphasized) noteColor else null,
                     )
                 }
-                repeat(columns - rowTracks.size) { Spacer(Modifier.weight(1f)) }
+                repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -80,6 +139,8 @@ private fun LedgerRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trackActions: TrackActionsPresenter? = null,
+    note: String? = null,
+    noteColor: Color? = null,
 ) {
     var menuOpen by remember(track.canonicalId) { mutableStateOf(false) }
     val openMenu: (() -> Unit)? = trackActions?.let { { menuOpen = true } }
@@ -93,7 +154,9 @@ private fun LedgerRow(
     Row(
         modifier
             .height(IntrinsicSize.Min)
-            .semantics { contentDescription = "${track.title}. $artistLine. $sourceLabel" },
+            .semantics {
+                contentDescription = listOfNotNull(track.title, artistLine, note, sourceLabel).joinToString(". ")
+            },
     ) {
         Box(
             Modifier
@@ -138,11 +201,12 @@ private fun LedgerRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                track.durationMs?.takeIf { it > 0 }?.let { ms ->
+                val trailing = note ?: track.durationMs?.takeIf { it > 0 }?.let(::formatTime)
+                if (trailing != null) {
                     Text(
-                        formatTime(ms),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        trailing,
+                        style = if (noteColor != null) MaterialTheme.typography.labelLarge else MaterialTheme.typography.labelSmall,
+                        color = noteColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (trackActions != null) {

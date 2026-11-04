@@ -28,6 +28,23 @@ class LocalMusicProviderTest {
     }
 
     @Test
+    fun recentlyAddedListsNewestModifiedFilesFirstAndSkipsFilesWithoutATime() = runTest {
+        val provider = LocalMusicProvider(LocalTrackSource {
+            listOf(
+                LocalTrack("old", "Old", location = "/old", fileModifiedEpochMs = 100),
+                LocalTrack("untimed", "Untimed", location = "/untimed"),
+                LocalTrack("new", "New", location = "/new", fileModifiedEpochMs = 300),
+                LocalTrack("mid", "Mid", location = "/mid", fileModifiedEpochMs = 200),
+            )
+        })
+        provider.refresh()
+        assertEquals(
+            listOf("New" to 300L, "Mid" to 200L, "Old" to 100L),
+            provider.recentlyAdded.value.map { it.track.title to it.addedAtMs },
+        )
+    }
+
+    @Test
     fun keysReuseOnlyUnchangedFingerprintsAndReachPersistedMetadata() = runTest {
         var snapshot = listOf(LocalTrack("key", "Track", location = "/track", contentLength = 8, fileModifiedEpochMs = 1))
         var reads = 0

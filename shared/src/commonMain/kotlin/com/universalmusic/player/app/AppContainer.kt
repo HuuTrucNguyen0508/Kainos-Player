@@ -8,6 +8,7 @@ import com.universalmusic.player.data.cache.toLocalPlaybackSource
 import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.history.ListeningHistory
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
@@ -71,6 +72,7 @@ import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.playback.FlushResult
 import com.universalmusic.player.domain.playback.HandoffPeer
 import com.universalmusic.player.domain.playback.ListeningHandoff
+import com.universalmusic.player.domain.playback.ListenTracker
 import com.universalmusic.player.domain.playback.RemotePlayerAdapter
 import com.universalmusic.player.data.sync.RemoteLinkHost
 import com.universalmusic.player.data.sync.listeningDeliveryTarget
@@ -102,6 +104,8 @@ import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.createListeningExchangeStore
 import com.universalmusic.player.platform.createListeningStore
+import com.universalmusic.player.platform.createPlayHistoryStore
+import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.createTokenStore
 import com.universalmusic.player.platform.createUserLibraryStore
 import com.universalmusic.player.platform.createKainosPlaylistStore
@@ -147,6 +151,7 @@ class AppContainer(
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
     val listeningStore: ListeningStore = createListeningStore()
+    val listeningHistory = ListeningHistory(createPlayHistoryStore(), scope, ::currentTimeMillis)
     private val foregroundHandoff = ForegroundHandoff { requestHandoff() }
     private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore(), foregroundHandoff::onPeerChanged)
 
@@ -318,6 +323,12 @@ class AppContainer(
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
+    init {
+        scope.launch {
+            val tracker = ListenTracker(::currentTimeMillis)
+            player.nowPlaying.collect { state -> tracker.observe(state)?.let(listeningHistory::record) }
+        }
+    }
     init { startupMark("player_end") }
     val sleepTimer = SleepTimerController(
         player = player,
@@ -460,6 +471,7 @@ class AppContainer(
             AppFailures.reporting { library.load(spotify.currentUserId()) }
             startupMark("library_load_end")
             AppFailures.reporting { kainosPlaylists.load() }
+            AppFailures.reporting { listeningHistory.load() }
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
             heartedAudio.enqueueMissing(hearted)

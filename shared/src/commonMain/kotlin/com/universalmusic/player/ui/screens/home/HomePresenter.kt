@@ -1,7 +1,9 @@
 package com.universalmusic.player.ui.screens
 
 import com.universalmusic.player.app.AppContainer
+import com.universalmusic.player.data.history.PlayHistory
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
@@ -9,6 +11,7 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.NowPlayingState
+import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.defaultLocalMusicFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +39,7 @@ internal data class HomeUiState(
     /** Music is here but nothing has played yet; the local source says whether it can. */
     val firstSound: SourceReadiness?,
     val favorites: FavoritesSummary,
+    val shelves: List<HomeShelf>,
     val libraryLines: List<LibraryLine>,
     val localTrackCount: Int,
     val discoverBusy: Boolean,
@@ -83,6 +87,9 @@ internal class HomePresenter(
     private val pinSuggestionHome: (PinSuggestion) -> Unit,
     private val scope: CoroutineScope,
     private val retryLocal: () -> Unit = {},
+    private val playHistory: StateFlow<PlayHistory> = MutableStateFlow(PlayHistory.EMPTY),
+    private val recentlyAdded: StateFlow<List<AddedTrack>> = MutableStateFlow(emptyList()),
+    private val clock: () -> Long = ::currentTimeMillis,
 ) {
     // Home reads track and play state only. Position ticks must not rebuild the landing page.
     private val stableNow = nowPlaying
@@ -110,7 +117,9 @@ internal class HomePresenter(
         ) { spotify, youtube, local, tracks, discover ->
             ProviderSlice(spotify, youtube, local, tracks, discover)
         },
-        combine(savedTracks, spotifyTracks) { saved, spotify -> CatalogSlice(saved, spotify) },
+        combine(savedTracks, spotifyTracks, playHistory, recentlyAdded) { saved, spotify, history, added ->
+            CatalogSlice(saved, spotify, history, added)
+        },
         combine(stableNow, settings, actions, ready, sources) { now, appSettings, action, loaded, readiness ->
             PlaybackSlice(now, appSettings, action, loaded, readiness)
         },
@@ -271,7 +280,7 @@ internal class HomePresenter(
             localTracks.value,
             discoverWeekly.value,
         ),
-        CatalogSlice(savedTracks.value, spotifyTracks.value),
+        CatalogSlice(savedTracks.value, spotifyTracks.value, playHistory.value, recentlyAdded.value),
         PlaybackSlice(
             nowPlaying.value.copy(positionMs = 0),
             settings.value,
@@ -338,6 +347,13 @@ internal class HomePresenter(
             firstSound = playback.sources.firstOrNull { it.source == MusicSource.Local }
                 ?.takeIf { playback.ready && providers.localTracks.isNotEmpty() && library.recent.isEmpty() && now.track == null },
             favorites = favorites,
+            shelves = homeShelves(
+                history = catalog.history,
+                favorites = library.favorites,
+                catalog = providers.localTracks + catalog.saved + catalog.spotify,
+                recentlyAdded = catalog.added,
+                nowMs = clock(),
+            ),
             libraryLines = libraryLines(playback.sources, favorites, library.kainos.size),
             localTrackCount = providers.localTracks.size,
             discoverBusy = action.discoverBusy,
@@ -366,6 +382,8 @@ internal class HomePresenter(
     private data class CatalogSlice(
         val saved: List<Track>,
         val spotify: List<Track>,
+        val history: PlayHistory,
+        val added: List<AddedTrack>,
     )
 
     private data class PlaybackSlice(
@@ -417,6 +435,8 @@ internal class HomePresenter(
                 )
             },
             scope = scope,
+            playHistory = container.listeningHistory.history,
+            recentlyAdded = container.local.recentlyAdded,
         )
     }
 }

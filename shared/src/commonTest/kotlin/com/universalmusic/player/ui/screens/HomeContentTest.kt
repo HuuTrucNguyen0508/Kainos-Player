@@ -1,6 +1,9 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.history.PlayCount
+import com.universalmusic.player.data.history.PlayHistory
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
@@ -315,6 +318,54 @@ class HomePresenterTest {
         )
     }
 
+    @Test
+    fun historyShelvesShowRepeatsForgottenHeartsAndNewFilesAndHideWhenEmpty() = runTest(UnconfinedTestDispatcher()) {
+        val day = 24L * 60 * 60 * 1000
+        val now = 400 * day
+        val loop = track("Loop", "A", provider = ProviderId.LOCAL, canonicalId = "local:loop")
+        val stale = track("Stale", "B", provider = ProviderId.SPOTIFY, canonicalId = "spotify:stale")
+        val recentHeart = track("Fresh heart", "C", provider = ProviderId.SPOTIFY, canonicalId = "spotify:fresh")
+        val unhearted = track("Unhearted", "D", provider = ProviderId.LOCAL, canonicalId = "local:old")
+        val newFile = track("New file", "E", provider = ProviderId.LOCAL, canonicalId = "local:new")
+        val history = MutableStateFlow(PlayHistory.EMPTY)
+        val added = MutableStateFlow<List<AddedTrack>>(emptyList())
+        val presenter = homePresenter(
+            favoriteIds = MutableStateFlow(setOf("spotify:stale", "spotify:fresh")),
+            localTracks = MutableStateFlow(listOf(loop, unhearted, newFile)),
+            savedTracks = MutableStateFlow(listOf(stale, recentHeart)),
+            playHistory = history,
+            recentlyAdded = added,
+            clock = { now },
+        )
+        assertEquals(emptyList(), presenter.state.value.shelves)
+
+        // History keeps its own snapshot; the live local copy wins when the library has it.
+        history.value = PlayHistory(
+            onRepeat = listOf(PlayCount(loop.copy(title = "Old title"), plays = 5, lastPlayedAtMs = now - day)),
+            lastPlayedAtMs = mapOf("local:loop" to now - day, "spotify:stale" to now - 75 * day,
+                "spotify:fresh" to now - 10 * day, "local:old" to now - 90 * day),
+        )
+        added.value = listOf(AddedTrack(newFile, now - 3 * day))
+
+        assertEquals(
+            listOf(
+                ShelfKind.ON_REPEAT to listOf("Loop" to "5 plays"),
+                ShelfKind.REDISCOVER to listOf("Stale" to "2 months ago"),
+                ShelfKind.RECENTLY_ADDED to listOf("New file" to "3 days ago"),
+            ),
+            presenter.state.value.shelves.map { shelf -> shelf.kind to shelf.rows.map { it.track.title to it.note } },
+        )
+    }
+
+    @Test
+    fun ageLabelsReadAsPlainRelativeTime() {
+        val day = 24L * 60 * 60 * 1000
+        assertEquals(
+            listOf("Today", "Yesterday", "6 days ago", "1 week ago", "4 weeks ago", "1 month ago", "11 months ago", "2 years ago"),
+            listOf(0L, 1, 6, 7, 29, 30, 364, 800).map { ageLabel(1_000 * day, 1_000 * day - it * day) },
+        )
+    }
+
     private fun TestScope.homePresenter(
         recentlyPlayed: StateFlow<List<Track>> = MutableStateFlow(emptyList()),
         homePins: StateFlow<List<PersistedHomePin>> = MutableStateFlow(emptyList()),
@@ -329,12 +380,16 @@ class HomePresenterTest {
         nowPlaying: StateFlow<NowPlayingState> = MutableStateFlow(NowPlayingState()),
         settings: StateFlow<AppSettings> = MutableStateFlow(AppSettings()),
         playFavoritesTracks: (Boolean) -> Boolean = { false },
+        savedTracks: StateFlow<List<Track>> = MutableStateFlow(emptyList()),
+        playHistory: StateFlow<PlayHistory> = MutableStateFlow(PlayHistory.EMPTY),
+        recentlyAdded: StateFlow<List<AddedTrack>> = MutableStateFlow(emptyList()),
+        clock: () -> Long = { 0 },
         scope: CoroutineScope = backgroundScope,
     ) = HomePresenter(
         recentlyPlayed = recentlyPlayed,
         homePins = homePins,
         favoriteIds = favoriteIds,
-        savedTracks = MutableStateFlow(emptyList()),
+        savedTracks = savedTracks,
         spotifyTracks = MutableStateFlow(emptyList()),
         spotifyState = spotifyState,
         youtubeState = youtubeState,
@@ -364,6 +419,9 @@ class HomePresenterTest {
         unpinHome = {},
         pinSuggestionHome = {},
         scope = scope,
+        playHistory = playHistory,
+        recentlyAdded = recentlyAdded,
+        clock = clock,
     )
 }
 

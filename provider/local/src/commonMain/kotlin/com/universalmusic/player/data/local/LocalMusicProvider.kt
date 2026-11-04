@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.local
 
+import com.universalmusic.player.data.history.HOME_SHELF_LIMIT
 import com.universalmusic.player.platform.logged
 import com.universalmusic.player.data.sync.localKeyHeartContentKey
 import com.universalmusic.player.domain.model.Album
@@ -46,6 +47,10 @@ class LocalMusicProvider(
         private set
     private val mutableLibraryTracks = MutableStateFlow<List<Track>>(emptyList())
     val libraryTracks: StateFlow<List<Track>> = mutableLibraryTracks.asStateFlow()
+    private val mutableRecentlyAdded = MutableStateFlow<List<AddedTrack>>(emptyList())
+
+    /** Files with the newest modification times first; files without one are left out. */
+    val recentlyAdded: StateFlow<List<AddedTrack>> = mutableRecentlyAdded.asStateFlow()
 
     /** Apply a persisted scan snapshot without marking the provider as loading. */
     fun applyCachedTracks(tracks: List<LocalTrack>) {
@@ -58,8 +63,18 @@ class LocalMusicProvider(
 
     private fun publish(tracks: List<LocalTrack>): List<Track> {
         val withArt = tracks.withCachedEmbeddedArtwork()
-        scanned.value = withArt
-        return withArt.map(LocalTrack::toDomain).also { mutableLibraryTracks.value = it }
+        show(withArt)
+        return mutableLibraryTracks.value
+    }
+
+    private fun show(next: List<LocalTrack>) {
+        scanned.value = next
+        val tracks = next.map(LocalTrack::toDomain)
+        mutableLibraryTracks.value = tracks
+        mutableRecentlyAdded.value = next.indices
+            .mapNotNull { i -> next[i].fileModifiedEpochMs?.let { AddedTrack(tracks[i], it) } }
+            .sortedByDescending(AddedTrack::addedAtMs)
+            .take(HOME_SHELF_LIMIT)
     }
 
     /** Cheap pass: attach covers already extracted on a previous run. */
@@ -138,8 +153,7 @@ class LocalMusicProvider(
                 } else current
             }
             if (changed) {
-                scanned.value = next
-                mutableLibraryTracks.value = next.map(LocalTrack::toDomain)
+                show(next)
                 dirty++
                 keyed++
             }
@@ -167,8 +181,7 @@ class LocalMusicProvider(
             }
         }
         if (!changed) return false
-        scanned.value = next
-        mutableLibraryTracks.value = next.map(LocalTrack::toDomain)
+        show(next)
         return true
     }
 
@@ -317,3 +330,6 @@ private fun LocalTrack.toDomain(): Track {
         localContentKey = contentKey,
     )
 }
+
+/** A local file and its modification time, which stands in for when it was added. */
+data class AddedTrack(val track: Track, val addedAtMs: Long)

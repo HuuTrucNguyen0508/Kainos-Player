@@ -138,6 +138,35 @@ class DatabaseRoundTripTest {
     }
 
     @Test
+    fun migrationFromSchemaSixKeepsLibraryRowsAndAddsAnEmptyPlayHistory() = runTest {
+        val directory = Files.createTempDirectory("kainos-v6-v7-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/6.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            listOf(
+                "INSERT INTO favorite VALUES (0, 'local:hearted')",
+                "INSERT INTO recent_track VALUES (0, 'yt:1', '{}')",
+                "INSERT INTO local_listening_export VALUES (0, 7, 1000, NULL)",
+            ).forEach { driver.execute(null, it, 0) }
+            KainosDatabase.Schema.migrate(driver, 6, KainosDatabase.Schema.version)
+            assertEquals(listOf(0L, "local:hearted"), driver.row("SELECT position, canonical_id FROM favorite"))
+            assertEquals(listOf("yt:1", "{}"), driver.row("SELECT canonical_id, track_json FROM recent_track"))
+            assertEquals(listOf(7L, 1000L), driver.row("SELECT revision, last_active_at_ms FROM local_listening_export"))
+            assertEquals(0L, driver.count("play_event"))
+            assertEquals(0L, driver.count("play_history_track"))
+            assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            val store = DbPlayHistoryStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val track = com.universalmusic.player.domain.model.Track("local:hearted", "Hearted", emptyList())
+            store.record(com.universalmusic.player.data.history.PlayEvent(track, 5_000, 60_000, completed = true), keepSinceMs = 0)
+            assertEquals(mapOf("local:hearted" to 5_000L), store.read(10_000).lastPlayedAtMs)
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun migrationFromTheHs5SchemaKeepsListeningRowsAndAddsAnEmptyDeliveryTable() {
         val directory = Files.createTempDirectory("kainos-v3-v4-migration")
         try {
@@ -735,7 +764,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(6L, KainosDatabase.Schema.version)
+    assertEquals(7L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(
@@ -746,10 +775,11 @@ private fun SqlDriver.assertMigratedPreHs5Data() {
     assertEquals(PublicationOrigin.LOCAL, db.readSessionOrigin())
     assertNull(db.readLocalExport())
     assertEquals(
-        List(8) { 0L },
+        List(10) { 0L },
         listOf(
             "local_listening", "local_listening_queue", "local_listening_export",
             "peer_listening", "handoff_applied", "listening_writer_receipt", "listening_delivery", "listening_refusal",
+            "play_event", "play_history_track",
         ).map(::count),
     )
 }
