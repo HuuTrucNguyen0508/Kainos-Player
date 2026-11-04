@@ -13,6 +13,7 @@ import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.homeLanHubAutostartEnabled
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanDeviceName
+import com.universalmusic.player.platform.homeLanPairingAddress
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.scheduleBackgroundListeningDelivery
 import com.universalmusic.player.platform.secureRandomBytes
@@ -75,6 +76,8 @@ class HomeLanSyncService(
     private val hubPort: Int = HOME_LAN_SYNC_DEFAULT_PORT,
     private val hubBrowser: HubBrowser = platformHubBrowser(),
     private val deviceName: () -> String = ::homeLanDeviceName,
+    /** This PC's address on the home network, for its pairing QR code. */
+    private val lanAddress: () -> String? = ::homeLanPairingAddress,
     private val pairingPollMs: Long = 1_000,
     private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
     private val hubAutostartEnabled: () -> Boolean? = ::homeLanHubAutostartEnabled,
@@ -211,6 +214,13 @@ class HomeLanSyncService(
     override fun discoverHubs(): Flow<DiscoveredHub> {
         val own = identity.fingerprint()
         return hubBrowser.browse().filter { CertFingerprint.parse(it.fp).let { fp -> fp != null && fp != own } }
+    }
+
+    override fun pairingLink(): String? {
+        if (!_status.value.hubListening) return null
+        val deviceId = settings().homeLanSyncDeviceId ?: return null
+        val host = lanAddress() ?: return null
+        return hubPairingLink(DiscoveredHub(identity.fingerprint().hex, deviceId, host, hubPort, "Kainos on ${deviceName()}"))
     }
 
     override suspend fun pairWith(hub: DiscoveredHub): HubPairingSession {

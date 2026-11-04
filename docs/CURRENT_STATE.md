@@ -43,7 +43,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 - No lyrics, until a source with clear terms exists. See [the investigation](plans/lyrics-source-investigation.md).
 - No YouTube Music account library.
 - Cached audio copies only while Sync now's Transfer runs in the open app. An interrupted copy restarts from the beginning.
-- No QR pairing, and no sync while the phone app is closed.
+- No sync while the phone app is closed. Pairing can start from the QR code the PC shows; the phone still compares the 6-digit code.
 - Spotify Discover Weekly cannot be listed through the Web API for most developer apps. Paste its share link in Settings → Music sources.
 - Spotify playback rests on unofficial librespot, so a protocol change can break it. Web API quotas can block search and library loading even while audio works.
 

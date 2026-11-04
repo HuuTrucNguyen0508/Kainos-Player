@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.Button
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.ui.PlatformBackHandler
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -34,6 +36,9 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     val syncStatus = syncUi.status
     val syncBusy = syncUi.busy
     val syncNotice = syncUi.notice
+    val pairingLink by syncPresenter.pairingLink.collectAsState()
+    var scanning by remember { mutableStateOf(false) }
+    PlatformBackHandler(enabled = scanning) { scanning = false }
     Text("Devices and sync", style = MaterialTheme.typography.titleMedium)
     val comparingCode = syncUi.incoming != null || syncUi.pairing is PairingUiState.Confirming ||
         syncUi.pairing is PairingUiState.WaitingForPc
@@ -79,11 +84,18 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     when (val pairing = syncUi.pairing) {
         PairingUiState.Idle -> Unit
         PairingUiState.Searching -> Text("Searching for PCs on your Wi-Fi…")
-        is PairingUiState.Found -> pairing.hubs.forEach { hub ->
-            OutlinedButton(onClick = { syncPresenter.pair(hub) }) {
-                Column {
-                    Text(hub.name)
-                    Text(hub.fp.chunked(16).joinToString(" "), style = MaterialTheme.typography.bodySmall)
+        is PairingUiState.Found -> {
+            Text(
+                if (pairing.scanned) "Is this your PC? Tap it to start pairing." else "Tap your PC to start pairing.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            pairing.hubs.forEach { hub ->
+                OutlinedButton(onClick = { syncPresenter.pair(hub) }) {
+                    Column {
+                        Text(hub.name)
+                        Text(hub.endpoint.authority, style = MaterialTheme.typography.bodySmall)
+                        Text(hub.fp.chunked(16).joinToString(" "), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -107,9 +119,28 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     if (syncUi.pairing is PairingUiState.Searching || syncUi.pairing is PairingUiState.Found) {
         OutlinedButton(onClick = { syncPresenter.cancelPairing() }) { Text("Cancel") }
     }
-    if (platformLabel() != "Linux" && (syncUi.pairing is PairingUiState.Idle ||
-            syncUi.pairing is PairingUiState.Failed || syncUi.pairing is PairingUiState.Paired)) {
-        Button(enabled = !syncBusy, onClick = { syncPresenter.search() }) { Text("Pair with a PC") }
+    val canStartPairing = platformLabel() != "Linux" && (syncUi.pairing is PairingUiState.Idle ||
+        syncUi.pairing is PairingUiState.Failed || syncUi.pairing is PairingUiState.Paired)
+    if (canStartPairing && scanning) {
+        Text("Point the camera at the code in Kainos on your PC, under Devices and sync.")
+        PairingScanWindow(
+            onScanned = { raw ->
+                scanning = false
+                syncPresenter.scanned(raw)
+            },
+            onUnavailable = { reason ->
+                scanning = false
+                syncPresenter.scanUnavailable(reason)
+            },
+        )
+        OutlinedButton(onClick = { scanning = false }) { Text("Cancel") }
+    } else if (canStartPairing) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = !syncBusy, onClick = { syncPresenter.search() }) { Text("Pair with a PC") }
+            if (canScanPairingCode) {
+                OutlinedButton(enabled = !syncBusy, onClick = { scanning = true }) { Text("Scan pairing code") }
+            }
+        }
     }
     (listOfNotNull(syncUi.trust.hub) + syncUi.trust.peers).forEach { peer ->
         Text(peer.displayName, style = MaterialTheme.typography.titleSmall)
@@ -119,6 +150,19 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     }
     if (syncStatus.hubListening) {
         Text("This PC is ready for pairing and sync", color = MaterialTheme.colorScheme.primary)
+    }
+    pairingLink?.takeUnless { comparingCode }?.let { link ->
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            PairingQrCode(link)
+            Column(Modifier.widthIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Pair a phone with this code", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "On your phone, open Devices and sync in Kainos and tap Scan pairing code. You will still compare a 6-digit code on both screens before they pair.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
     Button(
         enabled = !syncBusy && syncStatus.enabled &&

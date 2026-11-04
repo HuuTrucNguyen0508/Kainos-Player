@@ -180,7 +180,7 @@ Home sync uses a desktop HTTPS hub on port `43822`. Pairing compares a code on b
 | YouTube cached audio | Cache blobs are not copied by Home sync; each device needs its own cached copy or network access. |
 | Home pins | Persist on each device; pin synchronization is not yet shipped. |
 
-The phone checks for sync when the app returns to the foreground; it does not run sync after the app is killed. Desktop can enable **Start hub at login** or run `kainos-player --hub-only` without opening the player window. Paired devices can see and control each other from Now Playing, and **Play here** moves the other device's queue to this one. In-app QR pairing is not implemented. Keep port `43822` private to the home network.
+The phone checks for sync when the app returns to the foreground; it does not run sync after the app is killed. Desktop can enable **Start hub at login** or run `kainos-player --hub-only` without opening the player window. Paired devices can see and control each other from Now Playing, and **Play here** moves the other device's queue to this one. To skip the network search, scan the QR code the PC shows under **Devices and sync** with **Scan pairing code** on the phone; both screens still show the 6-digit code to compare. Keep port `43822` private to the home network.
 
 ## Playback and quality
 

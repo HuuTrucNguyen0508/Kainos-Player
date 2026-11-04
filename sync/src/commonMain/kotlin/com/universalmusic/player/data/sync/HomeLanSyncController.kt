@@ -35,6 +35,8 @@ interface HomeLanSyncController {
     fun discoverHubs(): Flow<DiscoveredHub>
     /** Starts pairing with [hub] and returns once both sides can show the code. */
     suspend fun pairWith(hub: DiscoveredHub): HubPairingSession
+    /** The [hubPairingLink] a phone can scan to reach this PC's hub, or null when the hub is not listening. */
+    fun pairingLink(): String?
     suspend fun confirmIncomingPairing(attemptId: String): Result<Unit>
     suspend fun rejectIncomingPairing(attemptId: String): Result<Unit>
     /** Forgets one paired device; on a client, that is its hub. */

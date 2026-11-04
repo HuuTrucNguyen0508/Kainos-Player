@@ -68,6 +68,8 @@ actual fun homeLanDeviceName(): String =
         ?: runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() }
         ?: "Linux PC"
 
+actual fun homeLanPairingAddress(): String? = currentLanAddress()?.ipv4
+
 actual suspend fun <T> withVaultSyncForeground(
     label: String,
     block: suspend () -> T,

@@ -14,6 +14,9 @@ import com.universalmusic.player.data.sync.PairedPeer
 import com.universalmusic.player.data.sync.PairingAttempt
 import com.universalmusic.player.data.sync.PairingCode
 import com.universalmusic.player.data.sync.HubPairingSession
+import com.universalmusic.player.data.sync.parseHubPairingLink
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -236,7 +239,8 @@ internal class SettingsConnectPresenter(
 internal sealed interface PairingUiState {
     data object Idle : PairingUiState
     data object Searching : PairingUiState
-    data class Found(val hubs: List<DiscoveredHub>) : PairingUiState
+    /** [scanned] marks a hub read from the PC's QR code rather than found on the network. */
+    data class Found(val hubs: List<DiscoveredHub>, val scanned: Boolean = false) : PairingUiState
     data class Confirming(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
     data class WaitingForPc(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
     data class Paired(val peer: PairedPeer) : PairingUiState
@@ -269,6 +273,11 @@ internal class SettingsSyncPresenter(
     }.stateIn(scope, SharingStarted.Eagerly,
         SettingsSyncUiState(controller.status.value, controller.trust.value, controller.incomingPairing.value))
 
+    /** The QR code this PC shows while its hub listens; null on a phone. */
+    val pairingLink: StateFlow<String?> = controller.status.map { it.hubListening }.distinctUntilChanged()
+        .map { listening -> if (listening) controller.pairingLink() else null }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
     fun setNotice(message: String) { operation.value = operation.value.first to message }
 
     private fun run(operation: suspend () -> String) {
@@ -298,6 +307,21 @@ internal class SettingsSyncPresenter(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Throwable) { pairing.value = PairingUiState.Failed(failure.message ?: "Could not find a PC. Try again.") }
         }
+    }
+
+    /** Lists the PC a scanned code names; pairing starts only when the user taps it, then both screens compare codes. */
+    fun scanned(raw: String) {
+        if (session != null) return
+        pairingJob?.cancel()
+        pairing.value = parseHubPairingLink(raw).fold(
+            onSuccess = { PairingUiState.Found(listOf(it), scanned = true) },
+            onFailure = { PairingUiState.Failed(it.message ?: "This is not a Kainos pairing code.") },
+        )
+    }
+
+    /** The camera could not scan, for example because the permission was refused. */
+    fun scanUnavailable(reason: String) {
+        if (session == null) pairing.value = PairingUiState.Failed(reason)
     }
 
     fun pair(hub: DiscoveredHub) {
