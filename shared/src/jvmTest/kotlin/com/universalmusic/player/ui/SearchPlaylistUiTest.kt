@@ -35,6 +35,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import javax.imageio.ImageIO
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,11 +60,11 @@ class SearchPlaylistUiTest {
     private fun song(title: String, artist: String): Track =
         track(title, artist, provider = ProviderId.SPOTIFY, canonicalId = "spotify:$title")
 
-    private fun ComposeUiTest.showSearch(secondPageFails: Boolean = false) {
+    private fun ComposeUiTest.showSearch(secondPageFails: Boolean = false, firstPageEmpty: Boolean = false) {
         setContent {
             TestTheme {
                 val scope = rememberCoroutineScope()
-                val presenter = remember { presenter(scope, secondPageFails) }
+                val presenter = remember { presenter(scope, secondPageFails, firstPageEmpty) }
                 SearchScreen(
                     presenter = presenter,
                     onPlayTrackInList = { _, _ -> },
@@ -78,7 +79,7 @@ class SearchPlaylistUiTest {
         waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private fun presenter(scope: CoroutineScope, secondPageFails: Boolean) = SearchPresenter(
+    private fun presenter(scope: CoroutineScope, secondPageFails: Boolean, firstPageEmpty: Boolean) = SearchPresenter(
         settings = MutableStateFlow(AppSettings()),
         spotify = MutableStateFlow(ProviderState.AVAILABLE),
         youtube = MutableStateFlow(ProviderState.NOT_CONFIGURED),
@@ -88,6 +89,11 @@ class SearchPlaylistUiTest {
         loadPlaylistPage = { _, cursor ->
             requested += cursor
             when {
+                // Slow enough that the page is laid out, and near its end, while this page is still loading.
+                cursor == null && firstPageEmpty -> {
+                    delay(500)
+                    PlaylistTracksPage(emptyList(), next = "50", total = 62)
+                }
                 cursor == null -> PlaylistTracksPage(firstPage, next = "50", total = 62)
                 secondPageFails -> error("Spotify is rate-limiting right now. Wait a few minutes.")
                 else -> PlaylistTracksPage(secondPage, next = null, total = 62)
@@ -181,6 +187,14 @@ class SearchPlaylistUiTest {
         text("Try again").performClick()
         waitForIdle()
         assertEquals(listOf(null, "50", "50"), requested)
+    }
+
+    @Test fun aFirstPageWithNoPlayableSongsStillLoadsTheNext() = runDesktopComposeUiTest(width = 560, height = 900) {
+        showSearch(firstPageEmpty = true)
+        onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
+        text("Night Ferry").performClick()
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(listOf(null, "50"), requested)
     }
 
     private companion object {

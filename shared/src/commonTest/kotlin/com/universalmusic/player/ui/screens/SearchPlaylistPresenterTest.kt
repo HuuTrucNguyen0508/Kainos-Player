@@ -134,7 +134,7 @@ class SearchPlaylistPresenterTest {
     }
 
     @Test
-    fun playWithAFailingPagePlaysWhatLoadedAndShowsTheError() = runTest {
+    fun playWithAFailingPageStartsNothingAndPlayAgainResumesAtThatPage() = runTest {
         val pages = FakePages(
             mutableMapOf(
                 null to PlaylistTracksPage(songs("One", "Two"), next = "2"),
@@ -144,11 +144,18 @@ class SearchPlaylistPresenterTest {
         val search = searchWith(pages)
         search.openPlaylist(playlist)
         runCurrent()
+        val page = search.playlist.value!!
         val played = mutableListOf<Int>()
-        search.playlist.value!!.play(startIndex = 0, shuffle = false) { tracks, _, _ -> played += tracks.size }
+        page.play(startIndex = 0, shuffle = false) { tracks, _, _ -> played += tracks.size }
         runCurrent()
-        assertEquals(listOf(2), played)
-        assertEquals("Spotify is rate-limiting right now.", search.playlist.value!!.state.value.error)
+        assertEquals(emptyList(), played, "A partial playlist must not replace the queue")
+        assertEquals("Spotify is rate-limiting right now.", page.state.value.error)
+        assertEquals(listOf("One", "Two"), page.state.value.tracks.map { it.title })
+
+        pages.pages["2"] = PlaylistTracksPage(songs("Three"), next = null)
+        page.play(startIndex = 0, shuffle = false) { tracks, _, _ -> played += tracks.size }
+        runCurrent()
+        assertEquals(listOf(3), played)
     }
 
     @Test

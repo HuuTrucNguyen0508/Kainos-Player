@@ -87,15 +87,17 @@ internal fun SearchPlaylistScreen(
 
     LaunchedEffect(presenter, listState) {
         // Counted against the loaded songs, not the laid-out rows: right after a page lands the
-        // layout still shows the shorter list and would ask for another page at once.
+        // layout still shows the shorter list and would ask for another page at once. Emitting the
+        // cursor lets a page that added few or no songs ask for the next one while still near the end.
         snapshotFlow {
             val current = pageState.value
             val lastRow = current.tracks.size + 1
-            current.error == null &&
+            val nearEnd = current.error == null &&
                 (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= lastRow - PREFETCH_ROWS
-        }.collect { nearEnd ->
+            current.cursor.takeIf { nearEnd }
+        }.collect { cursor ->
             // A failed page waits for Try again; the emission may predate that failure.
-            if (nearEnd && presenter.state.value.error == null) presenter.loadMore()
+            if (cursor != null && presenter.state.value.error == null) presenter.loadMore()
         }
     }
 

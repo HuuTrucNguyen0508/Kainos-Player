@@ -41,7 +41,7 @@ internal data class PlaylistPageState(
 /**
  * A Spotify or YouTube playlist opened from Search. Pages load as the list scrolls; Play and
  * Shuffle fetch the rest first so the queue is the whole playlist. A failed page keeps the songs
- * already in, and the next [loadMore] retries it.
+ * already in, and the next [loadMore] or Play retries it.
  */
 internal class SearchPlaylistPresenter(
     playlist: Playlist,
@@ -66,7 +66,7 @@ internal class SearchPlaylistPresenter(
 
     /**
      * Loads every remaining page, then hands the songs to [onReady] with [startIndex]. If a page
-     * fails, it plays what loaded and the page shows the error.
+     * fails, nothing plays: the page keeps the songs it has and shows the error with Try again.
      */
     fun play(startIndex: Int, shuffle: Boolean, onReady: (List<Track>, Int, Boolean) -> Unit) {
         if (state.value.preparingPlay) return
@@ -78,7 +78,7 @@ internal class SearchPlaylistPresenter(
                 mutableState.update { it.copy(preparingPlay = false) }
             }
             val tracks = state.value.tracks
-            if (tracks.isNotEmpty()) onReady(tracks, startIndex.coerceIn(0, tracks.lastIndex), shuffle)
+            if (state.value.complete && tracks.isNotEmpty()) onReady(tracks, startIndex.coerceIn(0, tracks.lastIndex), shuffle)
         }
     }
 
