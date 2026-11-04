@@ -5,6 +5,7 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -88,6 +89,7 @@ import com.universalmusic.player.ui.screens.NowPlayingScreen
 import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
+import com.universalmusic.player.ui.screens.TrackActionsPresenter
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.screens.SettingsTarget
 import com.universalmusic.player.ui.theme.KainosTheme
@@ -143,6 +145,7 @@ private fun AppScaffold(
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
     val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
+    val trackActions = remember(container) { TrackActionsPresenter.from(container) }
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
     val appReady by container.ready.collectAsState()
@@ -384,12 +387,14 @@ private fun AppScaffold(
                                         onOpenSettings = ::openSettings,
                                         onOpenSearch = { navigateToTab(AppDestination.Search) },
                                         onOpenLibrary = { navigateToTab(AppDestination.Library) },
+                                        trackActions = trackActions,
                                         // The side pane already shows the session, so Home skips its session card.
                                         playerPaneVisible = showSideNowPlaying,
                                     )
                                     AppDestination.Search -> SearchScreen(
                                         presenter = searchPresenter,
                                         onPlayTrackInList = ::playSearchTracks,
+                                        trackActions = trackActions,
                                         requestFocus = true,
                                         onOpenSettings = ::openSettings,
                                     )
@@ -398,11 +403,14 @@ private fun AppScaffold(
                                         container::consumeLibraryTypeAhead,
                                         libraryPresenter,
                                         ::playTracks,
+                                        trackActions,
                                     )
                                     AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                                 }
                             }
                         }
+                        // Overlays the list instead of pushing it, so rapid row actions never shift rows.
+                        TrackActionNoticeBar(trackActions, Modifier.align(Alignment.BottomCenter))
                     }
 
                     if (showWideQueueColumn) {
@@ -538,6 +546,50 @@ private fun HandoffNoticeBar(container: AppContainer) {
 }
 
 @Composable
+private fun TrackActionNoticeBar(actions: TrackActionsPresenter, modifier: Modifier = Modifier) {
+    val notice by actions.notice.collectAsState()
+    var shown by remember { mutableStateOf(notice) }
+    notice?.let { shown = it }
+    LaunchedEffect(notice?.id) {
+        val id = notice?.id ?: return@LaunchedEffect
+        delay(TrackActionNoticeVisibleMs)
+        actions.dismissNotice(id)
+    }
+    AnimatedVisibility(
+        visible = notice != null,
+        modifier = modifier.padding(16.dp),
+        enter = fadeIn(tween(HandoffNoticeEnterMs, easing = StandardEasing)) +
+            slideInVertically(tween(HandoffNoticeEnterMs, easing = StandardEasing)) { it / 2 },
+        exit = fadeOut(tween(HandoffNoticeExitMs, easing = StandardEasing)),
+    ) {
+        shown?.let { current -> TrackActionNoticePill(current.message) }
+    }
+}
+
+/** Confirms a track menu action; quieter than a failure and gone on its own. */
+@Composable
+internal fun TrackActionNoticePill(message: String) {
+    Surface(
+        shape = LocalSkinTokens.current.rounding.full,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        border = BorderStroke(1.dp, LocalKainosPalette.current.hair),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Text(
+            message,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+        )
+    }
+}
+
+@Composable
 internal fun FailureBar(failures: StateFlow<Set<AppFailure>>) {
     val failure = failures.collectAsState().value.shown
     var last by remember { mutableStateOf<AppFailure?>(null) }
@@ -635,6 +687,7 @@ internal fun HandoffNoticePill(deviceName: String, onDismiss: () -> Unit) {
 }
 
 private const val HandoffNoticeVisibleMs = 6_000L
+private const val TrackActionNoticeVisibleMs = 2_500L
 private const val HandoffNoticeEnterMs = 300
 private const val HandoffNoticeExitMs = 200
 private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)

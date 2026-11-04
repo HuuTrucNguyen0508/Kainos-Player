@@ -243,7 +243,7 @@ internal fun libraryLines(
         if (favorites.count > 0) {
             LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} ${if (favorites.count == 1) "song" else "songs"} · Play favorites", LibraryDoor.FAVORITES)
         } else {
-            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs in Now Playing to build favorites", LibraryDoor.LIBRARY)
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs from Now Playing or a song's menu", LibraryDoor.LIBRARY)
         },
     )
     if (kainosPlaylistCount > 0) {

@@ -17,7 +17,6 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.ui.components.EmptyState
-import com.universalmusic.player.ui.components.TrackRow
 
 @Composable
 internal fun ColumnScope.LibrarySongsTab(
@@ -28,6 +27,7 @@ internal fun ColumnScope.LibrarySongsTab(
     onSortMenuDismiss: () -> Unit,
     onSortSelected: (TrackSort) -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
     onRefreshSpotify: () -> Unit,
     trackAvailability: (Track) -> TrackAvailabilityInfo,
 ) {
@@ -42,7 +42,7 @@ internal fun ColumnScope.LibrarySongsTab(
             },
             when {
                 state.needle.isNotEmpty() -> "Try another title, artist, or album name."
-                state.favoritesOnly -> "Heart tracks from Now Playing. App favorites stay separate from Spotify Liked."
+                state.favoritesOnly -> "Heart songs from Now Playing or a song's menu. App favorites stay separate from Spotify Liked."
                 state.localOnly -> "Scan your music folders from Settings, or turn off Local files only."
                 else -> "Local files and Spotify likes show up here after a scan or Spotify refresh."
             },
@@ -86,8 +86,9 @@ internal fun ColumnScope.LibrarySongsTab(
                 )
             }
             items(songs, key = { it.canonicalId }) { track ->
-                TrackRow(
+                ActionTrackRow(
                     track = track,
+                    actions = trackActions,
                     compact = true,
                     availability = remember(track, state.downloads) {
                         trackAvailability(track)

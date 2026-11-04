@@ -53,6 +53,7 @@ internal fun LibraryScreen(
     consumeTypeAhead: () -> String,
     presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -213,6 +214,7 @@ internal fun LibraryScreen(
                     presenter.setSort(sort)
                 },
                 onPlayTracks = onPlayTracks,
+                trackActions = trackActions,
                 onRefreshSpotify = {
                     dismissSpotifyError = false
                     presenter.refreshSpotify()
@@ -231,6 +233,7 @@ internal fun LibraryScreen(
                 selectedArtist = selectedArtist,
                 onSelectedArtistId = { selectedArtistId = it },
                 onPlayTracks = onPlayTracks,
+                trackActions = trackActions,
                 trackAvailability = presenter::trackAvailability,
             )
             LibraryTab.Playlists -> LibraryPlaylistsTab(
@@ -239,6 +242,7 @@ internal fun LibraryScreen(
                 listState = playlistsListState,
                 scope = scope,
                 onPlayTracks = onPlayTracks,
+                trackActions = trackActions,
                 playlistBusyId = playlistBusyId,
                 onPlaylistBusyId = { playlistBusyId = it },
                 playlistError = playlistError,

@@ -401,7 +401,7 @@ class FirstRunUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { FakeDevice(spotify = ProviderState.AUTH_REQUIRED).search(scope) }
-                SearchScreen(presenter, { _, _ -> }, onOpenSettings = { opened = it })
+                SearchScreen(presenter, { _, _ -> }, RecordedTrackActions().presenter, onOpenSettings = { opened = it })
             }
         }
         node("Search needs Spotify or YouTube").assertIsDisplayed()
@@ -415,7 +415,7 @@ class FirstRunUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { FakeDevice(youtube = ProviderState.AVAILABLE).search(scope) }
-                SearchScreen(presenter, { _, _ -> })
+                SearchScreen(presenter, { _, _ -> }, RecordedTrackActions().presenter)
             }
         }
         onAllNodesWithText("Search YouTube", useUnmergedTree = true).assertCountEquals(2)

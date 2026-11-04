@@ -433,9 +433,27 @@ class PlayerSession(
         startCurrent(ListeningChange.LOCAL_INTENT)
     }
 
-    fun addToQueue(track: Track) = onSession { editQueue { addToQueue(track) } }
+    fun addToQueue(track: Track) = onSession {
+        editQueue { addToQueue(track) }
+        showFirstQueuedPaused()
+    }
 
-    fun playNext(track: Track) = onSession { editQueue { playNext(track) } }
+    fun playNext(track: Track) = onSession {
+        editQueue { playNext(track) }
+        showFirstQueuedPaused()
+    }
+
+    /** Queueing into an empty session shows the first entry paused, so the player bar can start it. */
+    private fun showFirstQueuedPaused() {
+        if (_nowPlaying.value.track != null) return
+        val item = queue.queue.value.current ?: return
+        _nowPlaying.value = NowPlayingState(
+            track = sources.prepareTrack(item.track),
+            queueItemId = item.id,
+            durationMs = item.track.durationMs,
+            favorite = isFavorite(item.track.canonicalId),
+        )
+    }
 
     fun stopTransport() = onSession {
         val position = startupTarget?.positionMs ?: _nowPlaying.value.positionMs

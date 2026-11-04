@@ -154,7 +154,7 @@ internal class HomePresenter(
             onOpenNowPlaying()
         } else {
             val message = if (favoriteIds.value.isEmpty()) {
-                "Heart a track in Now Playing to build favorites."
+                "Heart a song from Now Playing or its menu to build favorites."
             } else {
                 "Favorites need a connection or local file to play."
             }

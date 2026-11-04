@@ -42,12 +42,13 @@ internal fun HomeScreen(
     onOpenSettings: (SettingsTarget) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenLibrary: () -> Unit,
+    trackActions: TrackActionsPresenter,
     playerPaneVisible: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { HomePresenter.from(container, scope) }
     LaunchedEffect(container) { container.recheckSourceTools() }
-    HomeContent(presenter, onPlayTracks, onOpenNowPlaying, onOpenSettings, onOpenSearch, onOpenLibrary, playerPaneVisible)
+    HomeContent(presenter, onPlayTracks, onOpenNowPlaying, onOpenSettings, onOpenSearch, onOpenLibrary, playerPaneVisible, trackActions)
 }
 
 @Composable
@@ -59,6 +60,7 @@ internal fun HomeContent(
     onOpenSearch: () -> Unit,
     onOpenLibrary: () -> Unit,
     playerPaneVisible: Boolean = false,
+    trackActions: TrackActionsPresenter? = null,
 ) {
     val ui by presenter.state.collectAsState()
     var editingPins by remember { mutableStateOf(false) }
@@ -215,6 +217,7 @@ internal fun HomeContent(
                 tracks = continueListening,
                 columns = columns,
                 onPlayTracks = onPlayTracks,
+                trackActions = trackActions,
             )
         }
     }

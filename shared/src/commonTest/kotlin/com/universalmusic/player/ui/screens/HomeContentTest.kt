@@ -310,7 +310,7 @@ class HomePresenterTest {
         empty.playFavorites {}
         assertEquals(1, failed)
         assertEquals(
-            "Heart a track in Now Playing to build favorites.",
+            "Heart a song from Now Playing or its menu to build favorites.",
             empty.state.value.actionMessage,
         )
     }
