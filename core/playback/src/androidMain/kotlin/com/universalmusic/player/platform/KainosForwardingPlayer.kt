@@ -470,6 +470,8 @@ class KainosForwardingPlayer(
         Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
         Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
         -> canSeek
+        // The item after the current one is a gapless successor the session owns, not a queue to jump into.
+        Player.COMMAND_SEEK_TO_MEDIA_ITEM -> false
         else -> super.isCommandAvailable(command)
     }
 
@@ -480,6 +482,7 @@ class KainosForwardingPlayer(
             .add(Player.COMMAND_SEEK_TO_PREVIOUS)
             .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            .remove(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
         if (!canSkipNext) {
             builder.remove(Player.COMMAND_SEEK_TO_NEXT)
             builder.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)

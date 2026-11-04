@@ -38,7 +38,7 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
             }
         }
         Text(
-            playbackBehaviourNote(platformLabel()),
+            PLAYBACK_BEHAVIOUR_NOTE,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -69,15 +69,10 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
 
 }
 
-/** Fixed behaviour with no switch in the app, stated per platform because it differs. */
-internal fun playbackBehaviourNote(platform: String): String {
-    val gapless = if (platform == "Android") {
-        "Tracks have a short gap between them on Android."
-    } else {
-        "Local files play gaplessly, one into the next. Spotify and YouTube tracks have a short gap."
-    }
-    return "$gapless Spotify uses its Loud volume normalization."
-}
+/** Fixed behaviour with no switch in the app. */
+internal const val PLAYBACK_BEHAVIOUR_NOTE =
+    "Local files play gaplessly, one into the next. Spotify and YouTube tracks have a short gap. " +
+        "Spotify uses its Loud volume normalization."
 
 internal fun levellingNote(platform: String): String {
     val reach = if (platform == "Android") {
