@@ -25,7 +25,8 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class KainosForwardingPlayerLevellingTest {
     private val exo = ExoPlayer.Builder(ApplicationProvider.getApplicationContext<Context>()).build()
-    private val player = KainosForwardingPlayer(exo)
+    private val gain = LevellingAudioProcessor()
+    private val player = KainosForwardingPlayer(exo, gain)
     private val reported = mutableListOf<Levelling?>()
 
     init {
@@ -46,8 +47,8 @@ class KainosForwardingPlayerLevellingTest {
     @Test fun flacVorbisCommentsTurnTheTrackDown() {
         player.onAudioTracks(flac("-13.00 dB", "0.100000"))
         assertEquals(Levelling.Applied(-6.0), player.levelling)
-        assertEquals(0.8f * 0.501187f, exo.volume, 0.0001f)
-        assertEquals("Controllers still see the volume they set", 0.8f, player.volume)
+        assertEquals("The audio sink applies the gain; the player volume stays the user's", 0.8f, exo.volume, 0.0001f)
+        assertEquals(0.8f, player.volume)
     }
 
     @Test fun mp3TxxxGainIsCappedAtUnityBecauseExoCannotBoost() {
@@ -55,7 +56,6 @@ class KainosForwardingPlayerLevellingTest {
             TextInformationFrame("TXXX", "REPLAYGAIN_TRACK_GAIN", ImmutableList.of("+3.00 dB")),
             TextInformationFrame("TXXX", "REPLAYGAIN_TRACK_PEAK", ImmutableList.of("0.500000"))))
         assertEquals(Levelling.Applied(0.0), player.levelling)
-        assertEquals(0.8f, exo.volume, 0.0001f)
     }
 
     @Test fun mp4ItunesFreeformAtomIsRead() {
@@ -67,16 +67,16 @@ class KainosForwardingPlayerLevellingTest {
     @Test fun untaggedPlaysAtTheUserVolume() {
         player.onAudioTracks(tracks(MimeTypes.AUDIO_FLAC, VorbisComment("TITLE", "Song")))
         assertEquals(Levelling.Untagged, player.levelling)
-        assertEquals(0.8f, exo.volume, 0.0001f)
     }
 
     @Test fun switchingOffRestoresTheUserVolumeForTheTrackPlayingNow() {
         player.onAudioTracks(flac("-13.00 dB", "0.100000"))
         player.setLevelling(false)
-        assertEquals(0.8f, exo.volume, 0.0001f)
+        assertEquals(false, gain.enabled)
         player.setLevelling(true)
+        assertEquals(true, gain.enabled)
         player.volume = 0.5f
-        assertEquals(0.5f * 0.501187f, exo.volume, 0.0001f)
+        assertEquals(0.5f, exo.volume, 0.0001f)
         assertEquals(listOf(Levelling.Applied(-6.0), Levelling.Off, Levelling.Applied(-6.0)), reported)
     }
 
@@ -84,6 +84,5 @@ class KainosForwardingPlayerLevellingTest {
         player.onAudioTracks(flac("-13.00 dB", "0.100000"))
         player.onAudioTracks(Tracks.EMPTY)
         assertEquals(null, player.levelling)
-        assertEquals(0.8f, exo.volume, 0.0001f)
     }
 }

@@ -109,7 +109,7 @@ class ExoSuccessorTest {
     @Test fun controllersCannotJumpIntoTheQueuedSuccessor() {
         successor.want(prepared("q2"))
         sync()
-        val player = KainosForwardingPlayer(exo)
+        val player = KainosForwardingPlayer(exo, LevellingAudioProcessor())
         assertEquals(false, player.isCommandAvailable(Player.COMMAND_SEEK_TO_MEDIA_ITEM))
         assertEquals(false, player.availableCommands.contains(Player.COMMAND_SEEK_TO_MEDIA_ITEM))
     }

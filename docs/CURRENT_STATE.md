@@ -20,7 +20,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 
 **Now Playing.** Seek, volume, heart, sleep timer, source and quality details, retry and another-source fallback, and changing a Spotify track's YouTube cache match.
 
-**Gapless.** Local files play gaplessly on Linux, including across a seek. Spotify and YouTube tracks have a short gap on Linux. Android has a short gap between all tracks.
+**Gapless.** Local files play gaplessly on both platforms, including across a seek. On Android the next local file waits in ExoPlayer behind the playing one, and the session swaps it when a skip, Play next, shuffle or repeat change picks another. Spotify and YouTube tracks have a short gap.
 
 **Offline.** Availability is separate from hearts: local, cached, downloading, waiting, unavailable or failed. Settings → Downloads shows progress, retry, removal, pinning and storage use, against a 2 GiB budget. Spotify audio is never downloaded. A Spotify heart can cache a matched YouTube recording, labeled as a match.
 
@@ -38,8 +38,8 @@ What the app does today, what it does not do, and how each claim was checked. Da
 
 ## What does not work
 
-- Volume levelling covers only local files with ReplayGain tags (Settings → Playback, on by default). Untagged files and YouTube play at their own level; there is no loudness analysis. Linux skips Opus and Matroska tags, and Android can only turn tracks down. Spotify's normalization is built into the receiver and has no switch.
-- No gapless on Android, and none for Spotify or YouTube on Linux. No crossfade, EQ or DSP.
+- Volume levelling covers only local files with ReplayGain tags (Settings → Playback, on by default). Untagged files and YouTube play at their own level; there is no loudness analysis. Linux skips Opus and Matroska tags, and Android can only turn tracks down. Both change the gain on the first sample of the next file. Spotify's normalization is built into the receiver and has no switch.
+- No gapless for Spotify or YouTube. No crossfade, EQ or DSP.
 - No lyrics, until a source with clear terms exists. See [the investigation](plans/lyrics-source-investigation.md).
 - No YouTube Music account library.
 - No sync of YouTube cached audio between devices.
