@@ -49,6 +49,9 @@ expect fun homeLanHubPort(): Int
 /** Name this device shows the other side while pairing. */
 expect fun homeLanDeviceName(): String
 
+/** This PC's home-network IPv4 address for its pairing QR code; null on a phone, which never runs a hub. */
+expect fun homeLanPairingAddress(): String?
+
 /**
  * Runs [block] under an Android `dataSync` foreground service when needed.
  * Desktop runs [block] directly.

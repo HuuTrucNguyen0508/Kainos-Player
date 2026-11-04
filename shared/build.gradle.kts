@@ -63,9 +63,16 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(compose.desktop.uiTestJUnit4)
         }
+        jvmMain.dependencies {
+            implementation(libs.zxing.core)
+        }
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.camera.camera2)
+            implementation(libs.androidx.camera.lifecycle)
+            implementation(libs.androidx.camera.view)
+            implementation(libs.zxing.core)
         }
     }
 }

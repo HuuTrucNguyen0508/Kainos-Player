@@ -18,6 +18,8 @@ actual fun homeLanDeviceName(): String =
         ?.takeIf { it.isNotBlank() }
         ?: "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
 
+actual fun homeLanPairingAddress(): String? = null
+
 actual suspend fun <T> withVaultSyncForeground(
     label: String,
     block: suspend () -> T,

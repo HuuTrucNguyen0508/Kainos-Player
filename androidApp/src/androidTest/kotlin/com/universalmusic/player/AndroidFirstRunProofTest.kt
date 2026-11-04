@@ -9,10 +9,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import java.io.File
 import java.nio.ByteBuffer
@@ -114,11 +113,17 @@ class AndroidFirstRunProofTest {
         find(By.text(Pattern.compile("Allow", Pattern.CASE_INSENSITIVE)), "grant confirmation").click()
     }
 
+    /**
+     * UiScrollable.scrollIntoView stops after one swipe here, because the Compose chip row sends no
+     * scroll events for it to read; so swipe the row until the last chip shows.
+     */
     private fun openAdvancedSettings() {
         click("Settings")
-        if (device.findObject(By.text("Advanced")) == null) {
-            UiScrollable(UiSelector().scrollable(true).instance(1)).setAsHorizontalList()
-                .scrollIntoView(UiSelector().text("Advanced"))
+        val chips = find(By.clazz("android.widget.HorizontalScrollView").hasDescendant(By.text("Playback")), "Settings section chips")
+        for (swipe in 1..6) {
+            if (device.hasObject(By.text("Advanced"))) break
+            chips.scroll(Direction.RIGHT, 1f)
+            settle()
         }
         click("Advanced")
     }

@@ -37,7 +37,7 @@ Handoff: Cleartext HTTP removed; hub uses self-signed TLS with SHA-256 pin in `k
 | Local-heart rematch by filename after vault sync | Done |
 | **HTTPS + pinned hub leaf cert (SHA-256 DER)** | Done |
 | Cleartext `kainos-homesync:1` / HTTP | Rejected |
-| In-app QR render + camera scan | Deferred |
+| In-app QR render + camera scan | Done (`kainos-pair:3` link with the hub pin; CameraX + ZXing scan, then the same code compare) |
 | Content-hash local canonical ids | Deferred |
 
 ### Security floor (current)

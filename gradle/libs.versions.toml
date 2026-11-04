@@ -9,6 +9,7 @@ androidx-activity = "1.13.0"
 androidx-lifecycle = "2.11.0-beta01"
 androidx-navigation = "2.9.2"
 androidx-media3 = "1.8.0"
+androidx-camera = "1.6.2"
 androidx-work = "2.10.5"
 androidx-test-core = "1.7.0"
 robolectric = "4.16"
@@ -18,6 +19,7 @@ desugar-jdk-libs-nio = "2.1.5"
 newpipe-extractor = "v0.26.5"
 librespot-android = "0.2.0"
 coil = "3.5.0"
+zxing = "3.5.4"
 compose-material-icons = "1.7.3"
 compose-material3 = "1.11.0-alpha07"
 compose-multiplatform = "1.11.1"
@@ -41,6 +43,10 @@ junit = { module = "junit:junit", version.ref = "junit" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidx-media3" }
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "androidx-media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "androidx-media3" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidx-camera" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 android-desugar-jdk-libs-nio = { module = "com.android.tools:desugar_jdk_libs_nio", version.ref = "desugar-jdk-libs-nio" }
 newpipe-extractor = { module = "com.github.teamnewpipe:NewPipeExtractor", version.ref = "newpipe-extractor" }
 librespot-android-sink = { module = "com.github.capullo-tech.lib-librespot-android:librespot-android-sink", version.ref = "librespot-android" }
