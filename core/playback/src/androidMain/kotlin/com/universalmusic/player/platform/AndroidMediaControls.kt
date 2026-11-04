@@ -134,6 +134,8 @@ object AndroidMediaControls {
 
     fun currentTrack(): Track? = session?.nowPlaying?.value?.track
 
+    fun queuedTrack(itemId: String): Track? = session?.queueState?.value?.items?.firstOrNull { it.id == itemId }?.track
+
     fun currentDurationMs(): Long? = session?.nowPlaying?.value?.durationMs
 
     fun skipToNext() = session?.skipToNext()

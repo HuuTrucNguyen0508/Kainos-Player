@@ -14,6 +14,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
+import com.universalmusic.player.domain.playback.PreparedPlayback
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executor
@@ -69,6 +70,9 @@ class AndroidPlaybackEngine(
     private var focusRetryGeneration = -1L
     /** Bumped by explicit pause/stop so a pending focus retry cannot restart audio the user paused. */
     @Volatile private var transportIntent = 0L
+    @Volatile private var gaplessEnabled = false
+    /** Main thread: the session thread, the controller listener and the FIFO all run there. */
+    private val successor = ExoSuccessor()
 
     /**
      * A focus request refused within [FOCUS_RETRY_WINDOW_MS] of our own play() is almost
@@ -166,6 +170,19 @@ class AndroidPlaybackEngine(
                 "controller mediaItemTransition id=${mediaItem?.mediaId} " +
                     "reason=${mediaItemTransitionReasonName(reason)}",
             )
+            val player = mediaPlayer ?: return
+            when (val crossing = successor.onTransition(mediaItem, reason, activePlayGeneration)) {
+                Crossing.None -> Unit
+                is Crossing.Adopt -> if (activeBackend == ActiveBackend.MEDIA3) crossInto(player, crossing.prepared)
+                Crossing.Unowned -> if (activeBackend == ActiveBackend.MEDIA3) {
+                    // The session replaced this successor after Exo had already queued it. Stop it
+                    // and end the outgoing track so the session starts the one it chose instead.
+                    trace("crossed into a cancelled successor -> ENDED + pause")
+                    ticker?.cancel()
+                    _state.update { it.copy(status = EngineStatus.ENDED) }
+                    launchMediaCommand { it.pause() }
+                }
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -225,6 +242,59 @@ class AndroidPlaybackEngine(
         }
         connectToPlaybackService()
     }
+
+    override val supportsGapless: Boolean get() = true
+
+    /** Called off Main before play(); the session clears the successor itself when this turns off. */
+    override fun configureGapless(enabled: Boolean) {
+        gaplessEnabled = enabled
+    }
+
+    override fun prepareNext(next: PreparedPlayback?) {
+        val candidate = next?.takeIf {
+            gaplessEnabled && activeBackend == ActiveBackend.MEDIA3 && it.generation == activePlayGeneration &&
+                isLocalMediaUri(it.handle.url)
+        }
+        if (candidate != null || next != null) {
+            trace("prepareNext ${candidate?.let(::describe) ?: "declined ${next?.itemId}"}")
+        }
+        successor.want(candidate)
+        launchMediaCommand(::syncSuccessor)
+    }
+
+    private fun syncSuccessor(player: MediaController) {
+        if (activeBackend != ActiveBackend.MEDIA3) return
+        successor.sync(player, activePlayGeneration, AndroidMediaControls::queuedTrack)
+    }
+
+    /**
+     * Exo moved into the prepared file by itself. Publish it as the next generation, naming the
+     * successor and the generation it follows, which is how the session learns the boundary was
+     * crossed. The levelling already reflects the new item: its tracks arrive with the transition.
+     */
+    private fun crossInto(player: MediaController, prepared: PreparedPlayback) {
+        val previous = activePlayGeneration
+        activePlayGeneration = previous + 1
+        trace("gapless crossing into ${describe(prepared)} from gen=$previous pos=${player.currentPosition}")
+        _state.value = EngineState(
+            status = when {
+                player.isPlaying -> EngineStatus.PLAYING
+                player.playbackState == Player.STATE_BUFFERING && player.playWhenReady -> EngineStatus.BUFFERING
+                else -> EngineStatus.PAUSED
+            },
+            positionMs = player.currentPosition,
+            durationMs = player.duration.takeIf { it > 0 },
+            playGeneration = activePlayGeneration,
+            seamlessItemId = prepared.itemId,
+            previousGeneration = previous,
+            levelling = AndroidMediaControls.forwardingPlayer?.levelling,
+        )
+        if (player.isPlaying) startTicker() else ticker?.cancel()
+        launchMediaCommand(successor::dropPlayed)
+    }
+
+    private fun describe(prepared: PreparedPlayback) =
+        "'${AndroidMediaControls.queuedTrack(prepared.itemId)?.title}' item=${prepared.itemId}"
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         try {
@@ -500,9 +570,14 @@ class AndroidPlaybackEngine(
         }
         trace("stopForTransition() status=${_state.value.status} pos=${_state.value.positionMs} -> pause Exo, keep item + audio focus")
         activeBackend = ActiveBackend.NONE
+        successor.want(null)
         ticker?.cancel()
         publishState(EngineState(status = EngineStatus.BUFFERING))
-        launchMediaCommand { it.pause() }
+        launchMediaCommand { player ->
+            player.pause()
+            // Only the item after the paused one goes; the paused item keeps focus and the island.
+            successor.sync(player, activePlayGeneration) { null }
+        }
     }
 
     override fun stop() {
@@ -510,6 +585,7 @@ class AndroidPlaybackEngine(
         val pauseSpotify = activeBackend == ActiveBackend.SPOTIFY
         trace("stop() status=${_state.value.status} pos=${_state.value.positionMs} (clearRetainedMedia queued on Main)")
         activeBackend = ActiveBackend.NONE
+        successor.want(null)
         ticker?.cancel()
         publishState(EngineState())
         launchMediaCommand {

@@ -9,10 +9,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.ReplayGain
-import com.universalmusic.player.domain.playback.VolumeLevelling
 import androidx.media3.exoplayer.ExoPlayer
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.math.pow
 
 /**
  * ExoPlayer wrapper that:
@@ -20,8 +18,9 @@ import kotlin.math.pow
  * - Keeps notification/island metadata in sync for both local ExoPlayer and Spotify backends
  * - Emits [Player.Listener] events when overlay playback state changes (ExoPlayer stays paused on silence)
  */
-class KainosForwardingPlayer(
+class KainosForwardingPlayer internal constructor(
     private val exo: ExoPlayer,
+    private val levellingGain: LevellingAudioProcessor,
 ) : ForwardingPlayer(exo) {
     private val listeners = CopyOnWriteArrayList<Player.Listener>()
 
@@ -90,8 +89,6 @@ class KainosForwardingPlayer(
         exo.addListener(exoForwarder)
     }
 
-    /** The volume controllers set; ExoPlayer plays at this times the track's levelling gain. */
-    private var userVolume = exo.volume
     private var levellingEnabled = true
     private var tracksKnown = false
     private var replayGain: ReplayGain? = null
@@ -100,13 +97,6 @@ class KainosForwardingPlayer(
     var levelling: Levelling? = null
         private set
     var onLevellingChanged: ((Levelling?) -> Unit)? = null
-
-    override fun setVolume(volume: Float) {
-        userVolume = volume.coerceIn(0f, 1f)
-        applyLevelling()
-    }
-
-    override fun getVolume(): Float = userVolume
 
     fun setLevelling(enabled: Boolean) {
         levellingEnabled = enabled
@@ -120,10 +110,10 @@ class KainosForwardingPlayer(
         applyLevelling()
     }
 
+    /** The audio sink applies the gain itself; this only reports what it does for the playing item. */
     private fun applyLevelling() {
-        // ExoPlayer's volume stops at unity, so levelling here can only turn tracks down.
-        val gainDb = replayGain?.takeIf { levellingEnabled }?.let { VolumeLevelling.appliedGainDb(it, ceilingDb = 0.0) }
-        exo.volume = userVolume * (gainDb?.let { 10.0.pow(it / 20).toFloat() } ?: 1f)
+        levellingGain.enabled = levellingEnabled
+        val gainDb = replayGain?.takeIf { levellingEnabled }?.let(::androidLevellingGainDb)
         val next = when {
             !tracksKnown -> null
             !levellingEnabled -> Levelling.Off
@@ -132,7 +122,7 @@ class KainosForwardingPlayer(
         }
         if (next != levelling) {
             levelling = next
-            trace("levelling=$next volume=$userVolume")
+            trace("levelling=$next")
             onLevellingChanged?.invoke(next)
         }
     }
@@ -470,6 +460,8 @@ class KainosForwardingPlayer(
         Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
         Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
         -> canSeek
+        // The item after the current one is a gapless successor the session owns, not a queue to jump into.
+        Player.COMMAND_SEEK_TO_MEDIA_ITEM -> false
         else -> super.isCommandAvailable(command)
     }
 
@@ -480,6 +472,7 @@ class KainosForwardingPlayer(
             .add(Player.COMMAND_SEEK_TO_PREVIOUS)
             .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            .remove(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
         if (!canSkipNext) {
             builder.remove(Player.COMMAND_SEEK_TO_NEXT)
             builder.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)

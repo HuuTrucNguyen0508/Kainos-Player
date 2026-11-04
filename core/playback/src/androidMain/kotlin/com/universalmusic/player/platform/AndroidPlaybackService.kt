@@ -52,14 +52,15 @@ class AndroidPlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
-        val exo = ExoPlayer.Builder(this).build().apply {
+        val levelling = LevellingAudioProcessor()
+        val exo = ExoPlayer.Builder(this, LevellingRenderersFactory(this, levelling)).build().apply {
             setWakeMode(C.WAKE_MODE_NETWORK)
             setAudioAttributes(audioAttributes, true)
             setHandleAudioBecomingNoisy(true)
             addListener(exoTrace)
             addAnalyticsListener(exoAnalyticsTrace)
         }
-        val player = KainosForwardingPlayer(exo)
+        val player = KainosForwardingPlayer(exo, levelling)
         forwardingPlayer = player
         AndroidMediaControls.attachPlayer(player)
         val session = MediaSession.Builder(this, player)
