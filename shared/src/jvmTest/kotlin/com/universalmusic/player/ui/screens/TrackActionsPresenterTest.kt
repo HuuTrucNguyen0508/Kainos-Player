@@ -43,6 +43,24 @@ class TrackActionsPresenterTest {
     }
 
     @Test
+    fun queueingIntoAnEmptySessionShowsTheFirstTrackPausedAndPlaysIt() = runTest {
+        val rig = rig()
+        rig.actions.addToQueue(track("x"))
+        rig.actions.playNext(track("y"))
+        runCurrent()
+
+        val now = rig.session.nowPlaying.value
+        assertEquals("x", now.track?.canonicalId)
+        assertFalse(now.isPlaying)
+        assertEquals(listOf("y"), rig.upcoming())
+
+        rig.session.togglePlayPause()
+        runCurrent()
+        assertEquals("x", rig.session.nowPlaying.value.track?.canonicalId)
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
     fun playNextUnderShuffleIsTheVeryNextTrack() = runTest {
         val rig = rig()
         rig.session.play((1..6).map { track("t$it") })
