@@ -4,6 +4,7 @@ import com.universalmusic.player.data.history.HOME_SHELF_LIMIT
 import com.universalmusic.player.data.history.PlayHistory
 import com.universalmusic.player.data.history.REDISCOVER_AFTER_MS
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.isLocationInFolder
 import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
@@ -467,7 +468,7 @@ internal fun resolveHomePin(
             }
         }
         HomePinKind.LOCAL_FOLDER -> {
-            if (folders.none { it == pin.targetId }) {
+            if (folders.none { it == pin.targetId || isLocationInFolder(pin.targetId, it) }) {
                 ResolvedHomePin(
                     pin,
                     PinStatus.MISSING,

@@ -100,6 +100,7 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
+import kotlin.random.Random
 import coil3.compose.LocalPlatformContext
 import com.universalmusic.player.ui.components.warmQueueArtwork
 import com.universalmusic.player.domain.model.ProviderId
@@ -131,6 +132,8 @@ private fun AppScaffold(
 
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // A step back inside the open screen (Library's folder trail), taken after overlays and before tab history.
+    var screenBack by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var settingsTarget by remember { mutableStateOf<SettingsTarget?>(null) }
@@ -244,6 +247,10 @@ private fun AppScaffold(
 
     fun handleSystemBack(): Boolean {
         if (dismissOverlayStack()) return true
+        screenBack?.let { back ->
+            back()
+            return true
+        }
         if (tabBackStackNames.isNotEmpty()) {
             destinationName = tabBackStackNames.last()
             tabBackStackNames = tabBackStackNames.dropLast(1)
@@ -276,6 +283,13 @@ private fun AppScaffold(
         openNowPlaying()
     }
 
+    /** Turns shuffle on first, so the fresh order starts from a random song of [tracks]. */
+    fun shuffleTracks(tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        if (!container.player.queueState.value.shuffle) container.player.toggleShuffle()
+        playTracks(tracks, Random.nextInt(tracks.size))
+    }
+
     fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
@@ -289,6 +303,7 @@ private fun AppScaffold(
         enabled = showQueue ||
             showNowPlaying ||
             (desktop && nowPlayingPaneExpanded && compactPlayer) ||
+            screenBack != null ||
             tabBackStackNames.isNotEmpty(),
     ) {
         handleSystemBack()
@@ -405,6 +420,8 @@ private fun AppScaffold(
                                         ::playTracks,
                                         trackActions,
                                         onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
+                                        onShuffleTracks = ::shuffleTracks,
+                                        onInnerBack = { screenBack = it },
                                     )
                                     AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                                 }

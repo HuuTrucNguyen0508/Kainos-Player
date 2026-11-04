@@ -12,6 +12,7 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
+import com.universalmusic.player.platform.defaultLocalMusicFolder
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,8 @@ internal class LibraryPresenter(
     },
     /** The track as it plays with no network (cached audio attached), or null when it cannot. */
     private val offlineTrack: (Track) -> Track? = Track::offlineOnly,
+    /** The platform default music folder, browsed in Folders until the listener picks their own. */
+    private val defaultMusicFolder: () -> String = { "" },
 ) {
     private val queryText = MutableStateFlow("")
 
@@ -220,6 +223,11 @@ internal class LibraryPresenter(
         spotifyState = spotify.providerState,
         downloads = pins.downloads,
         query = query,
+        musicFolders = configuredMusicFolders(
+            catalog.settings.localMusicFolders,
+            catalog.settings.localMusicFoldersConfigured,
+            defaultMusicFolder(),
+        ),
         offlineTrack = offlineTrack,
     )
 
@@ -274,6 +282,7 @@ internal class LibraryPresenter(
             },
             onTrackAvailability = container::trackAvailability,
             offlineTrack = container::offlineTrack,
+            defaultMusicFolder = ::defaultLocalMusicFolder,
         )
     }
 }
