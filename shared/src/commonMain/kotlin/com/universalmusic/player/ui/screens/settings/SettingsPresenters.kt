@@ -17,6 +17,11 @@ import com.universalmusic.player.data.sync.HubPairingSession
 import com.universalmusic.player.data.sync.parseHubPairingLink
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -260,6 +265,7 @@ internal class SettingsSyncPresenter(
     private val controller: HomeLanSyncController,
     private val scope: CoroutineScope,
     private val discoveryTimeoutMs: Long = 10_000,
+    private val pairingLinkRefreshMs: Long = 10_000,
 ) {
     private val operation = MutableStateFlow(false to (null as String?))
     private val pairing = MutableStateFlow<PairingUiState>(PairingUiState.Idle)
@@ -273,10 +279,22 @@ internal class SettingsSyncPresenter(
     }.stateIn(scope, SharingStarted.Eagerly,
         SettingsSyncUiState(controller.status.value, controller.trust.value, controller.incomingPairing.value))
 
-    /** The QR code this PC shows while its hub listens; null on a phone. */
+    /**
+     * The QR code this PC shows while its hub listens; null on a phone. Read again every
+     * [pairingLinkRefreshMs] while shown, so a new Wi-Fi address reaches the code.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
     val pairingLink: StateFlow<String?> = controller.status.map { it.hubListening }.distinctUntilChanged()
-        .map { listening -> if (listening) controller.pairingLink() else null }
-        .stateIn(scope, SharingStarted.Eagerly, null)
+        .flatMapLatest { listening ->
+            if (!listening) flowOf<String?>(null) else flow {
+                while (true) {
+                    emit(controller.pairingLink())
+                    delay(pairingLinkRefreshMs)
+                }
+            }
+        }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.WhileSubscribed(), null)
 
     fun setNotice(message: String) { operation.value = operation.value.first to message }
 

@@ -15,6 +15,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -141,14 +142,19 @@ class SettingsSyncPresenterTest {
     }
 
     @Test
-    fun thePcShowsItsPairingLinkOnlyWhileItsHubListens() = runTest {
+    fun thePcShowsItsPairingLinkWhileItsHubListensAndFollowsANewAddress() = runTest {
         val service = FakeSyncController(hub, peer)
-        val presenter = SettingsSyncPresenter(service, backgroundScope)
+        val presenter = SettingsSyncPresenter(service, backgroundScope, pairingLinkRefreshMs = 1_000)
+        backgroundScope.launch { presenter.pairingLink.collect {} }
         runCurrent()
         assertEquals(null, presenter.pairingLink.value)
         service.status.value = service.status.value.copy(hubListening = true)
         runCurrent()
-        assertEquals("kainos-pair:3?link", presenter.pairingLink.value)
+        assertEquals("kainos-pair:3?host=192.168.1.20", presenter.pairingLink.value)
+        service.address = "192.168.1.31"
+        testScheduler.advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals("kainos-pair:3?host=192.168.1.31", presenter.pairingLink.value)
         service.status.value = service.status.value.copy(hubListening = false)
         runCurrent()
         assertEquals(null, presenter.pairingLink.value)
@@ -163,7 +169,8 @@ class SettingsSyncPresenterTest {
         var confirmed = false
         var cancelled = 0
         val pairedWith = mutableListOf<DiscoveredHub>()
-        override fun pairingLink() = "kainos-pair:3?link".takeIf { status.value.hubListening }
+        var address = "192.168.1.20"
+        override fun pairingLink() = "kainos-pair:3?host=$address".takeIf { status.value.hubListening }
         override suspend fun enable(enabled: Boolean) { status.value = status.value.copy(enabled = enabled) }
         override fun discoverHubs() = flow { if (emitHub) emit(hub); awaitCancellation() }
         override suspend fun pairWith(hub: DiscoveredHub) = object : HubPairingSession {
