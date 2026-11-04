@@ -1,6 +1,7 @@
 package com.universalmusic.player.ui.screens
 
 import com.universalmusic.player.data.cache.DownloadItemState
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
@@ -14,6 +15,7 @@ internal data class LibraryUiState(
     val songSort: TrackSort,
     val localOnly: Boolean,
     val favoritesOnly: Boolean,
+    val readyOffline: Boolean,
     val favorites: Set<String>,
     val query: String,
     val needle: String,
@@ -28,6 +30,7 @@ internal data class LibraryUiState(
     val spotifyPlaylists: List<Playlist>,
     val pinnedKeys: Set<String>,
     val localCount: Int,
+    val cachedCount: Int,
     val spotifyCount: Int,
     val localState: ProviderState,
     val spotifyConnected: Boolean,
@@ -50,7 +53,7 @@ internal fun LibraryUiState.withQuery(query: String): LibraryUiState {
         spotifyPlaylists = libraryFilteredSpotifyPlaylists(
             spotifyPlaylistCatalog,
             needle,
-            localOnly,
+            localOnly || readyOffline,
             favoritesOnly,
         ),
     )
@@ -71,10 +74,12 @@ internal fun deriveLibraryUiState(
     spotifyState: ProviderState,
     downloads: Map<String, DownloadItemState>,
     query: String,
+    offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ): LibraryUiState {
     val needle = ""
     val localOnly = settings.libraryLocalOnly
     val favoritesOnly = settings.libraryFavoritesOnly
+    val readyOffline = settings.libraryReadyOffline
     val queueSongs = libraryQueueSongs(
         local = localTracks,
         saved = saved,
@@ -83,11 +88,14 @@ internal fun deriveLibraryUiState(
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
         favorites = favorites,
+        readyOffline = readyOffline,
+        offlineTrack = offlineTrack,
     )
     return LibraryUiState(
         songSort = settings.librarySongSort,
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
+        readyOffline = readyOffline,
         favorites = favorites,
         query = "",
         needle = needle,
@@ -99,9 +107,10 @@ internal fun deriveLibraryUiState(
         kainosRows = kainosRows,
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),
         spotifyPlaylistCatalog = spotifyPlaylists,
-        spotifyPlaylists = libraryFilteredSpotifyPlaylists(spotifyPlaylists, needle, localOnly, favoritesOnly),
+        spotifyPlaylists = libraryFilteredSpotifyPlaylists(spotifyPlaylists, needle, localOnly || readyOffline, favoritesOnly),
         pinnedKeys = libraryPinnedKeys(homePins),
         localCount = libraryLocalCount(queueSongs),
+        cachedCount = libraryCachedCount(queueSongs),
         spotifyCount = librarySpotifyCount(queueSongs),
         localState = localState,
         spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED,

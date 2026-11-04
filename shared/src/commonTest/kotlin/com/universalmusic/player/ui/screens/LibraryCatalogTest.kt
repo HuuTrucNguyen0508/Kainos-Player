@@ -1,11 +1,15 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackSource
+import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -175,5 +179,36 @@ class LibraryCatalogTest {
             listOf("Discover Weekly", "Chill"),
             libraryFilteredSpotifyPlaylists(catalog, needle = "", localOnly = false, favoritesOnly = false).map { it.title },
         )
+    }
+
+    @Test
+    fun readyOfflineQueuesLocalAndCachedTracksWithTheirStreamsRemoved() {
+        val file = PlaybackSource(ProviderId.LOCAL, "/m/a.flac", isPlayable = true, handle = PlaybackHandle.Url("file:///m/a.flac"))
+        val cache = PlaybackSource(ProviderId.LOCAL, "hearted-yt:v1", isPlayable = true, handle = PlaybackHandle.Url("file:///c/v1.m4a"))
+        val local = Track("local:a", "Alpha", emptyList(), sources = listOf(file))
+        val mirror = Track("spotify:s1", "Mirror", emptyList(), sources = listOf(
+            PlaybackSource(ProviderId.SPOTIFY, "s1", isPlayable = true, handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "s1")),
+        ))
+        val stream = track("Stream", "Ada", provider = ProviderId.YOUTUBE_MUSIC, canonicalId = "yt:v9")
+        // Stands in for the hearted-audio cache attaching the downloaded file before filtering.
+        val attachCache = { t: Track -> if (t.canonicalId == "spotify:s1") t.copy(sources = listOf(cache) + t.sources) else t }
+
+        val queue = libraryQueueSongs(
+            local = listOf(local),
+            saved = listOf(stream),
+            spotify = listOf(mirror),
+            sort = TrackSort.NAME_ASCENDING,
+            localOnly = false,
+            favoritesOnly = false,
+            favorites = emptySet(),
+            readyOffline = true,
+            offlineTrack = { attachCache(it).offlineOnly() },
+        )
+
+        assertEquals(listOf("local:a", "spotify:s1"), queue.map { it.canonicalId })
+        assertEquals(listOf(listOf(file), listOf(cache)), queue.map { it.sources })
+        assertEquals(1, libraryLocalCount(queue))
+        assertEquals(1, libraryCachedCount(queue))
+        assertEquals(0, librarySpotifyCount(queue))
     }
 }

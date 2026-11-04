@@ -59,6 +59,8 @@ data class AppSettings(
     val libraryLocalOnly: Boolean = false,
     /** When true, Library Songs (and related album views) show only app-hearted tracks. */
     val libraryFavoritesOnly: Boolean = false,
+    /** When true, Library keeps only tracks that play with no network: local files and fully cached audio. */
+    val libraryReadyOffline: Boolean = false,
     /**
      * When true, tapping a Spotify or YouTube Search result plays that track followed by its own
      * source's radio (Spotify radio / YouTube Mix). When false, only the same-source results follow.

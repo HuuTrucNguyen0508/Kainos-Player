@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.playlist.toDomainPlaylist
@@ -8,6 +10,7 @@ import com.universalmusic.player.domain.matching.FuzzyMatcher
 import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artist
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -29,6 +32,8 @@ internal fun libraryQueueSongs(
     localOnly: Boolean,
     favoritesOnly: Boolean,
     favorites: Set<String>,
+    readyOffline: Boolean = false,
+    offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ): List<Track> {
     val catalog = if (localOnly) {
         local
@@ -36,7 +41,8 @@ internal fun libraryQueueSongs(
         (local + saved + spotify).distinctBy(Track::canonicalId)
     }
     val filtered = catalog.filter { !favoritesOnly || it.canonicalId in favorites }
-    return sort.sort(filtered)
+    // Ready offline queues the on-disk copies, so playback has no stream to fall back to.
+    return sort.sort(if (readyOffline) filtered.mapNotNull(offlineTrack) else filtered)
 }
 
 internal fun libraryDisplaySongs(queueSongs: List<Track>, needle: String): List<Track> {
@@ -127,7 +133,17 @@ internal fun libraryFilteredSpotifyPlaylists(
 }
 
 internal fun libraryLocalCount(queueSongs: List<Track>): Int =
-    queueSongs.count { it.sources.any { s -> s.provider == ProviderId.LOCAL } }
+    queueSongs.count { it.sources.any { s -> s.provider == ProviderId.LOCAL && !s.isHeartedCache() } }
+
+/** Songs that play from a downloaded `audio-cache/` file rather than a library file. */
+internal fun libraryCachedCount(queueSongs: List<Track>): Int =
+    queueSongs.count { track ->
+        track.sources.any { it.isHeartedCache() } &&
+            track.sources.none { it.provider == ProviderId.LOCAL && !it.isHeartedCache() }
+    }
+
+private fun PlaybackSource.isHeartedCache(): Boolean =
+    provider == ProviderId.LOCAL && providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX)
 
 internal fun librarySpotifyCount(queueSongs: List<Track>): Int =
     queueSongs.count { it.sources.any { s -> s.provider == ProviderId.SPOTIFY } }

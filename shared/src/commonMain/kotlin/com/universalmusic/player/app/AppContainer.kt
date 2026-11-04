@@ -5,6 +5,7 @@ import com.universalmusic.player.data.cache.MetadataCacheStats
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.HeartedAudioCacheStats
 import com.universalmusic.player.data.cache.toLocalPlaybackSource
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
@@ -576,6 +577,9 @@ class AppContainer(
     suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
 
     fun trackAvailability(track: Track) = heartedAudio.availabilityFor(track)
+
+    /** [track] with its cached audio attached and every stream removed, or null when it needs network. */
+    fun offlineTrack(track: Track): Track? = heartedAudio.applyCacheToTrack(track).offlineOnly()
 
     fun retryHeartedDownload(canonicalId: String) = heartedAudio.retry(canonicalId)
 

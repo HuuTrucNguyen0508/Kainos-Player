@@ -5,7 +5,10 @@ import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.domain.matching.track
+import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
@@ -87,11 +90,39 @@ class LibraryPresenterTest {
         assertEquals(listOf("amy"), presenter.state.value.queueSongs.map { it.canonicalId })
     }
 
+    @Test
+    fun readyOfflineChipPersistsAndKeepsOnlyTracksThatPlayWithoutNetwork() = runTest(UnconfinedTestDispatcher()) {
+        val settings = MutableStateFlow(AppSettings())
+        val file = PlaybackSource(ProviderId.LOCAL, "/m/a.flac", isPlayable = true, handle = PlaybackHandle.Url("file:///m/a.flac"))
+        val presenter = libraryPresenter(
+            settings = settings,
+            localTracks = MutableStateFlow(listOf(Track("local:a", "Alpha", emptyList(), sources = listOf(file)))),
+            spotifyTracks = MutableStateFlow(
+                listOf(track("Zed", "Ada", provider = ProviderId.SPOTIFY, canonicalId = "spotify:zed")),
+            ),
+            spotifyPlaylists = MutableStateFlow(
+                listOf(Playlist("spotify:playlist:p", "Mix", source = ProviderEntityRef(ProviderId.SPOTIFY, "p"))),
+            ),
+        )
+        advanceUntilIdle()
+        assertEquals(listOf("local:a", "spotify:zed"), presenter.state.value.queueSongs.map { it.canonicalId })
+        assertEquals(listOf("Mix"), presenter.state.value.spotifyPlaylists.map { it.title })
+
+        presenter.toggleReadyOffline()
+        advanceUntilIdle()
+
+        assertTrue(settings.value.libraryReadyOffline)
+        assertTrue(presenter.state.value.readyOffline)
+        assertEquals(listOf("local:a"), presenter.state.value.queueSongs.map { it.canonicalId })
+        assertEquals(emptyList(), presenter.state.value.spotifyPlaylists)
+    }
+
     private fun TestScope.libraryPresenter(
         settings: MutableStateFlow<AppSettings> = MutableStateFlow(AppSettings()),
         localTracks: MutableStateFlow<List<Track>> = MutableStateFlow(emptyList()),
         savedTracks: MutableStateFlow<List<Track>> = MutableStateFlow(emptyList()),
         spotifyTracks: MutableStateFlow<List<Track>> = MutableStateFlow(emptyList()),
+        spotifyPlaylists: MutableStateFlow<List<Playlist>> = MutableStateFlow(emptyList()),
         favorites: MutableStateFlow<Set<String>> = MutableStateFlow(emptySet()),
         updateSettings: suspend ((AppSettings) -> AppSettings) -> Unit = { transform ->
             settings.value = transform(settings.value)
@@ -107,7 +138,7 @@ class LibraryPresenterTest {
             localTracks = localTracks,
             localState = MutableStateFlow(ProviderState.AVAILABLE),
             spotifyTracks = spotifyTracks,
-            spotifyPlaylists = MutableStateFlow<List<Playlist>>(emptyList()),
+            spotifyPlaylists = spotifyPlaylists,
             kainosPlaylistRows = MutableStateFlow<List<PersistedKainosPlaylist>>(emptyList()),
             homePins = MutableStateFlow<List<PersistedHomePin>>(emptyList()),
             spotifyLibraryLoading = MutableStateFlow(false),

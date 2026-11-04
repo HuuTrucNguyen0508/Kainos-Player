@@ -58,6 +58,15 @@ fun libraryLocalSource(track: Track) = track.sources.firstOrNull {
         !it.providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX)
 }
 
+/**
+ * This track cut down to audio already on this device (a library file or a fully cached
+ * `audio-cache/` file), or null when it has none. A queue of these can never fall back to a stream.
+ */
+fun Track.offlineOnly(): Track? {
+    val onDisk = sources.filter { it.provider == ProviderId.LOCAL && it.isPlayable && it.handle is PlaybackHandle.Url }
+    return if (onDisk.isEmpty()) null else copy(sources = onDisk)
+}
+
 fun isSpotifyIdentity(track: Track): Boolean =
     track.canonicalId.startsWith("spotify:") ||
         track.sources.any { it.provider == ProviderId.SPOTIFY }
