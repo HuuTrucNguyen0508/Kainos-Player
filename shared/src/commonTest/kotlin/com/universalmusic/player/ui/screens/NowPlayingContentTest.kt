@@ -18,6 +18,7 @@ import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.ResolvedPlayback
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.NowPlayingState
+import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.SleepTimerState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NowPlayingContentTest {
+    @Test
+    fun sleepLabelSaysFadingOutDuringTheFade() {
+        val duration = SleepTimerState(active = true, mode = SleepTimerMode.Duration(300_000L), remainingMs = 24_000L)
+        assertEquals("Sleep · 0:24", sleepTimerRemainingLabel(duration))
+        assertEquals("Fading out · 0:24", sleepTimerRemainingLabel(duration.copy(fading = true)))
+        val endOfTrack = SleepTimerState(active = true, mode = SleepTimerMode.EndOfTrack, fading = true)
+        assertEquals("Fading out · end of track", sleepTimerRemainingLabel(endOfTrack))
+        assertNull(sleepTimerRemainingLabel(SleepTimerState()))
+    }
+
     @Test
     fun qualityLabelsForSpotifyFlacAndUnknown() {
         val spotify = AudioQuality(

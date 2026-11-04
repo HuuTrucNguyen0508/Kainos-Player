@@ -164,6 +164,156 @@ class SleepTimerControllerTest {
     }
 
     @Test
+    fun durationFadesEngineVolumeOverLastThirtySecondsThenPausesAndRestores() = runTest {
+        val engine = SleepTimerTestEngine()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        var clock = 0L
+        val timer = SleepTimerController(session, backgroundScope) { clock }
+
+        session.play(listOf(track("One", "A", provider = ProviderId.SAMPLE)), startIndex = 0)
+        runCurrent()
+        session.setVolume(0.8f)
+        runCurrent()
+        timer.startDuration(60_000L)
+        runCurrent()
+        engine.events.clear()
+
+        clock += 29_000L
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals(emptyList(), engine.events, "no fade before the last 30 seconds")
+        assertFalse(timer.state.value.fading)
+
+        clock += 16_000L
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals(listOf("volume 0.4"), engine.events)
+        assertTrue(timer.state.value.fading)
+        assertEquals(0.8f, session.volume.value, "the user's volume setting never moves")
+        assertTrue(session.nowPlaying.value.isPlaying)
+
+        clock += 15_000L
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals(listOf("volume 0.4", "pause", "volume 0.8"), engine.events)
+        assertFalse(timer.state.value.active)
+        assertFalse(timer.state.value.fading)
+        assertFalse(session.nowPlaying.value.isPlaying)
+
+        engine.events.clear()
+        session.playTransport()
+        runCurrent()
+        assertEquals(listOf("volume 0.8", "resume"), engine.events, "next Play resends the restored volume")
+    }
+
+    @Test
+    fun cancelMidFadeRestoresVolumeAtOnceAndKeepsPlaying() = runTest {
+        val engine = SleepTimerTestEngine()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        var clock = 0L
+        val timer = SleepTimerController(session, backgroundScope) { clock }
+
+        session.play(listOf(track("One", "A", provider = ProviderId.SAMPLE)), startIndex = 0)
+        runCurrent()
+        timer.startDuration(60_000L)
+        runCurrent()
+        engine.events.clear()
+
+        clock += 45_000L
+        advanceTimeBy(1_000L)
+        runCurrent()
+        session.setVolume(0.6f)
+        runCurrent()
+        assertEquals(listOf("volume 0.5", "volume 0.3"), engine.events, "a slider move mid-fade stays scaled")
+
+        timer.cancel()
+        runCurrent()
+        assertEquals(listOf("volume 0.5", "volume 0.3", "volume 0.6"), engine.events)
+        assertFalse(timer.state.value.active)
+        assertTrue(session.nowPlaying.value.isPlaying)
+
+        clock += 60_000L
+        advanceTimeBy(60_000L)
+        runCurrent()
+        assertEquals(EngineStatus.PLAYING, engine.state.value.status)
+        assertEquals(listOf("volume 0.5", "volume 0.3", "volume 0.6"), engine.events)
+    }
+
+    @Test
+    fun endOfTrackFadesOverTheTracksRemainingTimeAndRestoresAtTheEnd() = runTest {
+        val engine = SleepTimerTestEngine(durationMs = 120_000L)
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        var clock = 0L
+        val timer = SleepTimerController(session, backgroundScope) { clock }
+
+        session.play(
+            listOf(
+                track("One", "A", provider = ProviderId.SAMPLE),
+                track("Two", "B", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+        timer.startEndOfTrack()
+        runCurrent()
+        engine.events.clear()
+
+        engine.emitPosition(80_000L)
+        runCurrent()
+        assertEquals(emptyList(), engine.events)
+
+        clock += 1_000L
+        engine.emitPosition(105_000L)
+        runCurrent()
+        assertEquals(listOf("volume 0.5"), engine.events)
+        assertTrue(timer.state.value.fading)
+
+        clock += 1_000L
+        engine.emitPosition(60_000L)
+        runCurrent()
+        assertEquals(listOf("volume 0.5", "volume 1.0"), engine.events, "seeking back out of the fade restores")
+        assertFalse(timer.state.value.fading)
+
+        clock += 1_000L
+        engine.emitPosition(114_000L)
+        runCurrent()
+        engine.emitEnded()
+        runCurrent()
+        assertEquals(listOf("volume 0.5", "volume 1.0", "volume 0.2", "volume 1.0", "stop"), engine.events)
+        assertFalse(timer.state.value.active)
+        assertEquals("One", session.nowPlaying.value.track?.title)
+        assertFalse(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun skipDuringEndOfTrackFadeRestoresVolume() = runTest {
+        val engine = SleepTimerTestEngine(durationMs = 120_000L)
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        val timer = SleepTimerController(session, backgroundScope) { 0L }
+
+        session.play(
+            listOf(
+                track("One", "A", provider = ProviderId.SAMPLE),
+                track("Two", "B", provider = ProviderId.SAMPLE),
+            ),
+            startIndex = 0,
+        )
+        runCurrent()
+        timer.startEndOfTrack()
+        runCurrent()
+        engine.emitPosition(105_000L)
+        runCurrent()
+        assertEquals(0.5f, engine.volume)
+
+        session.skipToNext()
+        runCurrent()
+        assertFalse(timer.state.value.active)
+        assertEquals("Two", session.nowPlaying.value.track?.title)
+        assertEquals(1f, engine.volume)
+    }
+
+
+    @Test
     fun formatSleepTimerRemainingPadsMinutesAndHours() {
         assertEquals("0:05", formatSleepTimerRemaining(4_100L))
         assertEquals("5:00", formatSleepTimerRemaining(5 * 60_000L))
@@ -171,24 +321,30 @@ class SleepTimerControllerTest {
     }
 }
 
-private class SleepTimerTestEngine : PlaybackEngine {
+private class SleepTimerTestEngine(private val durationMs: Long = 1_000L) : PlaybackEngine {
     override val state = MutableStateFlow(EngineState())
     private var activePlayGeneration: Long = 0L
+    /** Volume, pause, resume and stop calls in order, volumes rounded to one decimal. */
+    val events = mutableListOf<String>()
+    var volume = 1f
+        private set
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         activePlayGeneration = playGeneration
         state.value = EngineState(
             status = EngineStatus.PLAYING,
-            durationMs = 1_000,
+            durationMs = durationMs,
             playGeneration = playGeneration,
         )
     }
 
     override fun pause() {
+        events += "pause"
         state.value = state.value.copy(status = EngineStatus.PAUSED, playGeneration = activePlayGeneration)
     }
 
     override fun resume() {
+        events += "resume"
         state.value = state.value.copy(status = EngineStatus.PLAYING, playGeneration = activePlayGeneration)
     }
 
@@ -197,10 +353,18 @@ private class SleepTimerTestEngine : PlaybackEngine {
     }
 
     override fun stop() {
+        events += "stop"
         state.value = EngineState(playGeneration = activePlayGeneration)
     }
 
-    override fun setVolume(volume: Float) = Unit
+    override fun setVolume(volume: Float) {
+        this.volume = volume
+        events += "volume ${kotlin.math.round(volume * 10) / 10}"
+    }
+
+    fun emitPosition(positionMs: Long) {
+        state.value = state.value.copy(positionMs = positionMs, playGeneration = activePlayGeneration)
+    }
 
     fun emitEnded() {
         state.value = state.value.copy(
