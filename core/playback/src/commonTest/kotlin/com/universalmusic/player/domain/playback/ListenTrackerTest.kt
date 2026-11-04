@@ -32,6 +32,15 @@ class ListenTrackerTest {
     }
 
     @Test
+    fun stoppingAtTheEndWithoutMovingOnRecordsTheFinishedListenOnce() {
+        at(1_000, "a", first, playing = true, position = 0)
+        at(200_600, "a", first, playing = true, position = 199_600)
+        assertEquals(PlayEvent(first, 1_000, 200_000, completed = true), at(201_000, "a", first, playing = false, position = 200_000))
+        assertNull(at(500_000, "a", first, playing = false, position = 200_000))
+        assertNull(at(501_000, "b", second, playing = true, position = 0))
+    }
+
+    @Test
     fun pausedTimeIsNotListening() {
         at(1_000, "a", first, playing = true, position = 0)
         at(11_000, "a", first, playing = false, position = 10_000)

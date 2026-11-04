@@ -28,32 +28,30 @@ class ListenTracker(private val clock: () -> Long) {
         val now = clock()
         playingSinceMs?.let { listenedMs += (now - it).coerceAtLeast(0) }
         val replayed = state.queueItemId == itemId && finished() && state.positionMs + LISTEN_END_SLACK_MS < positionMs
-        val ended = if (state.queueItemId != itemId || replayed) {
-            close().also {
-                itemId = state.queueItemId
-                startedAtMs = null
-                listenedMs = 0
-            }
-        } else {
-            null
-        }
+        val ended = if (state.queueItemId != itemId || replayed) close().also { itemId = state.queueItemId } else null
         track = state.track
         positionMs = state.positionMs
         durationMs = state.durationMs ?: state.track?.durationMs
         playingSinceMs = now.takeIf { state.isPlaying }
         if (state.isPlaying && startedAtMs == null) startedAtMs = now
-        return ended
+        // Playback that stops at the end without moving on (last entry, sleep timer) has finished this listen.
+        return ended ?: if (!state.isPlaying && atEnd(positionMs)) close() else null
     }
 
-    private fun finished(): Boolean {
+    private fun atEnd(position: Long): Boolean {
         val duration = durationMs?.takeIf { it > 0 } ?: return false
-        return maxOf(positionMs, listenedMs) >= duration - LISTEN_END_SLACK_MS
+        return position >= duration - LISTEN_END_SLACK_MS
     }
 
+    private fun finished(): Boolean = atEnd(maxOf(positionMs, listenedMs))
+
+    /** Ends the current listen; the same entry can start another one. */
     private fun close(): PlayEvent? {
-        val listened = track ?: return null
-        val started = startedAtMs ?: return null
-        if (listenedMs < MIN_RECORDED_LISTEN_MS) return null
-        return PlayEvent(listened, started, listenedMs, completed = finished())
+        val event = startedAtMs?.let { started ->
+            track?.takeIf { listenedMs >= MIN_RECORDED_LISTEN_MS }?.let { PlayEvent(it, started, listenedMs, completed = finished()) }
+        }
+        startedAtMs = null
+        listenedMs = 0
+        return event
     }
 }
