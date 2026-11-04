@@ -218,7 +218,7 @@ class DesktopHomeLanSyncHub(
                         touchActivity()
                         val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
                         val remote = json.decodeFromString<HeartsSyncDocument>(body)
-                        val localAfter = config.onHearts(remote)
+                        val localAfter = config.onHearts(remote).forPeerSpotifyAccount(remote.spotifyAccountId)
                         call.respondText(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_HEARTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,

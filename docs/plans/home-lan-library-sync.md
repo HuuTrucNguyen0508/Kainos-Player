@@ -102,7 +102,7 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 ## Local hearts (post Phase 3)
 
 - Wire id: `localkey:lc1:<hash>` when known; `localfile:<basename>` (lowercase) remains the fallback. Device `local:` ids stay on-device.
-- Home-LAN heart ops: YouTube + localfile only (not Spotify — same account already covers Spotify).
+- Home-LAN heart ops: YouTube, localfile, and Spotify-scoped app hearts. Spotify ops cross only when both documents carry the same `spotifyAccountId`; the hub reply and the v1 downgrade omit them for any other peer.
 - When the basename is missing on a peer, Sync now lists pending transfers; confirm copies the blob, then rematch hearts.
 
 ## Architecture

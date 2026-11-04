@@ -28,7 +28,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 
 **System controls.** MPRIS and media keys on Linux. Notification, lock screen and Bluetooth transport on Android, where tapping the notification opens Now Playing.
 
-**Home sync.** The phone finds the PC on the local network. Both screens show a code to compare and confirm, and pairing pins the hub's certificate over HTTPS on port `43822`. YouTube and local-file hearts merge both ways, Kainos playlists sync, and vault audio moves only after confirmation. Paired devices can see and control each other from Now Playing, and Play here moves the other device's queue to this one. Sync runs while the phone app is open. The PC hub can start at login.
+**Home sync.** The phone finds the PC on the local network. Both screens show a code to compare and confirm, and pairing pins the hub's certificate over HTTPS on port `43822`. YouTube and local-file hearts merge both ways. Spotify app hearts merge too, but only between devices signed into the same Spotify account, and never touch Spotify Liked Songs. Kainos playlists sync, and vault audio moves only after confirmation. Paired devices can see and control each other from Now Playing, and Play here moves the other device's queue to this one. Sync runs while the phone app is open. The PC hub can start at login.
 
 **Appearance.** Folio and Caelestia skins, seven tints, and light, dark or system mode. Caelestia follows the shell's live colours on Linux. Desktop has a collapsible, resizable Now Playing pane that waits for the first track, a compact player, and Queue beside content on wide windows.
 
@@ -40,7 +40,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 - No gapless on Android, and none for Spotify or YouTube on Linux. No crossfade, EQ or DSP.
 - No lyrics, until a source with clear terms exists. See [the investigation](plans/lyrics-source-investigation.md).
 - No YouTube Music account library.
-- No sync of Spotify app hearts, YouTube cached audio or Home pins between devices.
+- No sync of YouTube cached audio or Home pins between devices.
 - No QR pairing, and no sync while the phone app is closed.
 - Spotify Discover Weekly cannot be listed through the Web API for most developer apps. Paste its share link in Settings → Music sources.
 - Spotify playback rests on unofficial librespot, so a protocol change can break it. Web API quotas can block search and library loading even while audio works.

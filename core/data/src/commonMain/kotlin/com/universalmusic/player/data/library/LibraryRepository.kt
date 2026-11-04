@@ -291,12 +291,21 @@ class LibraryRepository(
         val favorites = _favorites.value
         val deviceId = deviceIdProvider()
         val now = clock()
-        // Home-LAN hearts: YouTube + portable local files only. Spotify is already
-        // available on both devices via the same account / Web API — not mirrored here.
-        val youtubeMeta = _saved.value
-            .filter { it.canonicalId in favorites && it.canonicalId.startsWith("yt:") }
+        // Spotify app hearts travel only under a known account; the receiver and the hub's
+        // reply drop them unless the peer is signed into that same account.
+        val account = spotifyAccountId
+        fun exportsProviderHeart(id: String) =
+            id.startsWith("yt:") || (account != null && isSpotifyHeartCanonicalId(id))
+        val providerMeta = _saved.value
+            .filter { it.canonicalId in favorites && exportsProviderHeart(it.canonicalId) }
             .mapNotNull { it.toPersisted(0).forHeartsSync() }
-        val youtubeOps = heartOps.compacted().filter { it.canonicalId.startsWith("yt:") }
+        val providerOps = heartOps.compacted().mapNotNull { op ->
+            when {
+                op.canonicalId.startsWith("yt:") -> op
+                !exportsProviderHeart(op.canonicalId) || (op.spotifyAccountId ?: account) != account -> null
+                else -> op.copy(spotifyAccountId = account)
+            }
+        }
         val localOpsById = heartOps.compacted().associateBy { it.canonicalId }
         val localExports = _saved.value
             .filter { it.canonicalId.startsWith("local:") }
@@ -324,7 +333,7 @@ class LibraryRepository(
         val localfileOps = localExports.map { it.first } + localTombstones + pendingLocalFileOps
         val localfileMeta = localExports.filter { it.first.action == HeartAction.FAVORITE }.map { it.second } + pendingLocalFileMeta
         val opsById = LinkedHashMap<String, HeartOp>()
-        for (op in youtubeOps + localfileOps) {
+        for (op in providerOps + localfileOps) {
             val existing = opsById[op.canonicalId]
             if (existing == null || op.revision > existing.revision ||
                 (op.revision == existing.revision && op.deviceId > existing.deviceId)
@@ -338,7 +347,7 @@ class LibraryRepository(
             ops = opsById.values.toList().collapseLocalSyncAliases(
                 localfileMeta.mapNotNull { it.localSyncIdentity() } + localfileOps.mapNotNull { it.localSyncIdentity() },
             ),
-            favoritesMetadata = (youtubeMeta + localfileMeta).portableFavoriteMetadata(),
+            favoritesMetadata = (providerMeta + localfileMeta).portableFavoriteMetadata(),
         )
     }
 
@@ -370,7 +379,7 @@ class LibraryRepository(
             } ?: track
             val wireOps = mergeHeartOps(
                 localOps = heartOps.collapseLocalSyncAliases(known),
-                remoteOps = remote.ops.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) }.collapseLocalSyncAliases(known),
+                remoteOps = remote.ops.collapseLocalSyncAliases(known),
                 localSpotifyAccountId = spotifyAccountId,
                 remoteSpotifyAccountId = remote.spotifyAccountId,
             )
