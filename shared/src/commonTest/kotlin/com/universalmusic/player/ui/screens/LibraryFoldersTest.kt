@@ -85,6 +85,10 @@ class LibraryFoldersTest {
         val (byTrack, files) = music.visibleFor("a", setOf("local:/m/Rock/Live/a.flac"))
         assertEquals(listOf("Jazz Club", "Rock"), byTrack.map { it.name }) // "Jazz Club" also spells a
         assertEquals(emptyList(), files)
+
+        // The list of music folders matches a root by its own name, with no song matching.
+        val roots = libraryFolderTree(listOf("/m", "/Archive"), library)
+        assertEquals(listOf("Archive"), roots.matching("archive", emptySet()).map { it.name })
     }
 
     @Test

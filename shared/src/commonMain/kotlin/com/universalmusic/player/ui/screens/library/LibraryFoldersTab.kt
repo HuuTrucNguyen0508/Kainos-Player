@@ -77,11 +77,7 @@ internal fun ColumnScope.LibraryFoldersTab(
         if (state.needle.isEmpty()) emptySet() else state.songs.mapTo(HashSet()) { it.canonicalId }
     }
     val (folders, tracks) = remember(folder, state.folders, state.needle, matchingIds) {
-        when {
-            folder != null -> folder.visibleFor(state.needle, matchingIds)
-            state.needle.isEmpty() -> state.folders to emptyList()
-            else -> state.folders.filter { root -> root.allTracks.any { it.canonicalId in matchingIds } } to emptyList()
-        }
+        folder?.visibleFor(state.needle, matchingIds) ?: (state.folders.matching(state.needle, matchingIds) to emptyList())
     }
     val pinned = { item: LibraryFolder -> "${HomePinKind.LOCAL_FOLDER.name}|${item.id}" in state.pinnedKeys }
     LazyColumn(

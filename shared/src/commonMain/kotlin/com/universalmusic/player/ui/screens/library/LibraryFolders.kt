@@ -72,11 +72,14 @@ internal fun List<LibraryFolder>.trailTo(id: String?): List<LibraryFolder>? {
 /** What a Folders view shows for a search: matching folder names or folders holding a matching track. */
 internal fun LibraryFolder.visibleFor(needle: String, matchingTrackIds: Set<String>): Pair<List<LibraryFolder>, List<Track>> {
     if (needle.isEmpty()) return folders to tracks
-    return folders.filter { folder ->
+    return folders.matching(needle, matchingTrackIds) to tracks.filter { it.canonicalId in matchingTrackIds }
+}
+
+internal fun List<LibraryFolder>.matching(needle: String, matchingTrackIds: Set<String>): List<LibraryFolder> =
+    if (needle.isEmpty()) this else filter { folder ->
         FuzzyMatcher.matches(needle, TrackNormalizer.fold(folder.name)) ||
             folder.allTracks.any { it.canonicalId in matchingTrackIds }
-    } to tracks.filter { it.canonicalId in matchingTrackIds }
-}
+    }
 
 /** Case-insensitive order where digit runs compare by value, so "2 Song" sorts before "10 Song". */
 internal fun naturalCompare(a: String, b: String): Int {
