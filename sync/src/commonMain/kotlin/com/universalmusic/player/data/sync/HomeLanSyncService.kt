@@ -130,6 +130,8 @@ class HomeLanSyncService(
         val role: HomeLanSyncRole,
     )
 
+    private fun livePlaylistIds(): Set<String> = playlists.playlists.value.mapTo(HashSet()) { it.id }
+
     private fun resolutionSource(target: PairedPeer) = synchronized(resolutionLock) {
         ResolutionSource(target, resolutionGeneration, _status.value.role)
     }
@@ -459,6 +461,8 @@ class HomeLanSyncService(
                         library.mergeAndPersistSyncState(remoteHearts)
                         val remotePlaylists = client.syncPlaylists().getOrThrow()
                         playlists.mergeAndPersistSyncState(remotePlaylists)
+                        val remotePins = client.syncHomePins().getOrThrow()
+                        remotePins?.let { library.mergeAndPersistHomePins(it, livePlaylistIds()) }
                         val rematchedPortable = rematchLocalHearts()
                         val rematchedPlaylistLocals = rematchPlaylistLocals()
                         refreshLocalLibrary()
@@ -491,6 +495,7 @@ class HomeLanSyncService(
                         val detail = buildString {
                             append("Hearts (${remoteHearts.ops.size} peer ops)")
                             append("; playlists (${remotePlaylists.playlists.size} peer)")
+                            append(remotePins?.let { "; pins (${it.pins.size} peer)" } ?: "; pins skipped (peer too old)")
                             append("; $vaultDetail")
                             if (rematched > 0) append(", rematched $rematched local hearts")
                             if (rematchedPl > 0) append(", rematched $rematchedPl playlist locals")
@@ -781,6 +786,7 @@ class HomeLanSyncService(
                         pairing = pairingHost,
                         onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
                         onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
+                        onHomePins = { remote -> library.mergeAndPersistHomePins(remote, livePlaylistIds()) },
                         vault = vaultStore.takeIf { it.isConfigured() },
                         heartedVaultFileNames = {
                             if (settings().homeLanSyncVaultHeartsOnly) heartedLocalAudioFileNames(library) else null

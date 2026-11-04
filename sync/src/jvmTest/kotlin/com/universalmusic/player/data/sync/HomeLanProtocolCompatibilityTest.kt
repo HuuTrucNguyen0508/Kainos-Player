@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.library.HomePinsSyncDocument
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
@@ -127,6 +129,62 @@ class HomeLanProtocolCompatibilityTest {
                 assertEquals(emptyList<HeartOp>(), v1.ops)
                 assertEquals(emptyList<com.universalmusic.player.data.library.PersistedTrack>(), v1.favoritesMetadata)
             }
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pinsCrossThePinnedHubWithSpotifyPinsOnlyForTheSameAccount() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-home-pins-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            val pcLibrary = LibraryRepository(deviceIdProvider = { "pc" }).apply { setSpotifyAccountId("account-a") }
+            pcLibrary.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:hub", title = "Hub list")
+            pcLibrary.pinHome(HomePinKind.PROVIDER_PLAYLIST, "spotify-playlist:hub", title = "Hub mix", providerEntityId = "hub", provider = "SPOTIFY")
+            pcLibrary.pinHome(HomePinKind.LOCAL_FOLDER, "/pc/Music", title = "Music")
+            hub = hub(pc, phone, port, { it }, { it }, vault = null, bindHost = "127.0.0.1",
+                onHomePins = { pcLibrary.mergeAndPersistHomePins(it, setOf("kainos:playlist:hub", "kainos:playlist:phone")) })
+            hub.start()
+            /** The pin targets the phone holds after one exchange. */
+            suspend fun pinsFor(account: String?): List<String> {
+                val library = LibraryRepository(deviceIdProvider = { "phone-$account" }).apply { setSpotifyAccountId(account) }
+                library.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:phone", title = "Phone list")
+                val reply = HttpHomeLanSyncClient(hubPeer(pc, port), library, KainosPlaylistRepository(), client(pc, phone))
+                    .use { it.syncHomePins().getOrThrow() }
+                library.mergeAndPersistHomePins(assertNotNull(reply), setOf("kainos:playlist:hub"))
+                return library.homePins.value.map { it.targetId }
+            }
+            assertEquals(listOf("kainos:playlist:phone", "kainos:playlist:hub", "spotify-playlist:hub"), pinsFor("account-a"))
+            assertEquals(listOf("kainos:playlist:phone", "kainos:playlist:hub"), pinsFor("account-b"))
+            assertEquals(listOf("kainos:playlist:phone", "kainos:playlist:hub"), pinsFor(null))
+            assertEquals(
+                listOf("kainos:playlist:hub", "spotify-playlist:hub", "/pc/Music", "kainos:playlist:phone"),
+                pcLibrary.homePins.value.map { it.targetId },
+            )
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aHubFromBeforePinSyncLeavesPinsAloneAndHeartsStillSync() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-old-hub-pins-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            hub = hub(pc, phone, port, { it }, { it }, vault = null, bindHost = "127.0.0.1")
+            hub.start()
+            val library = LibraryRepository(deviceIdProvider = { "phone" })
+            library.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:phone", title = "Phone list")
+            HttpHomeLanSyncClient(hubPeer(pc, port), library, KainosPlaylistRepository(), client(pc, phone)).use { client ->
+                assertNull(client.syncHomePins().getOrThrow())
+                assertTrue(client.syncHearts().isSuccess)
+            }
+            assertEquals(listOf("kainos:playlist:phone"), library.homePins.value.map { it.targetId })
         } finally {
             hub?.stop()
             directory.deleteRecursively()
@@ -349,6 +407,7 @@ class HomeLanProtocolCompatibilityTest {
         onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
         vault: HomeLanVaultStore?,
         bindHost: String,
+        onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
     ) = DesktopHomeLanSyncHub(
         HomeLanHubConfig(
             deviceId = "pc",
@@ -357,6 +416,7 @@ class HomeLanProtocolCompatibilityTest {
             pairing = PairingHost({ pc.fingerprint }, { "pc" }, onPaired = {}),
             onHearts = onHearts,
             onPlaylists = onPlaylists,
+            onHomePins = onHomePins,
             vault = vault,
             heartedVaultFileNames = { null },
         ),

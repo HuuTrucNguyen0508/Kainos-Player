@@ -2,7 +2,6 @@ package com.universalmusic.player.data.library
 
 import kotlinx.coroutines.CompletableDeferred
 import com.universalmusic.player.data.backup.BackupRestoreCounts
-import com.universalmusic.player.data.backup.isSpotifyScoped
 import com.universalmusic.player.data.sync.emptyPortableTrack
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.putPreservingOnFailure
@@ -70,6 +69,8 @@ class LibraryRepository(
 
     private var spotifyAccountId: String? = null
     private var heartOps: List<HeartOp> = emptyList()
+    private var pinTombstones: List<HomePinTombstone> = emptyList()
+    private var pinOrderStamp = HomePinStamp()
     private val persistMutex = Mutex()
     private var persistJob: Job? = null
 
@@ -108,23 +109,38 @@ class LibraryRepository(
             provider = provider ?: existing?.provider,
         )
         if (!pin.isValidShape()) return null
-        _homePins.update { current ->
-            if (existing != null) {
-                current.map { if (it.id == existing.id) pin else it }
-            } else {
-                current + pin
-            }.migratedHomePins()
+        if (existing != null) {
+            _homePins.update { current -> current.map { if (it.id == existing.id) pin else it }.migratedHomePins() }
+        } else {
+            addPins(listOf(pin))
         }
         schedulePersist()
         return pin
     }
 
-    /** Remove the pin only; the playlist/album/folder remains. */
+    /** Appends new pins; portable ones get a fresh stamp that beats any earlier unpin of the same target. */
+    private fun addPins(pins: List<PersistedHomePin>) {
+        val stamped = pins.map { if (it.forHomeSync() != null) it.copy(syncStamp = nextPinStamp()) else it }
+        val keys = stamped.mapTo(HashSet()) { pinKey(it.kind, it.targetId) }
+        pinTombstones = pinTombstones.filterNot { pinKey(it.kind, it.targetId) in keys }
+        _homePins.update { current -> (current + stamped).migratedHomePins() }
+    }
+
+    private fun nextPinStamp(): HomePinStamp {
+        val newest = (_homePins.value.mapNotNull { it.syncStamp } + pinTombstones.map { it.stamp } + pinOrderStamp)
+            .maxOf { it.revision }
+        return HomePinStamp(maxOf(clock(), newest + 1), deviceIdProvider())
+    }
+
+    /** Remove the pin only; the playlist/album/folder remains. Unpinning a portable pin is synced. */
     fun unpinHome(pinId: String): Boolean {
         val before = _homePins.value
-        val after = before.filterNot { it.id == pinId }
-        if (after.size == before.size) return false
-        _homePins.value = after
+        val pin = before.firstOrNull { it.id == pinId } ?: return false
+        if (pin.forHomeSync() != null) {
+            pinTombstones = pinTombstones.filterNot { it.kind == pin.kind && it.targetId == pin.targetId } +
+                HomePinTombstone(pin.kind, pin.targetId, nextPinStamp())
+        }
+        _homePins.value = before - pin
         schedulePersist()
         return true
     }
@@ -141,8 +157,7 @@ class LibraryRepository(
         val reordered = orderedPinIds.mapNotNull { byId[it] }
         val missing = current.filter { it.id !in orderedPinIds }
         if (reordered.size + missing.size != current.size) return false
-        _homePins.value = (reordered + missing).migratedHomePins()
-        schedulePersist()
+        setPinOrder((reordered + missing).migratedHomePins())
         return true
     }
 
@@ -154,9 +169,16 @@ class LibraryRepository(
         if (target == index) return false
         val item = current.removeAt(index)
         current.add(target, item)
-        _homePins.value = current
-        schedulePersist()
+        setPinOrder(current)
         return true
+    }
+
+    /** A reorder that changes the order of portable pins is synced; the newest reorder wins. */
+    private fun setPinOrder(next: List<PersistedHomePin>) {
+        fun List<PersistedHomePin>.portableOrder() = filter { it.forHomeSync() != null }.map { it.id }
+        if (next.portableOrder() != _homePins.value.portableOrder()) pinOrderStamp = nextPinStamp()
+        _homePins.value = next
+        schedulePersist()
     }
 
     fun toggleFavorite(track: Track): Boolean {
@@ -269,6 +291,8 @@ class LibraryRepository(
         _saved.value = migrated.remembered.map { it.toDomain() }
         _recent.value = migrated.recents.map { it.toDomain() }
         _homePins.value = migrated.homePins.migratedHomePins()
+        pinTombstones = migrated.homePinTombstones
+        pinOrderStamp = migrated.homePinOrderStamp
     }
 
     /** Drop Spotify-scoped app data when the signed-in account changes or disconnects. */
@@ -288,7 +312,35 @@ class LibraryRepository(
         remembered = _saved.value.map { it.toPersisted(clock()) },
         recents = _recent.value.map { it.toPersisted(clock()) },
         homePins = _homePins.value.migratedHomePins(),
+        homePinTombstones = pinTombstones,
+        homePinOrderStamp = pinOrderStamp,
     )
+
+    fun exportHomePinsSyncDocument(): HomePinsSyncDocument =
+        HomePinsState(_homePins.value, pinTombstones, pinOrderStamp).exportForHomeSync(deviceIdProvider(), spotifyAccountId)
+
+    /**
+     * Applies a peer's pins (see [mergeHomePinsSync]) and returns this device's document after the merge.
+     * A Kainos playlist pin is added only when its playlist is in [livePlaylistIds].
+     */
+    suspend fun mergeAndPersistHomePins(remote: HomePinsSyncDocument, livePlaylistIds: Set<String>): HomePinsSyncDocument {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        persistJob?.cancel()
+        persistJob = null
+        persistMutex.withLock {
+            val merged = mergeHomePinsSync(
+                local = HomePinsState(_homePins.value, pinTombstones, pinOrderStamp),
+                remote = remote,
+                localSpotifyAccountId = spotifyAccountId,
+                hasTarget = { it.kind != HomePinKind.KAINOS_PLAYLIST || it.targetId in livePlaylistIds },
+            )
+            _homePins.value = merged.pins
+            pinTombstones = merged.tombstones
+            pinOrderStamp = merged.orderStamp
+            store?.write(toSnapshot())
+        }
+        return exportHomePinsSyncDocument()
+    }
 
     fun exportHeartsSyncDocument(): HeartsSyncDocument {
         val favorites = _favorites.value
@@ -689,7 +741,7 @@ class LibraryRepository(
         var already = 0
         var spotifySkipped = 0
         for (pin in pins.portableForHomeSync()) {
-            if (pin.isSpotifyScoped() && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
+            if (pin.isSpotifyPlaylistPin() && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
                 spotifySkipped += 1
                 continue
             }
@@ -701,7 +753,7 @@ class LibraryRepository(
             added += if (usedIds.add(pin.id)) pin else pin.copy(id = newHomePinId())
         }
         if (apply && added.isNotEmpty()) {
-            _homePins.value = (current + added).migratedHomePins()
+            addPins(added)
             flush()
         }
         return BackupRestoreCounts(pinsAdded = added.size, pinsAlready = already, spotifySkipped = spotifySkipped)

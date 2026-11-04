@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.library.HomePinsSyncDocument
+import com.universalmusic.player.data.library.forPeerSpotifyAccount
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.playlist.forV1Sync
 import com.universalmusic.player.platform.HomeLanHubConfig
@@ -236,6 +238,16 @@ class DesktopHomeLanSyncHub(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_PLAYLISTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,
                         )
+                    }
+                }
+                config.onHomePins?.let { onHomePins ->
+                    post(HOME_LAN_SYNC_PATH_V3_PINS) {
+                        call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        val remote = json.decodeFromString<HomePinsSyncDocument>(body)
+                        val localAfter = onHomePins(remote).forPeerSpotifyAccount(remote.spotifyAccountId)
+                        call.respondText(json.encodeToString(localAfter), ContentType.Application.Json)
                     }
                 }
                 for (path in listOf(HOME_LAN_SYNC_PATH_VAULT_INDEX, HOME_LAN_SYNC_PATH_V2_VAULT_INDEX)) {

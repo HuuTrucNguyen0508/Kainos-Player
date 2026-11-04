@@ -4,7 +4,9 @@
 
 CREATE TABLE library_meta (
     id INTEGER NOT NULL PRIMARY KEY CHECK (id = 0),
-    spotify_account_id TEXT
+    spotify_account_id TEXT,
+    pin_order_revision INTEGER NOT NULL DEFAULT 0,
+    pin_order_device_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE favorite (
@@ -44,11 +46,20 @@ CREATE TABLE home_pin (
     pin_json TEXT NOT NULL
 );
 
+-- Portable Home pins this device removed, so Home sync does not bring them back.
+CREATE TABLE home_pin_tombstone (
+    kind TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    PRIMARY KEY (kind, target_id)
+);
+
 selectMeta:
-SELECT spotify_account_id FROM library_meta WHERE id = 0;
+SELECT spotify_account_id, pin_order_revision, pin_order_device_id FROM library_meta WHERE id = 0;
 
 upsertMeta:
-INSERT OR REPLACE INTO library_meta (id, spotify_account_id) VALUES (0, ?);
+INSERT OR REPLACE INTO library_meta (id, spotify_account_id, pin_order_revision, pin_order_device_id) VALUES (0, ?, ?, ?);
 
 selectFavorites:
 SELECT canonical_id FROM favorite ORDER BY position;
@@ -110,3 +121,12 @@ DELETE FROM home_pin;
 
 deleteHomePinAt:
 DELETE FROM home_pin WHERE position = ?;
+
+selectHomePinTombstones:
+SELECT * FROM home_pin_tombstone ORDER BY kind, target_id;
+
+insertHomePinTombstone:
+INSERT OR REPLACE INTO home_pin_tombstone (kind, target_id, revision, device_id) VALUES (?, ?, ?, ?);
+
+deleteHomePinTombstone:
+DELETE FROM home_pin_tombstone WHERE kind = ? AND target_id = ?;

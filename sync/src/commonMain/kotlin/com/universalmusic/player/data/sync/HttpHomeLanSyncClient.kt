@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.library.HomePinsSyncDocument
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
@@ -64,6 +65,19 @@ class HttpHomeLanSyncClient(
             setBody(json.encodeToString(if (v2) local else local.forV1Sync()))
         }.requireSuccess("Playlist sync").bodyAsText()
         json.decodeFromString<PlaylistsSyncDocument>(text)
+    }
+
+    override suspend fun syncHomePins(): Result<HomePinsSyncDocument?> = runCatching {
+        val response = http.post("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_PINS") {
+            expectSuccess = false
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(library.exportHomePinsSyncDocument()))
+        }
+        if (response.status == HttpStatusCode.NotFound) {
+            response.bodyAsBytes()
+            return@runCatching null
+        }
+        json.decodeFromString<HomePinsSyncDocument>(response.requireSuccess("Pin sync").bodyAsText())
     }
 
     override suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument> =
