@@ -145,6 +145,7 @@ internal enum class SettingsSection(val label: String, val accent: AccentSlot) {
     Sources("Music sources", AccentSlot.Green),
     Devices("Devices and sync", AccentSlot.Blue),
     Downloads("Downloads", AccentSlot.Teal),
+    Backup("Backup", AccentSlot.Yellow),
     Advanced("Advanced", AccentSlot.Gray),
 }
 

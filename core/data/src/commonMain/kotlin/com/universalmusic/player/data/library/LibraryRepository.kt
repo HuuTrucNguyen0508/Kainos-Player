@@ -1,6 +1,9 @@
 package com.universalmusic.player.data.library
 
 import kotlinx.coroutines.CompletableDeferred
+import com.universalmusic.player.data.backup.BackupRestoreCounts
+import com.universalmusic.player.data.backup.isSpotifyScoped
+import com.universalmusic.player.data.sync.emptyPortableTrack
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.putPreservingOnFailure
 import com.universalmusic.player.data.cache.withoutHeartedAudioCache
@@ -580,6 +583,128 @@ class LibraryRepository(
             artwork = art?.let { url -> track.artwork?.copy(url = url) ?: Artwork(url) },
             sources = track.withPersistedSourcesOnly().sources,
         )
+    }
+
+    /** Every heart in portable form for a backup file: no `local:` ids, paths or stream URLs. */
+    fun backupHearts(): List<PersistedTrack> {
+        val savedById = _saved.value.associateBy { it.canonicalId }
+        val catalogById = localTrackCatalog().associateBy { it.canonicalId }
+        val opsById = heartOps.associateBy { it.canonicalId }
+        return _favorites.value.sorted().mapNotNull { id ->
+            val track = savedById[id] ?: catalogById[id]
+            when {
+                id.startsWith("local:") -> track?.let { currentLocalTrack(it).copy(canonicalId = id) }
+                    ?.toPersisted(0)?.toLocalFileHeartExport(deviceId = "", revision = 0)?.second
+                isProviderHeartCanonicalId(id) -> track?.toPersisted(0)?.forHeartsSync() ?: emptyPortableTrack(id)
+                isPortableLocalHeartCanonicalId(id) -> (track?.toPersisted(0)
+                    ?: opsById[id]?.localSyncIdentity()?.basename?.let { name ->
+                        PersistedTrack(id, title = name, sources = listOf(PersistedSource(ProviderId.LOCAL.name, name)))
+                    })?.forHeartsSync()
+                else -> null
+            }
+        }.distinctBy { it.canonicalId }
+    }
+
+    /**
+     * Adds each heart in [hearts] that is not hearted here yet and never removes one. A portable local heart
+     * maps onto the matching library file when there is one; otherwise it waits for the file. Spotify hearts
+     * apply only when this device is signed in to [backupSpotifyAccountId]. With [apply] false nothing changes.
+     */
+    suspend fun restoreBackupHearts(
+        hearts: List<PersistedTrack>,
+        backupSpotifyAccountId: String?,
+        apply: Boolean,
+    ): BackupRestoreCounts {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        if (!apply) return planBackupHearts(hearts, backupSpotifyAccountId).counts
+        persistJob?.cancel()
+        persistJob = null
+        val plan = persistMutex.withLock {
+            val plan = planBackupHearts(hearts, backupSpotifyAccountId)
+            val savedIds = _saved.value.mapTo(HashSet()) { it.canonicalId }
+            for ((track, identity) in plan.added) {
+                heartOps = (heartOps + HeartOp(
+                    canonicalId = track.canonicalId,
+                    action = HeartAction.FAVORITE,
+                    revision = maxOf(clock(), (heartOps.maxOfOrNull { it.revision } ?: 0L) + 1),
+                    deviceId = deviceIdProvider(),
+                    spotifyAccountId = if (isSpotifyHeartCanonicalId(track.canonicalId)) spotifyAccountId else null,
+                    localIdentity = identity,
+                )).compacted()
+            }
+            _favorites.value = _favorites.value + plan.added.map { it.first.canonicalId }
+            _saved.value = plan.added.map { it.first }.filter { it.canonicalId !in savedIds } + _saved.value
+            store?.write(toSnapshot())
+            plan
+        }
+        for ((track, _) in plan.added) onFavoriteChanged?.invoke(track, true)
+        return plan.counts
+    }
+
+    private class BackupHeartsPlan(val added: List<Pair<Track, LocalSyncIdentity?>>, val counts: BackupRestoreCounts)
+
+    private fun planBackupHearts(hearts: List<PersistedTrack>, backupSpotifyAccountId: String?): BackupHeartsPlan {
+        val deviceTracks = (localTrackCatalog() + _saved.value)
+            .filter { it.canonicalId.startsWith("local:") }
+            .distinctBy { it.canonicalId }
+        val index = LocalSyncIdentityIndex(deviceTracks)
+        val favorites = _favorites.value.toMutableSet()
+        val added = mutableListOf<Pair<Track, LocalSyncIdentity?>>()
+        var already = 0
+        var spotifySkipped = 0
+        for (portable in hearts.mapNotNull { it.forHeartsSync() }) {
+            val id = portable.canonicalId
+            if (isSpotifyHeartCanonicalId(id) && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
+                spotifySkipped += 1
+                continue
+            }
+            val identity = portable.localSyncIdentity()
+            val match = if (isPortableLocalHeartCanonicalId(id)) identity?.let(index::match) else null
+            val track = match ?: portable.toDomain().withPersistedSourcesOnly()
+            if (!favorites.add(track.canonicalId)) {
+                already += 1
+                continue
+            }
+            added += track to (match?.let { currentLocalTrack(it).localSyncIdentity() } ?: identity)
+        }
+        return BackupHeartsPlan(added, BackupRestoreCounts(heartsAdded = added.size, heartsAlready = already, spotifySkipped = spotifySkipped))
+    }
+
+    /**
+     * Appends each portable pin in [pins] whose kind and target are not pinned yet, after the current pins.
+     * Kainos playlist pins need their playlist in [livePlaylistIds]; Spotify pins need [backupSpotifyAccountId]
+     * to be this device's account. With [apply] false nothing changes.
+     */
+    suspend fun restoreBackupPins(
+        pins: List<PersistedHomePin>,
+        backupSpotifyAccountId: String?,
+        livePlaylistIds: Set<String>,
+        apply: Boolean,
+    ): BackupRestoreCounts {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        val current = _homePins.value
+        val pinned = current.mapTo(HashSet()) { pinKey(it.kind, it.targetId) }
+        val usedIds = current.mapTo(HashSet()) { it.id }
+        val added = mutableListOf<PersistedHomePin>()
+        var already = 0
+        var spotifySkipped = 0
+        for (pin in pins.portableForHomeSync()) {
+            if (pin.isSpotifyScoped() && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
+                spotifySkipped += 1
+                continue
+            }
+            if (pin.kind == HomePinKind.KAINOS_PLAYLIST && pin.targetId !in livePlaylistIds) continue
+            if (!pinned.add(pinKey(pin.kind, pin.targetId))) {
+                already += 1
+                continue
+            }
+            added += if (usedIds.add(pin.id)) pin else pin.copy(id = newHomePinId())
+        }
+        if (apply && added.isNotEmpty()) {
+            _homePins.value = (current + added).migratedHomePins()
+            flush()
+        }
+        return BackupRestoreCounts(pinsAdded = added.size, pinsAlready = already, spotifySkipped = spotifySkipped)
     }
 
     companion object {
