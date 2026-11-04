@@ -132,7 +132,19 @@ any failure, and ends with the manual checks as an unchecked list.
 
 On an emulator it regenerates the baseline profile (`--skip-profile` keeps the
 committed one and reports how stale it is), builds, verifies the APK, installs it,
-smoke-tests that exact APK, then runs each instrumented class and first-run stage.
+smoke-tests that exact APK, drives it through the phone paths, then runs each
+instrumented class and first-run stage.
+
+The phone paths (`scripts/android_phone_paths.py`) use only adb, the way the system
+reaches the app: media keys through `cmd media_session dispatch`, the notification
+shade, screen off, `force-stop`. They check what Android reports in `dumpsys
+media_session`, `dumpsys notification`, the service record and logcat. They push 16
+silent tracks to `Music/KainosGate`, clear app data, and change `device_config` and
+app ops for one stage, then put all of it back. To run only them, in about two minutes:
+
+```bash
+scripts/android-release-gate.py --serial emulator-5554 --phone-paths androidApp/build/outputs/apk/optimized/androidApp-optimized.apk
+```
 Commit regenerated profiles. Instrumented classes use `-PandroidTestTarget=optimized`,
 whose APK has extra test-only keep rules; only the smoke stage proves the shipped APK.
 Those runs overwrite `androidApp-optimized.apk`, so ship the verified copy the gate
