@@ -23,7 +23,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
@@ -48,9 +47,11 @@ import com.universalmusic.player.ui.components.ProviderStatusRow
 internal fun SearchScreen(
     presenter: SearchPresenter,
     onPlayTrackInList: (List<Track>, Int) -> Unit,
+    onPlayPlaylist: (List<Track>, Int, Boolean) -> Unit,
     trackActions: TrackActionsPresenter,
     requestFocus: Boolean = false,
     onOpenSettings: (SettingsTarget) -> Unit = {},
+    openLink: (String) -> Unit = ::openUrl,
 ) {
     val state by presenter.state.collectAsState()
     val query = state.query
@@ -62,6 +63,7 @@ internal fun SearchScreen(
     val spotify = state.spotify
     val youtube = state.youtube
     val downloads = state.downloads
+    val openPlaylist by presenter.playlist.collectAsState()
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -69,7 +71,18 @@ internal fun SearchScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // The results keep their scroll while a playlist is open: their list state is held above this branch.
+    openPlaylist?.let { page ->
+        SearchPlaylistScreen(
+            presenter = page,
+            trackActions = trackActions,
+            availability = presenter::trackAvailability,
+            downloads = downloads,
+            onBack = { presenter.closePlaylist() },
+            onPlay = onPlayPlaylist,
+            openLink = openLink,
+        )
+    } ?: Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
             onValueChange = presenter::setQuery,
@@ -162,7 +175,7 @@ internal fun SearchScreen(
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
                     fun openYouTube() {
                         youtubeSource?.let {
-                            openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
+                            openLink("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
                         }
                     }
                     ActionTrackRow(
@@ -188,22 +201,17 @@ internal fun SearchScreen(
                         },
                     )
                 }
-                itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
-                    TextButton(
-                        onClick = {
-                            val id = encodeUrl(playlist.source.providerEntityId)
-                            when (playlist.source.provider) {
-                                ProviderId.YOUTUBE_MUSIC ->
-                                    openUrl("https://www.youtube.com/playlist?list=$id")
-                                ProviderId.SPOTIFY ->
-                                    openUrl("https://open.spotify.com/playlist/$id")
-                                else -> Unit
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                    ) {
-                        Text("${playlist.title} · Open on ${playlist.source.provider.displayName}")
+                if (playlists.isNotEmpty()) {
+                    item(key = "playlists-heading") {
+                        SectionRule("Playlists", Modifier.padding(horizontal = 20.dp).padding(top = 12.dp))
                     }
+                }
+                itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
+                    PlaylistResultRow(
+                        playlist = playlist,
+                        onClick = { presenter.openPlaylist(playlist) },
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
             }
         }

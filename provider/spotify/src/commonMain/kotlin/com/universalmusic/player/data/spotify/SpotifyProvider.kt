@@ -7,6 +7,7 @@ import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artist
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderCapabilities
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
@@ -57,6 +58,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 private const val AUTH_URL = "https://accounts.spotify.com/authorize"
 private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
 private const val API = "https://api.spotify.com/v1"
+private const val PLAYLIST_PAGE_SIZE = 50
 private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
 private const val OBSERVE_RATE_LIMIT_DEFAULT_MS = 30_000L
 private val SCOPES = listOf(
@@ -338,23 +340,38 @@ class SpotifyProvider(
      * developer Client ID. Liked songs stay on `/me/tracks`.
      */
     suspend fun getPlaylistTracks(playlistId: String): List<Track> {
-        val id = playlistId.trim()
-        if (id.isEmpty()) return emptyList()
-        val token = accessToken()
+        if (playlistId.isBlank()) return emptyList()
         val result = mutableListOf<Track>()
-        var offset = 0
+        var cursor: String? = null
         do {
-            val response = http.get("$API/playlists/$id/items") {
-                bearerAuth(token)
-                parameter("limit", 50)
-                parameter("offset", offset)
-                parameter("additional_types", "track")
-            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist items")
-            result += response.items.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) }
-            offset += response.items.size
-            if (response.items.isEmpty()) break
-        } while (response.next != null)
+            val page = getPlaylistTracksPage(playlistId, cursor)
+            result += page.tracks
+            cursor = page.next
+        } while (cursor != null)
         return result
+    }
+
+    /**
+     * One page of up to 50 entries from `/playlists/{id}/items`, starting at the offset in [cursor]
+     * (null for the first page). Entries Spotify cannot show (removed or local files) are skipped,
+     * so a page may hold fewer tracks than it covered.
+     */
+    suspend fun getPlaylistTracksPage(playlistId: String, cursor: String?): PlaylistTracksPage {
+        val id = playlistId.trim()
+        require(id.isNotEmpty()) { "Playlist id is required" }
+        val offset = cursor?.toIntOrNull() ?: 0
+        val response = http.get("$API/playlists/$id/items") {
+            bearerAuth(accessToken())
+            parameter("limit", PLAYLIST_PAGE_SIZE)
+            parameter("offset", offset)
+            parameter("additional_types", "track")
+        }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist items")
+        val more = response.next != null && response.items.isNotEmpty()
+        return PlaylistTracksPage(
+            tracks = response.items.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) },
+            next = if (more) (offset + response.items.size).toString() else null,
+            total = response.total,
+        )
     }
 
     override suspend fun getStream(track: Track): PlaybackSource? {

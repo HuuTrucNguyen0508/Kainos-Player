@@ -56,6 +56,8 @@ import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.PlaylistTracksPage
+import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
@@ -729,6 +731,33 @@ class AppContainer(
         }
         return webTracks.getOrThrow()
     }
+
+    /**
+     * One page of a Spotify or YouTube playlist opened from Search; [cursor] is null for the first page.
+     * Spotify playlists the Web API refuses (its own editorial and algorithmic lists) fall back to
+     * librespot on the first page, which returns every song at once.
+     */
+    suspend fun loadProviderPlaylistPage(source: ProviderEntityRef, cursor: String?): PlaylistTracksPage =
+        when (source.provider) {
+            ProviderId.YOUTUBE_MUSIC -> youtube.getPlaylistTracksPage(source.providerEntityId, cursor)
+            ProviderId.SPOTIFY -> {
+                val web = runCatching { spotify.getPlaylistTracksPage(source.providerEntityId, cursor) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .logged("Spotify", "playlist page load failed")
+                val page = web.getOrNull()
+                if (cursor != null || (page != null && page.tracks.isNotEmpty())) {
+                    web.getOrThrow()
+                } else {
+                    val whole = runCatching { fetchLibrespotDiscoverWeekly(source.providerEntityId) }
+                        .onFailure { if (it is CancellationException) throw it }
+                        .logged("Spotify", "playlist load through librespot failed").getOrNull()
+                    whole?.tracks?.takeIf { it.isNotEmpty() }
+                        ?.let { PlaylistTracksPage(it, next = null, total = it.size) }
+                        ?: web.getOrThrow()
+                }
+            }
+            else -> error("${source.provider.displayName} playlists do not open in Kainos")
+        }
 
     private var volumePersistJob: Job? = null
 
