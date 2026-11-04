@@ -308,7 +308,7 @@ class PhonePaths:
         session = p.wait_playing(target, timeout=20)
         time.sleep(1.5)
         later = p.session()
-        if later is None or later.title != target or later.position_at(p.uptime_ms()) <= session.position_ms:
+        if later is None or later.state != "PLAYING" or later.title != target or later.position_at(p.uptime_ms()) <= session.position_ms:
             raise StageFailed(f"playback did not settle and advance on {target}: {later}")
         p.wait_notification(target)
         self.same_process()
@@ -415,13 +415,14 @@ class PhonePaths:
         time.sleep(1)
         p.launch()
         p.wait_node(text=title, timeout=20)
-        p.wait_node(desc="Play")
+        # Home's session button reads "Resume" only for a restored, paused session; history alone gives "Play".
+        p.wait_node(desc="Resume")
         time.sleep(3)
         session = p.session()
         if session is not None and session.state == "PLAYING":
             raise StageFailed(f"restored session autoplayed: {session}")
         self.pid = p.pid()
-        return f"after force-stop the app shows {title} with Play; MediaSession {session.state if session else 'absent'}"
+        return f"after force-stop Home offers Resume for {title}; MediaSession {session.state if session else 'absent'}"
 
     def play_next_from_menu(self) -> str:
         p = self.phone
