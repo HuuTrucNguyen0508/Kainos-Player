@@ -207,6 +207,7 @@ class PlayerSession(
                     current.error
                 },
                 syncWarning = engineState.syncWarning,
+                levelling = engineState.levelling,
             )
         }
         if (playing) pausedSeekTargetMs = null
@@ -282,6 +283,7 @@ class PlayerSession(
         onSession {
             _preferences.value = preferences
             engine.configureGapless(preferences.gapless && _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL)
+            engine.configureLevelling(preferences.volumeLevelling)
             prefetcher.schedule(turn.generation)
         }
     }

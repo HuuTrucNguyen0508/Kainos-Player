@@ -43,6 +43,17 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SettingToggle(
+            "Even out the volume of local files",
+            settings.volumeLevelling,
+        ) {
+            presenter.change { current -> current.copy(volumeLevelling = it) }
+        }
+        Text(
+            levellingNote(platformLabel()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingToggle(
             "Start the source's radio from Search",
             settings.searchRadioEnabled,
         ) {
@@ -65,5 +76,15 @@ internal fun playbackBehaviourNote(platform: String): String {
     } else {
         "Local files play gaplessly, one into the next. Spotify and YouTube tracks have a short gap."
     }
-    return "$gapless Spotify uses its Loud volume normalization. Local files and YouTube play at their own level."
+    return "$gapless Spotify uses its Loud volume normalization."
+}
+
+internal fun levellingNote(platform: String): String {
+    val reach = if (platform == "Android") {
+        "Android can only turn loud tracks down, not quiet ones up."
+    } else {
+        "Quiet tracks are raised only as far as their peaks allow."
+    }
+    return "Uses each file's ReplayGain tags so local tracks play near Spotify's level. $reach " +
+        "Files without tags and YouTube play at their own level. Details in Now Playing show what was applied."
 }

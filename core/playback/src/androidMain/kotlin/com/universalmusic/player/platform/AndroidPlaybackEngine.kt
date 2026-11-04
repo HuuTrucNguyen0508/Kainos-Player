@@ -252,6 +252,10 @@ class AndroidPlaybackEngine(
                 runMediaCommand { player ->
                     spotifyFocus.release()
                     AndroidMediaControls.forwardingPlayer?.useSpotifyAudioFocus(false)
+                    AndroidMediaControls.forwardingPlayer?.let { forwarding ->
+                        forwarding.onLevellingChanged = ::publishMedia3Levelling
+                        forwarding.setLevelling(levellingEnabled)
+                    }
                     activeBackend = ActiveBackend.MEDIA3
                     AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
                     ticker?.cancel()
@@ -527,6 +531,19 @@ class AndroidPlaybackEngine(
                 spotify.pause,
             )
         }
+    }
+
+    @Volatile private var levellingEnabled = true
+
+    override fun configureLevelling(enabled: Boolean) {
+        levellingEnabled = enabled
+        launchMediaCommand { AndroidMediaControls.forwardingPlayer?.setLevelling(enabled) }
+    }
+
+    /** Main thread, from the forwarding player, which applies the gain to ExoPlayer itself. */
+    private fun publishMedia3Levelling(levelling: com.universalmusic.player.domain.playback.Levelling?) {
+        if (activeBackend != ActiveBackend.MEDIA3) return
+        _state.update { it.copy(levelling = levelling) }
     }
 
     private var volumeJob: Job? = null

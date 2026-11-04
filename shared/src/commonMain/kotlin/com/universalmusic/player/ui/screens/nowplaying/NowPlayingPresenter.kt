@@ -149,6 +149,7 @@ internal class NowPlayingPresenter(
                 quality?.technicalDetail,
                 now.resolved?.reason,
                 now.fallback?.message,
+                now.levelling,
             ),
             showSpotifyOutput = showSpotifyOutput(explicitSpotifyDevice, provider, track, spotify),
             canCorrectMatch = canCorrectYouTubeMatch(track, availability),

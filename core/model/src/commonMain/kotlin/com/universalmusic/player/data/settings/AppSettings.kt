@@ -39,9 +39,12 @@ data class AppSettings(
     val followCaelestiaScheme: Boolean = true,
     val compactMode: Boolean = false,
     val sourceSelection: SourceSelectionMode = SourceSelectionMode.AUTOMATIC,
-    val crossfadeMs: Int = 0,
     val gapless: Boolean = true,
-    val normalizeVolume: Boolean = false,
+    /**
+     * ReplayGain levelling for local files, so they sit near Spotify's Loud level. Replaces the
+     * unused `normalizeVolume`, which stored settings still carry as false and is ignored.
+     */
+    val volumeLevelling: Boolean = true,
     /**
      * Absolute paths (desktop) or tree URIs (Android SAF) for local music roots.
      * Interpreted with [localMusicFoldersConfigured].
@@ -101,9 +104,8 @@ data class AppSettings(
 ) {
     fun toPlaybackPreferences(): PlaybackPreferences = PlaybackPreferences(
         sourceSelection = sourceSelection,
-        crossfadeMs = crossfadeMs,
         gapless = gapless,
-        normalizeVolume = normalizeVolume,
+        volumeLevelling = volumeLevelling,
     )
 }
 
