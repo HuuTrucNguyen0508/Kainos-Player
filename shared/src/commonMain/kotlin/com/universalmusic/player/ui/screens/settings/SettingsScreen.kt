@@ -35,7 +35,7 @@ internal fun SettingsScreen(container: AppContainer, target: SettingsTarget? = n
     val connect = remember(container) { SettingsConnectPresenter.from(container, scope) }
     val sync = remember(container) { SettingsSyncPresenter.from(container, scope) }
     val advanced = remember(container) { SettingsAdvancedPresenter.from(container, scope) }
-    val backup = remember(container) { SettingsBackupPresenter.from(container, scope) }
+    val backup = remember(container) { SettingsBackupPresenter.retainedFor(container) }
     val sources = remember(container) { SourcesPresenter.from(container, scope) }
     SettingsFrame(target) { section ->
         when (section) {

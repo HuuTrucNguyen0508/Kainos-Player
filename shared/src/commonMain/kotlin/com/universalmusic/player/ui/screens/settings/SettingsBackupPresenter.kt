@@ -87,7 +87,17 @@ internal class SettingsBackupPresenter(
     }
 
     companion object {
-        fun from(container: AppContainer, scope: CoroutineScope) = SettingsBackupPresenter(
+        private var retained: Pair<AppContainer, SettingsBackupPresenter>? = null
+
+        /**
+         * One presenter per container, running on the container's scope: a pick still open when Android
+         * recreates the activity, or when the user leaves Settings, finishes and its result is shown on return.
+         */
+        fun retainedFor(container: AppContainer): SettingsBackupPresenter =
+            retained?.takeIf { it.first === container }?.second
+                ?: from(container, container.scope).also { retained = container to it }
+
+        private fun from(container: AppContainer, scope: CoroutineScope) = SettingsBackupPresenter(
             export = container.backup::export,
             save = ::saveBackupFile,
             open = ::openBackupFile,
