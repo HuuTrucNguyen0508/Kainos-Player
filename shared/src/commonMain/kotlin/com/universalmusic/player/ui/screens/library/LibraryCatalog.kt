@@ -41,8 +41,7 @@ internal fun libraryQueueSongs(
         (local + saved + spotify).distinctBy(Track::canonicalId)
     }
     val filtered = catalog.filter { !favoritesOnly || it.canonicalId in favorites }
-    // Ready offline queues the on-disk copies, so playback has no stream to fall back to.
-    return sort.sort(if (readyOffline) filtered.mapNotNull(offlineTrack) else filtered)
+    return sort.sort(if (readyOffline) filtered.filter { offlineTrack(it) != null } else filtered)
 }
 
 internal fun libraryDisplaySongs(queueSongs: List<Track>, needle: String): List<Track> {

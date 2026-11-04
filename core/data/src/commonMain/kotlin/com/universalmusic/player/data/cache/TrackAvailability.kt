@@ -67,6 +67,15 @@ fun Track.offlineOnly(): Track? {
     return if (onDisk.isEmpty()) null else copy(sources = onDisk)
 }
 
+/**
+ * [tracks] cut to on-disk audio by [offlineTrack], in place. One whose file has gone keeps its slot
+ * with no sources, so playback skips it as a terminal failure instead of reaching for a stream.
+ */
+fun offlineQueue(
+    tracks: List<Track>,
+    offlineTrack: (Track) -> Track? = Track::offlineOnly,
+): List<Track> = tracks.map { offlineTrack(it) ?: it.copy(sources = emptyList()) }
+
 fun isSpotifyIdentity(track: Track): Boolean =
     track.canonicalId.startsWith("spotify:") ||
         track.sources.any { it.provider == ProviderId.SPOTIFY }

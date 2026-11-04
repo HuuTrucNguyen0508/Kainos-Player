@@ -110,7 +110,7 @@ internal fun deriveLibraryUiState(
         spotifyPlaylists = libraryFilteredSpotifyPlaylists(spotifyPlaylists, needle, localOnly || readyOffline, favoritesOnly),
         pinnedKeys = libraryPinnedKeys(homePins),
         localCount = libraryLocalCount(queueSongs),
-        cachedCount = libraryCachedCount(queueSongs),
+        cachedCount = if (readyOffline) libraryCachedCount(queueSongs.mapNotNull(offlineTrack)) else 0,
         spotifyCount = librarySpotifyCount(queueSongs),
         localState = localState,
         spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED,

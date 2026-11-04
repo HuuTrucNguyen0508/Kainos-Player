@@ -57,6 +57,7 @@ internal fun LibraryScreen(
     presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
     trackActions: TrackActionsPresenter,
+    onPlayOffline: (List<Track>, Int) -> Unit = onPlayTracks,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -78,6 +79,8 @@ internal fun LibraryScreen(
     val emitted by presenter.state.collectAsState()
     val state = remember(emitted, query) { emitted.withQuery(query) }
     SideEffect { presenter.setQuery(query) }
+    // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
+    val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
     LaunchedEffect(tab, state.localOnly, state.favoritesOnly, state.readyOffline, state.needle) {
@@ -165,7 +168,7 @@ internal fun LibraryScreen(
             tab = tab,
             songs = state.songs,
             queueSongs = state.queueSongs,
-            onPlayTracks = onPlayTracks,
+            onPlayTracks = playSongs,
             localState = state.localState,
             onRefreshLocal = presenter::refreshLocal,
             showSpotifyError = showSpotifyError,
@@ -226,7 +229,7 @@ internal fun LibraryScreen(
                     sortMenuOpen = false
                     presenter.setSort(sort)
                 },
-                onPlayTracks = onPlayTracks,
+                onPlayTracks = playSongs,
                 trackActions = trackActions,
                 onRefreshSpotify = {
                     dismissSpotifyError = false

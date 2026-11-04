@@ -68,7 +68,7 @@ internal fun ColumnScope.LibrarySongsTab(
                         readyOffline = state.readyOffline,
                     ),
                     localCount = state.localCount,
-                    cachedCount = if (state.readyOffline) state.cachedCount else 0,
+                    cachedCount = state.cachedCount,
                     spotifyCount = state.spotifyCount,
                     localOnly = state.localOnly || state.readyOffline,
                     favoritesOnly = state.favoritesOnly,

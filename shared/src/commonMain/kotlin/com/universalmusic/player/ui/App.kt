@@ -268,11 +268,11 @@ private fun AppScaffold(
         }
     }
 
-    fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0, offlineOnly: Boolean = false) {
         if (tracks.isEmpty()) return
         val index = startIndex.coerceIn(0, tracks.lastIndex)
         container.library.recordPlay(tracks[index])
-        container.playTracks(tracks, startIndex = index)
+        container.playTracks(tracks, startIndex = index, offlineOnly = offlineOnly)
         openNowPlaying()
     }
 
@@ -404,6 +404,7 @@ private fun AppScaffold(
                                         libraryPresenter,
                                         ::playTracks,
                                         trackActions,
+                                        onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
                                     )
                                     AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                                 }

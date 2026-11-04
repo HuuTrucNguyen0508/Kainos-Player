@@ -5,6 +5,7 @@ import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.HeartedAudioCacheEntry
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.offlineOnly
+import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.domain.model.ArtistRef
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -34,7 +35,7 @@ import kotlin.test.assertEquals
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReadyOfflineQueueTest {
     @Test
-    fun readyOfflineQueuePlaysOnlyFilesAndSkipsACachedSongWhoseFileVanished() = runTest {
+    fun readyOfflineQueuePlaysOnlyFilesAndSkipsForwardPastACachedSongWhoseFileVanished() = runTest {
         val cache = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(createTempDirectory("ready-offline")))
         val audioDir = Path(cache.audioDirectoryPath()).also { Files.createDirectories(it) }
         suspend fun cached(owner: String, videoId: String): HeartedAudioCacheEntry {
@@ -48,12 +49,17 @@ class ReadyOfflineQueueTest {
             youtubeSearch = { emptyList() },
             networkAvailable = { true },
         )
-        val keep = cached("yt:keep", "keep").also(service::rememberEntry)
+        cached("yt:alpha", "alpha").also(service::rememberEntry)
         cached("spotify:gone", "gone").also(service::rememberEntry)
+        val keep = cached("yt:keep", "keep").also(service::rememberEntry)
 
         val queue = libraryQueueSongs(
             local = emptyList(),
-            saved = listOf(stream("yt:keep", "Keep", ProviderId.YOUTUBE_MUSIC), stream("yt:net", "Net", ProviderId.YOUTUBE_MUSIC)),
+            saved = listOf(
+                stream("yt:alpha", "Alpha", ProviderId.YOUTUBE_MUSIC),
+                stream("yt:keep", "Keep", ProviderId.YOUTUBE_MUSIC),
+                stream("yt:net", "Net", ProviderId.YOUTUBE_MUSIC),
+            ),
             spotify = listOf(stream("spotify:gone", "Gone", ProviderId.SPOTIFY)),
             sort = TrackSort.NAME_ASCENDING,
             localOnly = false,
@@ -62,9 +68,11 @@ class ReadyOfflineQueueTest {
             readyOffline = true,
             offlineTrack = { service.applyCacheToTrack(it).offlineOnly() },
         )
-        assertEquals(listOf("spotify:gone", "yt:keep"), queue.map { it.canonicalId })
+        assertEquals(listOf("yt:alpha", "spotify:gone", "yt:keep"), queue.map { it.canonicalId })
 
+        // Gone vanishes after the list was built but before its row is tapped.
         audioDir.resolve("gone.m4a").deleteExisting()
+        val offline = offlineQueue(queue) { service.applyCacheToTrack(it).offlineOnly() }
         val played = mutableListOf<String>()
         val enriched = mutableListOf<ProviderId>()
         val session = PlayerSession(
@@ -72,7 +80,7 @@ class ReadyOfflineQueueTest {
             enrichSource = { _, source -> enriched += source.provider; source },
             prepareTrack = service::applyCacheToTrack,
         )
-        session.play(queue, startIndex = 0)
+        session.play(offline, startIndex = 1)
         runCurrent()
 
         assertEquals(listOf(keep.localUri), played)

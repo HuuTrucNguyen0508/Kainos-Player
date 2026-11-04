@@ -1,6 +1,7 @@
 package com.universalmusic.player.ui.screens
 
 import com.universalmusic.player.data.cache.offlineOnly
+import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.matching.track
@@ -182,7 +183,7 @@ class LibraryCatalogTest {
     }
 
     @Test
-    fun readyOfflineQueuesLocalAndCachedTracksWithTheirStreamsRemoved() {
+    fun readyOfflineKeepsLocalAndCachedTracksWholeAndPlaysOnlyTheirDiskCopies() {
         val file = PlaybackSource(ProviderId.LOCAL, "/m/a.flac", isPlayable = true, handle = PlaybackHandle.Url("file:///m/a.flac"))
         val cache = PlaybackSource(ProviderId.LOCAL, "hearted-yt:v1", isPlayable = true, handle = PlaybackHandle.Url("file:///c/v1.m4a"))
         val local = Track("local:a", "Alpha", emptyList(), sources = listOf(file))
@@ -206,9 +207,11 @@ class LibraryCatalogTest {
         )
 
         assertEquals(listOf("local:a", "spotify:s1"), queue.map { it.canonicalId })
-        assertEquals(listOf(listOf(file), listOf(cache)), queue.map { it.sources })
-        assertEquals(1, libraryLocalCount(queue))
-        assertEquals(1, libraryCachedCount(queue))
-        assertEquals(0, librarySpotifyCount(queue))
+        // Rows keep their streams so history, hearts and playlists never save a disk-only copy.
+        assertEquals(listOf(local, mirror), queue)
+        val offline = offlineQueue(queue) { attachCache(it).offlineOnly() }
+        assertEquals(listOf(listOf(file), listOf(cache)), offline.map { it.sources })
+        assertEquals(1, libraryLocalCount(offline))
+        assertEquals(1, libraryCachedCount(offline))
     }
 }
