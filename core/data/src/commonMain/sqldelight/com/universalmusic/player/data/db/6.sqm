@@ -1,0 +1,16 @@
+CREATE TABLE play_event (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    canonical_id TEXT NOT NULL,
+    started_at_ms INTEGER NOT NULL,
+    listened_ms INTEGER NOT NULL CHECK (listened_ms >= 0),
+    completed INTEGER AS kotlin.Boolean NOT NULL
+);
+
+CREATE INDEX play_event_track ON play_event (canonical_id, started_at_ms);
+
+CREATE INDEX play_event_started ON play_event (started_at_ms);
+
+CREATE TABLE play_history_track (
+    canonical_id TEXT NOT NULL PRIMARY KEY,
+    track_json TEXT NOT NULL
+);

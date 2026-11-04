@@ -13,6 +13,8 @@ import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.db.DbKainosPlaylistStore
 import com.universalmusic.player.data.db.DbListeningExchangeStore
 import com.universalmusic.player.data.db.DbListeningStore
+import com.universalmusic.player.data.db.DbPlayHistoryStore
+import com.universalmusic.player.data.history.PlayHistoryStore
 import com.universalmusic.player.data.db.DbLocalLibraryScanCache
 import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.JvmLegacyJsonSource
@@ -101,6 +103,8 @@ actual fun createKainosPlaylistStore(): KainosPlaylistStore = DbKainosPlaylistSt
 actual fun createListeningStore(): ListeningStore = DbListeningStore(kainosStorage)
 
 actual fun createListeningExchangeStore(): ListeningExchangeStore = DbListeningExchangeStore(kainosStorage)
+
+actual fun createPlayHistoryStore(): PlayHistoryStore = DbPlayHistoryStore(kainosStorage)
 
 actual fun createMetadataArtworkCache(): MetadataArtworkCache {
     val disk = FileMetadataCacheDisk(configDir() / "meta-cache")

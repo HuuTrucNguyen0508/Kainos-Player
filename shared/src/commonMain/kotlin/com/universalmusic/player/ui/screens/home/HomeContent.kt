@@ -1,6 +1,10 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.history.HOME_SHELF_LIMIT
+import com.universalmusic.player.data.history.PlayHistory
+import com.universalmusic.player.data.history.REDISCOVER_AFTER_MS
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.library.requiresNetworkToPlay
@@ -481,3 +485,58 @@ internal fun resolveHomePin(
         }
     }
 }
+
+internal enum class ShelfKind { ON_REPEAT, REDISCOVER, RECENTLY_ADDED }
+
+/** [note] is the one fact that put the track on this shelf: its play count or how long ago. */
+internal data class ShelfRow(val track: Track, val note: String)
+
+internal data class HomeShelf(val kind: ShelfKind, val rows: List<ShelfRow>)
+
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
+internal fun ageLabel(nowMs: Long, thenMs: Long): String {
+    val days = ((nowMs - thenMs).coerceAtLeast(0) / DAY_MS).toInt()
+    fun count(n: Int, unit: String) = if (n == 1) "1 $unit ago" else "$n ${unit}s ago"
+    return when {
+        days < 1 -> "Today"
+        days < 2 -> "Yesterday"
+        days < 7 -> count(days, "day")
+        days < 30 -> count(days / 7, "week")
+        days < 365 -> count((days / 30).coerceAtMost(11), "month")
+        else -> count(days / 365, "year")
+    }
+}
+
+/**
+ * Home's history shelves, in display order, each left out when it has nothing to show.
+ * [catalog] supplies the freshest copy of a track (live local files first); history's own
+ * snapshot stands in for tracks no loaded catalog has.
+ */
+internal fun homeShelves(
+    history: PlayHistory,
+    favorites: Set<String>,
+    catalog: List<Track>,
+    recentlyAdded: List<AddedTrack>,
+    nowMs: Long,
+): List<HomeShelf> {
+    val byId = HashMap<String, Track>()
+    catalog.forEach { byId.putIfAbsent(it.canonicalId, it) }
+    val onRepeat = history.onRepeat.map { count ->
+        ShelfRow(byId[count.track.canonicalId] ?: count.track, if (count.plays == 1) "1 play" else "${count.plays} plays")
+    }
+    val rediscover = history.lastPlayedAtMs.entries
+        .filter { (id, last) -> id in favorites && nowMs - last >= REDISCOVER_AFTER_MS }
+        .sortedBy { it.value }
+        .mapNotNull { (id, last) -> byId[id]?.let { ShelfRow(it, ageLabel(nowMs, last)) } }
+        .take(HOME_SHELF_LIMIT)
+    val added = recentlyAdded.map { ShelfRow(it.track, ageLabel(nowMs, it.addedAtMs)) }
+    return listOf(
+        HomeShelf(ShelfKind.ON_REPEAT, onRepeat),
+        HomeShelf(ShelfKind.REDISCOVER, rediscover),
+        HomeShelf(ShelfKind.RECENTLY_ADDED, added),
+    ).filter { it.rows.isNotEmpty() }
+}
+
+/** Phones show four rows per shelf; wide windows fill each column to the same depth. */
+internal fun shelfRowLimit(columns: Int): Int = minOf(HOME_SHELF_LIMIT, columns * 4)

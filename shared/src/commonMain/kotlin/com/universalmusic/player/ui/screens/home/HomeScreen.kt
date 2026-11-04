@@ -219,6 +219,10 @@ internal fun HomeContent(
                 onPlayTracks = onPlayTracks,
                 trackActions = trackActions,
             )
+            ui.shelves.forEachIndexed { index, shelf ->
+                if (index > 0 || continueListening.isNotEmpty()) Spacer(Modifier.height(20.dp))
+                HistoryShelf(shelf, columns, onPlayTracks, trackActions = trackActions)
+            }
         }
     }
 }
