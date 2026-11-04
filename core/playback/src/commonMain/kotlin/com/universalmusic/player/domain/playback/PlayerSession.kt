@@ -207,6 +207,7 @@ class PlayerSession(
                     current.error
                 },
                 syncWarning = engineState.syncWarning,
+                levelling = engineState.levelling,
             )
         }
         if (playing) pausedSeekTargetMs = null
@@ -282,6 +283,7 @@ class PlayerSession(
         onSession {
             _preferences.value = preferences
             engine.configureGapless(preferences.gapless && _nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL)
+            engine.configureLevelling(preferences.volumeLevelling)
             prefetcher.schedule(turn.generation)
         }
     }
@@ -470,7 +472,7 @@ class PlayerSession(
         playJob = null
         pendingResumePositionMs = position
         engine.stop()
-        _nowPlaying.update { it.copy(isPlaying = false, buffering = false, positionMs = position) }
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false, positionMs = position, levelling = null) }
         ledger.record(ListeningChange.USER_PAUSE, playing = false)
     }
 
@@ -603,7 +605,7 @@ class PlayerSession(
             playJob?.cancel()
             playJob = null
             engine.stop()
-            _nowPlaying.update { it.copy(buffering = false, isPlaying = false) }
+            _nowPlaying.update { it.copy(buffering = false, isPlaying = false, levelling = null) }
             ledger.record(change, playing = false)
             return
         }
@@ -802,6 +804,7 @@ class PlayerSession(
                 buffering = false,
                 positionMs = position,
                 error = null,
+                levelling = null,
             )
         }
         ledger.record(ListeningChange.AUTOMATIC)
@@ -858,7 +861,7 @@ class PlayerSession(
         playJob = null
         engine.stop()
         _nowPlaying.update {
-            it.copy(isPlaying = false, buffering = false, positionMs = 0, error = null)
+            it.copy(isPlaying = false, buffering = false, positionMs = 0, error = null, levelling = null)
         }
         ledger.record(change)
     }
@@ -897,6 +900,7 @@ class PlayerSession(
                 fallback = null,
                 favorite = isFavorite(item.track.canonicalId),
                 syncWarning = null,
+                levelling = null,
             )
         }
         ledger.record(change)

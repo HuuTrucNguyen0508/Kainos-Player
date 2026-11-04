@@ -36,7 +36,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 
 ## What does not work
 
-- No volume normalization for local files or YouTube. Spotify's is built into the receiver and has no switch.
+- Volume levelling covers only local files with ReplayGain tags (Settings → Playback, on by default). Untagged files and YouTube play at their own level; there is no loudness analysis. Linux skips Opus and Matroska tags, and Android can only turn tracks down. Spotify's normalization is built into the receiver and has no switch.
 - No gapless on Android, and none for Spotify or YouTube on Linux. No crossfade, EQ or DSP.
 - No lyrics, until a source with clear terms exists. See [the investigation](plans/lyrics-source-investigation.md).
 - No YouTube Music account library.

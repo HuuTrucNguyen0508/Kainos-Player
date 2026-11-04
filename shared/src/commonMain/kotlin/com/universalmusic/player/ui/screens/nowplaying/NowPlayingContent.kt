@@ -10,6 +10,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.SleepTimerState
 import com.universalmusic.player.domain.playback.formatSleepTimerRemaining
@@ -82,10 +83,23 @@ internal fun nowPlayingDetailLines(
     technicalDetail: String?,
     resolveReason: String?,
     fallbackMessage: String?,
+    levelling: Levelling? = null,
 ): List<String> = buildList {
     technicalDetail?.let(::add)
     resolveReason?.takeIf { it.isNotBlank() }?.let(::add)
     fallbackMessage?.let(::add)
+    levelling?.let { add(levellingLine(it)) }
+}
+
+/** Only what the engine reported doing; Spotify and unknown tracks get no line. */
+internal fun levellingLine(levelling: Levelling): String = when (levelling) {
+    Levelling.Off -> "Volume levelling is off"
+    Levelling.Untagged -> "No ReplayGain tags, so this track plays at its own level"
+    is Levelling.Applied -> {
+        val tenths = kotlin.math.round(levelling.gainDb * 10).toInt()
+        if (tenths == 0) "ReplayGain tags read; volume left unchanged"
+        else "Volume levelled by ${if (tenths > 0) "+" else "-"}${kotlin.math.abs(tenths) / 10}.${kotlin.math.abs(tenths) % 10} dB from ReplayGain tags"
+    }
 }
 
 internal fun showSpotifyOutput(

@@ -6,8 +6,13 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import com.universalmusic.player.domain.playback.Levelling
+import com.universalmusic.player.domain.playback.ReplayGain
+import com.universalmusic.player.domain.playback.VolumeLevelling
 import androidx.media3.exoplayer.ExoPlayer
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.pow
 
 /**
  * ExoPlayer wrapper that:
@@ -77,10 +82,59 @@ class KainosForwardingPlayer(
             if (spotifyActive) return
             listeners.forEach { it.onMediaMetadataChanged(mediaMetadata) }
         }
+
+        override fun onTracksChanged(tracks: Tracks) = onAudioTracks(tracks)
     }
 
     init {
         exo.addListener(exoForwarder)
+    }
+
+    /** The volume controllers set; ExoPlayer plays at this times the track's levelling gain. */
+    private var userVolume = exo.volume
+    private var levellingEnabled = true
+    private var tracksKnown = false
+    private var replayGain: ReplayGain? = null
+
+    /** What levelling does to Exo's current item; null until its audio track is known. Main thread. */
+    var levelling: Levelling? = null
+        private set
+    var onLevellingChanged: ((Levelling?) -> Unit)? = null
+
+    override fun setVolume(volume: Float) {
+        userVolume = volume.coerceIn(0f, 1f)
+        applyLevelling()
+    }
+
+    override fun getVolume(): Float = userVolume
+
+    fun setLevelling(enabled: Boolean) {
+        levellingEnabled = enabled
+        applyLevelling()
+    }
+
+    /** Called with each item's tracks, which carry the tags; empty while the next item loads. */
+    internal fun onAudioTracks(tracks: Tracks) {
+        tracksKnown = !tracks.isEmpty
+        replayGain = replayGainOf(tracks)
+        applyLevelling()
+    }
+
+    private fun applyLevelling() {
+        // ExoPlayer's volume stops at unity, so levelling here can only turn tracks down.
+        val gainDb = replayGain?.takeIf { levellingEnabled }?.let { VolumeLevelling.appliedGainDb(it, ceilingDb = 0.0) }
+        exo.volume = userVolume * (gainDb?.let { 10.0.pow(it / 20).toFloat() } ?: 1f)
+        val next = when {
+            !tracksKnown -> null
+            !levellingEnabled -> Levelling.Off
+            gainDb == null -> Levelling.Untagged
+            else -> Levelling.Applied(gainDb)
+        }
+        if (next != levelling) {
+            levelling = next
+            trace("levelling=$next volume=$userVolume")
+            onLevellingChanged?.invoke(next)
+        }
     }
 
     override fun addListener(listener: Player.Listener) {

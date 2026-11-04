@@ -17,4 +17,6 @@ data class NowPlayingState(
     val error: String? = null,
     /** Set when Spotify playback cannot be confirmed against the receiver. */
     val syncWarning: String? = null,
+    /** What volume levelling does to this track; null when it does not apply (Spotify, nothing playing). */
+    val levelling: Levelling? = null,
 )

@@ -25,6 +25,8 @@ data class EngineState(
     val retryAtPositionMs: Long? = null,
     val seamlessItemId: String? = null,
     val previousGeneration: Long? = null,
+    /** Null when levelling does not apply, such as Spotify or before a track has started. */
+    val levelling: Levelling? = null,
 )
 
 interface PlaybackEngine {
@@ -34,6 +36,9 @@ interface PlaybackEngine {
     val supportsGapless: Boolean get() = false
 
     fun configureGapless(enabled: Boolean) = Unit
+
+    /** Turn ReplayGain levelling of local files on or off, including for the track playing now. */
+    fun configureLevelling(enabled: Boolean) = Unit
 
     /** Replace or cancel the single local successor. Generation identifies its owning track. */
     fun prepareNext(next: PreparedPlayback?) = Unit

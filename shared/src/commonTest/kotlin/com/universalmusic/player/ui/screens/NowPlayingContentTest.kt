@@ -17,6 +17,7 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.ResolvedPlayback
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.SleepTimerState
@@ -154,6 +155,24 @@ class NowPlayingPresenterTest {
         assertEquals("Playing from local file", presenter.state.value.actualSourceLabel)
         assertEquals(RepeatMode.OFF, presenter.state.value.queue.repeat)
         assertFalse(presenter.state.value.shuffle.on)
+    }
+
+    @Test
+    fun detailsSayWhatLevellingDidToThisTrack() = runTest(UnconfinedTestDispatcher()) {
+        val now = MutableStateFlow(NowPlayingState(track = track("Song", "Artist", provider = ProviderId.LOCAL, canonicalId = "local:song")))
+        val presenter = nowPlayingPresenter(nowPlaying = now)
+        assertEquals(emptyList(), presenter.state.value.detailLines, "Spotify and unknown tracks get no line")
+        val expected = mapOf(
+            Levelling.Applied(-6.04) to "Volume levelled by -6.0 dB from ReplayGain tags",
+            Levelling.Applied(2.46) to "Volume levelled by +2.5 dB from ReplayGain tags",
+            Levelling.Applied(0.0) to "ReplayGain tags read; volume left unchanged",
+            Levelling.Untagged to "No ReplayGain tags, so this track plays at its own level",
+            Levelling.Off to "Volume levelling is off",
+        )
+        for ((levelling, line) in expected) {
+            now.value = now.value.copy(levelling = levelling)
+            assertEquals(listOf(line), presenter.state.value.detailLines)
+        }
     }
 
     @Test

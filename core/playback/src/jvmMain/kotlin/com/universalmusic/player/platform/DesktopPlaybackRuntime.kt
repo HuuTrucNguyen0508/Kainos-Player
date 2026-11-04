@@ -1,5 +1,7 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.domain.playback.ReplayGain
+import com.universalmusic.player.domain.playback.VolumeLevelling
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -31,6 +33,8 @@ internal interface DesktopPlaybackRuntime {
     fun openEvents(socket: Path): MpvEventStream? = null
     fun findOnPath(name: String): String?
     fun probeDurationMs(url: String): Long?
+    /** ReplayGain that ffmpeg's `volume=replaygain=track` filter will apply to this local file, or null. */
+    fun probeReplayGain(url: String): ReplayGain? = null
     fun createIpcPath(): Path
     fun startProcess(command: List<String>): Process
     fun waitForIpc(socket: Path)
@@ -93,6 +97,20 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
             val seconds = output.lineSequence().firstOrNull()?.toDoubleOrNull() ?: return null
             (seconds * 1000.0).toLong().takeIf { it > 0L }
         }.getOrNull()
+    }
+
+    override fun probeReplayGain(url: String): ReplayGain? {
+        if (!isLocalMediaUrl(url)) return null
+        val media = mediaPathForProbe(url) ?: return null
+        val ffprobe = findOnPath("ffprobe") ?: return null
+        val output = runCatching {
+            ProcessBuilder(
+                ffprobe, "-v", "error", "-select_streams", "a:0",
+                "-show_entries", "stream_side_data=side_data_type:stream_tags:format_tags",
+                "-of", "json", media,
+            ).readOutputWithin(5_000)
+        }.getOrNull() ?: return null
+        return replayGainFromFfprobe(output)
     }
 
     /** Read fresh STREAMINFO duration directly, avoiding a subprocess for local FLACs.
@@ -272,6 +290,27 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
         runCatching { Files.deleteIfExists(path) }
     }
 }
+
+internal fun isLocalMediaUrl(url: String): Boolean = url.startsWith("file:") || !url.contains("://")
+
+/**
+ * ffmpeg applies ReplayGain only where its demuxer exported it as stream side data (FLAC, MP3,
+ * Ogg Vorbis, MP4; not Opus or Matroska), so the tags count only when that side data is present.
+ * ffprobe no longer prints the side data's values, so they come from the same tags it was parsed from.
+ */
+internal fun replayGainFromFfprobe(json: String): ReplayGain? = runCatching {
+    val root = Json.parseToJsonElement(json).jsonObject
+    val stream = (root["streams"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.jsonObject ?: return null
+    val sideData = stream["side_data_list"] as? kotlinx.serialization.json.JsonArray ?: return null
+    if (sideData.none { it.jsonObject["side_data_type"]?.jsonPrimitive?.content == "Replay Gain" }) return null
+    val tags = buildMap {
+        for (source in listOf(root["format"], stream)) {
+            val entries = (source as? kotlinx.serialization.json.JsonObject)?.get("tags") as? kotlinx.serialization.json.JsonObject ?: continue
+            entries.forEach { (key, value) -> put(key.uppercase(), value.jsonPrimitive.content) }
+        }
+    }
+    VolumeLevelling.parse(tags::get)
+}.getOrNull()
 
 internal fun mpvCommandSucceeded(reply: String): Boolean = runCatching {
     kotlinx.serialization.json.Json.parseToJsonElement(reply).jsonObject["error"]?.jsonPrimitive?.content == "success"

@@ -119,6 +119,7 @@ internal class TrackStarter(
                 fallback = fallback,
                 error = null,
                 favorite = isFavorite(playable.track.canonicalId),
+                levelling = null,
             )
         }
         trace("engine.play ${playable.track.traceLabel()} via ${playable.source.provider} gen=$generation")
@@ -129,6 +130,7 @@ internal class TrackStarter(
                         handle.copy(startPositionMs = target?.positionMs ?: 0, durationMs = playable.track.durationMs) else handle
                 }
                 engine.configureGapless(currentPreferences.value.gapless && playable.source.provider == ProviderId.LOCAL)
+                engine.configureLevelling(currentPreferences.value.volumeLevelling)
                 engine.play(handle, playable.source.quality, playGeneration = generation)
             }
             if (generation == turn.generation) {

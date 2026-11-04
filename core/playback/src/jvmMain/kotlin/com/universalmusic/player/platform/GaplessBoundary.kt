@@ -4,6 +4,7 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PreparedPlayback
+import com.universalmusic.player.domain.playback.ReplayGain
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -20,8 +21,9 @@ internal class GaplessPlaylist {
     var entryId: Long? = null
     var decodingEntryId: Long? = null
     var crossingEntryId: Long? = null
-    val entries: MutableMap<Long, Pair<PreparedPlayback, Long?>> = mutableMapOf()
+    val entries: MutableMap<Long, ProbedSuccessor> = mutableMapOf()
     var nextDuration: Long? = null
+    var nextReplayGain: ReplayGain? = null
     var crossing: PreparedPlayback? = null
     var crossingRunning: Boolean = false
     var outputDrained: Boolean = false
@@ -29,6 +31,9 @@ internal class GaplessPlaylist {
     var crossingFailed: Boolean = false
     var awaitingSuccessor: Boolean = false
 }
+
+/** A successor appended to mpv's playlist, with what was probed from its file beforehand. */
+internal class ProbedSuccessor(val prepared: PreparedPlayback, val durationMs: Long?, val replayGain: ReplayGain?)
 
 /**
  * Joins the next local file onto the running mpv process. Owns the single prepared successor,
@@ -49,7 +54,7 @@ internal class GaplessBoundary(
     private var prepared: PreparedPlayback? = null
     private var preparationRevision = 0L
 
-    fun canJoin(url: String): Boolean = enabled && localFile(url) && runtime.supportsEvents
+    fun canJoin(url: String): Boolean = enabled && isLocalMediaUrl(url) && runtime.supportsEvents
 
     fun adoptGenerationLocked(generation: Long, keepPrepared: Boolean) {
         preparationRevision++
@@ -83,7 +88,7 @@ internal class GaplessBoundary(
     fun prepareNext(next: PreparedPlayback?) {
         synchronized(transport.lock) {
             val revision = ++preparationRevision
-            val candidate = next?.takeIf { enabled && it.generation == transport.activeGeneration && localFile(it.handle.url) }
+            val candidate = next?.takeIf { enabled && it.generation == transport.activeGeneration && isLocalMediaUrl(it.handle.url) }
             prepared = candidate
             val active = slot.active ?: return
             if (!active.gapless) return
@@ -102,6 +107,7 @@ internal class GaplessBoundary(
                 scope.launch(Dispatchers.IO) {
                     val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
                     val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
+                    val replayGain = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
                     synchronized(transport.lock) {
                         if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@launch
                         slot.enqueueLocked apply@{
@@ -131,7 +137,7 @@ internal class GaplessBoundary(
                                 }
                                 val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
                                 synchronized(transport.lock) {
-                                    if (id != null) playlist.entries[id] = candidate to duration
+                                    if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain)
                                     else if (prepared === candidate) prepared = null
                                 }
                             }
@@ -141,8 +147,6 @@ internal class GaplessBoundary(
             }
         }
     }
-
-    private fun localFile(url: String): Boolean = url.startsWith("file:") || !url.contains("://")
 
     /** Runs in the IPC FIFO. With no successor, EOF can only enter idle, never another file. */
     fun seek(active: ActiveProcess, handle: PlaybackHandle.Url, seconds: Double): Boolean {
@@ -199,7 +203,7 @@ internal class GaplessBoundary(
                         return
                     }
                     val binding = playlist.entries[playlist.decodingEntryId]
-                    val next = binding?.first?.takeIf { it === prepared } ?: run {
+                    val next = binding?.prepared?.takeIf { it === prepared } ?: run {
                         // Cancellation raced an already decoded file. Let the session select the
                         // current successor again rather than playing an unowned queue item.
                         ticker.cancelLocked()
@@ -212,7 +216,8 @@ internal class GaplessBoundary(
                     playlist.awaitingSuccessor = false
                     playlist.crossing = next
                     playlist.crossingEntryId = playlist.decodingEntryId
-                    playlist.nextDuration = binding.second
+                    playlist.nextDuration = binding.durationMs
+                    playlist.nextReplayGain = binding.replayGain
                 }
                 "playback-restart" -> {
                     val next = playlist.crossing ?: return
@@ -295,12 +300,14 @@ internal class GaplessBoundary(
                 val previous = transport.activeGeneration++
                 transport.handle = next.handle
                 transport.quality = next.quality
+                transport.replayGain = playlist.nextReplayGain
                 ticker.anchor(0)
                 slot.epoch++
                 transport.publish(EngineState(status = if (playlist.crossingFailed) EngineStatus.FAILED else if (playlist.endedAfterCrossing) EngineStatus.ENDED else
                     if (transport.userPaused) EngineStatus.PAUSED else EngineStatus.PLAYING,
                     error = if (playlist.crossingFailed) "Local file playback failed" else null,
-                    durationMs = playlist.nextDuration, seamlessItemId = next.itemId, previousGeneration = previous))
+                    durationMs = playlist.nextDuration, seamlessItemId = next.itemId, previousGeneration = previous,
+                    levelling = transport.levellingLocked()))
                 playlist.endedAfterCrossing = false
                 playlist.crossingFailed = false
             }
