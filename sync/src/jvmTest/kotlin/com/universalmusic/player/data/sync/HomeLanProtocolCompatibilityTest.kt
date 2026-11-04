@@ -97,6 +97,43 @@ class HomeLanProtocolCompatibilityTest {
     }
 
     @Test
+    fun hubRepliesWithSpotifyHeartsOnlyToTheSameAccountAndNeverOnV1() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-spotify-hearts-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            val pcLibrary = LibraryRepository(deviceIdProvider = { "pc" }).apply { setSpotifyAccountId("account-a") }
+            pcLibrary.toggleFavorite(Track("spotify:hub", "Hub song", emptyList(), sources = listOf(PlaybackSource(
+                ProviderId.SPOTIFY, "hub", isPlayable = true, handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "hub", null)))))
+            hub = hub(pc, phone, port,
+                { pcLibrary.mergeAndPersistSyncState(it); pcLibrary.exportHeartsSyncDocument() },
+                { it }, vault = null, bindHost = "127.0.0.1")
+            hub.start()
+            /** The hub's raw reply, then what the phone holds after merging it. */
+            suspend fun heartsFor(account: String?): Pair<List<String>, Set<String>> {
+                val library = LibraryRepository(deviceIdProvider = { "phone" }).apply { setSpotifyAccountId(account) }
+                val reply = HttpHomeLanSyncClient(hubPeer(pc, port), library, KainosPlaylistRepository(), client(pc, phone))
+                    .use { it.syncHearts().getOrThrow() }
+                library.mergeAndPersistSyncState(reply)
+                return (reply.ops.map { it.canonicalId } + reply.favoritesMetadata.map { it.canonicalId }) to library.favoriteIds.value
+            }
+            assertEquals(listOf("spotify:hub", "spotify:hub") to setOf("spotify:hub"), heartsFor("account-a"))
+            assertEquals(emptyList<String>() to emptySet(), heartsFor("account-b"))
+            assertEquals(emptyList<String>() to emptySet(), heartsFor(null))
+            client(pc, phone).use { http ->
+                val v1 = json.decodeFromString<HeartsSyncDocument>(http.post("https://127.0.0.1:$port$HOME_LAN_SYNC_PATH_HEARTS") {
+                    setBody(json.encodeToString(HeartsSyncDocument("old", "account-a")))
+                }.bodyAsText())
+                assertEquals(emptyList<HeartOp>(), v1.ops)
+                assertEquals(emptyList<com.universalmusic.player.data.library.PersistedTrack>(), v1.favoritesMetadata)
+            }
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun newPinnedClientRetriesLegacyOnlyHubAndSendsBasenameIdentities() = runBlocking {
         val directory = Files.createTempDirectory("kainos-legacy-protocol-").toFile()
         try {

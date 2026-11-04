@@ -28,7 +28,8 @@ data class HeartOp(
 
 /**
  * Portable hearts exchange document. Favorites metadata must be URI-sanitized.
- * Wire ids on the LAN: `yt:` and `localfile:<basename>`. Spotify is not mirrored here.
+ * Wire ids on the LAN: `yt:`, `localfile:<basename>` / `localkey:`, and `spotify:` app hearts,
+ * which a receiver applies only when both documents carry the same [spotifyAccountId].
  */
 @Serializable
 data class HeartsSyncDocument(
@@ -184,8 +185,7 @@ fun mergeHeartOps(
         if (isLocalFileHeartCanonicalId(op.canonicalId)) return@filter true
         if (!isSpotifyHeartCanonicalId(op.canonicalId)) return@filter true
         val local = localSpotifyAccountId
-        val remote = remoteSpotifyAccountId
-        local != null && remote != null && local == remote
+        local != null && remoteSpotifyAccountId == local && (op.spotifyAccountId ?: local) == local
     }
     // Keep all local ops (including device `local:` hearts); never accept remote `local:` ops.
     val remotePortableOnly = acceptedRemote.filter { isPortableHeartCanonicalId(it.canonicalId) }
@@ -277,8 +277,13 @@ fun emptyPortableTrack(canonicalId: String): PersistedTrack = PersistedTrack(
     ),
 )
 
-/** One-release downgrade. Keyed unheart operations retain the same revision and basename. */
-fun HeartsSyncDocument.forV1Sync(): HeartsSyncDocument {
+/**
+ * One-release downgrade. Keyed unheart operations retain the same revision and basename.
+ * v1 peers never exchanged Spotify app hearts, so they are omitted.
+ */
+fun HeartsSyncDocument.forV1Sync(): HeartsSyncDocument = withoutSpotifyHearts().downgradedLocalKeys()
+
+private fun HeartsSyncDocument.downgradedLocalKeys(): HeartsSyncDocument {
     val identities = ops.mapNotNull { it.localIdentity } + favoritesMetadata.mapNotNull { it.localSyncIdentity() }
     val ambiguous = identities.filter { it.contentKey != null && it.basename != null }
         .groupBy { it.basename }.filterValues { rows -> rows.map { it.contentKey }.distinct().size > 1 }.keys
@@ -298,3 +303,12 @@ fun HeartsSyncDocument.forV1Sync(): HeartsSyncDocument {
         } }.distinctBy { it.canonicalId },
     )
 }
+
+/** Spotify-scoped hearts only for a peer signed into this document's Spotify account. */
+fun HeartsSyncDocument.forPeerSpotifyAccount(peerSpotifyAccountId: String?): HeartsSyncDocument =
+    if (spotifyAccountId != null && peerSpotifyAccountId == spotifyAccountId) this else withoutSpotifyHearts()
+
+private fun HeartsSyncDocument.withoutSpotifyHearts(): HeartsSyncDocument = copy(
+    ops = ops.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) },
+    favoritesMetadata = favoritesMetadata.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) },
+)
