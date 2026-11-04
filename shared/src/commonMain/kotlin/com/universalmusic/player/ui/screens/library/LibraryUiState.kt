@@ -24,6 +24,8 @@ internal data class LibraryUiState(
     val localTracks: List<Track>,
     val albums: List<Album>,
     val artists: List<LibraryArtistEntry>,
+    /** Configured music folders as trees; Favorites only keeps hearted files, the other chips change nothing. */
+    val folders: List<LibraryFolder>,
     val kainosRows: List<PersistedKainosPlaylist>,
     val kainosPlaylists: List<Playlist>,
     val spotifyPlaylistCatalog: List<Playlist>,
@@ -74,6 +76,7 @@ internal fun deriveLibraryUiState(
     spotifyState: ProviderState,
     downloads: Map<String, DownloadItemState>,
     query: String,
+    musicFolders: List<String> = emptyList(),
     offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ): LibraryUiState {
     val needle = ""
@@ -104,6 +107,10 @@ internal fun deriveLibraryUiState(
         localTracks = localTracks,
         albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, favorites), needle),
         artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, favorites), needle),
+        folders = libraryFolderTree(
+            musicFolders,
+            if (favoritesOnly) localTracks.filter { it.canonicalId in favorites } else localTracks,
+        ),
         kainosRows = kainosRows,
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),
         spotifyPlaylistCatalog = spotifyPlaylists,

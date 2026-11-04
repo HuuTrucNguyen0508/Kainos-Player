@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,10 +23,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +37,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -44,10 +48,17 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.domain.model.Track
 import kotlinx.coroutines.flow.StateFlow
 
-internal enum class LibraryTab { Songs, Albums, Artists, Playlists }
+internal enum class LibraryTab { Songs, Albums, Artists, Playlists, Folders }
+
+/** Where each visited folder was scrolled to ("" is the list of roots), so going up lands where it left. */
+private val FolderScrollSaver = listSaver<MutableMap<String, Pair<Int, Int>>, String>(
+    save = { positions -> positions.flatMap { (id, at) -> listOf(id, at.first.toString(), at.second.toString()) } },
+    restore = { flat -> flat.chunked(3).associateTo(mutableMapOf()) { (id, index, offset) -> id to (index.toInt() to offset.toInt()) } },
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,6 +69,9 @@ internal fun LibraryScreen(
     onPlayTracks: (List<Track>, Int) -> Unit,
     trackActions: TrackActionsPresenter,
     onPlayOffline: (List<Track>, Int) -> Unit = onPlayTracks,
+    onShuffleTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
+    /** Library hands the app what system back / Escape should do inside it, or null when nothing. */
+    onInnerBack: ((() -> Unit)?) -> Unit = {},
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -75,6 +89,7 @@ internal fun LibraryScreen(
     val albumsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val artistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    val foldersListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val scope = rememberCoroutineScope()
     val emitted by presenter.state.collectAsState()
     val state = remember(emitted, query) { emitted.withQuery(query) }
@@ -85,6 +100,29 @@ internal fun LibraryScreen(
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
     LaunchedEffect(tab, state.localOnly, state.favoritesOnly, state.readyOffline, state.needle) {
         if (tab != LibraryTab.Artists) selectedArtistId = null
+    }
+    var folderId by rememberSaveable { mutableStateOf<String?>(null) }
+    val folderTrail = remember(state.folders, folderId) { state.folders.trailTo(folderId) }
+    val folderScroll = rememberSaveable(saver = FolderScrollSaver) { mutableMapOf() }
+    var pendingFolderScroll by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    fun openFolder(id: String?) {
+        val shownId = folderTrail?.last()?.id.orEmpty()
+        folderScroll[shownId] = foldersListState.firstVisibleItemIndex to foldersListState.firstVisibleItemScrollOffset
+        val goingUp = id == null || folderTrail?.any { it.id == id } == true
+        pendingFolderScroll = if (goingUp) folderScroll[id.orEmpty()] ?: (0 to 0) else 0 to 0
+        folderId = id
+    }
+    LaunchedEffect(folderId) {
+        val (index, offset) = pendingFolderScroll ?: return@LaunchedEffect
+        pendingFolderScroll = null
+        foldersListState.scrollToItem(index, offset)
+    }
+    val folderUp: (() -> Unit)? = folderTrail
+        ?.takeIf { tab == LibraryTab.Folders }
+        ?.let { trail -> { openFolder(trail.getOrNull(trail.lastIndex - 1)?.id) } }
+    DisposableEffect(folderUp != null, folderTrail?.last()?.id) {
+        onInnerBack(folderUp)
+        onDispose { onInnerBack(null) }
     }
     var playlistBusyId by remember { mutableStateOf<String?>(null) }
     var playlistError by remember { mutableStateOf<String?>(null) }
@@ -146,6 +184,7 @@ internal fun LibraryScreen(
             LibraryTab.Albums -> albumsListState.scrollToItem(0)
             LibraryTab.Artists -> artistsListState.scrollToItem(0)
             LibraryTab.Playlists -> playlistsListState.scrollToItem(0)
+            LibraryTab.Folders -> foldersListState.scrollToItem(0)
         }
     }
 
@@ -209,13 +248,21 @@ internal fun LibraryScreen(
                 leadingIcon = Icons.Default.OfflinePin,
             )
         }
-        TabRow(selectedTabIndex = tab.ordinal) {
+        val tabs = @Composable {
             LibraryTab.entries.forEach { item ->
                 Tab(
                     selected = tab == item,
                     onClick = { tabName = item.name },
-                    text = { Text(item.name) },
+                    text = { Text(item.name, maxLines = 1) },
                 )
+            }
+        }
+        // Five labels do not fit a phone's width at equal shares; let them scroll there instead of wrap.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth < 520.dp) {
+                PrimaryScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 8.dp, tabs = tabs)
+            } else {
+                TabRow(selectedTabIndex = tab.ordinal, tabs = tabs)
             }
         }
         when (tab) {
@@ -273,6 +320,23 @@ internal fun LibraryScreen(
                 onDeletePlaylistId = { deletePlaylistId = it },
                 createDraft = createDraft,
                 onCreateDraft = { createDraft = it },
+            )
+            LibraryTab.Folders -> LibraryFoldersTab(
+                state = state,
+                listState = foldersListState,
+                trail = folderTrail,
+                onOpenFolder = ::openFolder,
+                onPlayTracks = onPlayTracks,
+                onShuffleTracks = onShuffleTracks,
+                onPinFolder = { folder, pin ->
+                    if (pin) {
+                        presenter.pinHome(HomePinKind.LOCAL_FOLDER, folder.id, folder.name, "Local folder")
+                    } else {
+                        presenter.unpinHome(HomePinKind.LOCAL_FOLDER, folder.id)
+                    }
+                },
+                trackActions = trackActions,
+                trackAvailability = presenter::trackAvailability,
             )
         }
     }

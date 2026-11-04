@@ -303,7 +303,9 @@ internal class HomePresenter(
             playback.settings.localMusicFoldersConfigured,
             defaultMusicFolder(),
         )
-        val counts = folderTrackCounts(folders, tracksInLocalFolder)
+        // Folder pins can name a subfolder picked in Library → Folders, not only a configured root.
+        val pinnedFolders = library.homePins.filter { it.kind == HomePinKind.LOCAL_FOLDER }.map { it.targetId }
+        val counts = folderTrackCounts((folders + pinnedFolders).distinct(), tracksInLocalFolder)
         val focus = sessionFocusOf(now.track, now.isPlaying, library.recent)
         val discover = loadedDiscoverPlaylist(providers.discover)
         val favorites = favoritesSummary(
