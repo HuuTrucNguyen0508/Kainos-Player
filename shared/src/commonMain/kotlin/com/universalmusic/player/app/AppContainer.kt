@@ -256,6 +256,13 @@ class AppContainer(
                     rematchPlaylistLocalsByFileName()
                     kainosPlaylists.exportSyncDocument()
                 },
+                onHomePins = config.onHomePins?.let { mergePins ->
+                    { remote ->
+                        library.awaitLoaded()
+                        kainosPlaylists.awaitLoaded()
+                        mergePins(remote)
+                    }
+                },
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
                 listening = config.listening,
