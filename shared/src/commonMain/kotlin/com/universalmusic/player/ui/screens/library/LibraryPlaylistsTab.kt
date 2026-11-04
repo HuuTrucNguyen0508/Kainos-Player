@@ -38,7 +38,6 @@ import com.universalmusic.player.data.spotify.isDiscoverWeekly
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
-import com.universalmusic.player.ui.components.TrackRow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -50,6 +49,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
     listState: LazyListState,
     scope: CoroutineScope,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
     playlistBusyId: String?,
     onPlaylistBusyId: (String?) -> Unit,
     playlistError: String?,
@@ -285,8 +285,9 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                             val entryId = state.kainosRows
                                 .firstOrNull { it.id == playlist.canonicalId }
                                 ?.entries?.getOrNull(index)?.entryId
-                            TrackRow(
+                            ActionTrackRow(
                                 track = track,
+                                actions = trackActions,
                                 onClick = { onPlayTracks(playlist.tracks, index) },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {

@@ -1,6 +1,20 @@
 package com.universalmusic.player.ui.theme
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.remember
+import com.universalmusic.player.data.library.PersistedTrack
+import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
+import com.universalmusic.player.data.playlist.PersistedPlaylistEntry
+import com.universalmusic.player.ui.RecordedTrackActions
+import com.universalmusic.player.ui.TrackActionNoticePill
+import com.universalmusic.player.ui.screens.ActionTrackRow
+import com.universalmusic.player.ui.screens.TrackActionsMenuItems
+import com.universalmusic.player.ui.screens.TrackMenuExtra
+import com.universalmusic.player.ui.screens.TrackMenuPage
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -135,3 +149,61 @@ internal fun RowSpecimens() = Page("Tiles, ledgers, rows") {
     }
     Slip(Modifier.width(420.dp)) { Text("A slip holds one thing", Modifier.padding(16.dp)) }
 }
+
+/** Track rows with the ⋮ menu, both menu pages as they open, and the confirmation that follows. */
+@Composable
+internal fun TrackMenuSpecimens() = Page("Track menu") {
+    val actions = remember {
+        RecordedTrackActions().apply {
+            favorites.value = setOf("b")
+            playlists.value = listOf(
+                PersistedKainosPlaylist("p1", "Late shift", entries = List(12) { PersistedPlaylistEntry("e$it", PersistedTrack("x$it", "x")) }),
+                PersistedKainosPlaylist("p2", "Road trip", entries = listOf(PersistedPlaylistEntry("e", PersistedTrack("b", "Ferric")))),
+                PersistedKainosPlaylist("p3", "Sunday records"),
+            )
+        }
+    }
+    val glass = sampleTrack("a", "Glass Harbour", "The Northern Wires", ProviderId.SPOTIFY)
+    val ferric = sampleTrack("b", "Ferric", "Halden & Vos", ProviderId.YOUTUBE_MUSIC)
+    Column(Modifier.width(560.dp)) {
+        ActionTrackRow(glass, actions.presenter, {}, compact = true)
+        ActionTrackRow(ferric, actions.presenter, {}, compact = true)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        MenuSheet {
+            TrackActionsMenuItems(
+                glass, TrackMenuPage.Actions, favorite = false, canQueue = true, playlists = actions.playlists.value,
+                extras = listOf(TrackMenuExtra("Open YouTube", Icons.AutoMirrored.Filled.OpenInNew) {}),
+                onPage = {}, onPlayNext = {}, onAddToQueue = {}, onToggleFavorite = {}, onAddToPlaylist = {}, onNewPlaylist = {}, onExtra = {},
+            )
+        }
+        MenuSheet {
+            TrackActionsMenuItems(
+                ferric, TrackMenuPage.Actions, favorite = true, canQueue = false, playlists = actions.playlists.value, extras = emptyList(),
+                onPage = {}, onPlayNext = {}, onAddToQueue = {}, onToggleFavorite = {}, onAddToPlaylist = {}, onNewPlaylist = {}, onExtra = {},
+            )
+        }
+        MenuSheet {
+            TrackActionsMenuItems(
+                ferric, TrackMenuPage.Playlists, favorite = true, canQueue = true, playlists = actions.playlists.value, extras = emptyList(),
+                onPage = {}, onPlayNext = {}, onAddToQueue = {}, onToggleFavorite = {}, onAddToPlaylist = {}, onNewPlaylist = {}, onExtra = {},
+            )
+        }
+    }
+    TrackActionNoticePill("Playing next: Glass Harbour")
+    TrackActionNoticePill("Added to Road trip")
+}
+
+/** Stands in for the dropdown popup, which an offscreen scene does not open. */
+@Composable
+private fun MenuSheet(content: @Composable () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.extraSmall,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 3.dp,
+        tonalElevation = 3.dp,
+    ) {
+        Column(Modifier.width(IntrinsicSize.Max).padding(vertical = 8.dp)) { content() }
+    }
+}
+

@@ -134,7 +134,7 @@ private fun FavoritesHeadline(favorites: FavoritesSummary, stacked: Boolean, mod
         )
         if (favorites.count == 0) {
             Text(
-                "Heart songs in Now Playing and they gather here.",
+                "Heart songs from Now Playing or a song's menu and they gather here.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -14,7 +14,7 @@ What the app does today, what it does not do, and how each claim was checked. Da
 
 **Search.** Spotify and YouTube only. Library has its own fuzzy search for everything else. Starting a Search result plays that track and then its own source's radio: Spotify radio through librespot, or the video's YouTube Mix. Radio never mixes sources and never falls back to a name search or a Liked Songs shuffle. Settings → Playback can turn it off. On Linux, Spotify radio needs the optional `kainos-discover-weekly` helper.
 
-**Library, queue and playlists.** Songs, albums, artists and playlists, with Local files only and Favorites only filters. App hearts stay separate from Spotify Liked Songs. Hearts are set from Now Playing. Queue supports shuffle, repeat, reordering, removal with undo, and saving as a Kainos playlist.
+**Library, queue and playlists.** Songs, albums, artists and playlists, with Local files only and Favorites only filters. App hearts stay separate from Spotify Liked Songs. Every song row in Library, Search and Home's Continue listening has a menu (the ⋮ button, a long press or a right click) with Play next, Add to queue, Heart and Add to playlist; Search rows that cannot play in the app skip the queue actions. Hearts can also be set from Now Playing. Queue supports shuffle, repeat, reordering, removal with undo, and saving as a Kainos playlist.
 
 **Now Playing.** Seek, volume, heart, sleep timer, source and quality details, retry and another-source fallback, and changing a Spotify track's YouTube cache match.
 
@@ -37,8 +37,6 @@ What the app does today, what it does not do, and how each claim was checked. Da
 - No volume normalization for local files or YouTube. Spotify's is built into the receiver and has no switch.
 - No gapless on Android, and none for Spotify or YouTube on Linux. No crossfade, EQ or DSP.
 - No lyrics, until a source with clear terms exists. See [the investigation](plans/lyrics-source-investigation.md).
-- No Play next or Add to queue in the Search or Library UI, though the session supports them.
-- No hearting from a Library or Search row.
 - No YouTube Music account library.
 - No sync of Spotify app hearts, YouTube cached audio or Home pins between devices.
 - No QR pairing, and no sync while the phone app is closed.

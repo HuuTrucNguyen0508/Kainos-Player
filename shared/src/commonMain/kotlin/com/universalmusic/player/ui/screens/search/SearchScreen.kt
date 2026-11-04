@@ -12,13 +12,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -30,11 +28,9 @@ import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
@@ -47,12 +43,12 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.ProviderStatusRow
-import com.universalmusic.player.ui.components.TrackRow
 
 @Composable
 internal fun SearchScreen(
     presenter: SearchPresenter,
     onPlayTrackInList: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
     requestFocus: Boolean = false,
     onOpenSettings: (SettingsTarget) -> Unit = {},
 ) {
@@ -169,8 +165,9 @@ internal fun SearchScreen(
                             openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
                         }
                     }
-                    TrackRow(
-                        track,
+                    ActionTrackRow(
+                        track = track,
+                        actions = trackActions,
                         availability = remember(track, downloads) {
                             presenter.trackAvailability(track)
                         },
@@ -184,24 +181,10 @@ internal fun SearchScreen(
                             }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp),
-                        trailing = {
-                            if (youtubeSource != null) {
-                                var menuOpen by remember(track.canonicalId) { mutableStateOf(false) }
-                                Row {
-                                    IconButton(onClick = { menuOpen = true }) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = "More actions for ${track.title}")
-                                    }
-                                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                        DropdownMenuItem(
-                                            text = { Text("Open YouTube") },
-                                            onClick = {
-                                                menuOpen = false
-                                                openYouTube()
-                                            },
-                                        )
-                                    }
-                                }
-                            }
+                        extras = if (youtubeSource != null) {
+                            listOf(TrackMenuExtra("Open YouTube", Icons.AutoMirrored.Filled.OpenInNew, ::openYouTube))
+                        } else {
+                            emptyList()
                         },
                     )
                 }

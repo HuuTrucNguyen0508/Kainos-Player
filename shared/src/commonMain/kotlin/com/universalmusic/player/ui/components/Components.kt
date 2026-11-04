@@ -158,6 +158,7 @@ fun TrackRow(
     compact: Boolean = false,
     availability: TrackAvailabilityInfo? = null,
     highlighted: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val artSize = if (compact) 40.dp else 48.dp
     val folio = LocalSkinTokens.current.skin == Skin.FOLIO
@@ -165,7 +166,7 @@ fun TrackRow(
     val needsNetwork = availability == null && track.requiresNetworkToPlay() &&
         remember(track.canonicalId) { !isNetworkAvailable() }
     val source = (track.playableSources().firstOrNull() ?: track.sources.firstOrNull())?.provider
-    LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted) {
+    LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted, onLongClick = onLongClick) {
         Box {
             ArtworkImage(
                 track.artwork, track.title, Modifier.size(artSize), track.title,

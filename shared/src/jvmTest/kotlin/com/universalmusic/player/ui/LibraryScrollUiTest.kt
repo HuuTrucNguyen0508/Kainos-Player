@@ -62,7 +62,7 @@ class LibraryScrollUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { presenter(tracks, favorites, scope) }
-                LibraryScreen(MutableStateFlow(""), { "" }, presenter, { _, _ -> })
+                LibraryScreen(MutableStateFlow(""), { "" }, presenter, { _, _ -> }, RecordedTrackActions().presenter)
             }
         }
     }
@@ -134,7 +134,7 @@ class LibraryScrollUiTest {
                 val tabs = rememberSaveableStateHolder()
                 if (inLibrary) {
                     tabs.SaveableStateProvider("Library") {
-                        LibraryScreen(MutableStateFlow(""), { "" }, presenter, { _, _ -> })
+                        LibraryScreen(MutableStateFlow(""), { "" }, presenter, { _, _ -> }, RecordedTrackActions().presenter)
                     }
                 } else {
                     Text("Now Playing")

@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -303,6 +304,7 @@ fun LedgerRow(
     onClick: (() -> Unit)? = null,
     highlighted: Boolean = false,
     header: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     val palette = LocalKainosPalette.current
@@ -320,7 +322,13 @@ fun LedgerRow(
             .fillMaxWidth()
             .clip(shape)
             .background(fill)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(
+                when {
+                    onClick != null && onLongClick != null -> Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)
+                    onClick != null -> Modifier.clickable(onClick = onClick)
+                    else -> Modifier
+                },
+            )
             .then(
                 if (folio) Modifier.drawBehind {
                     drawLine(line, Offset(0f, size.height - .5f), Offset(size.width, size.height - .5f), 1.dp.toPx())

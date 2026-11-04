@@ -147,6 +147,7 @@ internal val galleryEntries = listOf(
     GalleryEntry("seek", height = 760) { SeekSpecimens() },
     GalleryEntry("marks", width = 1200, height = 640) { MarkSpecimens() },
     GalleryEntry("rows", height = 1000) { RowSpecimens() },
+    GalleryEntry("track-menu", width = 1040, height = 760) { TrackMenuSpecimens() },
     GalleryEntry("failures", width = 560, height = 220) { FailureSpecimens() },
 )
 

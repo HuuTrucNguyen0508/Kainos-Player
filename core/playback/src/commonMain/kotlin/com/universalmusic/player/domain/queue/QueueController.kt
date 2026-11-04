@@ -91,7 +91,12 @@ class QueueController(
             val newItem = QueueItem(idFactory(), track)
             val insertAt = (current.currentIndex + 1).coerceAtMost(current.items.size)
             val items = current.items.toMutableList().also { it.add(insertAt, newItem) }
-            val newCurrent = if (insertAt <= current.currentIndex) current.currentIndex + 1 else current.currentIndex
+            // On an empty queue the new track becomes the current entry instead of history.
+            val newCurrent = when {
+                current.items.isEmpty() -> 0
+                insertAt <= current.currentIndex -> current.currentIndex + 1
+                else -> current.currentIndex
+            }
             current.copy(
                 items = items,
                 currentIndex = newCurrent,
