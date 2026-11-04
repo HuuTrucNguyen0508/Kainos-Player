@@ -26,7 +26,7 @@ class DesktopLevellingPcmTest {
         }
     }
 
-    /** A 441 Hz tone at 1/8 full scale, longer than ao_pcm's 65536-sample buffer. */
+    /** A 441 Hz tone at 1/8 full scale. */
     private fun tone(name: String, vararg tags: Pair<String, String>): File = File(root, name).also { file ->
         val command = mutableListOf("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=441:sample_rate=44100:duration=$SECONDS")
         tags.forEach { (key, value) -> command += listOf("-metadata", "$key=$value") }
@@ -76,13 +76,13 @@ class DesktopLevellingPcmTest {
     }
 
     /**
-     * Plays [files] gaplessly from a paused start. With [whilePlaying], mpv is paced to real time
-     * and the block runs against the live process during playback.
+     * Plays [files] gaplessly, paced to real time like a sound card so every state lasts long
+     * enough to observe. [whilePlaying] runs against the live process during playback.
      */
     private fun render(
         files: List<File>,
         levelling: Boolean,
-        whilePlaying: (suspend (PlayerSession, (String) -> String?) -> Unit)? = null,
+        whilePlaying: suspend (PlayerSession, (String) -> String?) -> Unit = { _, _ -> },
     ): Run = runBlocking {
         val output = File(root, "out-${System.nanoTime()}.raw")
         var socket = java.nio.file.Path.of("/tmp/nonexistent-levelling-proof")
@@ -91,13 +91,10 @@ class DesktopLevellingPcmTest {
             override fun createIpcPath(): java.nio.file.Path = SystemDesktopPlaybackRuntime.createIpcPath().also { socket = it }
             override fun startProcess(command: List<String>): Process {
                 spawns++
-                // Unpaced runs start paused until the successor is queued; a paced one plays in real
-                // time like a sound card. A reopened output would truncate the file and fail the count.
+                // A reopened output would truncate the file and fail the sample count.
                 return FlushingOnStop(output, 4L * FRAMES * files.size, ProcessBuilder(command.filter { it != "--really-quiet" } +
-                    listOfNotNull("--pause".takeIf { whilePlaying == null }) + listOf("--no-config", "--ao=pcm",
-                    "--ao-pcm-waveheader=no", "--ao-pcm-file=${output.absolutePath}",
-                    "--audio-format=float", "--audio-channels=mono") +
-                    listOfNotNull("--af-pre=@pace:lavfi=[arealtime]".takeIf { whilePlaying != null }))
+                    listOf("--no-config", "--ao=pcm", "--ao-pcm-waveheader=no", "--ao-pcm-file=${output.absolutePath}",
+                        "--audio-format=float", "--audio-channels=mono", "--af-pre=@pace:lavfi=[arealtime]"))
                     .redirectOutput(File(root, "mpv-$spawns.log")).redirectErrorStream(true).start())
             }
         }
@@ -115,8 +112,7 @@ class DesktopLevellingPcmTest {
                 while (property("playlist-count") != files.size.toString()) delay(10)
                 session.nowPlaying.first { it.levelling != null }
             }
-            assertTrue(runtime.sendIpc("""["set_property","pause",false]""", socket))
-            whilePlaying?.invoke(session, property)
+            whilePlaying(session, property)
             withTimeout(20_000) {
                 session.nowPlaying.first { it.track?.canonicalId == "${files.lastIndex}" && !it.isPlaying && !it.buffering }
             }
@@ -126,8 +122,7 @@ class DesktopLevellingPcmTest {
             val bytes = output.readBytes()
             val samples = FloatArray(bytes.size / 4)
             ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(samples)
-            // The watcher may miss a short-lived state, so the final value is read from the session.
-            Run(samples, seen.filterNotNull().take(1) + listOfNotNull(session.nowPlaying.value.levelling), spawns)
+            Run(samples, seen.filterNotNull(), spawns)
         } finally {
             watcher.cancel()
             engine.stop()
@@ -168,7 +163,7 @@ class DesktopLevellingPcmTest {
     @Test fun offPlaysEveryFileAtItsOwnLevel() {
         val run = render(listOf(quiet(), hot()), levelling = false)
         assertLevels(run.pcm, UNITY, UNITY)
-        assertEquals(listOf(Levelling.Off, Levelling.Off), run.levelling)
+        assertEquals(listOf(Levelling.Off), run.levelling)
     }
 
     @Test fun turningItOffReachesTheTrackAlreadyLoaded() {
