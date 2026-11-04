@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui
 
+import kotlin.random.Random
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
@@ -100,7 +101,6 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.State
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
-import kotlin.random.Random
 import coil3.compose.LocalPlatformContext
 import com.universalmusic.player.ui.components.warmQueueArtwork
 import com.universalmusic.player.domain.model.ProviderId
@@ -149,6 +149,7 @@ private fun AppScaffold(
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
     val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
     val trackActions = remember(container) { TrackActionsPresenter.from(container) }
+    val searchPlaylist by searchPresenter.playlist.collectAsState()
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
     val appReady by container.ready.collectAsState()
@@ -247,6 +248,7 @@ private fun AppScaffold(
 
     fun handleSystemBack(): Boolean {
         if (dismissOverlayStack()) return true
+        if (destination == AppDestination.Search && searchPresenter.closePlaylist()) return true
         screenBack?.let { back ->
             back()
             return true
@@ -298,10 +300,18 @@ private fun AppScaffold(
         openNowPlaying()
     }
 
-    // Queue → Now Playing → previous tab → … → Home. At root Home, let the system leave the app.
+    /** Play or Shuffle on a Search playlist page; Shuffle starts on a random song of a fresh order. */
+    fun playPlaylist(tracks: List<Track>, startIndex: Int, shuffle: Boolean) {
+        if (tracks.isEmpty()) return
+        if (shuffle && !container.player.queueState.value.shuffle) container.player.toggleShuffle()
+        playTracks(tracks, if (shuffle) Random.nextInt(tracks.size) else startIndex)
+    }
+
+    // Queue → Now Playing → Search playlist → previous tab → … → Home. At root Home, let the system leave the app.
     PlatformBackHandler(
         enabled = showQueue ||
             showNowPlaying ||
+            (destination == AppDestination.Search && searchPlaylist != null) ||
             (desktop && nowPlayingPaneExpanded && compactPlayer) ||
             screenBack != null ||
             tabBackStackNames.isNotEmpty(),
@@ -409,6 +419,7 @@ private fun AppScaffold(
                                     AppDestination.Search -> SearchScreen(
                                         presenter = searchPresenter,
                                         onPlayTrackInList = ::playSearchTracks,
+                                        onPlayPlaylist = ::playPlaylist,
                                         trackActions = trackActions,
                                         requestFocus = true,
                                         onOpenSettings = ::openSettings,

@@ -453,6 +453,31 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun playlistPagesCarryTheNextOffsetAndTotal() = runTest {
+        val store = TokenStoreFake(AuthTokens("access"))
+        val provider = provider(store) { request ->
+            assertTrue(request.url.encodedPath.endsWith("/playlists/mix/items"))
+            assertEquals("50", request.url.parameters["limit"])
+            when (request.url.parameters["offset"]) {
+                "0" -> respondJson(
+                    """{"items":[{"item":{"id":"a","name":"One","type":"track"}},{"item":null}],"total":3,"next":"https://api.spotify.com/v1/playlists/mix/items?offset=2&limit=50"}""",
+                )
+                "2" -> respondJson("""{"items":[{"item":{"id":"b","name":"Two","type":"track"}}],"total":3,"next":null}""")
+                else -> error("Unexpected offset ${request.url.parameters["offset"]}")
+            }
+        }
+
+        val first = provider.getPlaylistTracksPage("mix", null)
+        assertEquals(listOf("One"), first.tracks.map { it.title })
+        assertEquals("2", first.next)
+        assertEquals(3, first.total)
+
+        val last = provider.getPlaylistTracksPage("mix", first.next)
+        assertEquals(listOf("Two"), last.tracks.map { it.title })
+        assertEquals(null, last.next)
+    }
+
+    @Test
     fun playlistItemsAcceptLegacyTrackFieldIfPresent() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val provider = provider(store) { request ->

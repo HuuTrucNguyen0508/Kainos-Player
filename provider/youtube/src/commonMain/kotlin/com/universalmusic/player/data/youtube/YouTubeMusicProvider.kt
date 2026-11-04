@@ -9,6 +9,7 @@ import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderCapabilities
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -97,7 +98,31 @@ class YouTubeMusicProvider(
         }.items.firstOrNull()?.toPlaylist()
     }
 
-    private suspend fun fetch(endpoint: String, parameters: HttpRequestBuilder.() -> Unit): YouTubeSearchResponse {
+    /**
+     * One page of up to 50 songs from `playlistItems`, after [pageToken] (null for the first page).
+     * Durations come from one `videos` call per page; deleted and private videos, which `videos`
+     * leaves out, are dropped from the page.
+     */
+    suspend fun getPlaylistTracksPage(playlistId: String, pageToken: String?): PlaylistTracksPage = request {
+        val page = fetch("playlistItems") {
+            parameter("part", "snippet,contentDetails")
+            parameter("playlistId", playlistId)
+            parameter("maxResults", 50)
+            pageToken?.let { parameter("pageToken", it) }
+        }
+        val ids = page.items.mapNotNull { it.contentDetails?.videoId ?: it.snippet?.resourceId?.videoId }
+        val details = if (ids.isEmpty()) emptyMap() else fetch("videos") {
+            parameter("part", "snippet,contentDetails")
+            parameter("id", ids.joinToString(","))
+        }.items.associateBy { it.resourceId("videoId") }
+        PlaylistTracksPage(
+            tracks = ids.mapNotNull { details[it]?.toTrack(streams.isAvailable()) },
+            next = page.nextPageToken?.takeIf { it.isNotBlank() && page.items.isNotEmpty() },
+            total = page.pageInfo?.totalResults,
+        )
+    }
+
+    private suspend fun fetch(endpoint: String, parameters: HttpRequestBuilder.() -> Unit): YouTubeListResponse {
         val key = config.youtubeDataApiKey?.takeIf { it.isNotBlank() }
             ?: error("YouTube Data API key is not configured")
         val response = http.get("https://www.googleapis.com/youtube/v3/$endpoint") {
@@ -182,9 +207,18 @@ class YouTubeMusicProvider(
 }
 
 @Serializable
-private data class YouTubeSearchResponse(
+private data class YouTubeListResponse(
     val items: List<YouTubeItem> = emptyList(),
+    val nextPageToken: String? = null,
+    val pageInfo: YouTubePageInfo? = null,
 )
+
+@Serializable
+private data class YouTubePageInfo(val totalResults: Int? = null)
+
+/** What a `playlistItems` entry points at. */
+@Serializable
+private data class YouTubeResourceId(val videoId: String? = null)
 
 @Serializable
 private data class YouTubeItem(
@@ -214,6 +248,7 @@ private data class YouTubeSnippet(
     val channelTitle: String? = null,
     val thumbnails: YouTubeThumbnails? = null,
     val description: String? = null,
+    val resourceId: YouTubeResourceId? = null,
 )
 
 @Serializable
@@ -234,6 +269,7 @@ private data class YouTubeThumbnail(
 private data class YouTubeContentDetails(
     val duration: String? = null,
     val itemCount: Int? = null,
+    val videoId: String? = null,
 )
 
 private fun YouTubeItem.toTrack(playable: Boolean): Track {
