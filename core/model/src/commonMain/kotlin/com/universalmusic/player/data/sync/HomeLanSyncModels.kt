@@ -35,6 +35,8 @@ data class HomeLanSyncStatus(
     val pendingConflicts: List<VaultConflict> = emptyList(),
     /** Missing hearted (or vault) files waiting for user confirm before blob copy. */
     val pendingTransfers: List<PendingVaultTransfer> = emptyList(),
+    /** Hearted YouTube audio cached on one side and missing on the other, waiting for Transfer or Skip. */
+    val pendingCachedAudio: List<PendingCachedAudioTransfer> = emptyList(),
     val bytesTransferred: Long = 0,
     val bytesTotal: Long = 0,
 )
@@ -83,4 +85,22 @@ interface HomeLanSyncClient : AutoCloseable {
     suspend fun fetchBlobHash(relPath: String): Result<String?> = Result.success(null)
 
     suspend fun uploadBlob(relPath: String, offset: Long, totalSize: Long, chunk: ByteArray): Result<Unit>
+
+    /** The hub's cached-audio offers after it saw ours; null when the hub predates cached-audio sync. */
+    suspend fun syncCachedAudio(local: CachedAudioSyncDocument): Result<CachedAudioSyncDocument?> = Result.success(null)
+
+    suspend fun downloadCachedAudio(owner: String, token: String, offset: Long, length: Int): Result<ByteArray> =
+        Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
+
+    /** SHA-256 of the hub's cached file [token] for [owner]. */
+    suspend fun fetchCachedAudioHash(owner: String, token: String): Result<String> =
+        Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
+
+    /**
+     * Sends one chunk; the hub verifies [sha256] and publishes once the chunk ending at [totalSize] arrives.
+     * Returns the hub's word: `ok`, `published`, or `already cached` (stop sending).
+     */
+    suspend fun uploadCachedAudio(
+        owner: String, token: String, offset: Long, totalSize: Long, sha256: String, chunk: ByteArray,
+    ): Result<String> = Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
 }

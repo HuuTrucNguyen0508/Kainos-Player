@@ -19,6 +19,8 @@ class HomeLanHubConfig(
     val onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
     /** Null leaves the pin route unanswered (404), as on hubs from before pin sync. */
     val onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
+    /** Null leaves the cached-audio routes unanswered (404), as on hubs from before cached-audio sync. */
+    val cachedAudio: com.universalmusic.player.data.sync.CachedAudioHost? = null,
     val vault: HomeLanVaultStore?,
     /** When non-null, the hub vault index only advertises these basenames (hearted-only mode). */
     val heartedVaultFileNames: () -> Set<String>?,

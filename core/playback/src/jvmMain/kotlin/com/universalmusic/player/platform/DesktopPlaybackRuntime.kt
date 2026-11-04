@@ -294,6 +294,13 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
 internal fun isLocalMediaUrl(url: String): Boolean = url.startsWith("file:") || !url.contains("://")
 
 /**
+ * What mpv is told to open. mpv refuses the `file:/path` form `File.toURI()` writes (hearted-cache
+ * entries store it) though it opens plain paths, so a `file:` URI becomes its path.
+ */
+internal fun mpvMediaArgument(url: String): String =
+    if (url.startsWith("file:")) runCatching { java.nio.file.Paths.get(java.net.URI(url)).toString() }.getOrDefault(url) else url
+
+/**
  * ffmpeg applies ReplayGain only where its demuxer exported it as stream side data (FLAC, MP3,
  * Ogg Vorbis, MP4; not Opus or Matroska), so the tags count only when that side data is present.
  * ffprobe no longer prints the side data's values, so they come from the same tags it was parsed from.

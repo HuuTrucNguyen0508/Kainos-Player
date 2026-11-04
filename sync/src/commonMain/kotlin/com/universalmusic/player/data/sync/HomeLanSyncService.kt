@@ -64,6 +64,8 @@ class HomeLanSyncService(
     private val pairingClientFactory: (HubEndpoint, CertFingerprint) -> HomeLanPairingClient,
     private val identity: DeviceIdentity,
     private val vaultStore: HomeLanVaultStore,
+    /** This device's hearted audio cache as Home sync copies it; null leaves cached audio out of sync. */
+    private val cachedAudio: com.universalmusic.player.data.cache.CachedAudioCopies? = null,
     private val refreshLocalLibrary: suspend () -> Unit,
     private val rematchLocalHearts: suspend () -> Int = { 0 },
     private val rematchPlaylistLocals: suspend () -> Int = { 0 },
@@ -463,6 +465,15 @@ class HomeLanSyncService(
                         playlists.mergeAndPersistSyncState(remotePlaylists)
                         val remotePins = client.syncHomePins().getOrThrow()
                         remotePins?.let { library.mergeAndPersistHomePins(it, livePlaylistIds()) }
+                        var pendingAudio = emptyList<PendingCachedAudioTransfer>()
+                        val cachedAudioDetail = cachedAudio?.let { copies ->
+                            val local = cachedAudioDocument(deviceId, library, copies)
+                            val remote = client.syncCachedAudio(local).getOrThrow()
+                                ?: return@let "cached audio skipped (peer too old)"
+                            pendingAudio = planCachedAudioTransfers(local, remote, library.favoriteIds.value)
+                            "cached audio pending ↓${pendingAudio.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
+                                "↑${pendingAudio.count { it.direction == VaultCopyDirection.TO_REMOTE }}"
+                        }
                         val rematchedPortable = rematchLocalHearts()
                         val rematchedPlaylistLocals = rematchPlaylistLocals()
                         refreshLocalLibrary()
@@ -496,11 +507,12 @@ class HomeLanSyncService(
                             append("Hearts (${remoteHearts.ops.size} peer ops)")
                             append("; playlists (${remotePlaylists.playlists.size} peer)")
                             append(remotePins?.let { "; pins (${it.pins.size} peer)" } ?: "; pins skipped (peer too old)")
+                            cachedAudioDetail?.let { append("; $it") }
                             append("; $vaultDetail")
                             if (rematched > 0) append(", rematched $rematched local hearts")
                             if (rematchedPl > 0) append(", rematched $rematchedPl playlist locals")
-                            if (pending.isNotEmpty()) {
-                                append("; confirm ${pending.size} file transfer(s)")
+                            if (pending.isNotEmpty() || pendingAudio.isNotEmpty()) {
+                                append("; confirm ${pending.size + pendingAudio.size} file transfer(s)")
                             }
                         }
                         val now = clock()
@@ -519,6 +531,7 @@ class HomeLanSyncService(
                                 vaultProgress = null,
                                 pendingConflicts = conflicts,
                                 pendingTransfers = pending,
+                                pendingCachedAudio = pendingAudio,
                                 bytesTransferred = 0,
                                 bytesTotal = 0,
                             )
@@ -592,53 +605,121 @@ class HomeLanSyncService(
         Result.success("Skipped $path")
     }
 
+    override suspend fun confirmCachedAudioTransfer(
+        ownerCanonicalId: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val target = syncTarget()
+            ?: return Result.failure(IllegalStateException("Not paired"))
+        val copies = cachedAudio
+            ?: return Result.failure(IllegalStateException("Cached audio sync is unavailable"))
+        val transfer = _status.value.pendingCachedAudio.firstOrNull {
+            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
+        } ?: return Result.failure(IllegalStateException("No pending cached audio for $ownerCanonicalId"))
+        runCatching {
+            val detail = withVaultSyncForeground("Cached audio transfer") {
+                clientFactory(target).use { client -> copyCachedAudio(copies, client, transfer, ::reportVaultProgress) }
+            }
+            _status.update {
+                it.copy(
+                    pendingCachedAudio = it.pendingCachedAudio - transfer,
+                    vaultProgress = null,
+                    bytesTransferred = 0,
+                    bytesTotal = 0,
+                    lastDetail = detail,
+                )
+            }
+            detail
+        }.onFailure { err ->
+            val message = err.message ?: err.toString()
+            _status.update { it.copy(lastError = message, vaultProgress = null) }
+        }
+    }
+
+    override suspend fun dismissCachedAudioTransfer(
+        ownerCanonicalId: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val skipped = _status.value.pendingCachedAudio.filter {
+            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
+        }
+        _status.update { it.copy(pendingCachedAudio = it.pendingCachedAudio - skipped.toSet()) }
+        Result.success("Skipped ${skipped.firstOrNull()?.offer?.title?.ifBlank { null } ?: ownerCanonicalId}")
+    }
+
+    private suspend fun copyCachedAudio(
+        copies: com.universalmusic.player.data.cache.CachedAudioCopies,
+        client: HomeLanSyncClient,
+        transfer: PendingCachedAudioTransfer,
+        onProgress: suspend (detail: String, transferred: Long, total: Long) -> Unit,
+    ): String {
+        val owner = transfer.offer.ownerCanonicalId
+        return executeCachedAudioTransfer(copies, client, transfer, { library.isFavorite(owner) }, onProgress)
+    }
+
     /**
-     * Copies every pending transfer over one client. A failed file stays pending and the batch moves
-     * on, but [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the hub is likely
-     * gone) instead of waiting out a timeout per remaining file.
+     * Copies every pending vault and cached-audio transfer over one client. A failed file stays pending
+     * and the batch moves on, but [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the
+     * hub is likely gone) instead of waiting out a timeout per remaining file.
      */
     override suspend fun confirmAllVaultTransfers(): Result<String> = mutex.withLock {
         val target = syncTarget()
             ?: return Result.failure(IllegalStateException("Not paired"))
-        val batch = _status.value.pendingTransfers
-        if (batch.isEmpty()) return Result.success("No pending transfers")
+        val vaultBatch = _status.value.pendingTransfers
+        val audioBatch = _status.value.pendingCachedAudio
+        val batchSize = vaultBatch.size + audioBatch.size
+        if (batchSize == 0) return Result.success("No pending transfers")
+        class Item(val name: String, val copy: suspend (HomeLanSyncClient, suspend (String, Long, Long) -> Unit) -> Unit,
+            val done: (HomeLanSyncStatus) -> HomeLanSyncStatus)
         runCatching {
-            require(vaultStore.isConfigured()) { "Vault not configured" }
+            if (vaultBatch.isNotEmpty()) require(vaultStore.isConfigured()) { "Vault not configured" }
+            val copies = cachedAudio
+            if (audioBatch.isNotEmpty()) requireNotNull(copies) { "Cached audio sync is unavailable" }
+            val items = vaultBatch.map { transfer ->
+                Item(transfer.relPath, { client, progress -> executeVaultTransfer(vaultStore, client, transfer, onProgress = progress) }) {
+                    it.copy(pendingTransfers = it.pendingTransfers.filterNot { t ->
+                        t.relPath == transfer.relPath && t.direction == transfer.direction
+                    })
+                }
+            } + audioBatch.map { transfer ->
+                Item(transfer.offer.title.ifBlank { transfer.offer.ownerCanonicalId },
+                    { client, progress -> copyCachedAudio(copies!!, client, transfer, progress) }) {
+                    it.copy(pendingCachedAudio = it.pendingCachedAudio - transfer)
+                }
+            }
             var transferred = 0
+            var vaultTransferred = 0
             val failures = mutableListOf<String>()
             var consecutiveFailures = 0
             withVaultSyncForeground("Vault transfer") {
                 clientFactory(target).use { client ->
-                    for ((index, transfer) in batch.withIndex()) {
+                    for ((index, item) in items.withIndex()) {
                         if (consecutiveFailures >= VAULT_BATCH_MAX_CONSECUTIVE_FAILURES) break
                         try {
-                            executeVaultTransfer(vaultStore, client, transfer) { detail, done, total ->
-                                reportVaultProgress("${index + 1}/${batch.size} · $detail", done, total)
+                            item.copy(client) { detail, done, total ->
+                                reportVaultProgress("${index + 1}/$batchSize · $detail", done, total)
                             }
                             transferred++
+                            if (index < vaultBatch.size) vaultTransferred++
                             consecutiveFailures = 0
-                            _status.update {
-                                it.copy(pendingTransfers = it.pendingTransfers.filterNot { t ->
-                                    t.relPath == transfer.relPath && t.direction == transfer.direction
-                                })
-                            }
+                            _status.update(item.done)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (err: Throwable) {
                             consecutiveFailures++
-                            failures += "${transfer.relPath}: ${err.message ?: err}"
+                            failures += "${item.name}: ${err.message ?: err}"
                         }
                     }
                 }
             }
-            if (transferred > 0) {
+            if (vaultTransferred > 0) {
                 refreshLocalLibrary()
                 rematchLocalHearts()
             }
             val summary = buildString {
-                append("Transferred $transferred of ${batch.size}")
+                append("Transferred $transferred of $batchSize")
                 if (failures.isNotEmpty()) append(", ${failures.size} failed")
-                val notTried = batch.size - transferred - failures.size
+                val notTried = batchSize - transferred - failures.size
                 if (notTried > 0) append(", $notTried not tried")
             }
             _status.update {
@@ -658,8 +739,8 @@ class HomeLanSyncService(
     }
 
     override suspend fun dismissAllVaultTransfers(): Result<String> = mutex.withLock {
-        val count = _status.value.pendingTransfers.size
-        _status.update { it.copy(pendingTransfers = emptyList()) }
+        val count = _status.value.pendingTransfers.size + _status.value.pendingCachedAudio.size
+        _status.update { it.copy(pendingTransfers = emptyList(), pendingCachedAudio = emptyList()) }
         Result.success("Skipped $count transfers")
     }
 
@@ -787,6 +868,7 @@ class HomeLanSyncService(
                         onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
                         onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
                         onHomePins = { remote -> library.mergeAndPersistHomePins(remote, livePlaylistIds()) },
+                        cachedAudio = cachedAudio?.let { CachedAudioHost({ deviceId }, library, it) },
                         vault = vaultStore.takeIf { it.isConfigured() },
                         heartedVaultFileNames = {
                             if (settings().homeLanSyncVaultHeartsOnly) heartedLocalAudioFileNames(library) else null

@@ -73,6 +73,9 @@ class LibraryRepository(
     val homePins: StateFlow<List<PersistedHomePin>> = _homePins.asStateFlow()
 
     private var spotifyAccountId: String? = null
+
+    /** The Spotify account that scopes Spotify app hearts here; null when signed out or unknown. */
+    val currentSpotifyAccountId: String? get() = spotifyAccountId
     private var heartOps: List<HeartOp> = emptyList()
     private val persistMutex = Mutex()
     private var persistJob: Job? = null

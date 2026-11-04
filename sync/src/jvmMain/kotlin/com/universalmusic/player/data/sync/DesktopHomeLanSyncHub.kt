@@ -250,6 +250,57 @@ class DesktopHomeLanSyncHub(
                         call.respondText(json.encodeToString(localAfter), ContentType.Application.Json)
                     }
                 }
+                config.cachedAudio?.let { host ->
+                    post(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO) {
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        call.respondAnswer(host.exchange(peer, body), ContentType.Application.Json)
+                    }
+                    get(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB) {
+                        val peer = call.pairedPeer() ?: return@get
+                        touchActivity()
+                        val owner = call.request.queryParameters["owner"].orEmpty()
+                        val token = call.request.queryParameters["token"].orEmpty()
+                        val size = host.size(peer, owner, token)
+                            ?: return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        val range = parseHubBlobRange(call.request.header(HttpHeaders.Range), size)
+                        if (range == null) {
+                            call.response.header(HttpHeaders.ContentRange, "bytes */$size")
+                            call.respondText("Range not satisfiable", status = HttpStatusCode.RequestedRangeNotSatisfiable)
+                            return@get
+                        }
+                        val bytes = host.read(peer, owner, token, range.first, (range.last - range.first + 1).toInt())
+                            ?: return@get call.respondText("Cached file changed; sync again", status = HttpStatusCode.Conflict)
+                        call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                        call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
+                        call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
+                    }
+                    get(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_HASH) {
+                        val peer = call.pairedPeer() ?: return@get
+                        touchActivity()
+                        val hash = host.hash(peer, call.request.queryParameters["owner"].orEmpty(),
+                            call.request.queryParameters["token"].orEmpty())
+                            ?: return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        call.respondText(hash)
+                    }
+                    put(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB) {
+                        val peer = call.pairedPeer() ?: return@put
+                        touchActivity()
+                        val params = call.request.queryParameters
+                        val offset = params["offset"]?.toLongOrNull()
+                        val total = params["total"]?.toLongOrNull()
+                        val sha256 = params["sha256"].orEmpty()
+                        if (offset == null || total == null || offset !in 0L until total || sha256.isBlank()) {
+                            call.respondText("Missing or invalid offset/total/sha256", status = HttpStatusCode.BadRequest)
+                            return@put
+                        }
+                        val chunk = call.receiveBytesOrRespondTooLarge(MAX_BLOB_BODY_BYTES) ?: return@put
+                        val answer = host.receive(peer, params["owner"].orEmpty(), params["token"].orEmpty(),
+                            offset, total, sha256, chunk)
+                        call.respondText(answer.body, ContentType.Text.Plain, HttpStatusCode.fromValue(answer.status))
+                    }
+                }
                 for (path in listOf(HOME_LAN_SYNC_PATH_VAULT_INDEX, HOME_LAN_SYNC_PATH_V2_VAULT_INDEX)) {
                     post(path) {
                         call.pairedPeer() ?: return@post
