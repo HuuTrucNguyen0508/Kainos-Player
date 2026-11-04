@@ -17,8 +17,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * - [HomePinKind.ALBUM]: device-local (album group keys include on-device paths).
  * - [HomePinKind.LOCAL_FOLDER]: device-local (SAF URI / absolute path).
  *
- * Wire sync for pins is not required for Phase 5 acceptance; [HomePinKind.canHomeSync] documents
- * the contract for a future `/kainos-sync/v1/pins` (or library-snapshot) merge.
+ * Home sync exchanges the portable kinds on `/kainos-sync/v3/pins`; see [mergeHomePinsSync].
  */
 @Serializable
 enum class HomePinKind {
@@ -60,6 +59,8 @@ data class PersistedHomePin(
     val providerEntityId: String? = null,
     /** [com.universalmusic.player.domain.model.ProviderId.name] for provider pins. */
     val provider: String? = null,
+    /** Last pin of a portable kind; null for device-local kinds and pins made before Home sync carried pins. */
+    val syncStamp: HomePinStamp? = null,
 )
 
 @OptIn(ExperimentalEncodingApi::class)
@@ -99,43 +100,15 @@ fun folderPinDisplayName(folder: String): String {
     return decoded.ifBlank { trimmed }.ifBlank { "Folder" }
 }
 
-/**
- * Portable pins for a future Home sync merge. Drops device-local kinds and
- * normalizes provider playlist pins to identity + title only.
- */
-fun PersistedHomePin.forHomeSync(): PersistedHomePin? {
-    if (!kind.canHomeSync) return null
-    return when (kind) {
-        HomePinKind.KAINOS_PLAYLIST -> copy(
-            artworkUrl = artworkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") },
-        )
-        HomePinKind.PROVIDER_PLAYLIST -> {
-            if (provider != null && provider != "SPOTIFY") return null
-            copy(
-                artworkUrl = artworkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") },
-            )
-        }
-        HomePinKind.ALBUM, HomePinKind.LOCAL_FOLDER -> null
-    }
-}
+/** Portable form of a syncable pin, or null for device-local kinds and non-Spotify provider pins. */
+fun PersistedHomePin.forHomeSync(): PersistedHomePin? = when (kind) {
+    HomePinKind.KAINOS_PLAYLIST -> this
+    HomePinKind.PROVIDER_PLAYLIST -> takeIf { isSpotifyPlaylistPin() }
+    HomePinKind.ALBUM, HomePinKind.LOCAL_FOLDER -> null
+}?.copy(artworkUrl = artworkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") })
 
 fun List<PersistedHomePin>.portableForHomeSync(): List<PersistedHomePin> =
     mapNotNull { it.forHomeSync() }.migratedHomePins()
 
-/**
- * Merge remote portable pins into local order. Local device-local pins are preserved.
- * Remote wins on duplicate [pinKey] when [remoteWins] (default: keep local order, append new remote).
- */
-fun mergeHomePins(
-    local: List<PersistedHomePin>,
-    remote: List<PersistedHomePin>,
-): List<PersistedHomePin> {
-    val localPortable = local.filter { it.kind.canHomeSync }.migratedHomePins()
-    val deviceLocal = local.filterNot { it.kind.canHomeSync }.migratedHomePins()
-    val remotePortable = remote.mapNotNull { it.forHomeSync() }.migratedHomePins()
-    val localKeys = localPortable.map { pinKey(it.kind, it.targetId) }.toSet()
-    val mergedPortable = localPortable + remotePortable.filter {
-        pinKey(it.kind, it.targetId) !in localKeys
-    }
-    return (mergedPortable + deviceLocal).migratedHomePins()
-}
+fun PersistedHomePin.isSpotifyPlaylistPin(): Boolean =
+    kind == HomePinKind.PROVIDER_PLAYLIST && (provider == "SPOTIFY" || (provider == null && targetId.startsWith("spotify")))

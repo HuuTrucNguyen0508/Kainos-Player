@@ -1,6 +1,5 @@
 package com.universalmusic.player.data.backup
 
-import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
@@ -116,10 +115,6 @@ fun AppSettings.backupPreferenceChanges(preferences: BackupPreferences): Int {
         current.searchRadioEnabled != next.searchRadioEnabled,
     ).count { it }
 }
-
-/** Spotify-scoped pins follow the same account rule as Spotify hearts. */
-fun PersistedHomePin.isSpotifyScoped(): Boolean =
-    kind == HomePinKind.PROVIDER_PLAYLIST && (provider == "SPOTIFY" || targetId.startsWith("spotify"))
 
 /** What a restore of one file did, or would do. */
 data class BackupRestoreCounts(

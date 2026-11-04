@@ -10,6 +10,8 @@ const val HOME_LAN_SYNC_PATH_VAULT_INDEX = "/kainos-sync/v1/vault/index"
 const val HOME_LAN_SYNC_PATH_V2_HEARTS = "/kainos-sync/v2/hearts"
 const val HOME_LAN_SYNC_PATH_V2_PLAYLISTS = "/kainos-sync/v2/playlists"
 const val HOME_LAN_SYNC_PATH_V2_VAULT_INDEX = "/kainos-sync/v2/vault/index"
+/** Portable Home pins; hubs from before pin sync answer 404 and the client skips pins. */
+const val HOME_LAN_SYNC_PATH_V3_PINS = "/kainos-sync/v3/pins"
 
 const val HOME_LAN_SYNC_PATH_VAULT_BLOB = "/kainos-sync/v1/vault/blob"
 const val HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH = "/kainos-sync/v2/vault/blob-hash"
@@ -70,6 +72,9 @@ interface HomeLanSyncClient : AutoCloseable {
     override fun close() = Unit
     suspend fun syncHearts(): Result<HeartsSyncDocument>
     suspend fun syncPlaylists(): Result<com.universalmusic.player.data.playlist.PlaylistsSyncDocument>
+
+    /** The hub's pins after it merged ours; null when the hub predates pin sync. */
+    suspend fun syncHomePins(): Result<com.universalmusic.player.data.library.HomePinsSyncDocument?> = Result.success(null)
     suspend fun probeHub(): Result<HomeLanHealthResponse>
     suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument>
     suspend fun downloadBlob(relPath: String, offset: Long, length: Int): Result<ByteArray>

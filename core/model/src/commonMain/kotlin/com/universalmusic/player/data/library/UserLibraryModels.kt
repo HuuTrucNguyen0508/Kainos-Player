@@ -41,6 +41,10 @@ data class UserLibrarySnapshot(
      * the underlying playlist, album, or folder. See [HomePinKind.canHomeSync].
      */
     val homePins: List<PersistedHomePin> = emptyList(),
+    /** Portable pins this device removed, kept so Home sync does not bring them back. */
+    val homePinTombstones: List<HomePinTombstone> = emptyList(),
+    /** Last reorder that changed the order of portable pins. */
+    val homePinOrderStamp: HomePinStamp = HomePinStamp(),
 )
 
 @Serializable
@@ -219,6 +223,8 @@ fun UserLibrarySnapshot.scopedToSpotifyAccount(activeAccountId: String?): UserLi
             pin.kind == HomePinKind.PROVIDER_PLAYLIST &&
                 (pin.provider == ProviderId.SPOTIFY.name || pin.targetId.startsWith("spotify"))
         },
+        homePinTombstones = homePinTombstones.filterNot { it.kind == HomePinKind.PROVIDER_PLAYLIST },
+        homePinOrderStamp = homePinOrderStamp,
     )
 }
 

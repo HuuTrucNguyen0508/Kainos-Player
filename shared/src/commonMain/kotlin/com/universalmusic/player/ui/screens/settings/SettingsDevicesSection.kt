@@ -39,7 +39,7 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
         syncUi.pairing is PairingUiState.WaitingForPc
     if (!comparingCode) {
         Text(
-            "Pair your phone with a PC on the same Wi-Fi. Compare the code on both screens, then confirm on each device. YouTube and local-file hearts sync both ways, and so do Spotify hearts when both devices use the same Spotify account. Audio transfers wait for your confirmation.",
+            "Pair your phone with a PC on the same Wi-Fi. Compare the code on both screens, then confirm on each device. YouTube and local-file hearts sync both ways, and so do Spotify hearts when both devices use the same Spotify account. Playlist pins on Home follow, with their order; album and folder pins stay on each device. Audio transfers wait for your confirmation.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

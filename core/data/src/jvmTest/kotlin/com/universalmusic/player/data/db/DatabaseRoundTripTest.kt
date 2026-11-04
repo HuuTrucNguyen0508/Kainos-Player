@@ -167,6 +167,70 @@ class DatabaseRoundTripTest {
     }
 
     @Test
+    fun migrationFromSchemaSevenKeepsTheSpotifyAccountAndPinsAndAddsNoPinTombstones() = runTest {
+        val directory = Files.createTempDirectory("kainos-v7-v8-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/7.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            val pin = PersistedHomePin("pin:1", HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", title = "A")
+            listOf(
+                "INSERT INTO library_meta VALUES (0, 'account-a')",
+                "INSERT INTO home_pin VALUES (0, 'pin:1', 'KAINOS_PLAYLIST', 'kainos:playlist:a', '${storageJson.encodeToString(pin)}')",
+            ).forEach { driver.execute(null, it, 0) }
+            KainosDatabase.Schema.migrate(driver, 7, KainosDatabase.Schema.version)
+            assertEquals(listOf("account-a", 0L, ""), driver.row("SELECT spotify_account_id, pin_order_revision, pin_order_device_id FROM library_meta"))
+            assertEquals(0L, driver.count("home_pin_tombstone"))
+            assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            val snapshot = DbUserLibraryStore(KainosStorage(openDriver = { driver }, clock = { 0 })).read()
+            assertEquals("account-a", snapshot.spotifyAccountId)
+            assertEquals(listOf(pin), snapshot.homePins)
+            assertEquals(com.universalmusic.player.data.library.HomePinStamp(), snapshot.homePinOrderStamp)
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pinUnpinsAndTheLastReorderSurviveARestart() = runTest {
+        val directory = Files.createTempDirectory("kainos-pin-sync-restart")
+        try {
+            val path = directory.resolve("kainos.db")
+            var now = 1_000L
+            fun library() = LibraryRepository(
+                scope = this, store = DbUserLibraryStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })),
+                clock = { now }, deviceIdProvider = { "pc" },
+            )
+            val first = library()
+            first.load(activeSpotifyAccountId = "account-a")
+            first.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", title = "a")
+            now += 10
+            first.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:b", title = "b")
+            now += 10
+            first.moveHomePin(first.homePins.value.last().id, -1)
+            now += 10
+            first.unpinHome(first.homePins.value.last().id)
+            first.flush()
+
+            val reloaded = library()
+            reloaded.load(activeSpotifyAccountId = "account-a")
+            val doc = reloaded.exportHomePinsSyncDocument()
+            assertEquals(listOf("kainos:playlist:b"), doc.pins.map { it.targetId })
+            assertEquals(
+                listOf(com.universalmusic.player.data.library.HomePinTombstone(
+                    HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", com.universalmusic.player.data.library.HomePinStamp(1_030, "pc"),
+                )),
+                doc.tombstones,
+            )
+            assertEquals(com.universalmusic.player.data.library.HomePinStamp(1_020, "pc"), doc.orderStamp)
+            assertEquals("account-a", doc.spotifyAccountId)
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun migrationFromTheHs5SchemaKeepsListeningRowsAndAddsAnEmptyDeliveryTable() {
         val directory = Files.createTempDirectory("kainos-v3-v4-migration")
         try {
@@ -764,7 +828,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(7L, KainosDatabase.Schema.version)
+    assertEquals(8L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(

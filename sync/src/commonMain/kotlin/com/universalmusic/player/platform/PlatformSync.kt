@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.data.library.HomePinsSyncDocument
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.sync.HeartsSyncDocument
@@ -16,6 +17,8 @@ class HomeLanHubConfig(
     val pairing: PairingHost,
     val onHearts: suspend (HeartsSyncDocument) -> HeartsSyncDocument,
     val onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
+    /** Null leaves the pin route unanswered (404), as on hubs from before pin sync. */
+    val onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
     val vault: HomeLanVaultStore?,
     /** When non-null, the hub vault index only advertises these basenames (hearted-only mode). */
     val heartedVaultFileNames: () -> Set<String>?,

@@ -132,15 +132,13 @@ class HomePinPersistenceTest {
                 title = "Should drop",
             ),
         )
-        val merged = mergeHomePins(local, remote)
-        assertEquals(
-            listOf(
-                HomePinKind.KAINOS_PLAYLIST,
-                HomePinKind.KAINOS_PLAYLIST,
-                HomePinKind.LOCAL_FOLDER,
-            ),
-            merged.map { it.kind },
-        )
+        val merged = mergeHomePinsSync(
+            local = HomePinsState(local, emptyList(), HomePinStamp()),
+            remote = HomePinsSyncDocument(deviceId = "phone", pins = remote),
+            localSpotifyAccountId = null,
+            hasTarget = { true },
+        ).pins
+        assertEquals(listOf("pin:local-folder", "pin:k1", "pin:k2"), merged.map { it.id })
         assertNull(remote.single { it.kind == HomePinKind.ALBUM }.forHomeSync())
         assertEquals("Playlist", folderPinDisplayName("/home/music/Playlist"))
     }
