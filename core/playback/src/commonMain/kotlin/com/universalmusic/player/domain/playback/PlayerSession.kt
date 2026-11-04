@@ -57,7 +57,8 @@ class PlayerSession(
     private val persistence: NowPlayingRecorder? = null,
     private val clock: () -> Long = ::currentTimeMillis,
 ) {
-    private val sessionContext: CoroutineContext = confineTo ?: EmptyCoroutineContext
+    /** The session thread; work launched here runs in order with every session call. */
+    internal val sessionContext: CoroutineContext = confineTo ?: EmptyCoroutineContext
     private val queue = QueueController()
     val queueState: StateFlow<PlaybackQueue> = queue.queue
 

@@ -49,7 +49,7 @@ private const val SPOTIFY_FADE_STEP_MS = 2_000L
  * through [PlayerSession.setSleepFadeGain] (the user's volume setting never moves), pauses
  * via [PlayerSession.pauseTransport] so notification / Bluetooth agree, then restores the
  * volume. Uses a monotonic clock; state is not persisted, so process death cancels the
- * timer (no surprise pause after reboot).
+ * timer (no surprise pause after reboot). Call it from the session thread (the UI thread).
  */
 class SleepTimerController(
     private val player: PlayerSession,
@@ -73,7 +73,8 @@ class SleepTimerController(
             mode = SleepTimerMode.Duration(clamped),
             remainingMs = clamped,
         )
-        timerJob = scope.launch {
+        // On the session thread, so a cancelled job can never apply a fade step after cancel() restored the volume.
+        timerJob = scope.launch(player.sessionContext) {
             while (true) {
                 val remaining = deadline - clockMs()
                 if (remaining <= 0L) break
@@ -113,7 +114,7 @@ class SleepTimerController(
                 false
             }
         }
-        watchJob = scope.launch {
+        watchJob = scope.launch(player.sessionContext) {
             var lastStepAtMs: Long? = null
             player.nowPlaying.collect { playing ->
                 val watched = endOfTrackItemId ?: return@collect
