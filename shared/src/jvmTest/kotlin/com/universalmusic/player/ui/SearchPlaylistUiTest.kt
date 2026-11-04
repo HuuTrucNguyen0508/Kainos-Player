@@ -76,7 +76,7 @@ class SearchPlaylistUiTest {
             }
         }
         onNode(hasSetTextAction()).performTextInput("night")
-        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun presenter(scope: CoroutineScope, secondPageFails: Boolean, firstPageEmpty: Boolean) = SearchPresenter(
@@ -107,7 +107,15 @@ class SearchPlaylistUiTest {
     private fun ComposeUiTest.openPlaylistFromResults() {
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
         text("Night Ferry").performClick()
-        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("By Harbour Radio")).fetchSemanticsNodes().isNotEmpty() }
+        // The header comes from the search result; wait for the first page of songs.
+        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    /** Scrolls the list until [text] is in it; reaching the end is what loads the next page. */
+    private fun ComposeUiTest.scrollToOnceLoaded(text: String) {
+        waitUntil(timeoutMillis = WAIT_MS) {
+            runCatching { onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text)) }.isSuccess
+        }
     }
 
     private fun ComposeUiTest.savePng(name: String) {
@@ -145,7 +153,8 @@ class SearchPlaylistUiTest {
         waitForIdle()
         assertEquals(listOf("https://open.spotify.com/playlist/night"), opened)
 
-        onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Late Track 60"))
+        // The second page loads once the list nears the end of the first.
+        scrollToOnceLoaded("Late Track 60")
         waitForIdle()
         assertEquals(listOf(null, "50"), requested, "Scrolling near the end loads the next page")
         text("2 songs in this playlist are unavailable on Spotify and not shown.").assertIsDisplayed()
@@ -162,13 +171,13 @@ class SearchPlaylistUiTest {
         showSearch()
         openPlaylistFromResults()
         text("Play").performClick()
-        waitUntil(timeoutMillis = 5_000) { played.isNotEmpty() }
+        waitUntil(timeoutMillis = WAIT_MS) { played.isNotEmpty() }
         assertEquals(listOf("60|0|false"), played)
 
         text("Shuffle").performClick()
-        waitUntil(timeoutMillis = 5_000) { played.size == 2 }
+        waitUntil(timeoutMillis = WAIT_MS) { played.size == 2 }
         text("Moonlit Quay 6").performClick()
-        waitUntil(timeoutMillis = 5_000) { played.size == 3 }
+        waitUntil(timeoutMillis = WAIT_MS) { played.size == 3 }
         assertEquals(listOf("60|0|false", "60|0|true", "60|5|false"), played)
         assertEquals(listOf(null, "50"), requested, "Pages already in are not fetched again")
     }
@@ -176,7 +185,7 @@ class SearchPlaylistUiTest {
     @Test fun aFailedPageKeepsTheSongsAndOffersTryAgain() = runDesktopComposeUiTest(width = 560, height = 900) {
         showSearch(secondPageFails = true)
         openPlaylistFromResults()
-        onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Try again"))
+        scrollToOnceLoaded("Try again")
         waitForIdle()
         text("Showing the first 50 songs. The next page did not load. Spotify is rate-limiting right now. Wait a few minutes.")
             .assertIsDisplayed()
@@ -193,11 +202,13 @@ class SearchPlaylistUiTest {
         showSearch(firstPageEmpty = true)
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
         text("Night Ferry").performClick()
-        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Late Track 51")).fetchSemanticsNodes().isNotEmpty() }
         assertEquals(listOf(null, "50"), requested)
     }
 
     private companion object {
+        /** Generous: these run beside other Gradle builds on the same machine and in CI. */
+        const val WAIT_MS = 20_000L
         val PAGE_ONE_TITLES = listOf("Moonlit Quay", "Signal Fires", "Low Tide Waltz", "Gull Static", "Lantern Row")
         val ARTISTS = listOf("Neon Coast", "Tide", "The Breakwaters", "Mara Vell")
     }

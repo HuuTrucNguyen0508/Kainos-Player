@@ -12,7 +12,9 @@ import com.universalmusic.player.domain.model.UnifiedSearchResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -84,6 +86,26 @@ class SearchPlaylistPresenterTest {
         page.loadMore()
         runCurrent()
         assertEquals(listOf("mix@first", "mix@2"), pages.requested, "A complete playlist asks for nothing more")
+    }
+
+    @Test
+    fun askingForTheNextPageAsSoonAsAPageLandsIsNotDropped() = runTest {
+        val pages = FakePages(
+            mutableMapOf(
+                null to PlaylistTracksPage(emptyList(), next = "50"),
+                "50" to PlaylistTracksPage(songs("Found"), next = null),
+            ),
+        )
+        val search = searchWith(pages)
+        search.openPlaylist(playlist)
+        val page = search.playlist.value!!
+        // Like the list's scroll trigger: react to the new cursor while the first fetch is still finishing.
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            page.state.collect { if (it.cursor is PlaylistCursor.After) page.loadMore() }
+        }
+        runCurrent()
+        assertEquals(listOf("mix@first", "mix@50"), pages.requested)
+        assertEquals(listOf("Found"), page.state.value.tracks.map { it.title })
     }
 
     @Test

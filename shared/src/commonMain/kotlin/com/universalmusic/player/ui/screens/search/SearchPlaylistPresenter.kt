@@ -53,14 +53,20 @@ internal class SearchPlaylistPresenter(
     val state: StateFlow<PlaylistPageState> = mutableState.asStateFlow()
     private val pages = Mutex()
     private var fetching: Job? = null
+    private var fetchingFrom: PlaylistCursor? = null
 
     init {
         loadMore()
     }
 
-    /** Asks for the next page unless one is already on its way or every page is in. */
+    /**
+     * Asks for the page at the current cursor unless that page is already on its way or every page
+     * is in. A fetch whose page has landed can still be finishing, so only the same cursor is skipped.
+     */
     fun loadMore() {
-        if (fetching?.isActive == true || state.value.complete) return
+        val cursor = state.value.cursor
+        if (cursor == PlaylistCursor.End || (fetching?.isActive == true && fetchingFrom == cursor)) return
+        fetchingFrom = cursor
         fetching = scope.launch { fetchNext() }
     }
 
