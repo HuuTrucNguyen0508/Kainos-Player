@@ -292,6 +292,8 @@ internal class AndroidLibrespotPlaybackHost(
                     }
                     override fun onConnectionEstablished() = Unit
                 })
+                // Autoplay is off, so each directly loaded track ends its context.
+                installLibrespotEndOfContextGuard()
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer
