@@ -473,16 +473,7 @@ class HeartedAudioCacheService(
             withContext(NonCancellable) {
                 mutationMutex.withLock {
                     if (!current(job)) return@withLock
-                    val before = cache.allEntries().map { it.ownerCanonicalId }.toSet()
-                    try { cache.put(entry, EvictionRequest(protectedOwners() + cache.allPinnedIds())) }
-                    finally {
-                        val remaining = cache.allEntries().map { it.ownerCanonicalId }.toSet()
-                        (before - remaining).forEach { removed ->
-                            known.remove(removed)
-                            _downloads.update { it - removed }
-                            onRemoved(removed)
-                        }
-                    }
+                    putReportingEvictions(entry)
                     if (!current(job)) {
                         cache.remove(canonicalId, reason = "obsolete download")
                         return@withLock
@@ -528,6 +519,60 @@ class HeartedAudioCacheService(
                 synchronized(youtubeQueue) { if (current(job) && !waitingForRetry) pending.remove(canonicalId) }
             }
         }
+    }
+
+    /** Caller holds [mutationMutex]. Budget evictions this put causes leave the download list and library. */
+    private suspend fun putReportingEvictions(entry: HeartedAudioCacheEntry) {
+        val before = cache.allEntries().map { it.ownerCanonicalId }.toSet()
+        try { cache.put(entry, EvictionRequest(protectedOwners() + cache.allPinnedIds())) }
+        finally {
+            val remaining = cache.allEntries().map { it.ownerCanonicalId }.toSet()
+            (before - remaining).forEach { removed ->
+                known.remove(removed)
+                _downloads.update { it - removed }
+                onRemoved(removed)
+            }
+        }
+    }
+
+    /**
+     * Fails before any byte of a Home sync copy moves when [sizeBytes] cannot fit beside the pinned and
+     * now-playing downloads, which the budget never evicts.
+     */
+    suspend fun checkRoomForCopy(ownerCanonicalId: String, sizeBytes: Long) {
+        val kept = protectedOwners() + cache.allPinnedIds() - ownerCanonicalId
+        val keptBytes = cache.allEntries().filter { it.ownerCanonicalId in kept }.sumOf { it.sizeBytes }
+        check(keptBytes + sizeBytes <= maxBytes) {
+            "Offline cache full: pinned and playing downloads leave no room for ${sizeBytes / (1024 * 1024)} MiB"
+        }
+    }
+
+    /**
+     * Enters a file another device copied (already at [entry]'s `localUri` in the audio directory) as an
+     * ordinary download, so it plays offline and shows as Cached. Returns false, keeping the existing
+     * file, when this owner got cached meanwhile. Throws when the budget cannot make room. Either way the
+     * caller deletes its copy unless this returned true.
+     */
+    suspend fun adoptCopiedFile(entry: HeartedAudioCacheEntry): Boolean {
+        val owner = entry.ownerCanonicalId
+        val adopted = withContext(NonCancellable) {
+            mutationMutex.withLock {
+                if (cache.get(owner) != null) return@withLock false
+                putReportingEvictions(entry)
+                val pinned = cache.isPinned(owner)
+                synchronized(youtubeQueue) {
+                    known[owner] = entry
+                    trackMeta[owner]?.let { track ->
+                        upsertDownload(track, DownloadPhase.CACHED, youtubeVideoId = entry.youtubeVideoId,
+                            sizeBytes = entry.sizeBytes, progress = 1f, pinned = pinned)
+                    }
+                    onCached(owner, entry)
+                }
+                true
+            }
+        }
+        if (adopted) refreshSnapshot()
+        return adopted
     }
 
     private suspend fun resolveYouTubeVideoId(track: Track): String? {

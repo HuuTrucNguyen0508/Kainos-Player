@@ -193,13 +193,24 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
             )
         }
     }
-    if (syncStatus.pendingTransfers.isNotEmpty()) {
-        val pendingCount = syncStatus.pendingTransfers.size
-        val pendingMiB = syncStatus.pendingTransfers.sumOf { it.sizeBytes } / (1024 * 1024)
+    // Vault files and offline copies share one list and one Transfer all / Skip all.
+    val pendingRows = syncStatus.pendingTransfers.map { transfer ->
+        PendingCopyRow(transfer.label, transfer.sizeBytes,
+            confirm = { syncPresenter.transfer(transfer.relPath, transfer.direction, true) },
+            skip = { syncPresenter.transfer(transfer.relPath, transfer.direction, false) })
+    } + syncStatus.pendingCachedAudio.map { transfer ->
+        val owner = transfer.offer.ownerCanonicalId
+        PendingCopyRow(transfer.label, transfer.offer.sizeBytes,
+            confirm = { syncPresenter.transferCachedAudio(owner, transfer.direction, true) },
+            skip = { syncPresenter.transferCachedAudio(owner, transfer.direction, false) })
+    }
+    if (pendingRows.isNotEmpty()) {
+        val pendingCount = pendingRows.size
+        val pendingMiB = pendingRows.sumOf { it.sizeBytes } / (1024 * 1024)
         Text(
             "$pendingCount ${if (pendingCount == 1) "file" else "files"} to copy" +
                 (if (pendingMiB > 0) " ($pendingMiB MiB)" else "") +
-                ". Confirm to copy missing hearted files.",
+                ". Confirm to copy missing hearted files and offline copies.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -215,28 +226,14 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
                 ) { Text("Skip all") }
             }
         }
-        syncStatus.pendingTransfers.take(8).forEach { transfer ->
+        pendingRows.take(8).forEach { row ->
             Text(
-                transfer.label + if (transfer.sizeBytes > 0) {
-                    " (${transfer.sizeBytes / 1024} KiB)"
-                } else {
-                    ""
-                },
+                row.label + if (row.sizeBytes > 0) " (${row.sizeBytes / 1024} KiB)" else "",
                 style = MaterialTheme.typography.bodySmall,
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    enabled = !syncBusy,
-                    onClick = {
-                        syncPresenter.transfer(transfer.relPath, transfer.direction, true)
-                    },
-                ) { Text("Transfer") }
-                OutlinedButton(
-                    enabled = !syncBusy,
-                    onClick = {
-                        syncPresenter.transfer(transfer.relPath, transfer.direction, false)
-                    },
-                ) { Text("Skip") }
+                OutlinedButton(enabled = !syncBusy, onClick = row.confirm) { Text("Transfer") }
+                OutlinedButton(enabled = !syncBusy, onClick = row.skip) { Text("Skip") }
             }
         }
         if (pendingCount > 8) {
@@ -282,3 +279,5 @@ internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, s
     }
 
 }
+
+private class PendingCopyRow(val label: String, val sizeBytes: Long, val confirm: () -> Unit, val skip: () -> Unit)

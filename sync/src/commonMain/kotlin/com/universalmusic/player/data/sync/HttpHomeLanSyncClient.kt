@@ -145,6 +145,71 @@ class HttpHomeLanSyncClient(
         response.requireSuccess("Blob hash $relPath").bodyAsText().trim()
     }
 
+    override suspend fun syncCachedAudio(local: CachedAudioSyncDocument): Result<CachedAudioSyncDocument?> = runCatching {
+        val response = http.post("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO") {
+            expectSuccess = false
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(local))
+        }
+        if (response.status == HttpStatusCode.NotFound) {
+            response.bodyAsBytes()
+            return@runCatching null
+        }
+        json.decodeFromString<CachedAudioSyncDocument>(response.requireSuccess("Cached audio sync").bodyAsText())
+    }
+
+    override suspend fun downloadCachedAudio(owner: String, token: String, offset: Long, length: Int): Result<ByteArray> =
+        runCatching {
+            require(offset >= 0L && length in 1..VAULT_BLOB_CHUNK_BYTES) { "Invalid cached audio range offset=$offset length=$length" }
+            val end = offset + length - 1
+            val response = http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB") {
+                expectSuccess = false
+                parameter("owner", owner)
+                parameter("token", token)
+                header(HttpHeaders.Range, "bytes=$offset-$end")
+            }
+            if (response.status != HttpStatusCode.PartialContent) {
+                response.requireSuccess("Cached audio $owner")
+                error("Cached audio $owner: expected 206 Partial Content, got ${response.status.value}")
+            }
+            val range = parseContentRange(response.headers[HttpHeaders.ContentRange])
+                ?: error("Cached audio $owner: missing or invalid Content-Range")
+            require(range.first == offset && range.last == end) {
+                "Cached audio $owner: Content-Range ${range.first}-${range.last} does not match $offset-$end"
+            }
+            val bytes = response.bodyAsBytes()
+            require(bytes.size == length) { "Cached audio $owner: body has ${bytes.size} bytes, expected $length" }
+            bytes
+        }
+
+    override suspend fun fetchCachedAudioHash(owner: String, token: String): Result<String> = runCatching {
+        http.get("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_HASH") {
+            expectSuccess = false
+            parameter("owner", owner)
+            parameter("token", token)
+        }.requireSuccess("Cached audio hash $owner").bodyAsText().trim()
+    }
+
+    override suspend fun uploadCachedAudio(
+        owner: String,
+        token: String,
+        offset: Long,
+        totalSize: Long,
+        sha256: String,
+        chunk: ByteArray,
+    ): Result<String> = runCatching {
+        http.put("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB") {
+            expectSuccess = false
+            parameter("owner", owner)
+            parameter("token", token)
+            parameter("offset", offset)
+            parameter("total", totalSize)
+            parameter("sha256", sha256)
+            contentType(ContentType.Application.OctetStream)
+            setBody(chunk)
+        }.requireSuccess("Upload cached audio $owner at $offset").bodyAsText().trim()
+    }
+
     override suspend fun uploadBlob(
         relPath: String,
         offset: Long,

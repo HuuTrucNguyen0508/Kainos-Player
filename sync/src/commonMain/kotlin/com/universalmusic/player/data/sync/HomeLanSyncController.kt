@@ -44,6 +44,9 @@ interface HomeLanSyncController {
     suspend fun syncNow(): Result<String>
     suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
     suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
+    suspend fun confirmCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection): Result<String>
+    suspend fun dismissCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection): Result<String>
+    /** Copies every pending vault file and cached audio file. */
     suspend fun confirmAllVaultTransfers(): Result<String>
     suspend fun dismissAllVaultTransfers(): Result<String>
     suspend fun startHubIfNeeded()

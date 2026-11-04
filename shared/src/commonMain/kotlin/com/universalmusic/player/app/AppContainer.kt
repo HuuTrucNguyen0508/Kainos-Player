@@ -5,6 +5,7 @@ import com.universalmusic.player.data.backup.KainosBackupFile
 import com.universalmusic.player.data.backup.KainosBackupService
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.MetadataCacheStats
+import com.universalmusic.player.data.cache.CachedAudioCopies
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.HeartedAudioCacheStats
 import com.universalmusic.player.data.cache.toLocalPlaybackSource
@@ -210,9 +211,10 @@ class AppContainer(
     val sourceTools: StateFlow<SourceTools> = _sourceTools.asStateFlow()
     val youtubeStreams = createYouTubeStreamResolver()
     val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
+    private val heartedAudioCache = createHeartedAudioCache()
     val heartedAudio = HeartedAudioCacheService(
         scope = scope,
-        cache = createHeartedAudioCache(),
+        cache = heartedAudioCache,
         downloader = createYouTubeAudioDownloader(youtubeStreams),
         youtubeSearch = { query -> youtube.search(query).tracks },
         matcher = matcher,
@@ -229,6 +231,7 @@ class AppContainer(
             else service.cancelAndRemove(track.canonicalId)
         }
     }
+    private val cachedAudioCopies = CachedAudioCopies(heartedAudioCache, heartedAudio)
     val homeLanVault = createHomeLanVaultStore(
         vaultRootProvider = { _settings.value.homeLanSyncVaultFolder },
     )
@@ -263,6 +266,7 @@ class AppContainer(
                         mergePins(remote)
                     }
                 },
+                cachedAudio = config.cachedAudio,
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
                 listening = config.listening,
@@ -278,6 +282,7 @@ class AppContainer(
         },
         identity = platformDeviceIdentity(),
         vaultStore = homeLanVault,
+        cachedAudio = cachedAudioCopies,
         refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },

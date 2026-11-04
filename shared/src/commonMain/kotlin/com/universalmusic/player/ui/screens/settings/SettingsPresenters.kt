@@ -371,6 +371,10 @@ internal class SettingsSyncPresenter(
         (if (confirm) controller.confirmVaultTransfer(path, direction)
         else controller.dismissVaultTransfer(path, direction)).getOrThrow()
     }
+    fun transferCachedAudio(ownerCanonicalId: String, direction: VaultCopyDirection, confirm: Boolean) = run {
+        (if (confirm) controller.confirmCachedAudioTransfer(ownerCanonicalId, direction)
+        else controller.dismissCachedAudioTransfer(ownerCanonicalId, direction)).getOrThrow()
+    }
     fun transferAll(confirm: Boolean) = run {
         (if (confirm) controller.confirmAllVaultTransfers() else controller.dismissAllVaultTransfers()).getOrThrow()
     }
