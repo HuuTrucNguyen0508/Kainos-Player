@@ -55,6 +55,7 @@ internal fun LibraryLedger(
     countLine: String,
     localCount: Int,
     spotifyCount: Int,
+    cachedCount: Int = 0,
     localOnly: Boolean,
     favoritesOnly: Boolean,
     localScanning: Boolean,
@@ -103,6 +104,9 @@ internal fun LibraryLedger(
                             else -> {
                                 if (localCount > 0 || localOnly || favoritesOnly) {
                                     SourceTally(sourceMark(Accents.local), "$localCount local")
+                                }
+                                if (cachedCount > 0) {
+                                    SourceTally(sourceMark(Accents.cached), "$cachedCount cached")
                                 }
                                 if (!localOnly && spotifyConnected) {
                                     Row(
@@ -235,8 +239,10 @@ internal fun songsCountLine(
     total: Int,
     queryActive: Boolean,
     favoritesOnly: Boolean,
+    readyOffline: Boolean = false,
 ): String = when {
     favoritesOnly && !queryActive -> countNoun(visible, "favorite", "favorites")
+    readyOffline && !queryActive -> "$visible ready offline"
     queryActive -> "$visible of $total ${if (total == 1) "song" else "songs"}"
     else -> countNoun(visible, "song", "songs")
 }

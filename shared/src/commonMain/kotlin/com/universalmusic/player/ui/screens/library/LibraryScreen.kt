@@ -3,6 +3,9 @@ package com.universalmusic.player.ui.screens
 import com.universalmusic.player.ui.components.KainosChip
 import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.material.icons.filled.SdStorage
+import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,6 +57,7 @@ internal fun LibraryScreen(
     presenter: LibraryPresenter,
     onPlayTracks: (List<Track>, Int) -> Unit,
     trackActions: TrackActionsPresenter,
+    onPlayOffline: (List<Track>, Int) -> Unit = onPlayTracks,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -75,9 +79,11 @@ internal fun LibraryScreen(
     val emitted by presenter.state.collectAsState()
     val state = remember(emitted, query) { emitted.withQuery(query) }
     SideEffect { presenter.setQuery(query) }
+    // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
+    val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
-    LaunchedEffect(tab, state.localOnly, state.favoritesOnly, state.needle) {
+    LaunchedEffect(tab, state.localOnly, state.favoritesOnly, state.readyOffline, state.needle) {
         if (tab != LibraryTab.Artists) selectedArtistId = null
     }
     var playlistBusyId by remember { mutableStateOf<String?>(null) }
@@ -88,7 +94,8 @@ internal fun LibraryScreen(
     var deletePlaylistId by remember { mutableStateOf<String?>(null) }
     var createDraft by remember { mutableStateOf<String?>(null) }
     var dismissSpotifyError by rememberSaveable { mutableStateOf(false) }
-    val showSpotifyError = !state.localOnly && !state.favoritesOnly && state.spotifyError != null && !dismissSpotifyError
+    val showSpotifyError = !state.localOnly && !state.favoritesOnly && !state.readyOffline &&
+        state.spotifyError != null && !dismissSpotifyError
 
     // Collapse on the way down; expand only after the list is back at the top so upward
     // scroll moves tracks first (enterAlways stole those gestures for the chrome).
@@ -128,7 +135,7 @@ internal fun LibraryScreen(
     // jump to top. Do not combine LaunchedEffect(filterKeys) with snapshotFlow.drop(1):
     // restarting the effect made drop(1) discard the filter change itself.
     var skipFilterScrollReset by remember { mutableStateOf(true) }
-    LaunchedEffect(state.songSort, libraryNeedle(query), state.localOnly, state.favoritesOnly) {
+    LaunchedEffect(state.songSort, libraryNeedle(query), state.localOnly, state.favoritesOnly, state.readyOffline) {
         if (skipFilterScrollReset) {
             skipFilterScrollReset = false
             return@LaunchedEffect
@@ -161,7 +168,7 @@ internal fun LibraryScreen(
             tab = tab,
             songs = state.songs,
             queueSongs = state.queueSongs,
-            onPlayTracks = onPlayTracks,
+            onPlayTracks = playSongs,
             localState = state.localState,
             onRefreshLocal = presenter::refreshLocal,
             showSpotifyError = showSpotifyError,
@@ -170,9 +177,11 @@ internal fun LibraryScreen(
         )
         // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
         // the header can fully hide; without this the Favorites chip is unreachable.
+        // Three chips overflow a 360dp phone; scroll them sideways rather than wrap and push the list down.
         Row(
             Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -191,6 +200,13 @@ internal fun LibraryScreen(
                 label = "Favorites only",
                 accent = Accents.heart,
                 leadingIcon = Icons.Default.Favorite,
+            )
+            KainosChip(
+                selected = state.readyOffline,
+                onClick = presenter::toggleReadyOffline,
+                label = "Ready offline",
+                accent = Accents.cached,
+                leadingIcon = Icons.Default.OfflinePin,
             )
         }
         TabRow(selectedTabIndex = tab.ordinal) {
@@ -213,7 +229,7 @@ internal fun LibraryScreen(
                     sortMenuOpen = false
                     presenter.setSort(sort)
                 },
-                onPlayTracks = onPlayTracks,
+                onPlayTracks = playSongs,
                 trackActions = trackActions,
                 onRefreshSpotify = {
                     dismissSpotifyError = false

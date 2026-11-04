@@ -186,4 +186,20 @@ class TrackAvailabilityTest {
         val info = resolveTrackAvailability(track)
         assertEquals(TrackAvailability.UNAVAILABLE, info.status)
     }
+
+    @Test
+    fun offlineOnlyKeepsOnDiskAudioAndDropsEveryStream() {
+        val file = PlaybackSource(ProviderId.LOCAL, "/m/a.flac", isPlayable = true, handle = PlaybackHandle.Url("file:///m/a.flac"))
+        val cache = PlaybackSource(ProviderId.LOCAL, "hearted-yt:v1", isPlayable = true, handle = PlaybackHandle.Url("file:///c/v1.m4a"))
+        val spotify = PlaybackSource(ProviderId.SPOTIFY, "s1", isPlayable = true, handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "s1"))
+        val youtube = PlaybackSource(ProviderId.YOUTUBE_MUSIC, "v1", isPlayable = true, handle = PlaybackHandle.ProviderPlayback(ProviderId.YOUTUBE_MUSIC, "v1"))
+
+        val mirror = Track("spotify:s1", "Mirror", emptyList(), sources = listOf(cache, spotify))
+        assertEquals(listOf(cache), mirror.offlineOnly()?.sources)
+        assertEquals("spotify:s1", mirror.offlineOnly()?.canonicalId)
+        assertEquals(listOf(file), Track("local:a", "A", emptyList(), sources = listOf(file)).offlineOnly()?.sources)
+        assertEquals(null, Track("yt:v1", "Stream", emptyList(), sources = listOf(youtube)).offlineOnly())
+        assertEquals(null, Track("spotify:s2", "Liked", emptyList(), sources = listOf(spotify)).offlineOnly())
+        assertEquals(null, Track("local:b", "Gone", emptyList(), sources = listOf(file.copy(isPlayable = false))).offlineOnly())
+    }
 }

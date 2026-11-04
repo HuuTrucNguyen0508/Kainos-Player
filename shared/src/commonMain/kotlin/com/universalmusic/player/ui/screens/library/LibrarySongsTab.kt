@@ -36,7 +36,11 @@ internal fun ColumnScope.LibrarySongsTab(
     if (songs.isEmpty()) {
         EmptyState(
             if (state.needle.isEmpty()) {
-                if (state.favoritesOnly) "No favorites yet" else "No songs yet"
+                when {
+                    state.favoritesOnly -> "No favorites yet"
+                    state.readyOffline -> "Nothing plays offline yet"
+                    else -> "No songs yet"
+                }
             } else {
                 "No songs match \"${state.query}\""
             },
@@ -44,6 +48,7 @@ internal fun ColumnScope.LibrarySongsTab(
                 state.needle.isNotEmpty() -> "Try another title, artist, or album name."
                 state.favoritesOnly -> "Heart songs from Now Playing or a song's menu. App favorites stay separate from Spotify Liked."
                 state.localOnly -> "Scan your music folders from Settings, or turn off Local files only."
+                state.readyOffline -> "Local files and downloaded hearts show up here. Heart a YouTube song to download it, or add music folders in Settings."
                 else -> "Local files and Spotify likes show up here after a scan or Spotify refresh."
             },
         )
@@ -60,10 +65,12 @@ internal fun ColumnScope.LibrarySongsTab(
                         total = queueSongs.size,
                         queryActive = state.needle.isNotEmpty(),
                         favoritesOnly = state.favoritesOnly,
+                        readyOffline = state.readyOffline,
                     ),
                     localCount = state.localCount,
+                    cachedCount = state.cachedCount,
                     spotifyCount = state.spotifyCount,
-                    localOnly = state.localOnly,
+                    localOnly = state.localOnly || state.readyOffline,
                     favoritesOnly = state.favoritesOnly,
                     localScanning = state.localState == ProviderState.LOADING,
                     spotifyConnected = state.spotifyConnected,
@@ -79,6 +86,7 @@ internal fun ColumnScope.LibrarySongsTab(
                     playLabel = when {
                         state.needle.isNotEmpty() -> "Play all ${queueSongs.size}"
                         state.favoritesOnly -> "Play favorites"
+                        state.readyOffline -> "Play offline"
                         else -> "Play all"
                     },
                     onPlay = { onPlayTracks(queueSongs, 0) },

@@ -3,6 +3,7 @@ package com.universalmusic.player.ui.screens
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
@@ -63,6 +64,8 @@ internal class LibraryPresenter(
     private val onTrackAvailability: (Track) -> TrackAvailabilityInfo = { track ->
         error("trackAvailability was not provided for ${track.canonicalId}")
     },
+    /** The track as it plays with no network (cached audio attached), or null when it cannot. */
+    private val offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ) {
     private val queryText = MutableStateFlow("")
 
@@ -118,6 +121,12 @@ internal class LibraryPresenter(
     fun toggleFavoritesOnly() {
         scope.launch {
             updateSettings { it.copy(libraryFavoritesOnly = !it.libraryFavoritesOnly) }
+        }
+    }
+
+    fun toggleReadyOffline() {
+        scope.launch {
+            updateSettings { it.copy(libraryReadyOffline = !it.libraryReadyOffline) }
         }
     }
 
@@ -211,6 +220,7 @@ internal class LibraryPresenter(
         spotifyState = spotify.providerState,
         downloads = pins.downloads,
         query = query,
+        offlineTrack = offlineTrack,
     )
 
     companion object {
@@ -263,6 +273,7 @@ internal class LibraryPresenter(
                     }
             },
             onTrackAvailability = container::trackAvailability,
+            offlineTrack = container::offlineTrack,
         )
     }
 }

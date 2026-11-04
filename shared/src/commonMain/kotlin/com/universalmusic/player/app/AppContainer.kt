@@ -5,6 +5,8 @@ import com.universalmusic.player.data.cache.MetadataCacheStats
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.HeartedAudioCacheStats
 import com.universalmusic.player.data.cache.toLocalPlaybackSource
+import com.universalmusic.player.data.cache.offlineOnly
+import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
@@ -381,8 +383,9 @@ class AppContainer(
 
     fun consumeLibraryTypeAhead(): String = _libraryTypeAhead.getAndUpdate { "" }
 
-    fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
-        player.play(tracks, startIndex = startIndex)
+    /** [offlineOnly] plays only the on-disk copies, so no entry can fall back to a stream. */
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0, offlineOnly: Boolean = false) {
+        player.play(if (offlineOnly) offlineQueue(tracks, ::offlineTrack) else tracks, startIndex = startIndex)
     }
 
     /** The picked result keeps its source: that source's radio follows it, or its same-source results. */
@@ -576,6 +579,9 @@ class AppContainer(
     suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
 
     fun trackAvailability(track: Track) = heartedAudio.availabilityFor(track)
+
+    /** [track] with its cached audio attached and every stream removed, or null when it needs network. */
+    fun offlineTrack(track: Track): Track? = heartedAudio.applyCacheToTrack(track).offlineOnly()
 
     fun retryHeartedDownload(canonicalId: String) = heartedAudio.retry(canonicalId)
 

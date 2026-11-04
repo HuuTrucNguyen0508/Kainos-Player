@@ -66,7 +66,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
     onCreateDraft: (String?) -> Unit,
 ) {
     val showKainos = !state.favoritesOnly
-    val showSpotify = !state.localOnly && !state.favoritesOnly
+    val showSpotify = !state.localOnly && !state.readyOffline && !state.favoritesOnly
     val totalCount = (if (showKainos) state.kainosPlaylists.size else 0) +
         (if (showSpotify) state.spotifyPlaylists.size else 0)
     LibraryPlaylistDialogs(
@@ -91,7 +91,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
         EmptyState(
             if (state.needle.isEmpty()) {
                 when {
-                    state.localOnly -> "No Kainos playlists yet"
+                    state.localOnly || state.readyOffline -> "No Kainos playlists yet"
                     else -> "No playlists"
                 }
             } else {
@@ -100,6 +100,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
             when {
                 state.needle.isNotEmpty() -> "Try another playlist name."
                 state.localOnly -> "Create a Kainos playlist, or turn off Local files only to see Spotify playlists."
+                state.readyOffline -> "Create a Kainos playlist, or turn off Ready offline to see Spotify playlists."
                 else -> "Create a Kainos playlist or connect Spotify and refresh."
             },
         )
