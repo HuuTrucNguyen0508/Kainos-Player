@@ -31,7 +31,8 @@ class CachedAudioCopies(
     private val clock: () -> Long = ::currentTimeMillis,
 ) {
     private val incomingMutex = Mutex()
-    @Volatile private var swept = false
+    /** Download generation each staged copy started under, by staging file name. */
+    private val startedUnder = HashMap<String, Pair<Long, Long>>()
 
     private fun audioDir() = File(cache.audioDirectoryPath())
     private fun incomingDir() = File(audioDir().parentFile, "incoming").apply { mkdirs() }
@@ -39,6 +40,8 @@ class CachedAudioCopies(
     /** Offerable entries: a YouTube file named by this app and still on disk. */
     suspend fun offers(describe: (ownerCanonicalId: String) -> Pair<String, String>?): List<CachedAudioOffer> =
         withContext(Dispatchers.Default) {
+            // Every Sync now lists offers, so a peer that vanished mid-upload cannot leave bytes here for long.
+            incomingMutex.withLock { sweepAbandoned() }
             cache.allEntries().mapNotNull { entry ->
                 val file = fileOf(entry.localUri)?.takeIf { it.isFile && it.length() > 0L } ?: return@mapNotNull null
                 if (entry.youtubeVideoId.isBlank() || !isCachedAudioFileToken(file.name)) return@mapNotNull null
@@ -92,12 +95,15 @@ class CachedAudioCopies(
     suspend fun beginIncoming(offer: CachedAudioOffer) = incomingMutex.withLock {
         sweepAbandoned()
         validate(offer)
-        staged(offer).delete()
+        val stage = staged(offer)
+        stage.delete()
+        startedUnder.remove(stage.name)
         try {
             service.checkRoomForCopy(offer.ownerCanonicalId, offer.sizeBytes)
         } catch (full: IllegalStateException) {
             throw CachedAudioCopyRefused(507, full.message ?: "Offline cache full")
         }
+        startedUnder[stage.name] = service.copyGeneration(offer.ownerCanonicalId)
     }
 
     /**
@@ -128,12 +134,17 @@ class CachedAudioCopies(
             publish(offer, stage, sha256, stillWanted)
         } catch (err: Throwable) {
             stage.delete()
+            startedUnder.remove(stage.name)
             throw err
         }
     }
 
     suspend fun discardIncoming(offer: CachedAudioOffer) = incomingMutex.withLock {
-        if (isCachedAudioFileToken(offer.fileToken)) staged(offer).delete()
+        if (isCachedAudioFileToken(offer.fileToken)) {
+            val stage = staged(offer)
+            stage.delete()
+            startedUnder.remove(stage.name)
+        }
         Unit
     }
 
@@ -147,6 +158,8 @@ class CachedAudioCopies(
         if (!actual.equals(sha256.trim(), ignoreCase = true)) {
             throw CachedAudioCopyRefused(422, "Copied audio does not match its source (SHA-256 differs); transfer again")
         }
+        val generation = startedUnder.remove(stage.name)
+            ?: throw CachedAudioCopyRefused(409, "Copy was not started here; transfer again")
         if (!stillWanted()) {
             stage.delete()
             return CachedAudioWrite.NOT_WANTED
@@ -167,14 +180,18 @@ class CachedAudioCopies(
             spotifyViaYouTubeMatch = offer.spotifyViaYouTubeMatch,
         )
         val adopted = try {
-            service.adoptCopiedFile(entry)
+            service.adoptCopiedFile(entry, generation)
         } catch (err: Throwable) {
             target.delete()
             if (err is IllegalStateException && err !is CachedAudioCopyRefused) throw CachedAudioCopyRefused(507, err.message ?: "Offline cache full")
             throw err
         }
-        if (!adopted) target.delete()
-        return if (adopted) CachedAudioWrite.PUBLISHED else CachedAudioWrite.ALREADY_CACHED
+        if (adopted != HeartedAudioCacheService.CopyAdoption.ADOPTED) target.delete()
+        return when (adopted) {
+            HeartedAudioCacheService.CopyAdoption.ADOPTED -> CachedAudioWrite.PUBLISHED
+            HeartedAudioCacheService.CopyAdoption.ALREADY_CACHED -> CachedAudioWrite.ALREADY_CACHED
+            HeartedAudioCacheService.CopyAdoption.STALE -> CachedAudioWrite.NOT_WANTED
+        }
     }
 
     private fun validate(offer: CachedAudioOffer) {
@@ -187,12 +204,13 @@ class CachedAudioCopies(
     private fun staged(offer: CachedAudioOffer): File =
         File(incomingDir(), sha256Hex((offer.ownerCanonicalId + "\n" + offer.fileToken).encodeToByteArray()).take(32) + ".part")
 
-    /** Copies left by a process that died mid-transfer; an hour is far past any live copy's next chunk. */
+    /** Copies whose sender stopped (a dropped upload, a process that died); a live copy writes every few seconds. */
     private fun sweepAbandoned() {
-        if (swept) return
-        swept = true
         val cutoff = clock() - ABANDONED_STAGE_MS
-        incomingDir().listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
+        incomingDir().listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach {
+            it.delete()
+            startedUnder.remove(it.name)
+        }
     }
 
     private fun fileOf(uri: String): File? = runCatching {
@@ -200,7 +218,7 @@ class CachedAudioCopies(
     }.getOrNull()
 
     private companion object {
-        const val ABANDONED_STAGE_MS = 60L * 60L * 1000L
+        const val ABANDONED_STAGE_MS = 10L * 60L * 1000L
     }
 }
 

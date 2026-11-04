@@ -547,17 +547,27 @@ class HeartedAudioCacheService(
         }
     }
 
+    /** Taken when a Home sync copy starts; a clear, unheart or match change since then makes the copy stale. */
+    fun copyGeneration(ownerCanonicalId: String): Pair<Long, Long> = synchronized(youtubeQueue) {
+        (generations[ownerCanonicalId] ?: 0L) to clearGeneration
+    }
+
+    enum class CopyAdoption { ADOPTED, ALREADY_CACHED, STALE }
+
     /**
      * Enters a file another device copied (already at [entry]'s `localUri` in the audio directory) as an
-     * ordinary download, so it plays offline and shows as Cached. Returns false, keeping the existing
-     * file, when this owner got cached meanwhile. Throws when the budget cannot make room. Either way the
-     * caller deletes its copy unless this returned true.
+     * ordinary download, so it plays offline and shows as Cached. Refuses a copy started before a clear,
+     * unheart or match change ([generation] from [copyGeneration]), and keeps the existing file when this
+     * owner got cached meanwhile. Throws when the budget cannot make room. The caller deletes its copy
+     * unless this returned [CopyAdoption.ADOPTED].
      */
-    suspend fun adoptCopiedFile(entry: HeartedAudioCacheEntry): Boolean {
+    suspend fun adoptCopiedFile(entry: HeartedAudioCacheEntry, generation: Pair<Long, Long>): CopyAdoption {
         val owner = entry.ownerCanonicalId
-        val adopted = withContext(NonCancellable) {
-            mutationMutex.withLock {
-                if (cache.get(owner) != null) return@withLock false
+        // Nothing after the commit may be cancelled, or the caller would delete a file the index names.
+        return withContext(NonCancellable) {
+            val adopted = mutationMutex.withLock {
+                if (!current(owner, generation)) return@withLock CopyAdoption.STALE
+                if (cache.get(owner) != null) return@withLock CopyAdoption.ALREADY_CACHED
                 putReportingEvictions(entry)
                 val pinned = cache.isPinned(owner)
                 synchronized(youtubeQueue) {
@@ -568,11 +578,11 @@ class HeartedAudioCacheService(
                     }
                     onCached(owner, entry)
                 }
-                true
+                CopyAdoption.ADOPTED
             }
+            if (adopted == CopyAdoption.ADOPTED) refreshSnapshot()
+            adopted
         }
-        if (adopted) refreshSnapshot()
-        return adopted
     }
 
     private suspend fun resolveYouTubeVideoId(track: Track): String? {

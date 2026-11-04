@@ -169,6 +169,24 @@ class CachedAudioSyncTest {
     }
 
     @Test
+    fun clearingTheOfflineCacheDuringACopyKeepsTheCopyOut() = scenario { pc, phone, client ->
+        val track = ytTrack("kkk")
+        pc.heart(track); phone.heart(track)
+        pc.seed(track, bytes(size, 2))
+        val clearing = object : HomeLanSyncClient by client {
+            override suspend fun downloadCachedAudio(owner: String, token: String, offset: Long, length: Int) =
+                client.downloadCachedAudio(owner, token, offset, length).also { if (offset == 0L) phone.service.clear() }
+        }
+
+        val outcome = phone.execute(clearing, phone.plan(client).single())
+
+        assertContains(outcome, "Skipped Song kkk")
+        assertNull(phone.cache.get("yt:kkk"))
+        assertTrue(phone.audioFiles().isEmpty())
+        assertTrue(phone.incoming().isEmpty())
+    }
+
+    @Test
     fun pinnedDownloadsThatFillTheBudgetStopTheCopyBeforeAnyByteMoves() = scenario(phoneMaxBytes = size + 100L) { pc, phone, client ->
         val track = ytTrack("eee")
         val pinned = ytTrack("pinned")
@@ -254,6 +272,10 @@ class CachedAudioSyncTest {
         assertFails { phone.execute(dropping, pending) }
         assertNull(pc.cache.get("yt:jjj"))
         assertTrue(pc.audioFiles().isEmpty())
+        assertEquals(1, pc.incoming().size, "the hub cannot tell a dropped upload from a slow one at once")
+        pc.nowMs += 11 * 60_000L
+        client.syncCachedAudio(phone.document()).getOrThrow()
+        assertTrue(pc.incoming().isEmpty(), "the next sync sweeps the abandoned upload")
 
         phone.execute(client, pending)
         assertContentEquals(phoneFile.readBytes(), File(java.net.URI(assertNotNull(pc.cache.get("yt:jjj")).localUri)).readBytes())
@@ -273,7 +295,8 @@ class CachedAudioSyncTest {
             networkAvailable = { false }, maxBytes = maxBytes,
             onCached = { id, entry -> library.attachHeartedCacheSource(id, entry.toLocalPlaybackSource()) },
             onRemoved = { id -> library.stripHeartedCacheSource(id) })
-        val copies = CachedAudioCopies(cache, service)
+        var nowMs = System.currentTimeMillis()
+        val copies = CachedAudioCopies(cache, service, clock = { nowMs })
         val audioDir: File get() = File(cache.audioDirectoryPath())
 
         fun heart(track: Track) { library.toggleFavorite(track) }

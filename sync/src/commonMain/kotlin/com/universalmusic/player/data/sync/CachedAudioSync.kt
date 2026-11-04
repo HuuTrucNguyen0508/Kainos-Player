@@ -78,7 +78,7 @@ suspend fun executeCachedAudioTransfer(
                 return when (outcome) {
                     CachedAudioWrite.PUBLISHED -> "Copied $name"
                     CachedAudioWrite.ALREADY_CACHED -> "$name was already cached"
-                    CachedAudioWrite.NOT_WANTED -> "Skipped $name (no longer hearted)"
+                    CachedAudioWrite.NOT_WANTED -> "Skipped $name: it was unhearted or the offline cache changed during the copy"
                     CachedAudioWrite.STAGED -> error("Copy of $name did not complete")
                 }
             } catch (err: Throwable) {
@@ -170,7 +170,7 @@ class CachedAudioHost(
                 CachedAudioWrite.STAGED -> HubAnswer(200, "ok")
                 CachedAudioWrite.PUBLISHED -> HubAnswer(200, "published")
                 CachedAudioWrite.ALREADY_CACHED -> HubAnswer(200, CACHED_AUDIO_ALREADY_CACHED)
-                CachedAudioWrite.NOT_WANTED -> HubAnswer(403, "Not hearted on this hub")
+                CachedAudioWrite.NOT_WANTED -> HubAnswer(409, "Unhearted, or the offline cache changed during the copy")
             }
         } catch (refused: CachedAudioCopyRefused) {
             HubAnswer(refused.status, refused.message.orEmpty())
