@@ -61,7 +61,8 @@ fun HomePinsSyncDocument.forPeerSpotifyAccount(peerSpotifyAccountId: String?): H
  *   it stays off this Home and is offered again on the next sync.
  * - The order of shared pins follows the newer reorder; pins the winner does not list keep the
  *   loser's relative order after it. Shared pins fill the places shared pins held before, and new
- *   ones go at the end.
+ *   ones go at the end. A newer order that lists a pin still waiting for its playlist is followed but
+ *   not adopted, so it wins again once that pin can be placed.
  */
 fun mergeHomePinsSync(
     local: HomePinsState,
@@ -85,6 +86,7 @@ fun mergeHomePinsSync(
     val usedIds = local.pins.mapTo(HashSet()) { it.id }
     val live = LinkedHashMap<String, PersistedHomePin>()
     val dead = LinkedHashMap<String, HomePinTombstone>()
+    var waiting = false
     for (key in localLive.keys + localDead.keys + remoteLive.keys + remoteDead.keys) {
         if (key in live || key in dead) continue
         val mine: HomePinStamp? = listOfNotNull(localLive[key]?.stamp(), localDead[key]?.stamp).maxOrNull()
@@ -102,7 +104,10 @@ fun mergeHomePinsSync(
                 when {
                     existing != null -> live[key] = pin.copy(id = existing.id)
                     hasTarget(pin) -> live[key] = if (usedIds.add(pin.id)) pin else pin.copy(id = newHomePinId())
-                    else -> localDead[key]?.let { dead[key] = it }
+                    else -> {
+                        waiting = true
+                        localDead[key]?.let { dead[key] = it }
+                    }
                 }
             }
         }
@@ -110,7 +115,8 @@ fun mergeHomePinsSync(
 
     val localOrder = local.pins.filter { it.takesPart() }.map { it.key() }
     val remoteOrder = remote.pins.map { it.key() }
-    val (first, second) = if (remote.orderStamp > local.orderStamp) remoteOrder to localOrder else localOrder to remoteOrder
+    val remoteOrderWins = remote.orderStamp > local.orderStamp
+    val (first, second) = if (remoteOrderWins) remoteOrder to localOrder else localOrder to remoteOrder
     val ordered = ArrayDeque((first + second + live.keys).distinct().filter { it in live }.map { live.getValue(it) })
     val merged = buildList {
         for (pin in local.pins) {
@@ -121,6 +127,6 @@ fun mergeHomePinsSync(
     return HomePinsState(
         pins = merged.migratedHomePins(),
         tombstones = local.tombstones.filterNot { takesPart(it.kind) } + dead.values,
-        orderStamp = maxOf(local.orderStamp, remote.orderStamp),
+        orderStamp = if (remoteOrderWins && !waiting) remote.orderStamp else local.orderStamp,
     )
 }

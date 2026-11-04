@@ -217,4 +217,67 @@ class HomePinSyncTest {
         assertEquals(emptyList(), doc.forPeerSpotifyAccount("account-b").tombstones)
         assertEquals(emptyList(), doc.forPeerSpotifyAccount(null).pins)
     }
+
+    @Test
+    fun aNewerOrderWaitingForAPlaylistWinsOnceThePlaylistArrives() = runTest {
+        val phone = device("phone", playlists = setOf("kainos:playlist:a", "kainos:playlist:b"))
+        val pc = device("pc", playlists = setOf("kainos:playlist:a"))
+        phone.pinKainos("a")
+        phone.pinKainos("b")
+        phone.move("kainos:playlist:b", -1)
+        sync(phone, pc)
+        assertEquals(listOf("kainos:playlist:a"), pc.pins())
+
+        pc.playlists += "kainos:playlist:b"
+        sync(phone, pc)
+        sync(phone, pc)
+
+        assertEquals(listOf("kainos:playlist:b", "kainos:playlist:a"), pc.pins())
+        assertEquals(listOf("kainos:playlist:b", "kainos:playlist:a"), phone.pins())
+    }
+
+    @Test
+    fun anUnpinMadeWhileAMergeRunsIsKept() = runTest {
+        val pc = device("pc", playlists = shared)
+        pc.pinKainos("a")
+        val phone = device("phone", playlists = shared)
+        phone.pinKainos("b")
+        var unpinned = false
+        // The pc user unpins "a" while the merge is reading the pc's pins.
+        val playlistsThatUnpinOnFirstLookup = object : AbstractSet<String>() {
+            override val size get() = shared.size
+            override fun iterator() = shared.iterator()
+            override fun contains(element: String): Boolean {
+                if (!unpinned) {
+                    unpinned = true
+                    pc.unpin("kainos:playlist:a")
+                }
+                return element in shared
+            }
+        }
+
+        pc.library.mergeAndPersistHomePins(phone.library.exportHomePinsSyncDocument(), playlistsThatUnpinOnFirstLookup)
+
+        assertEquals(listOf("kainos:playlist:b"), pc.pins())
+        assertEquals(listOf("kainos:playlist:a"), pc.library.exportHomePinsSyncDocument().tombstones.map { it.targetId })
+    }
+
+    @Test
+    fun refreshingAPinKeepsItsStampSoAnOlderPeerUnpinCannotRemoveIt() = runTest {
+        val phone = device("phone", playlists = shared)
+        val pc = device("pc", playlists = shared)
+        phone.pinKainos("a")
+        sync(phone, pc)
+        pc.unpin("kainos:playlist:a")
+        phone.unpin("kainos:playlist:a")
+        phone.pinKainos("a")
+        val stamp = phone.library.homePins.value.single().syncStamp
+
+        phone.library.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", title = "renamed")
+        assertEquals(stamp, phone.library.homePins.value.single().syncStamp)
+        sync(phone, pc)
+
+        assertEquals(listOf("kainos:playlist:a"), pc.pins())
+        assertEquals(listOf("renamed"), phone.library.homePins.value.map { it.title })
+    }
 }
