@@ -85,10 +85,16 @@ class LibraryRepository(
     fun pinOf(kind: HomePinKind, targetId: String): PersistedHomePin? =
         _homePins.value.firstOrNull { it.kind == kind && it.targetId == targetId }
 
-    /** Applies [transform] atomically; it may run more than once, so it must only compute. */
+    /**
+     * Applies [transform] atomically; it may run more than once, so it must only compute. Publishing
+     * repeats until [homePins] matches the state, so a slower thread cannot leave older pins showing.
+     */
     private fun updatePins(transform: (HomePinsState) -> HomePinsState) {
         pinState.update(transform)
-        _homePins.value = pinState.value.pins
+        do {
+            val pins = pinState.value.pins
+            _homePins.value = pins
+        } while (pinState.value.pins !== pins)
     }
 
     /**
@@ -182,8 +188,8 @@ class LibraryRepository(
 
     fun moveHomePin(pinId: String, delta: Int): Boolean = reorderPins { current ->
         val index = current.indexOfFirst { it.id == pinId }
-        val target = (index + delta).coerceIn(0, current.lastIndex)
-        if (index < 0 || target == index) null
+        val target = if (index < 0) index else (index + delta).coerceIn(0, current.lastIndex)
+        if (target == index) null
         else current.toMutableList().apply { add(target, removeAt(index)) }
     }
 

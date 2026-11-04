@@ -280,4 +280,18 @@ class HomePinSyncTest {
         assertEquals(listOf("kainos:playlist:a"), pc.pins())
         assertEquals(listOf("renamed"), phone.library.homePins.value.map { it.title })
     }
+
+    @Test
+    fun movingAPinThatASyncJustRemovedDoesNothing() = runTest {
+        val phone = device("phone", playlists = shared)
+        val pc = device("pc", playlists = shared)
+        phone.pinKainos("a")
+        sync(phone, pc)
+        val staleId = phone.library.homePins.value.single().id
+        pc.unpin("kainos:playlist:a")
+        sync(phone, pc)
+
+        assertEquals(false, phone.library.moveHomePin(staleId, 1))
+        assertEquals(emptyList(), phone.pins())
+    }
 }
