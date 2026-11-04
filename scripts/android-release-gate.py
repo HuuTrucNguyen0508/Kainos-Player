@@ -4,8 +4,13 @@
     scripts/android-release-gate.py --serial emulator-5554
 
 On an emulator it regenerates the baseline profile, builds, verifies and installs
-the optimized APK, then runs every instrumented stage against it. Emulator app
-data is disposable and gets cleared. A physical device needs --allow-physical,
+the optimized APK, then runs every instrumented stage against it. Between the two it drives the
+shipped APK black-box through the phone paths in android_phone_paths.py. Emulator
+app data is disposable and gets cleared.
+
+    scripts/android-release-gate.py --serial emulator-5554 --phone-paths path/to.apk
+
+installs that APK and runs only the phone paths, in a few minutes. A physical device needs --allow-physical,
 and then only receives a certificate-checked `install -r`: instrumented stages
 clear data and revoke grants, so they never run on one.
 
@@ -26,6 +31,9 @@ import time
 import xml.etree.ElementTree as ElementTree
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
+
+import android_phone_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = "com.universalmusic.player"
@@ -41,13 +49,36 @@ FIRST_RUN = (
     (True, "fresh"), (True, "grant"), (False, "restore"), (False, "revoke"), (False, "revokedLaunch"),
     (True, "dark"), (True, "spotify"), (True, "youtube"), (False, "version"),
 )
+# Each needs real hardware or a real account. "Emulator:" names the stage that proves the stock-Android half.
 MANUAL = (
-    "Update the phone with `adb install -r` and confirm hearts, SAF folders, playlists and settings survive",
-    "Lock screen: metadata and transport controls across several track changes",
-    "Notification and HyperOS island: controls stay stable, tapping opens Now Playing",
-    "Bluetooth: play, pause and skip from a real headset or car",
-    "Live Spotify: login, playback, and a natural end of track moving to the next item",
-    "Live YouTube: search, play two results, background playback",
+    "Update the phone with `adb install -r`: hearts, SAF folders, playlists, settings and listening history "
+    "survive, and the session comes back paused. Emulator: restart restores paused",
+    "HyperOS lock screen: title and controls follow at least five track changes, pause and play work locked. "
+    "Emulator: background with the screen off",
+    "HyperOS notification and island: controls stay stable across skips; tapping opens Now Playing, also from a "
+    "cold start. Emulator: notification opens Now Playing",
+    "Bluetooth headset or car: play, pause, next, previous; disconnecting pauses (becoming noisy). "
+    "Emulator: headset and lock-screen keys covers media keys only, not AVRCP",
+    "Rapid skips on HyperOS: ten quick Next presses from the notification and from a headset land on the tenth "
+    "track with no stuck buffering; repeat on a Spotify queue. Emulator: rapid skips (local files)",
+    "Live Spotify: sign in, play, and a natural end of track moves to the next item",
+    "Spotify in the background: play with the phone locked for 10 minutes; no process death, playback-trace.log "
+    "shows no receiver restart",
+    "Spotify reconnect (2026-11-02 crash 1): during Spotify playback switch Wi-Fi off and on, and Wi-Fi to mobile "
+    "data, several times. No fatal on session-packet-receiver; the trace shows `interrupted AP reconnect; "
+    "recreating receiver` then `session ready`, playback pauses, and Play resumes at the saved position",
+    "Foreground denial (2026-11-02 crash 2): pause for over 10 minutes with Kainos in the background, then start "
+    "playback separately from desktop Connect, a Home sync handoff, Bluetooth and the notification. No process "
+    "death; it either plays or pauses with Session3 `foreground promotion denied` and a toast. "
+    "Emulator: background play after demotion (this emulator admits the start, so the denial branch is unrun)",
+    "Live YouTube: search, play two results, background playback, YouTube Mix refills the queue",
+    "Track row menu (#33): Play next, Add to queue, Heart and Add to playlist on Library and Search rows. "
+    "Emulator: track menu Play next",
+    "Ready offline (#34): the chip lists and queues only audio that is on the phone, with Wi-Fi off",
+    "Sleep timer (#36): a 5-minute timer fades out over its last 30 seconds and pauses; End of track pauses at the end",
+    "Listening history (#37): after a few plays Home shows On repeat, Rediscover and Recently added",
+    "Volume levelling (#38): local files with ReplayGain tags play at matched loudness, untagged ones unchanged",
+    "Home sync between the phone and the PC on the previous and the new version",
 )
 
 
@@ -88,6 +119,26 @@ class Gate:
         passed, log = self.execute(name, command, env)
         self.record(name, "PASS" if passed else "FAIL", started, log)
         return passed
+
+    def stage(self, name: str, action: Callable[[], str]) -> bool:
+        """Runs one black-box stage; on failure keeps a screenshot and the UI tree."""
+        started = time.monotonic()
+        print(f"... {name}", flush=True)
+        try:
+            detail = action()
+        except Exception as error:  # A stage failure of any kind is a gate FAIL, not a crash of the gate.
+            stem = self.logs / re.sub(r"[^\w.-]+", "-", name)
+            try:
+                with open(f"{stem}.png", "wb") as image:
+                    subprocess.run([str(self.sdk / "platform-tools/adb"), "-s", self.args.serial, "exec-out", "screencap", "-p"],
+                                   stdout=image, timeout=60)
+                Path(f"{stem}.xml").write_text(self.adb("exec-out", "uiautomator", "dump", "/dev/tty").stdout)
+            except (OSError, subprocess.SubprocessError) as capture:
+                print(f"Could not capture the screen: {capture}", file=sys.stderr)
+            self.record(name, "FAIL", started, f"{error or type(error).__name__}; {stem.name}.png")
+            return False
+        self.record(name, "PASS", started, detail)
+        return True
 
     def record(self, name: str, status: str, started: float, detail: str) -> None:
         self.rows.append(Row(name, status, time.monotonic() - started, detail))
@@ -210,13 +261,13 @@ def update_physical(gate: Gate, certs: set[str]) -> bool:
     return gate.run("Install", [str(gate.sdk / "platform-tools/adb"), "-s", gate.args.serial, "install", "-r", str(APK)])
 
 
-def install_emulator(gate: Gate) -> bool:
+def install_emulator(gate: Gate, apk: Path = APK) -> bool:
     started = time.monotonic()
-    result = gate.adb("install", "-r", str(APK))
+    result = gate.adb("install", "-r", str(apk))
     output = result.stdout + result.stderr
     if "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in output or "INSTALL_FAILED_VERSION_DOWNGRADE" in output:
         gate.adb("uninstall", APP)
-        result = gate.adb("install", str(APK))
+        result = gate.adb("install", str(apk))
         output = result.stdout + result.stderr
     passed = result.returncode == 0 and "Success" in output
     # A folder grant left by an earlier run turns MediaStore off and hides the seeded library.
@@ -241,6 +292,24 @@ def smoke_shipped_apk(gate: Gate) -> bool:
             and gate.run("Shipped APK: playback, Settings, sync screen", [*runtime, "smoke", "optimized", "localTransportSettingsAndSync"], gate.gradle_env))
 
 
+def phone_paths(gate: Gate) -> bool:
+    """Emulator only: clears app data and seeds shared storage."""
+    phone = android_phone_paths.Phone(gate.adb)
+    gate.adb("logcat", "-c", "-b", "all")
+    paths = android_phone_paths.PhonePaths(phone, lambda local, remote: gate.adb("push", f"{local}/.", remote).returncode == 0)
+    try:
+        stages = [*paths.stages(), ("Phone: no crash or ANR", lambda: android_phone_paths.crash_check(phone))]
+        for index, (name, action) in enumerate(stages):
+            if not gate.stage(name, action):
+                for skipped, _ in stages[index + 1:]:
+                    gate.record(skipped, "SKIP", time.monotonic(), "an earlier phone stage failed")
+                return False
+        return True
+    finally:
+        phone.wake_and_unlock()
+        android_phone_paths.remove_seed(phone)
+
+
 def first_run(gate: Gate) -> bool:
     gate.adb("shell", "rm", "-rf", "/sdcard/Download/kainos-proof")
     keep_installed = "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
@@ -259,7 +328,7 @@ def report(gate: Gate, summary: Path) -> bool:
     table = [f"{'Stage'.ljust(width)}  Result  Seconds  Detail"] + [
         f"{row.name.ljust(width)}  {row.status:6}  {row.seconds:7.0f}  {row.detail}" for row in gate.rows]
     passed = all(row.status != "FAIL" for row in gate.rows) and any(row.status == "PASS" for row in gate.rows)
-    manual = ["Manual checks no emulator can do:"] + [f"- [ ] {item}" for item in MANUAL]
+    manual = ["Manual checks on the phone, for the APK this gate verified:"] + [f"- [ ] {item}" for item in MANUAL]
     text = "\n".join(table + ["", f"Gate: {'PASS' if passed else 'FAIL'}", "", *manual]) + "\n"
     print("\n" + text)
     summary.write_text(text)
@@ -272,6 +341,8 @@ def main() -> int:
     parser.add_argument("--serial", required=True, help="adb serial; `adb devices` lists them")
     parser.add_argument("--allow-physical", action="store_true", help="update a physical device with install -r; runs no tests on it")
     parser.add_argument("--skip-profile", action="store_true", help="keep the committed baseline profile")
+    parser.add_argument("--phone-paths", type=Path, metavar="APK",
+                        help="install this APK on the emulator and run only the black-box phone paths")
     parser.add_argument("--max-workers", type=int, default=6)
     args = parser.parse_args()
 
@@ -284,6 +355,10 @@ def main() -> int:
         print(f"Device {args.serial} is not online", file=sys.stderr)
         return 2
     emulator = is_emulator(args.serial, gate.prop("ro.kernel.qemu") or gate.prop("ro.boot.qemu"))
+    if not emulator and args.phone_paths:
+        print(f"{args.serial} is a physical device. Phone paths clear app data and seed storage, "
+              "so they only run on an emulator.", file=sys.stderr)
+        return 2
     if not emulator and not args.allow_physical:
         print(f"{args.serial} is a physical device. Instrumented stages clear app data, so the gate "
               "refuses it. --allow-physical only updates it with install -r.", file=sys.stderr)
@@ -291,6 +366,9 @@ def main() -> int:
     logs.mkdir(parents=True)
     gate.record("Device", "PASS", started, f"{gate.prop('ro.product.model')}, API {gate.prop('ro.build.version.sdk')}, "
                 f"{'emulator' if emulator else 'physical'}")
+
+    def phone_paths_only() -> bool:
+        return install_emulator(gate, args.phone_paths) and phone_paths(gate)
 
     def steps() -> bool:
         started = time.monotonic()
@@ -310,12 +388,12 @@ def main() -> int:
             return passed
         if not install_emulator(gate):
             return False
-        if not smoke_shipped_apk(gate):
+        if not smoke_shipped_apk(gate) or not phone_paths(gate):
             return False
         results = [gate.connected(f"Instrumented: {name}", name) for name in INSTRUMENTED]
         return all(results) and first_run(gate)
 
-    steps()
+    phone_paths_only() if args.phone_paths else steps()
     return 0 if report(gate, logs / "summary.txt") else 1
 
 

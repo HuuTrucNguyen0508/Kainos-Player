@@ -159,12 +159,12 @@ class AndroidFirstRunProofTest {
                     context.contentResolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 launch()
-                see("Could not read")
+                see("Cannot read music folders: KainosProof")
                 shot("revoked")
             }
             "revokedLaunch" -> {
                 launch()
-                see("Could not read")
+                see("Cannot read music folders: KainosProof")
                 shot("revoked-relaunch")
             }
             "dark" -> try {
