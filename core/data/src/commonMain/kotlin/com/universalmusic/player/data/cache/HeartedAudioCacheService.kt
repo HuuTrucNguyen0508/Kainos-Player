@@ -570,13 +570,21 @@ class HeartedAudioCacheService(
                 if (cache.get(owner) != null) return@withLock CopyAdoption.ALREADY_CACHED
                 putReportingEvictions(entry)
                 val pinned = cache.isPinned(owner)
-                synchronized(youtubeQueue) {
-                    known[owner] = entry
-                    trackMeta[owner]?.let { track ->
-                        upsertDownload(track, DownloadPhase.CACHED, youtubeVideoId = entry.youtubeVideoId,
-                            sizeBytes = entry.sizeBytes, progress = 1f, pinned = pinned)
+                // A clear or unheart can land while the put suspends; publish only if none did, as downloads do.
+                val published = synchronized(youtubeQueue) {
+                    current(owner, generation).also { live ->
+                        if (!live) return@also
+                        known[owner] = entry
+                        trackMeta[owner]?.let { track ->
+                            upsertDownload(track, DownloadPhase.CACHED, youtubeVideoId = entry.youtubeVideoId,
+                                sizeBytes = entry.sizeBytes, progress = 1f, pinned = pinned)
+                        }
+                        onCached(owner, entry)
                     }
-                    onCached(owner, entry)
+                }
+                if (!published) {
+                    cache.remove(owner, reason = "obsolete copy")
+                    return@withLock CopyAdoption.STALE
                 }
                 CopyAdoption.ADOPTED
             }

@@ -5,6 +5,8 @@ import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_MAX_BYTES
 import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
+import com.universalmusic.player.data.cache.EvictionRequest
+import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.HeartedAudioCacheEntry
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.TrackAvailability
@@ -26,6 +28,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.IOException
@@ -187,6 +192,29 @@ class CachedAudioSyncTest {
     }
 
     @Test
+    fun aClearThatLandsWhileTheCopyIsBeingStoredStillWins() = scenario { pc, phone, client ->
+        val track = ytTrack("lll")
+        pc.heart(track); phone.heart(track)
+        pc.seed(track, bytes(4096, 3))
+        val pending = phone.plan(client).single()
+        phone.duringPut = {
+            phone.duringPut = {}
+            val before = phone.service.copyGeneration("yt:lll")
+            // The clear bumps its generation at once, then waits for the put to finish before it empties the cache.
+            CoroutineScope(Dispatchers.Default).launch { phone.service.clear() }
+            while (phone.service.copyGeneration("yt:lll") == before) delay(1)
+        }
+
+        val outcome = phone.execute(client, pending)
+
+        assertContains(outcome, "Skipped Song lll")
+        withTimeout(5_000) { while (phone.cache.allEntries().isNotEmpty() || phone.audioFiles().isNotEmpty()) delay(10) }
+        assertFalse(phone.library.savedTracks.value.single().sources.any {
+            it.providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX)
+        })
+    }
+
+    @Test
     fun pinnedDownloadsThatFillTheBudgetStopTheCopyBeforeAnyByteMoves() = scenario(phoneMaxBytes = size + 100L) { pc, phone, client ->
         val track = ytTrack("eee")
         val pinned = ytTrack("pinned")
@@ -289,7 +317,15 @@ class CachedAudioSyncTest {
 
     private class Device(root: File, val name: String, maxBytes: Long, private val scope: CoroutineScope) {
         private val cacheRoot = root.resolve("$name-cache")
-        val cache = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(cacheRoot.toPath()), maxBytes)
+        private val disk = DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(cacheRoot.toPath()), maxBytes)
+        /** Runs inside each cache put, before it persists. */
+        var duringPut: suspend () -> Unit = {}
+        val cache = object : HeartedAudioCache by disk {
+            override suspend fun put(entry: HeartedAudioCacheEntry, eviction: EvictionRequest): HeartedAudioCacheEntry {
+                duringPut()
+                return disk.put(entry, eviction)
+            }
+        }
         val library = LibraryRepository(deviceIdProvider = { name })
         val service = HeartedAudioCacheService(scope, cache, NoDownloader, youtubeSearch = { emptyList() },
             networkAvailable = { false }, maxBytes = maxBytes,
