@@ -1,5 +1,8 @@
 package com.universalmusic.player.app
 
+import com.universalmusic.player.data.backup.BackupRestoreCounts
+import com.universalmusic.player.data.backup.KainosBackupFile
+import com.universalmusic.player.data.backup.KainosBackupService
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.MetadataCacheStats
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
@@ -178,6 +181,7 @@ class AppContainer(
         deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
         localTrackCatalog = { local.libraryTracks.value },
     )
+    val backup = KainosBackupService(library, kainosPlaylists, { _settings.value }, { transform -> updateSettings(transform) })
     val matcher = TrackMatcher()
     private val sampleUnavailable = MutableStateFlow(ProviderState.UNAVAILABLE)
     val local = LocalMusicProvider(
@@ -589,6 +593,14 @@ class AppContainer(
     }
 
     suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
+
+    /** Restores [file], then maps its portable local hearts and playlist entries onto files in the library. */
+    suspend fun restoreBackup(file: KainosBackupFile): BackupRestoreCounts {
+        val counts = backup.restore(file)
+        rematchLocalHeartsByFileName()
+        rematchPlaylistLocalsByFileName()
+        return counts
+    }
 
     fun trackAvailability(track: Track) = heartedAudio.availabilityFor(track)
 

@@ -20,7 +20,10 @@ import androidx.lifecycle.lifecycleScope
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.AndroidPlaybackService
+import com.universalmusic.player.platform.BackupFilePickerRelay
 import com.universalmusic.player.platform.MusicFolderPickerRelay
+import com.universalmusic.player.platform.launchBackupOpenPicker
+import com.universalmusic.player.platform.launchBackupSavePicker
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
 import com.universalmusic.player.platform.logged
@@ -52,11 +55,22 @@ class MainActivity : ComponentActivity() {
         MusicFolderPickerRelay.complete(uri.toString())
     }
 
+    private val saveBackup = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? -> BackupFilePickerRelay.complete(uri) }
+
+    private val openBackup = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? -> BackupFilePickerRelay.complete(uri) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         initAndroidPlatform(applicationContext)
         launchMusicFolderPicker = { openMusicFolder.launch(null) }
+        launchBackupSavePicker = { name -> saveBackup.launch(name) }
+        // Many file managers report .json as plain text or octet-stream.
+        launchBackupOpenPicker = { openBackup.launch(arrayOf("application/json", "text/*", "application/octet-stream")) }
         val container = ensureAppContainer()
         setContent {
             val settings by container.settings.collectAsState()
@@ -93,6 +107,8 @@ class MainActivity : ComponentActivity() {
         if (launchMusicFolderPicker != null) {
             launchMusicFolderPicker = null
         }
+        launchBackupSavePicker = null
+        launchBackupOpenPicker = null
         super.onDestroy()
     }
 

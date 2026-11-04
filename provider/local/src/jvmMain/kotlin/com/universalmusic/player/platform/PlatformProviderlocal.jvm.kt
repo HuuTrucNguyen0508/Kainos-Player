@@ -43,8 +43,12 @@ internal data class FolderPickerAnswer(val folder: String?)
 private const val DIALOG_CANCELLED = 1
 
 /** Null when the dialog itself failed and the next one should be tried. */
-internal fun folderPickerAnswer(exitCode: Int, stdout: String): FolderPickerAnswer? = when (exitCode) {
-    0 -> FolderPickerAnswer(parsePickedDirectory(stdout))
+internal fun folderPickerAnswer(
+    exitCode: Int,
+    stdout: String,
+    parse: (String) -> String? = ::parsePickedDirectory,
+): FolderPickerAnswer? = when (exitCode) {
+    0 -> FolderPickerAnswer(parse(stdout))
     DIALOG_CANCELLED -> FolderPickerAnswer(null)
     else -> null
 }
@@ -64,27 +68,29 @@ private fun askKdialog(): FolderPickerAnswer? = runDialog(
     "Choose music folder",
 )
 
-private fun runDialog(tool: String, vararg arguments: String): FolderPickerAnswer? {
+internal fun runDialog(
+    tool: String,
+    vararg arguments: String,
+    parse: (String) -> String? = ::parsePickedDirectory,
+): FolderPickerAnswer? {
     val executable = findExecutable(tool) ?: return null
     return runCatching {
         val process = ProcessBuilder(executable, *arguments).redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val stdout = process.inputStream.bufferedReader().readText()
-        folderPickerAnswer(process.waitFor(), stdout)
-    }.logged("Local", "folder picker failed").getOrNull()
+        folderPickerAnswer(process.waitFor(), stdout, parse)
+    }.logged("Local", "file picker failed").getOrNull()
 }
 
-/** Keep the last absolute path-looking line; ignore GTK/tool chatter on stdout. */
+/** The last absolute path-looking line, normalized; GTK/tool chatter on stdout is ignored. */
+internal fun lastPickedPath(stdout: String): java.nio.file.Path? = stdout
+    .lineSequence()
+    .map(String::trim)
+    .filter { it.startsWith('/') }
+    .lastOrNull()
+    ?.let { Paths.get(it).toAbsolutePath().normalize() }
 
-private fun parsePickedDirectory(stdout: String): String? {
-    val candidate = stdout
-        .lineSequence()
-        .map(String::trim)
-        .filter { it.startsWith('/') }
-        .lastOrNull()
-        ?: return null
-    val path = Paths.get(candidate).toAbsolutePath().normalize()
-    return path.takeIf { Files.isDirectory(path) }?.toString()
-}
+private fun parsePickedDirectory(stdout: String): String? =
+    lastPickedPath(stdout)?.takeIf { Files.isDirectory(it) }?.toString()
 
 private fun pickWithSwing(): String? {
     fun choose(): String? {
@@ -118,7 +124,7 @@ private fun pickWithSwing(): String? {
     }
 }
 
-private fun findExecutable(name: String): String? {
+internal fun findExecutable(name: String): String? {
     val path = System.getenv("PATH") ?: return null
     return path.split(':').firstOrNull { dir ->
         val file = java.io.File(dir, name)
