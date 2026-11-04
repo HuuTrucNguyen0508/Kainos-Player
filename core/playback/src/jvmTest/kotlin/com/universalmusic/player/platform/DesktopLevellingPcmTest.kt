@@ -39,9 +39,10 @@ class DesktopLevellingPcmTest {
     /** +3 dB plus the 7 dB preamp asks for +10 dB; the 0.5 peak allows only +6.02 dB. */
     private fun hot() = tone("hot.flac", "REPLAYGAIN_TRACK_GAIN" to "+3.00 dB", "REPLAYGAIN_TRACK_PEAK" to "0.500000")
 
-    private fun track(index: Int, file: File) = Track("$index", file.name, emptyList(), durationMs = SECONDS * 1_000L,
+    /** [asUri] gives the `file:/path` form hearted-cache entries store (`File.toURI()`), not a plain path. */
+    private fun track(index: Int, file: File, asUri: Boolean = false) = Track("$index", file.name, emptyList(), durationMs = SECONDS * 1_000L,
         sources = listOf(PlaybackSource(ProviderId.LOCAL, "$index", isPlayable = true,
-            handle = PlaybackHandle.Url(file.absolutePath, durationMs = SECONDS * 1_000L))))
+            handle = PlaybackHandle.Url(if (asUri) file.toURI().toASCIIString() else file.absolutePath, durationMs = SECONDS * 1_000L))))
 
     private companion object {
         const val SECONDS = 3
@@ -82,6 +83,7 @@ class DesktopLevellingPcmTest {
     private fun render(
         files: List<File>,
         levelling: Boolean,
+        asUri: Boolean = false,
         whilePlaying: suspend (PlayerSession, (String) -> String?) -> Unit = { _, _ -> },
     ): Run = runBlocking {
         val output = File(root, "out-${System.nanoTime()}.raw")
@@ -106,7 +108,7 @@ class DesktopLevellingPcmTest {
         val seen = mutableListOf<Levelling?>()
         val watcher = scope.launch { session.nowPlaying.collect { if (seen.lastOrNull() != it.levelling) seen += it.levelling } }
         try {
-            session.play(files.mapIndexed(::track))
+            session.play(files.mapIndexed { index, file -> track(index, file, asUri) })
             val property = { name: String -> runtime.readProperty(name, socket) }
             withTimeout(5_000) {
                 while (property("playlist-count") != files.size.toString()) delay(10)
@@ -158,6 +160,12 @@ class DesktopLevellingPcmTest {
         assertLevels(run.pcm, PLUS_6_DB, MINUS_6_DB)
         assertEquals(6.0206, (run.levelling.first() as Levelling.Applied).gainDb, 0.0001)
         assertEquals(Levelling.Applied(-6.0), run.levelling.last())
+    }
+
+    @Test fun heartedCacheFileUrisPlayInOneProcessLikePaths() {
+        val run = render(listOf(untagged(), quiet()), levelling = false, asUri = true)
+        assertEquals(1, run.spawns, "The appended cache file must join the same mpv process")
+        assertLevels(run.pcm, UNITY, UNITY)
     }
 
     @Test fun offPlaysEveryFileAtItsOwnLevel() {

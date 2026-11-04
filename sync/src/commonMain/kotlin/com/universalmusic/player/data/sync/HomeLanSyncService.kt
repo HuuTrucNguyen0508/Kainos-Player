@@ -640,12 +640,11 @@ class HomeLanSyncService(
         ownerCanonicalId: String,
         direction: VaultCopyDirection,
     ): Result<String> = mutex.withLock {
-        _status.update {
-            it.copy(pendingCachedAudio = it.pendingCachedAudio.filterNot { t ->
-                t.offer.ownerCanonicalId == ownerCanonicalId && t.direction == direction
-            })
+        val skipped = _status.value.pendingCachedAudio.filter {
+            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
         }
-        Result.success("Skipped cached audio for $ownerCanonicalId")
+        _status.update { it.copy(pendingCachedAudio = it.pendingCachedAudio - skipped.toSet()) }
+        Result.success("Skipped ${skipped.firstOrNull()?.offer?.title?.ifBlank { null } ?: ownerCanonicalId}")
     }
 
     private suspend fun copyCachedAudio(

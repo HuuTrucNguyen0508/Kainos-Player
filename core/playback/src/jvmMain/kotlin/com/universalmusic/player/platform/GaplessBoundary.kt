@@ -135,7 +135,7 @@ internal class GaplessBoundary(
                                     if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@apply
                                     playlist.nextDuration = duration
                                 }
-                                val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(candidate.handle.url)},"append-play"]""", active.socket)
+                                val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(mpvMediaArgument(candidate.handle.url))},"append-play"]""", active.socket)
                                 synchronized(transport.lock) {
                                     if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain)
                                     else if (prepared === candidate) prepared = null

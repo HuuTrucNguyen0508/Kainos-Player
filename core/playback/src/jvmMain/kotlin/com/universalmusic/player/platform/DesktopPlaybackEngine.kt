@@ -387,7 +387,7 @@ class DesktopPlaybackEngine internal constructor(
                 add("--input-ipc-server=$socket")
                 if (targetStatus == EngineStatus.PAUSED) add("--pause")
                 if (startSeconds > 0 && !seamless) add("--start=$startSeconds")
-                if (!seamless) add(url)
+                if (!seamless) add(mpvMediaArgument(url))
             }
             val process = try {
                 warm?.first ?: runtime.startProcess(command)
@@ -443,7 +443,7 @@ class DesktopPlaybackEngine internal constructor(
                     check(slot.awaitIpc {
                         // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
                         val id = runtime.loadEntry(
-                            """{"name":"loadfile","url":${Json.encodeToString(url)},"flags":"replace","options":{"start":"$startSeconds"}}""",
+                            """{"name":"loadfile","url":${Json.encodeToString(mpvMediaArgument(url))},"flags":"replace","options":{"start":"$startSeconds"}}""",
                             active.socket,
                         )
                         synchronized(transport.lock) { active.playlist.entryId = id }
