@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -96,7 +97,11 @@ class SearchPlaylistUiTest {
                 }
                 cursor == null -> PlaylistTracksPage(firstPage, next = "50", total = 62)
                 secondPageFails -> error("Spotify is rate-limiting right now. Wait a few minutes.")
-                else -> PlaylistTracksPage(secondPage, next = null, total = 62)
+                else -> {
+                    // Keep page completion asynchronous, including when the UI has reached the end.
+                    delay(1_000)
+                    PlaylistTracksPage(secondPage, next = null, total = 62)
+                }
             }
         },
         scope = scope,
@@ -111,11 +116,16 @@ class SearchPlaylistUiTest {
         waitUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    /** Scrolls the list until [text] is in it; reaching the end is what loads the next page. */
-    private fun ComposeUiTest.scrollToOnceLoaded(text: String) {
+    /** Reach the loaded page's end, wait for its successor, then find the target row. */
+    private fun ComposeUiTest.scrollToOnceLoaded(text: String, firstLoadedText: String = text) {
+        // The header is index 0, so the last loaded song is at firstPage.size.
+        onNode(hasScrollToIndexAction()).performScrollToIndex(firstPage.size)
+        // A full lazy-list search is an action, not a polling predicate: it resets to the top
+        // on each miss and can consume the entire wait deadline on a slower runner.
         waitUntil(timeoutMillis = WAIT_MS) {
-            runCatching { onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text)) }.isSuccess
+            onAllNodes(hasText(firstLoadedText)).fetchSemanticsNodes().isNotEmpty()
         }
+        onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
     }
 
     private fun ComposeUiTest.savePng(name: String) {
@@ -154,7 +164,7 @@ class SearchPlaylistUiTest {
         assertEquals(listOf("https://open.spotify.com/playlist/night"), opened)
 
         // The second page loads once the list nears the end of the first.
-        scrollToOnceLoaded("Late Track 60")
+        scrollToOnceLoaded("Late Track 60", firstLoadedText = "Late Track 51")
         waitForIdle()
         assertEquals(listOf(null, "50"), requested, "Scrolling near the end loads the next page")
         text("2 songs in this playlist are unavailable on Spotify and not shown.").assertIsDisplayed()
