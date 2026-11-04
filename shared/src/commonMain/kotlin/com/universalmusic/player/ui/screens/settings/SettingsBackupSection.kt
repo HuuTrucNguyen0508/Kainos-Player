@@ -110,7 +110,7 @@ private fun BackupManifest(
         Text(title, style = MaterialTheme.typography.titleMedium)
         SetupNote(subtitle)
         val playlistParts = listOf(
-            counts.playlistsAdded to "new",
+            counts.playlistsAdded to if (restored) "added" else "new",
             counts.playlistsUpdated to "updated",
             counts.playlistsRestored to "brought back",
         ).filter { it.first > 0 }
@@ -123,7 +123,8 @@ private fun BackupManifest(
         ManifestRow(
             Accents.playlist, "Kainos playlists",
             amount = playlistParts.sumOf { it.first },
-            amountLabel = if (playlistParts.size > 1) "changes" else playlistParts.singleOrNull()?.second ?: "new",
+            amountLabel = if (playlistParts.size > 1) "changes"
+            else playlistParts.singleOrNull()?.second ?: if (restored) "added" else "new",
             detail = (if (playlistParts.size > 1) playlistParts.map { "${it.first} ${it.second}" } else emptyList())
                 .plus(listOfNotNull(kept)).joinToString(", ").ifEmpty { null },
         )
