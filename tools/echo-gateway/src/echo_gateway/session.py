@@ -10,7 +10,7 @@ import secrets
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -26,6 +26,20 @@ SESSION_FILE_VERSION = 1
 
 _STREAM_TOKEN = re.compile(r"([0-9a-f]{32})\.(0|[1-9][0-9]{0,8})\.([0-9a-f]{8})")
 _RESUMABLE_ACTIVITIES = {"PLAYING", "PAUSED", "STOPPED", "BUFFER_UNDERRUN"}
+# What the device is doing with the stream it reports. Its STOPPED follows our pause.
+_DEVICE_ACTIVITY = {
+    "PLAYING": "playing",
+    "BUFFER_UNDERRUN": "playing",
+    "PAUSED": "paused",
+    "STOPPED": "paused",
+    "FINISHED": "stopped",
+    "IDLE": "stopped",
+}
+ACTIVITIES = {"playing", "paused", "stopped"}
+
+
+def wall_clock_ms() -> int:
+    return time.time_ns() // 1_000_000
 
 
 @dataclass(frozen=True)
@@ -70,6 +84,12 @@ class Session:
     near_end: bool = False
     failures: int = 0
     failed_tracks: list[str] = field(default_factory=list)
+    # What the device last said it was doing, for listeners. position_ms was the
+    # position in the current track at epoch ms position_at_ms.
+    activity: str = "stopped"
+    position_ms: int = 0
+    position_at_ms: int = 0
+    last_event_at_ms: int = 0
 
     @property
     def current_id(self) -> str | None:
@@ -167,6 +187,53 @@ class Session:
         if parsed is not None and offset is not None:
             self.offset_ms = parsed.base_ms + offset
 
+    def stream_position(self, token: str, offset_ms: Any) -> int:
+        """Position in the track for an offset Alexa reports on token's stream."""
+        parsed = StreamToken.parse(token)
+        base = parsed.base_ms if parsed is not None else 0
+        return base + (reported_offset(offset_ms) or 0)
+
+    def mark(self, activity: str, now_ms: int, position_ms: int) -> None:
+        assert activity in ACTIVITIES
+        self.activity = activity
+        self.position_ms = position_ms
+        self.position_at_ms = now_ms
+        self.last_event_at_ms = now_ms
+
+    def observe_device(self, context: dict[str, Any], now_ms: int) -> None:
+        """Take the activity the device reports for the stream this session owns."""
+        audio = context.get("AudioPlayer") or {}
+        activity = _DEVICE_ACTIVITY.get(audio.get("playerActivity"))
+        token = audio.get("token") or ""
+        if activity is None:
+            return
+        # A queued stream the device has finished or never started is not in play.
+        owned = self.owns(token) if activity != "stopped" else bool(token) and token == self.current_token
+        if owned:
+            self.mark(activity, now_ms, self.stream_position(token, audio.get("offsetInMilliseconds")))
+
+    def upcoming(self, limit: int) -> list[str]:
+        """Tracks that play after the current one, without changing the session.
+
+        Stops where a shuffled list would reshuffle, since that order is not drawn yet.
+        """
+        if self.current_id is None:
+            return []
+        if self.repeat_one:
+            return [self.current_id]
+        probe = copy.deepcopy(self)
+        upcoming: list[str] = []
+        while len(upcoming) < limit:
+            at_end = probe.position + 1 >= len(probe.order)
+            if at_end and probe.loop and probe.shuffle and len(probe.order) > 1:
+                break
+            track_id = probe.successor()
+            if track_id is None:
+                break
+            upcoming.append(track_id)
+            probe.move_to(track_id)
+        return upcoming
+
     def record_context(self, context: dict[str, Any]) -> None:
         audio = context.get("AudioPlayer") or {}
         if audio.get("playerActivity") in _RESUMABLE_ACTIVITIES and self.owns(audio.get("token") or ""):
@@ -186,6 +253,8 @@ class Session:
         if current not in known_ids:
             self.offset_ms = 0
             self.current_token = ""
+            self.activity = "stopped"
+            self.position_ms = 0
         queued = StreamToken.parse(self.queued_token)
         if queued is not None and queued.track_id not in known_ids:
             self.queued_token = ""
@@ -208,6 +277,10 @@ class Session:
             near_end=bool(raw["near_end"]),
             failures=int(raw["failures"]),
             failed_tracks=list(raw.get("failed_tracks", [])),
+            activity=raw.get("activity") if raw.get("activity") in ACTIVITIES else "stopped",
+            position_ms=int(raw.get("position_ms", raw["offset_ms"])),
+            position_at_ms=int(raw.get("position_at_ms", 0)),
+            last_event_at_ms=int(raw.get("last_event_at_ms", 0)),
         )
         if order and not 0 <= session.position < len(order):
             session.position = 0
@@ -221,9 +294,15 @@ def device_key(device_id: str) -> str:
 class SessionStore:
     """Sessions by hashed device id, one JSON file each under STATE_DIR/sessions."""
 
-    def __init__(self, state_dir: Path, library: Library) -> None:
+    def __init__(
+        self,
+        state_dir: Path,
+        library: Library,
+        clock: Callable[[], int] = wall_clock_ms,
+    ) -> None:
         self._dir = state_dir / "sessions"
         self._library = library
+        self.now = clock
         self._lock = threading.Lock()
         self._sessions: dict[str, Session] = {}
         self._saved: dict[str, str] = {}
@@ -261,6 +340,16 @@ class SessionStore:
             finally:
                 self._persist(key, session)
 
+    def snapshot(self) -> dict[str, Session]:
+        """Copies of every session, reconciled with the library. Changes and writes nothing."""
+        with self._lock:
+            sessions = {key: copy.deepcopy(session) for key, session in self._sessions.items()}
+        known_ids = set(self._library.ids())
+        if known_ids:
+            for session in sessions.values():
+                session.reconcile(known_ids)
+        return sessions
+
     def _load(self) -> None:
         try:
             paths = sorted(self._dir.glob("*.json"))
@@ -271,6 +360,10 @@ class SessionStore:
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 session = Session.from_dict(raw)
+                if not session.last_event_at_ms:
+                    # Saved before events were timed: the last write is the best guess.
+                    session.last_event_at_ms = path.stat().st_mtime_ns // 1_000_000
+                    session.position_at_ms = session.last_event_at_ms
             except (OSError, ValueError, KeyError, TypeError):
                 logger.warning("session_load_failed category=corrupt_file key=%s", path.stem[:8])
                 continue

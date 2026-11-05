@@ -36,6 +36,8 @@ def make_settings(**overrides) -> Settings:
         allow_open_test_stream=True,
         alexa_skill_id=SKILL_ID,
         skip_alexa_signature_verify=True,
+        local_port=0,
+        local_api_base_url="http://127.0.0.1:8788",
     )
     base.update(overrides)
     return Settings(**base)

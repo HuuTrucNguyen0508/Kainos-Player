@@ -50,6 +50,52 @@ Alexa then reports offsets relative to that stream, so the stream token carries
 the base: `<track_id>.<base_ms>.<nonce>`. Absolute position is base + offset. The
 nonce keeps ENQUEUE of the same track valid under repeat-one.
 
+## Now playing for apps on this machine
+
+A second listener in the same process serves apps on this machine, such as the
+Kainos desktop app. Compose publishes it as `127.0.0.1:8788` only. It has no
+token, so **never Funnel port 8788** and never publish it on another address.
+`scripts/funnel-up.sh` maps only 8787.
+
+| Route | Answer |
+| --- | --- |
+| `GET /now-playing` | Each Echo's state, track, position, modes and next five tracks (`Cache-Control: no-store`) |
+| `GET /art/{track_id}.jpg` | The same art as the token route; 404 for unknown ids |
+| `GET /health` | Same as on 8787 |
+
+Port 8787 has no `/now-playing`, and port 8788 has no stream, art-token or Alexa
+route, so it never shows the stream token or a stream URL.
+
+```json
+{"version": 1, "generated_at_ms": 1793925000000, "echoes": [{
+  "device": "e56a4ca3", "state": "playing", "last_event_at_ms": 1793924990000,
+  "track": {"id": "…", "title": "…", "artist": "…",
+            "art_url": "http://127.0.0.1:8788/art/….jpg", "duration_ms": 201000},
+  "position_ms": 12000, "position_at_ms": 1793924990000,
+  "shuffle": true, "loop": true, "repeat_one": false,
+  "up_next": [{"id": "…", "title": "…", "artist": "…", "duration_ms": 180000}]}]}
+```
+
+- `echoes` is newest first by `last_event_at_ms`. `device` is the first 8
+  characters of the session file name, a hash of the Alexa device id.
+- `state` is `playing`, `paused`, `stopped` or `idle` (no current track, so
+  `track` is null). It comes from AudioPlayer events and from the device state
+  Alexa attaches to every request. Sending a Play that replaces the stream
+  counts as `playing` from its start position until the device reports.
+- `position_ms` was true at `position_at_ms`. Add `now - position_at_ms` only
+  while `state` is `playing`. It never exceeds `duration_ms`.
+- An Echo that goes quiet sends nothing. `playing` turns into `stopped` once the
+  track should have ended a minute ago, or 15 minutes after the last event when
+  the duration is unknown.
+- `up_next` is the order the session really plays. With repeat-one it holds the
+  current track once. A shuffled list ends where it would reshuffle, since that
+  order is drawn only when the list wraps.
+- `duration_ms` comes from the scan (ffprobe `format.duration`) and is null
+  until the scan reaches the track.
+- `LOCAL_PORT` (default `8788`) and `LOCAL_API_BASE_URL` (default
+  `http://127.0.0.1:8788`, used in `art_url`) configure it. If the port is busy,
+  the gateway logs `local_api_failed category=bind` and keeps serving Alexa.
+
 ## Security for public exposure
 
 Codex review required an unguessable token before Funnel:
@@ -62,7 +108,7 @@ Codex review required an unguessable token before Funnel:
 - Compose still binds **loopback only**; Funnel runs on the host
 - The access log is off because request lines contain the token. Info logs hold no token, device id or file path
 
-Never Funnel Home Sync (`43822`).
+Never Funnel Home Sync (`43822`) or the now-playing API (`8788`).
 
 The container does not mount `~/.universal-music-player`, which holds tokens.
 
@@ -189,6 +235,10 @@ loudest, AAC overshoot at the -1 dBTP ceiling clipped 14 samples in total, so a
 lower ceiling is not worth the lost evenness. Unscanned tracks still play at unity gain.
 
 `GET /health` reports `scan.scanned`, `scan.total` and `sessions`.
+
+The same pass records each track's duration. Entries from a `scan.json` written
+before durations existed get one from an ffprobe call each on the next pass,
+without a new loudness measurement.
 
 ## Unreadable files
 

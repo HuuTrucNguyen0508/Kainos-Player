@@ -310,8 +310,10 @@ def _handle_audio_event(
     request: dict[str, Any],
     session: Session,
     settings: Settings,
+    now_ms: int,
 ) -> Reply:
     token = request.get("token") or ""
+    position = session.stream_position(token, request.get("offsetInMilliseconds"))
     logger.info(
         "alexa_playback request_id=%s type=%s %s offset_ms=%s",
         request.get("requestId") or "",
@@ -320,9 +322,18 @@ def _handle_audio_event(
         reported_offset(request.get("offsetInMilliseconds")),
     )
     if request_type == "AudioPlayer.PlaybackFailed":
+        state = request.get("currentPlaybackState") or {}
+        prefetch_only = (
+            token == session.queued_token
+            and state.get("playerActivity") == "PLAYING"
+            and state.get("token") == session.current_token
+        )
+        if token and token in (session.current_token, session.queued_token) and not prefetch_only:
+            session.mark("stopped", now_ms, position)
         return _handle_playback_failed(request, session, settings)
     if request_type == "AudioPlayer.PlaybackStarted":
-        session.adopt(token)
+        if session.owns(token):
+            session.mark("playing", now_ms, position)
     elif request_type == "AudioPlayer.PlaybackNearlyFinished":
         if session.owns(token):
             session.failures = 0
@@ -332,13 +343,18 @@ def _handle_audio_event(
     elif request_type == "AudioPlayer.PlaybackStopped":
         if session.owns(token):
             session.record_position(request.get("offsetInMilliseconds"))
+            session.mark("paused", now_ms, position)
     elif request_type == "AudioPlayer.PlaybackFinished":
         if session.owns(token):
             session.failures = 0
             session.failed_tracks.clear()
-            if not session.queued_token:
+            if session.queued_token:
+                # The queued stream starts next and PlaybackStarted moves the session to it.
+                session.last_event_at_ms = now_ms
+            else:
                 session.offset_ms = 0
                 session.near_end = False
+                session.mark("stopped", now_ms, position)
     return Reply()
 
 
@@ -348,12 +364,13 @@ def _dispatch(
     session: Session,
     settings: Settings,
     player: Player,
+    now_ms: int,
 ) -> Reply:
     request_type = request.get("type") or ""
     request_id = request.get("requestId") or ""
 
     if request_type.startswith("AudioPlayer."):
-        return _handle_audio_event(request_type, request, session, settings)
+        return _handle_audio_event(request_type, request, session, settings, now_ms)
 
     if request_type in {"LaunchRequest", "IntentRequest"} or request_type.startswith(
         "PlaybackController."
@@ -423,7 +440,12 @@ def handle_alexa_envelope(
         cached = player.sessions.cached_response(key, request_id)
         if cached is not None:
             return cached
-        reply = _dispatch(request, context, session, settings, player)
+        now_ms = player.sessions.now()
+        session.observe_device(context, now_ms)
+        reply = _dispatch(request, context, session, settings, player, now_ms)
+        if reply.play is not None and reply.play.behavior == "REPLACE_ALL":
+            # The device starts this stream now. PlaybackStarted confirms the position.
+            session.mark("playing", now_ms, reply.play.token.base_ms)
         response = render(
             reply, settings, player,
             conversational=request_type in {"LaunchRequest", "IntentRequest"},

@@ -18,6 +18,7 @@ COPY src ./src
 ENV PYTHONPATH=/app/src \
     HOST=0.0.0.0 \
     PORT=8787 \
+    LOCAL_PORT=8788 \
     MUSIC_ROOT=/music \
     STATE_DIR=/state \
     TEST_TRACK=/music/test.flac \
@@ -29,6 +30,6 @@ ENV PYTHONPATH=/app/src \
 # Music is mounted read-only at runtime. No secrets baked into the image.
 # No access log: request lines contain the stream token.
 USER echo
-EXPOSE 8787
+EXPOSE 8787 8788
 
 CMD ["uvicorn", "echo_gateway.main:app", "--host", "0.0.0.0", "--port", "8787", "--log-level", "info", "--no-access-log"]

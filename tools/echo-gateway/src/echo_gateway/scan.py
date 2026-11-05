@@ -7,7 +7,7 @@ import logging
 import math
 import re
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -17,7 +17,8 @@ from echo_gateway.paths import atomic_write
 
 logger = logging.getLogger("echo_gateway.scan")
 
-SCAN_FILE_VERSION = 1
+# Version 2 added duration_ms. Version 1 entries get it from a probe, not a new measurement.
+SCAN_FILE_VERSION = 2
 SCAN_PROBE_TIMEOUT_S = 30.0
 MEASURE_TIMEOUT_S = 15 * 60.0
 RESCAN_INTERVAL_S = 60 * 60.0
@@ -38,6 +39,7 @@ _TRUE_PEAK = re.compile(r"\bPeak:\s+(-?(?:\d+(?:\.\d+)?|inf|nan)) dBFS")
 class TrackMetadata:
     title: str
     artist: str
+    duration_ms: int | None = None
 
 
 @dataclass
@@ -49,6 +51,7 @@ class ScanEntry:
     measured: bool = False
     lufs: float | None = None
     true_peak: float | None = None
+    duration_ms: int | None = None
 
 
 def _filename_tags(relative_path: str) -> tuple[str, str | None]:
@@ -82,7 +85,16 @@ def metadata_from_probe(raw_json: str | bytes, relative_path: str) -> TrackMetad
     return TrackMetadata(
         title=tags.get("title") or file_title,
         artist=tags.get("artist") or tags.get("album_artist") or file_artist or UNKNOWN_ARTIST,
+        duration_ms=_duration_ms((probe.get("format") or {}).get("duration")),
     )
+
+
+def _duration_ms(raw: Any) -> int | None:
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return round(seconds * 1000) if math.isfinite(seconds) and seconds > 0 else None
 
 
 def parse_ebur128(stderr: str) -> tuple[float, float | None] | None:
@@ -184,6 +196,8 @@ class LibraryScan:
         self._path = settings.state_dir / "scan.json"
         self._lock = threading.Lock()
         self._entries: dict[str, ScanEntry] = {}
+        # Paths of entries saved before durations were recorded.
+        self._without_duration: set[str] = set()
         self._load()
 
     def progress(self) -> tuple[int, int]:
@@ -203,7 +217,7 @@ class LibraryScan:
         """Use cached tags or the filename. Play responses never wait for a probe."""
         entry = self._valid_entry(track)
         if entry is not None:
-            return TrackMetadata(title=entry.title, artist=entry.artist)
+            return TrackMetadata(entry.title, entry.artist, entry.duration_ms)
         return filename_metadata(track.relative_path)
 
     async def run_forever(self) -> None:
@@ -217,6 +231,7 @@ class LibraryScan:
     async def run_pass(self) -> None:
         await asyncio.to_thread(self._library.refresh)
         tracks = self._library.tracks
+        await self._add_durations(tracks)
         for track in tracks:
             valid = self._valid_entry(track)
             if valid is not None and valid.measured:
@@ -228,6 +243,29 @@ class LibraryScan:
         await asyncio.to_thread(self._prune_and_save, {track.relative_path for track in tracks})
         scanned, total = self.progress()
         logger.info("scan_pass category=ok scanned=%s total=%s", scanned, total)
+
+    async def _add_durations(self, tracks: tuple[LibraryTrack, ...]) -> None:
+        """Probe old entries for a duration. Loudness stays as measured."""
+        for track in tracks:
+            if track.relative_path not in self._without_duration:
+                continue
+            entry = self._valid_entry(track)
+            if entry is None:
+                # Changed or gone: the full scan measures it again with a duration.
+                self._without_duration.discard(track.relative_path)
+                continue
+            try:
+                probed = await run_quiet(
+                    probe_command(self._settings, track.absolute_path), SCAN_PROBE_TIMEOUT_S
+                )
+            except OSError:
+                logger.error("scan_tool_failed category=spawn track=%s", track.track_id[:8])
+                return
+            if probed is not None and probed[0] == 0:
+                duration = metadata_from_probe(probed[1], track.relative_path).duration_ms
+                self._remember(track, replace(entry, duration_ms=duration))
+            # A file ffprobe cannot read keeps no duration and is not probed again.
+            self._without_duration.discard(track.relative_path)
 
     async def _scan_track(self, track: LibraryTrack) -> ScanEntry | None:
         stamp = file_stamp(track)
@@ -260,7 +298,9 @@ class LibraryScan:
             # Recorded as measured so an undecodable file is not retried every pass.
             logger.warning("scan_measure_failed category=no_loudness track=%s", track.track_id[:8])
         lufs, true_peak = loudness or (None, None)
-        return ScanEntry(*stamp, metadata.title, metadata.artist, True, lufs, true_peak)
+        return ScanEntry(
+            *stamp, metadata.title, metadata.artist, True, lufs, true_peak, metadata.duration_ms
+        )
 
     def _valid_entry(self, track: LibraryTrack) -> ScanEntry | None:
         with self._lock:
@@ -277,12 +317,16 @@ class LibraryScan:
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             entries = {path: ScanEntry(**fields) for path, fields in raw["entries"].items()}
+            without_duration = {
+                path for path, fields in raw["entries"].items() if "duration_ms" not in fields
+            }
         except FileNotFoundError:
             return
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             logger.warning("scan_load_failed category=corrupt_file")
             return
         self._entries = entries
+        self._without_duration = without_duration
 
     def _prune_and_save(self, known_paths: set[str]) -> None:
         with self._lock:

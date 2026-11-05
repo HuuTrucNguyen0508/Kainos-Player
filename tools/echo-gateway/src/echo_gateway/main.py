@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -27,6 +28,7 @@ from echo_gateway.alexa_verify import (
 from echo_gateway.art import ArtCache
 from echo_gateway.config import Settings
 from echo_gateway.library import Library
+from echo_gateway.now_playing import now_playing
 from echo_gateway.paths import PathValidationError, resolve_under_root
 from echo_gateway.scan import LibraryScan
 from echo_gateway.session import MAX_START_MS, SessionStore
@@ -47,6 +49,27 @@ def configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+
+class LocalServer(uvicorn.Server):
+    """The loopback listener. It shares the main server's event loop, and the main
+    server owns the signals: its lifespan stops this one through should_exit.
+    """
+
+    @contextlib.contextmanager
+    def capture_signals(self):
+        yield
+
+
+async def _serve_local(server: LocalServer) -> None:
+    """A busy port must not take Alexa playback down with it."""
+    try:
+        await server.serve()
+    except SystemExit:
+        # uvicorn exits when it cannot bind.
+        logger.error("local_api_failed category=bind port=%s", server.config.port)
+    except Exception:
+        logger.exception("local_api_failed category=serve")
 
 
 class EncoderResponse(StreamingResponse):
@@ -76,7 +99,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
     art = ArtCache(cfg)
 
     @asynccontextmanager
-    async def lifespan(_app: Starlette):
+    async def lifespan(app: Starlette):
         logger.info(
             "gateway_start host=%s port=%s music_root_set=%s max_concurrent=%s "
             "public_base_url=%s open_test_stream=%s "
@@ -92,9 +115,24 @@ def create_app(settings: Settings | None = None) -> Starlette:
             sessions.count,
         )
         scan_task = asyncio.create_task(scan.run_forever())
+        local_server = LocalServer(
+            uvicorn.Config(
+                local_app,
+                host=cfg.host,
+                port=cfg.local_port,
+                lifespan="off",
+                access_log=False,
+                log_config=None,
+                timeout_graceful_shutdown=2,
+            )
+        )
+        app.state.local_server = local_server
+        local_task = asyncio.create_task(_serve_local(local_server))
         try:
             yield
         finally:
+            local_server.should_exit = True
+            await local_task
             scan_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await scan_task
@@ -191,11 +229,20 @@ def create_app(settings: Settings | None = None) -> Starlette:
         return await _stream_file(request, request_id, source, start_ms=start_ms, gain_db=gain_db)
 
     async def art_token(request: Request) -> Response:
+        if not _token_ok(request.path_params["token"]):
+            return _art_not_found(request)
+        return await art_local(request)
+
+    def _art_not_found(request: Request) -> Response:
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        logger.warning("art_reject request_id=%s category=not_found", request_id)
+        return JSONResponse({"error": "not_found", "request_id": request_id}, status_code=404)
+
+    async def art_local(request: Request) -> Response:
+        """The loopback listener serves art as is. The public one checks the token first."""
         track = library.get(request.path_params["track_id"])
-        if not _token_ok(request.path_params["token"]) or track is None:
-            logger.warning("art_reject request_id=%s category=not_found", request_id)
-            return JSONResponse({"error": "not_found", "request_id": request_id}, status_code=404)
+        if track is None:
+            return _art_not_found(request)
         try:
             resolve_under_root(track.absolute_path, cfg.music_root)
         except PathValidationError:
@@ -205,6 +252,11 @@ def create_app(settings: Settings | None = None) -> Starlette:
             media_type="image/jpeg",
             headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
         )
+
+    async def now_playing_route(_: Request) -> Response:
+        # The session lock can wait on an fsync, so read off the event loop.
+        body = await asyncio.to_thread(now_playing, player, cfg.local_api_base_url)
+        return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
     async def _stream_file(
         request: Request,
@@ -351,10 +403,20 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/alexa", alexa, methods=["POST"]),
     ]
 
+    # Apps on this machine read playback here. No token and no stream URL ever appear on it.
+    local_app = Starlette(
+        routes=[
+            Route("/health", health, methods=["GET"]),
+            Route("/now-playing", now_playing_route, methods=["GET"]),
+            Route("/art/{track_id}.jpg", art_local, methods=["GET"]),
+        ]
+    )
+
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.settings = cfg
     app.state.transcoder = transcoder
     app.state.player = player
+    app.state.local_app = local_app
     app.state.ffmpeg_command_for_docs = command_docs(cfg)
     return app
 

@@ -32,6 +32,9 @@ class Settings:
     allow_open_test_stream: bool
     alexa_skill_id: str
     skip_alexa_signature_verify: bool
+    # Second listener for apps on this machine. Publish it on loopback only, never Funnel it.
+    local_port: int
+    local_api_base_url: str
 
     @property
     def public_stream_url(self) -> str:
@@ -76,4 +79,8 @@ class Settings:
             allow_open_test_stream=_env_bool("ALLOW_OPEN_TEST_STREAM", True),
             alexa_skill_id=os.environ.get("ALEXA_SKILL_ID", "").strip(),
             skip_alexa_signature_verify=_env_bool("SKIP_ALEXA_SIGNATURE_VERIFY", False),
+            local_port=int(os.environ.get("LOCAL_PORT", "8788")),
+            local_api_base_url=os.environ.get(
+                "LOCAL_API_BASE_URL", "http://127.0.0.1:8788"
+            ).rstrip("/"),
         )
