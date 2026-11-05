@@ -25,6 +25,7 @@ import com.universalmusic.player.data.sync.HeartAction
 import com.universalmusic.player.data.sync.HeartOp
 import com.universalmusic.player.data.sync.LocalSyncIdentity
 import com.universalmusic.player.domain.model.AudioQuality
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
@@ -187,6 +188,35 @@ class DatabaseRoundTripTest {
             assertEquals(listOf(pin), snapshot.homePins)
             assertEquals(com.universalmusic.player.data.library.HomePinStamp(), snapshot.homePinOrderStamp)
             driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaEightReadsTheOldSessionWithoutRadioAndThenKeepsTheRadio() {
+        val directory = Files.createTempDirectory("kainos-v8-v9-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/8.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                val item = PersistedQueueItem("q1", track("spotify:1", "One"))
+                listOf(
+                    "INSERT INTO session_state VALUES (0, 0, 0, 'OFF', '[]', 3000, 'LOCAL', NULL)",
+                    "INSERT INTO session_queue_item VALUES (0, 'q1', 'spotify:1', '${storageJson.encodeToString(item.track)}')",
+                ).forEach { driver.execute(null, it, 0) }
+                KainosDatabase.Schema.migrate(driver, 8, KainosDatabase.Schema.version)
+                val db = KainosDatabase(driver)
+                val old = SessionSnapshot(items = listOf(item), positionMs = 3000)
+                assertEquals(old, db.readSessionSnapshot())
+
+                db.writeSessionSnapshot(old.copy(radio = ProviderId.SPOTIFY), cached = null)
+                assertEquals(old.copy(radio = ProviderId.SPOTIFY), db.readSessionSnapshot())
+
+                driver.execute(null, "UPDATE session_state SET radio_provider = 'SOUNDCLOUD'", 0)
+                assertEquals(old, db.readSessionSnapshot())
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            }
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -828,7 +858,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(8L, KainosDatabase.Schema.version)
+    assertEquals(9L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(

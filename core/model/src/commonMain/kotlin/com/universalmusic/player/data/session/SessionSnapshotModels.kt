@@ -4,6 +4,7 @@ import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.toDomain
 import com.universalmusic.player.data.library.toPersisted
 import com.universalmusic.player.domain.model.PlaybackQueue
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QueueItem
 import com.universalmusic.player.domain.model.RepeatMode
 import kotlinx.serialization.Serializable
@@ -25,6 +26,8 @@ data class SessionSnapshot(
     /** Coarse playback position within the current track. */
     val positionMs: Long = 0L,
     val remoteSession: RemoteSession? = null,
+    /** The provider whose radio keeps appending to this queue; null when nothing continues it. */
+    val radio: ProviderId? = null,
 )
 
 @Serializable

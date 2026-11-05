@@ -1,6 +1,7 @@
 package com.universalmusic.player.domain.continuation
 
 import com.universalmusic.player.domain.model.PlaybackQueue
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 
 /**
@@ -10,6 +11,9 @@ import com.universalmusic.player.domain.model.Track
 interface QueueContinuation {
     /** Ask for a batch once this many or fewer entries remain after the current one. */
     val lowWater: Int
+
+    /** The radio a restored session rebuilds to continue this queue; null when it cannot be rebuilt. */
+    val radio: ProviderId? get() = null
 
     /** Tracks to append at the tail of [queue]. Empty means the continuation is finished. */
     suspend fun nextBatch(queue: PlaybackQueue): List<Track>

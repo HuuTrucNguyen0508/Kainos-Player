@@ -19,6 +19,7 @@ import com.universalmusic.player.data.session.QueueProjection
 import com.universalmusic.player.data.session.persistedItems
 import com.universalmusic.player.data.session.toSessionSnapshot
 import com.universalmusic.player.domain.model.PlaybackQueue
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QueueItem
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
@@ -57,6 +58,7 @@ internal class SessionCapture(
     val lastActiveAtMs: Long?,
     val origin: PublicationOrigin,
     val remoteSession: RemoteSession?,
+    val radio: ProviderId?,
 )
 
 private class PersistenceIntent(val private: SessionCapture, val local: SessionCapture?) {
@@ -111,8 +113,9 @@ class NowPlayingRecorder(
         origin: PublicationOrigin,
         local: Boolean,
         remoteSession: RemoteSession?,
+        radio: ProviderId?,
     ): Long {
-        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin, remoteSession)
+        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin, remoteSession, radio)
         val intent = PersistenceIntent(capture, capture.takeIf { local })
         pending.update { waiting -> waiting?.then(intent) ?: intent }
         return capture.sequence
@@ -213,7 +216,7 @@ class NowPlayingRecorder(
         return ListeningCommit(
             writerId = writerId,
             sequence = private.sequence,
-            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs).copy(remoteSession = private.remoteSession),
+            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs).copy(remoteSession = private.remoteSession, radio = private.radio),
             origin = private.origin,
             local = local,
             committedAtMs = clock(),

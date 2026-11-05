@@ -27,6 +27,8 @@ class SourceRadio(
     /** Everything this radio has queued or seen queued, so tracks the user removed do not come back. */
     private val seen = mutableSetOf<String>()
 
+    override val radio: ProviderId get() = provider
+
     override suspend fun nextBatch(queue: PlaybackQueue): List<Track> {
         queue.items.mapTo(seen) { it.track.canonicalId }
         val seed = seedFrom(queue) ?: run {

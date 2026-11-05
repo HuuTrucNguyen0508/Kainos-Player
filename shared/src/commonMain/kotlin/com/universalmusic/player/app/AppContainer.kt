@@ -338,6 +338,7 @@ class AppContainer(
             store = PublicationNotifyingStore(listeningStore) { homeLanSync.requestListeningDelivery() },
             scope = scope,
         ),
+        radioFor = { provider -> if (_settings.value.searchRadioEnabled) sourceRadio(provider) else null },
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
@@ -420,17 +421,16 @@ class AppContainer(
     /** The picked result keeps its source: that source's radio follows it, or its same-source results. */
     fun playSearchResults(tracks: List<Track>, startIndex: Int) {
         val plan = planSearchPlayback(tracks, startIndex, radioEnabled = _settings.value.searchRadioEnabled)
-        val radio = plan.radio?.let { provider ->
-            SourceRadio(provider, fetch = { seed, exclude ->
-                when (provider) {
-                    ProviderId.SPOTIFY -> spotify.radio(seed, exclude)
-                    ProviderId.YOUTUBE_MUSIC -> youtube.mix(seed)
-                    else -> error("$provider has no radio")
-                }
-            })
-        }
-        player.play(plan.tracks, startIndex = plan.startIndex, continuation = radio)
+        player.play(plan.tracks, startIndex = plan.startIndex, continuation = plan.radio?.let(::sourceRadio))
     }
+
+    private fun sourceRadio(provider: ProviderId) = SourceRadio(provider, fetch = { seed, exclude ->
+        when (provider) {
+            ProviderId.SPOTIFY -> spotify.radio(seed, exclude)
+            ProviderId.YOUTUBE_MUSIC -> youtube.mix(seed)
+            else -> error("$provider has no radio")
+        }
+    })
 
     fun clearPlaybackQueue() {
         player.clearQueue()

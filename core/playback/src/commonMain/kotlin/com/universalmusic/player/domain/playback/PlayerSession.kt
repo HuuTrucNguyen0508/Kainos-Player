@@ -56,6 +56,8 @@ class PlayerSession(
     /** Receives every recorded change and checkpoint. Null keeps the session in memory only. */
     private val persistence: NowPlayingRecorder? = null,
     private val clock: () -> Long = ::currentTimeMillis,
+    /** Rebuilds the radio a restored session was continuing; null leaves the restored queue to end. */
+    private val radioFor: (ProviderId) -> QueueContinuation? = { null },
 ) {
     /** The session thread; work launched here runs in order with every session call. */
     internal val sessionContext: CoroutineContext = confineTo ?: EmptyCoroutineContext
@@ -88,8 +90,8 @@ class PlayerSession(
 
     private fun engineVolume(): Float = _volume.value * sleepFadeGain
 
-    private val ledger = ListeningLedger(persistence, queueState, nowPlaying, scope, sessionContext, clock)
-    private val refiller = QueueRefiller(queue, scope, sessionContext, workContext) {
+    private val ledger = ListeningLedger(persistence, queueState, nowPlaying, { refiller.continuation?.radio }, scope, sessionContext, clock)
+    private val refiller: QueueRefiller = QueueRefiller(queue, scope, sessionContext, workContext) {
         ledger.record(ListeningChange.AUTOMATIC)
     }
     private val turn = PlaybackTurn()
@@ -359,8 +361,10 @@ class PlayerSession(
         val oldQueue = queue.queue.value
         val oldNow = _nowPlaying.value
         val oldResume = pendingResumePositionMs
+        val oldContinuation = refiller.continuation
         return {
             queue.restore(oldQueue)
+            refiller.attach(oldContinuation)
             _nowPlaying.value = oldNow
             pendingResumePositionMs = oldResume
         }
@@ -382,6 +386,7 @@ class PlayerSession(
         playJob = null
         pendingResumePositionMs = snapshot.positionMs.takeIf { it > 0L }
         queue.restore(restored)
+        refiller.attach(snapshot.radio?.let(radioFor))
         val item = queue.queue.value.current
         _nowPlaying.value = NowPlayingState(
             track = item?.let { sources.prepareTrack(it.track) },
@@ -399,6 +404,7 @@ class PlayerSession(
         trace(
             "installPaused items=${restored.items.size} index=${restored.currentIndex} " +
                 "pos=${snapshot.positionMs} shuffle=${restored.shuffle} repeat=${restored.repeat} " +
+                "radio=${refiller.continuation?.radio} " +
                 "track=${item?.track.traceLabel()}",
         )
     }

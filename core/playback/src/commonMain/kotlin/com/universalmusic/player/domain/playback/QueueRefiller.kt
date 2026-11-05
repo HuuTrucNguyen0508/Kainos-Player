@@ -20,7 +20,8 @@ internal class QueueRefiller(
     private val onAppended: () -> Unit,
 ) {
     /** Dropped when other playback replaces the queue it was started with. */
-    private var continuation: QueueContinuation? = null
+    var continuation: QueueContinuation? = null
+        private set
     private var refill: Job? = null
 
     fun attach(continuation: QueueContinuation?) {
