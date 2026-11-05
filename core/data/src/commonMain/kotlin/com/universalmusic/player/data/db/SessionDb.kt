@@ -6,6 +6,7 @@ import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.SESSION_SNAPSHOT_FORMAT_VERSION
 import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.domain.model.ProviderId
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -21,6 +22,7 @@ internal fun KainosDatabase.readSessionSnapshot(): SessionSnapshot {
         shuffleOrder = storageJson.decodeFromString(state.shuffle_order),
         positionMs = state.position_ms,
         remoteSession = state.remote_session_json?.let { storageJson.decodeFromString<RemoteSession>(it) },
+        radio = state.radio_provider?.let { name -> runCatching { ProviderId.valueOf(name) }.getOrNull() },
     )
 }
 
@@ -69,6 +71,7 @@ internal fun KainosDatabase.writeSessionSnapshot(
         snapshot.positionMs,
         origin.name,
         snapshot.remoteSession?.let { storageJson.encodeToString(it) },
+        snapshot.radio?.name,
     )
     return StoredQueue(rows, queue)
 }

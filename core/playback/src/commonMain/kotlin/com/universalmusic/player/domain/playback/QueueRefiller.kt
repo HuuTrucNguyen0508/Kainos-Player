@@ -17,10 +17,12 @@ internal class QueueRefiller(
     private val scope: CoroutineScope,
     private val sessionContext: CoroutineContext,
     private val workContext: CoroutineContext,
-    private val onAppended: () -> Unit,
+    /** Records the queue or continuation change; the saved session must not keep a finished radio. */
+    private val onChanged: () -> Unit,
 ) {
     /** Dropped when other playback replaces the queue it was started with. */
-    private var continuation: QueueContinuation? = null
+    var continuation: QueueContinuation? = null
+        private set
     private var refill: Job? = null
 
     fun attach(continuation: QueueContinuation?) {
@@ -62,11 +64,12 @@ internal class QueueRefiller(
             if (batch.isEmpty()) {
                 trace("continuation finished")
                 continuation = null
+                onChanged()
                 return@launch
             }
             queue.appendTracks(batch)
             trace("continuation appended ${batch.size}; queue size=${queue.queue.value.items.size}")
-            onAppended()
+            onChanged()
         }.also { refill = it }
     }
 

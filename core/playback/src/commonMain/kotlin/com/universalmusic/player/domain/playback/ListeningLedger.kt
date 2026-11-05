@@ -3,6 +3,7 @@ package com.universalmusic.player.domain.playback
 import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.RemoteSession
 import com.universalmusic.player.domain.model.PlaybackQueue
+import com.universalmusic.player.domain.model.ProviderId
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -24,6 +25,7 @@ internal class ListeningLedger(
     private val persistence: NowPlayingRecorder?,
     private val queue: StateFlow<PlaybackQueue>,
     private val nowPlaying: StateFlow<NowPlayingState>,
+    private val radio: () -> ProviderId?,
     private val scope: CoroutineScope,
     private val sessionContext: CoroutineContext,
     private val clock: () -> Long,
@@ -108,6 +110,7 @@ internal class ListeningLedger(
         origin = origin,
         local = local,
         remoteSession = remoteSession,
+        radio = radio(),
     )
 
     private fun restartCheckpoints(playing: Boolean) {

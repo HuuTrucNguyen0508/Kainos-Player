@@ -292,8 +292,8 @@ internal class AndroidLibrespotPlaybackHost(
                     }
                     override fun onConnectionEstablished() = Unit
                 })
-                // Autoplay is off, so each directly loaded track ends its context.
-                installLibrespotEndOfContextGuard()
+                // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
+                installLibrespotStaleTaskGuard()
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer
