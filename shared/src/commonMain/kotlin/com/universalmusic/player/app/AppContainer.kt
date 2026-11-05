@@ -51,6 +51,7 @@ import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.continuation.SourceRadio
+import com.universalmusic.player.domain.echo.EchoStatusSource
 import com.universalmusic.player.domain.continuation.planSearchPlayback
 import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.domain.matching.TrackMatcher
@@ -295,6 +296,8 @@ class AppContainer(
         onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
     )
     init { startupMark("providers_end") }
+    /** What the Echo gateway is playing; null on platforms with no source. Polls only while collected. */
+    val echoStatus: EchoStatusSource? = echoStatusBaseUrl()?.let { EchoStatusPoller.http(scope, http, it) }
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
     val ready = _ready.asStateFlow()

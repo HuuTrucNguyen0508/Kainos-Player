@@ -63,6 +63,8 @@ internal fun HomeContent(
     trackActions: TrackActionsPresenter? = null,
 ) {
     val ui by presenter.state.collectAsState()
+    // Collecting is what keeps the gateway polled, so it runs only while Home is on screen.
+    val echo by presenter.echo.collectAsState()
     var editingPins by remember { mutableStateOf(false) }
     val sessionFocus = ui.sessionFocus
     val showSessionCard = homeSessionCardVisible(playerPaneVisible, sessionFocus)
@@ -119,6 +121,9 @@ internal fun HomeContent(
                 accent = Accents.home,
                 modifier = Modifier.padding(top = 20.dp),
             )
+
+            // The Echo plays apart from this app, so its card shows even beside the Now Playing pane.
+            EchoOnHome(echo)
 
             if (showSessionCard && sessionFocus != null) {
                 Spacer(Modifier.height(16.dp))
