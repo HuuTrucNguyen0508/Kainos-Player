@@ -7,6 +7,7 @@ import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.domain.echo.EchoStatus
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
@@ -90,6 +91,8 @@ internal class HomePresenter(
     private val playHistory: StateFlow<PlayHistory> = MutableStateFlow(PlayHistory.EMPTY),
     private val recentlyAdded: StateFlow<List<AddedTrack>> = MutableStateFlow(emptyList()),
     private val clock: () -> Long = ::currentTimeMillis,
+    /** Kept out of [state]: the gateway's replies must not rebuild the landing page. */
+    val echo: StateFlow<EchoStatus?> = MutableStateFlow(null),
 ) {
     // Home reads track and play state only. Position ticks must not rebuild the landing page.
     private val stableNow = nowPlaying
@@ -439,6 +442,7 @@ internal class HomePresenter(
             scope = scope,
             playHistory = container.listeningHistory.history,
             recentlyAdded = container.local.recentlyAdded,
+            echo = container.echoStatus?.status ?: MutableStateFlow(null),
         )
     }
 }

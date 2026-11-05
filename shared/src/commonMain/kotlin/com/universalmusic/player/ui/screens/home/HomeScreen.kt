@@ -120,6 +120,9 @@ internal fun HomeContent(
                 modifier = Modifier.padding(top = 20.dp),
             )
 
+            // The Echo plays apart from this app, so its card shows even beside the Now Playing pane.
+            EchoOnHome(presenter.echo)
+
             if (showSessionCard && sessionFocus != null) {
                 Spacer(Modifier.height(16.dp))
                 SessionCard(
