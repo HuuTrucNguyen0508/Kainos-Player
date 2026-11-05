@@ -16,6 +16,6 @@ depuis ce dossier. Locale : **fr-FR**, distribution : **FR**.
 
 Phrase de test :
 
-> Alexa, ouvre aden
+> Alexa, ouvre personnel
 
 Endpoint : `https://theadenkingof.taila3d69a.ts.net/alexa`

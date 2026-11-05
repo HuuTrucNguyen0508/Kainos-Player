@@ -270,7 +270,7 @@ def test_next_and_previous_walk_the_same_order(echo: Echo):
 def test_transport_with_no_session_only_speaks(echo: Echo, name: str):
     response = echo.send(intent(name))
     assert "directives" not in response
-    assert response["outputSpeech"]["text"] == "Rien en cours. Dis lance aden."
+    assert response["outputSpeech"]["text"] == "Rien en cours. Dis lance personnel."
     assert echo.player.sessions.count == 0
 
 

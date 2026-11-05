@@ -20,8 +20,8 @@
           "summary": "Lit un flux FLAC local de test Kainos sur Echo.",
           "description": "Skill de développement pour la passerelle Echo Kainos (phase 4). Lance le flux de test configuré.",
           "examplePhrases": [
-            "Alexa, lance aden",
-            "Alexa, ouvre aden"
+            "Alexa, lance personnel",
+            "Alexa, ouvre personnel"
           ],
           "keywords": [
             "musique",

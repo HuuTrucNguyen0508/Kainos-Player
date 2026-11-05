@@ -20,7 +20,7 @@ Separate from Kainos `PlayerSession`, Home Sync, and the main app UI.
 
 | Say or press | Result |
 | --- | --- |
-| "Alexa, lance aden", or open the skill | Fresh shuffle of the whole folder |
+| "Alexa, lance personnel", or open the skill | Fresh shuffle of the whole folder |
 | "Alexa, stop", pause button | Stop and save the exact position |
 | "Alexa, reprends", play button | Same track, same position, same queue. Fresh shuffle if there is no session |
 | "Alexa, suivant", "précédent", buttons | Walk the queue. Clears repeat-one |
@@ -142,7 +142,7 @@ See [`alexa-skill/README.md`](alexa-skill/README.md).
 Flow:
 
 1. Funnel exposes `https://<host>/alexa` and the token stream.
-2. “Alexa, lance aden” → LaunchRequest → `AudioPlayer.Play` with the token HTTPS URL.
+2. “Alexa, lance personnel” → LaunchRequest → `AudioPlayer.Play` with the token HTTPS URL.
 3. Echo pulls AAC from Funnel → gateway → FFmpeg.
 
 After creating the skill, put `ALEXA_SKILL_ID` in `.env` and recreate the container.
