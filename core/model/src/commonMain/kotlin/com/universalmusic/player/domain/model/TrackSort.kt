@@ -8,51 +8,27 @@ enum class TrackSort {
     ;
 
     fun sort(tracks: List<Track>): List<Track> {
-        val titleTieBreaker = compareBy<Track>({ it.title.trim().lowercase() }, { it.canonicalId })
-        val comparator = when (this) {
-            NAME_ASCENDING -> Comparator { left, right ->
-                compareTitles(left, right, descending = false, titleTieBreaker)
+        val keys = tracks.map { SortKey(it, it.title.trim().lowercase(), it.durationMs?.takeIf { ms -> ms > 0 }) }
+        val descending = this == NAME_DESCENDING || this == DURATION_DESCENDING
+        val byDuration = this == DURATION_ASCENDING || this == DURATION_DESCENDING
+        return keys.sortedWith { left, right ->
+            val primary = if (byDuration) {
+                when {
+                    left.duration == null && right.duration == null -> 0
+                    left.duration == null -> return@sortedWith 1
+                    right.duration == null -> return@sortedWith -1
+                    else -> left.duration.compareTo(right.duration)
+                }
+            } else left.title.compareTo(right.title)
+            when {
+                primary != 0 -> if (descending) -primary else primary
+                else -> {
+                    val title = left.title.compareTo(right.title)
+                    if (title != 0) title else left.track.canonicalId.compareTo(right.track.canonicalId)
+                }
             }
-            NAME_DESCENDING -> Comparator { left, right ->
-                compareTitles(left, right, descending = true, titleTieBreaker)
-            }
-            DURATION_ASCENDING -> compareDurations(descending = false, titleTieBreaker)
-            DURATION_DESCENDING -> compareDurations(descending = true, titleTieBreaker)
-        }
-        return tracks.sortedWith(comparator)
-    }
-
-    private fun compareTitles(
-        left: Track,
-        right: Track,
-        descending: Boolean,
-        titleTieBreaker: Comparator<Track>,
-    ): Int {
-        val leftTitle = left.title.trim().lowercase()
-        val rightTitle = right.title.trim().lowercase()
-        val primary = leftTitle.compareTo(rightTitle)
-        return if (primary != 0) {
-            if (descending) -primary else primary
-        } else {
-            titleTieBreaker.compare(left, right)
-        }
-    }
-
-    private fun compareDurations(
-        descending: Boolean,
-        titleTieBreaker: Comparator<Track>,
-    ): Comparator<Track> = Comparator { left, right ->
-        val leftDuration = left.durationMs?.takeIf { it > 0 }
-        val rightDuration = right.durationMs?.takeIf { it > 0 }
-        when {
-            leftDuration == null && rightDuration == null -> titleTieBreaker.compare(left, right)
-            leftDuration == null -> 1
-            rightDuration == null -> -1
-            leftDuration != rightDuration -> {
-                val primary = leftDuration.compareTo(rightDuration)
-                if (descending) -primary else primary
-            }
-            else -> titleTieBreaker.compare(left, right)
-        }
+        }.map { it.track }
     }
 }
+
+private data class SortKey(val track: Track, val title: String, val duration: Long?)

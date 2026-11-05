@@ -11,7 +11,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.unit.dp
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.Skin
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -29,6 +39,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.compose.asPainter
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,7 +103,8 @@ fun rememberArtworkTint(artworkUrl: String?): Color? {
 fun rememberAlbumLight(artworkUrl: String?): State<Color> {
     val scheme = MaterialTheme.colorScheme
     val tint = rememberArtworkTint(artworkUrl)
-    val target = remember(tint, scheme) { albumLightColor(tint ?: scheme.primary, scheme) }
+    val dark = LocalKainosPalette.current.isDark
+    val target = remember(tint, scheme, dark) { albumLightColor(tint ?: scheme.primary, scheme, dark) }
     return animateColorAsState(target, animationSpec = tween(durationMillis = 700), label = "albumLight")
 }
 
@@ -104,15 +116,62 @@ fun Modifier.albumLight(
     centerY: Float = 0.3f,
 ): Modifier = drawBehind {
     val radius = max(size.width, size.height) * 0.75f
+    val opacity = if (darkScheme) 0.55f else 0.45f
     drawRect(
         Brush.radialGradient(
-            0f to light.copy(alpha = if (darkScheme) 0.55f else 0.45f),
-            0.5f to light.copy(alpha = if (darkScheme) 0.20f else 0.16f),
+            0f to light.copy(alpha = opacity),
+            0.25f to light.copy(alpha = opacity * 0.844f),
+            0.5f to light.copy(alpha = opacity * 0.5f),
+            0.75f to light.copy(alpha = opacity * 0.156f),
             1f to Color.Transparent,
             center = Offset(size.width * centerX, size.height * centerY),
             radius = radius,
         ),
     )
+}
+
+/** Folio washes the whole Now Playing surface in ink-tinted light; Caelestia keeps it inside the cover card. */
+@Composable
+fun Modifier.skinAlbumLight(light: Color, centerX: Float, centerY: Float): Modifier =
+    if (LocalSkinTokens.current.skin == Skin.FOLIO) albumLight(light, LocalKainosPalette.current.isDark, centerX, centerY) else this
+
+/**
+ * The cover with its album light. Folio adds the coloured rule under the cover, drawn outside the
+ * layout bounds so the controls never move; Caelestia sets the cover in a tonal card whose glow is
+ * the light mixed 45% toward primaryContainer.
+ */
+@Composable
+fun AlbumLightCover(light: Color, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val tokens = LocalSkinTokens.current
+    val scheme = MaterialTheme.colorScheme
+    if (tokens.skin == Skin.FOLIO) {
+        Box(
+            modifier.drawWithContent {
+                drawContent()
+                val width = 44.dp.toPx()
+                val y = size.height + 10.dp.toPx()
+                drawLine(light, Offset((size.width - width) / 2, y), Offset((size.width + width) / 2, y), 2.dp.toPx())
+            },
+        ) { content() }
+    } else {
+        val glow = lerp(light, scheme.primaryContainer, .45f)
+        Box(
+            modifier
+                .clip(RoundedCornerShape(tokens.rounding.extraLarge))
+                .background(scheme.surfaceContainer)
+                .drawBehind {
+                    drawRect(
+                        Brush.radialGradient(
+                            0f to glow.copy(alpha = .7f),
+                            1f to Color.Transparent,
+                            center = Offset(size.width / 2, size.height / 2),
+                            radius = size.maxDimension * .7f,
+                        ),
+                    )
+                }
+                .padding(14.dp),
+        ) { content() }
+    }
 }
 
 /** Horizontal wash for the mini player: the light sits under the cover and fades out across the bar. */
@@ -125,8 +184,7 @@ fun Modifier.albumLightStrip(light: Color, darkScheme: Boolean): Modifier = draw
     )
 }
 
-internal fun albumLightColor(source: Color, scheme: ColorScheme): Color {
-    val dark = scheme.isDark
+internal fun albumLightColor(source: Color, scheme: ColorScheme, dark: Boolean = scheme.isDark): Color {
     val (h, s, _) = source.toHsl()
     // Near-grey covers keep a hint of the scheme accent instead of glowing flat grey.
     val hue = if (s < 0.12f) scheme.primary.toHsl().first else h

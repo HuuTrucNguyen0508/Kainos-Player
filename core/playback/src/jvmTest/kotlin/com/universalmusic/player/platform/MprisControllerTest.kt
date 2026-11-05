@@ -17,11 +17,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import com.universalmusic.player.domain.model.RepeatMode
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.Assume.assumeTrue
 
 /**
  * MPRIS registration is best-effort against the session bus. Wiring tests do not require D-Bus;
@@ -31,6 +34,41 @@ import kotlin.test.assertTrue
 class MprisControllerTest {
     private val busName = mprisBusName("test${ProcessHandle.current().pid()}")
     private val playerName = busName.removePrefix("org.mpris.MediaPlayer2.")
+    @Test
+    fun loopStatusWritesSetRequestedModeOnConfinedSession() = runTest {
+        val session = PlayerSession(
+            RecordingEngineForMpris(), DefaultSourceResolver(), backgroundScope,
+            confineTo = StandardTestDispatcher(testScheduler),
+        )
+        val facade = MprisFacade(session) {}
+        for ((value, mode) in listOf(
+            "Track" to RepeatMode.ONE, "Playlist" to RepeatMode.ALL, "None" to RepeatMode.OFF,
+            "Track" to RepeatMode.ONE, "Track" to RepeatMode.ONE,
+        )) {
+            facade.Set(MprisController.IFACE_PLAYER, "LoopStatus", value)
+            runCurrent()
+            assertEquals(mode, session.queueState.value.repeat, value)
+        }
+    }
+
+    @Test
+    fun stopKeepsQueueAndPositionForResume() = runTest {
+        val engine = RecordingEngineForMpris()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("One", "A", provider = ProviderId.SAMPLE))
+        runCurrent()
+        session.seekTo(4200)
+        runCurrent()
+        MprisFacade(session) {}.Stop()
+        runCurrent()
+        assertEquals(1, session.queueState.value.items.size)
+        assertEquals(4200, session.nowPlaying.value.positionMs)
+        assertEquals(EngineStatus.IDLE, engine.state.value.status)
+        session.playTransport()
+        runCurrent()
+        assertEquals(4200, session.nowPlaying.value.positionMs)
+    }
+
     @Test
     fun instanceSuffixesTheBusName() {
         assertEquals("org.mpris.MediaPlayer2.kainosplayer", mprisBusName(null))
@@ -68,10 +106,11 @@ class MprisControllerTest {
 
     @Test
     fun livePlayerctlSeesSessionMetadata() = runBlocking(Dispatchers.Default) {
-        if (System.getenv("DBUS_SESSION_BUS_ADDRESS").isNullOrBlank()) return@runBlocking
-        if (runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() != 0) {
-            return@runBlocking
-        }
+        assumeTrue("Needs a D-Bus session bus", !System.getenv("DBUS_SESSION_BUS_ADDRESS").isNullOrBlank())
+        assumeTrue(
+            "Needs playerctl",
+            runCatching { ProcessBuilder("playerctl", "--version").start().waitFor() }.getOrNull() == 0,
+        )
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val engine = RecordingEngineForMpris()
         val session = PlayerSession(engine, DefaultSourceResolver(), scope)

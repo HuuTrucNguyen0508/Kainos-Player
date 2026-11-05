@@ -14,6 +14,22 @@ const val METADATA_CACHE_MAX_ENTRIES: Int = 500
 /** Soft cap on downloaded artwork bytes under the cache directory. */
 const val METADATA_CACHE_MAX_ARTWORK_BYTES: Long = 50L * 1024L * 1024L
 
+/** Largest single artwork download. */
+const val MAX_ARTWORK_BYTES: Int = 2 * 1024 * 1024
+
+/** Null for an empty response or one over the limit, which costs at most [MAX_ARTWORK_BYTES] + 1 bytes to find out. */
+fun readBoundedArtwork(read: (ByteArray, Int, Int) -> Int): ByteArray? {
+    var buffer = ByteArray(16 * 1024)
+    var size = 0
+    while (size <= MAX_ARTWORK_BYTES) {
+        if (size == buffer.size) buffer = buffer.copyOf(minOf(buffer.size * 2, MAX_ARTWORK_BYTES + 1))
+        val count = read(buffer, size, buffer.size - size)
+        if (count < 0) break
+        size += count
+    }
+    return buffer.copyOf(size).takeIf { size in 1..MAX_ARTWORK_BYTES }
+}
+
 @Serializable
 data class MetadataCacheIndex(
     val version: Int = METADATA_CACHE_FORMAT_VERSION,
@@ -108,7 +124,7 @@ class DefaultMetadataArtworkCache(
         if (artworkLocal == null && !remote.isNullOrBlank() && isRemoteUrl(remote)) {
             runCatching {
                 val bytes = downloadArtwork(remote) ?: return@runCatching
-                if (bytes.isEmpty() || bytes.size > 2 * 1024 * 1024) return@runCatching
+                if (bytes.isEmpty() || bytes.size > MAX_ARTWORK_BYTES) return@runCatching
                 enforceArtworkBudget(bytes.size.toLong())
                 artworkLocal = disk.saveArtwork(track.canonicalId, bytes)
             }

@@ -1,12 +1,17 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.history.PlayCount
+import com.universalmusic.player.data.history.PlayHistory
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.playlist.PersistedPlaylistEntry
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.domain.matching.track
+import com.universalmusic.player.domain.model.AlbumRef
+import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -148,11 +153,113 @@ class HomeContentTest {
     fun configuredFoldersDoNotReintroduceTheDefaultOnceExplicit() {
         assertEquals(listOf("/music"), configuredMusicFolders(emptyList(), localMusicFoldersConfigured = false, defaultFolder = "/music"))
         assertEquals(emptyList(), configuredMusicFolders(emptyList(), localMusicFoldersConfigured = true, defaultFolder = "/music"))
-        assertEquals("Spotify is offline · Open Settings", providerAttentionMessage(
-            localState = ProviderState.AVAILABLE,
-            spotifyState = ProviderState.UNAVAILABLE,
-            youtubeState = ProviderState.AVAILABLE,
-        ))
+    }
+
+    @Test
+    fun favoritesSummaryCountsBySourceAndUsesStableCovers() {
+        val old = track("Old", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "local:old", artwork = Artwork("old.png"))
+        val newer = track("Newer", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "localfile:newer", artwork = Artwork("new.png"))
+        val liked = track("Liked", "Artist", provider = ProviderId.SPOTIFY).copy(canonicalId = "spotify:liked")
+        val summary = favoritesSummary(
+            favoriteIds = linkedSetOf("local:old", "spotify:liked", "yt:v1", "localfile:newer"),
+            catalog = listOf(old, newer, liked),
+        )
+        assertEquals(4, summary.count)
+        assertEquals(2, summary.local)
+        assertEquals(1, summary.spotify)
+        assertEquals(1, summary.youtube)
+        assertEquals(listOf("new.png", "old.png"), summary.covers.map { it.url })
+        assertEquals(summary, favoritesSummary(linkedSetOf("localfile:newer", "yt:v1", "spotify:liked", "local:old"), listOf(old, newer, liked)))
+        assertEquals(FavoritesSummary.EMPTY, favoritesSummary(emptySet(), listOf(old)))
+        assertEquals("4 hearted · 1 local song", homeEyebrow(favorites = 4, localTracks = 1))
+        assertEquals("Your listening", homeEyebrow(favorites = 0, localTracks = 0))
+    }
+
+    @Test
+    fun narrowHomeKeepsEightRecentsAfterExcludingTheSessionTrack() {
+        val recent = (0..12).map { index ->
+            track("Recent $index", "Artist", provider = ProviderId.LOCAL).copy(canonicalId = "local:$index")
+        }
+        val shown = continueListeningTracks(
+            recent,
+            SessionFocus.Restored(recent.first(), isPlaying = false),
+            playerPaneVisible = false,
+            limit = continueListeningLimit(continueListeningColumns(380)),
+        )
+        assertEquals(listOf("local:1", "local:2", "local:3", "local:4", "local:5", "local:6", "local:7", "local:8"), shown.map { it.canonicalId })
+    }
+
+    @Test
+    fun libraryLedgerNamesEachSourceAndItsDoor() {
+        val facts = SourceFacts(
+            desktop = true, tools = com.universalmusic.player.app.SourceTools(),
+            local = ProviderState.AVAILABLE, localTrackCount = 512, musicFolders = listOf("/music"),
+            folderPicker = false, spotify = ProviderState.RATE_LIMITED, youtube = ProviderState.AVAILABLE,
+        )
+        val lines = libraryLines(sourceReadiness(facts), FavoritesSummary(95, 94, 0, 1, emptyList()), 0)
+        assertEquals(
+            listOf(LibraryMark.LOCAL, LibraryMark.HEARTS, LibraryMark.SPOTIFY, LibraryMark.YOUTUBE),
+            lines.map { it.mark },
+        )
+        assertEquals("512 songs in 1 folder", lines[0].detail)
+        assertEquals(LibraryDoor.LIBRARY, lines[0].door)
+        assertEquals(LibraryDoor.FAVORITES, lines[1].door)
+        assertEquals("Limited · Open Spotify settings", lines[2].detail)
+        assertEquals(LibraryDoor.SETTINGS, lines[2].door)
+        assertEquals(LibraryDoor.SEARCH, lines[3].door)
+
+        val empty = libraryLines(sourceReadiness(facts.copy(localTrackCount = 0, musicFolders = emptyList(), spotify = ProviderState.NOT_CONFIGURED, youtube = ProviderState.UNAVAILABLE)), FavoritesSummary.EMPTY, 2)
+        assertEquals(LibraryDoor.SETTINGS, empty[0].door)
+        assertEquals("2 Kainos playlists", empty[2].detail)
+        assertEquals("Offline · Open YouTube settings", empty.last().detail)
+    }
+
+    @Test
+    fun pinSuggestionsComeFromTheLibraryAndStopOnceThereArePins() {
+        val album = track("One", "Artist", provider = ProviderId.LOCAL).copy(
+            canonicalId = "local:1",
+            album = AlbumRef("album:a", "Alpha", Artwork("a.png")),
+        )
+        val albumTwo = album.copy(canonicalId = "local:2")
+        val single = track("Solo", "Artist", provider = ProviderId.LOCAL).copy(
+            canonicalId = "local:3",
+            album = AlbumRef("album:b", "Beta"),
+        )
+        val playlist = PersistedKainosPlaylist(
+            id = "kainos:playlist:a",
+            title = "Morning",
+            entries = listOf(PersistedPlaylistEntry("e1", PersistedTrack("t1", "One", artworkUrl = "p.png"))),
+            updatedAtMs = 5,
+        )
+        val suggestions = pinSuggestions(
+            homePins = listOf(pin("pin-b", HomePinKind.ALBUM, "album:b", "Beta")),
+            kainosPlaylists = listOf(playlist, PersistedKainosPlaylist(id = "kainos:playlist:empty", title = "Empty")),
+            spotifyPlaylists = listOf(
+                Playlist(canonicalId = "spotify-playlist:x", title = "Mix", trackCount = 30, source = ProviderEntityRef(ProviderId.SPOTIFY, "x")),
+            ),
+            spotifyState = ProviderState.RATE_LIMITED,
+            localTracks = listOf(album, albumTwo, single),
+            folders = listOf("/music/Playlist", "/music/empty"),
+            folderTrackCounts = mapOf("/music/Playlist" to 3),
+        )
+        assertEquals(
+            listOf("kainos:playlist:a", "/music/Playlist", "album:a"),
+            suggestions.map { it.targetId },
+        )
+        assertEquals("Kainos · 1 track", suggestions[0].subtitle)
+        assertEquals("p.png", suggestions[0].artwork?.url)
+        assertEquals("Folder · 3 tracks", suggestions[1].subtitle)
+        assertEquals("Album · 2 tracks", suggestions[2].subtitle)
+        assertEquals("a.png", suggestions[2].artwork?.url)
+        val resolved = suggestions[2].asResolvedPin()
+        assertEquals(PinStatus.READY, resolved.status)
+        assertEquals(HomePinKind.ALBUM, resolved.pin.kind)
+
+        val enough = List(PIN_SUGGESTIONS_UNTIL_PINS) { pin("pin-$it", HomePinKind.LOCAL_FOLDER, "/f$it", "F$it") }
+        assertTrue(pinSuggestions(enough, listOf(playlist), emptyList(), ProviderState.AVAILABLE, emptyList(), emptyList(), emptyMap()).isEmpty())
+        assertEquals(3, continueListeningColumns(1300))
+        assertEquals(2, continueListeningColumns(800))
+        assertEquals(1, continueListeningColumns(500))
     }
 }
 
@@ -187,15 +294,18 @@ class HomePresenterTest {
     fun playFavoritesCallsThePlaybackLambda() = runTest(UnconfinedTestDispatcher()) {
         var calls = 0
         var opened = false
+        var shuffled: Boolean? = null
         val presenter = homePresenter(
             favoriteIds = MutableStateFlow(setOf("local")),
-            playFavoritesTracks = {
+            playFavoritesTracks = { shuffle ->
                 calls += 1
+                shuffled = shuffle
                 true
             },
         )
-        presenter.playFavorites { opened = true }
+        presenter.playFavorites(shuffle = true) { opened = true }
         assertEquals(1, calls)
+        assertEquals(true, shuffled)
         assertTrue(opened)
 
         var failed = 0
@@ -203,8 +313,56 @@ class HomePresenterTest {
         empty.playFavorites {}
         assertEquals(1, failed)
         assertEquals(
-            "Heart tracks in Library to build favorites.",
+            "Heart a song from Now Playing or its menu to build favorites.",
             empty.state.value.actionMessage,
+        )
+    }
+
+    @Test
+    fun historyShelvesShowRepeatsForgottenHeartsAndNewFilesAndHideWhenEmpty() = runTest(UnconfinedTestDispatcher()) {
+        val day = 24L * 60 * 60 * 1000
+        val now = 400 * day
+        val loop = track("Loop", "A", provider = ProviderId.LOCAL, canonicalId = "local:loop")
+        val stale = track("Stale", "B", provider = ProviderId.SPOTIFY, canonicalId = "spotify:stale")
+        val recentHeart = track("Fresh heart", "C", provider = ProviderId.SPOTIFY, canonicalId = "spotify:fresh")
+        val unhearted = track("Unhearted", "D", provider = ProviderId.LOCAL, canonicalId = "local:old")
+        val newFile = track("New file", "E", provider = ProviderId.LOCAL, canonicalId = "local:new")
+        val history = MutableStateFlow(PlayHistory.EMPTY)
+        val added = MutableStateFlow<List<AddedTrack>>(emptyList())
+        val presenter = homePresenter(
+            favoriteIds = MutableStateFlow(setOf("spotify:stale", "spotify:fresh")),
+            localTracks = MutableStateFlow(listOf(loop, unhearted, newFile)),
+            savedTracks = MutableStateFlow(listOf(stale, recentHeart)),
+            playHistory = history,
+            recentlyAdded = added,
+            clock = { now },
+        )
+        assertEquals(emptyList(), presenter.state.value.shelves)
+
+        // History keeps its own snapshot; the live local copy wins when the library has it.
+        history.value = PlayHistory(
+            onRepeat = listOf(PlayCount(loop.copy(title = "Old title"), plays = 5, lastPlayedAtMs = now - day)),
+            lastPlayedAtMs = mapOf("local:loop" to now - day, "spotify:stale" to now - 75 * day,
+                "spotify:fresh" to now - 10 * day, "local:old" to now - 90 * day),
+        )
+        added.value = listOf(AddedTrack(newFile, now - 3 * day))
+
+        assertEquals(
+            listOf(
+                ShelfKind.ON_REPEAT to listOf("Loop" to "5 plays"),
+                ShelfKind.REDISCOVER to listOf("Stale" to "2 months ago"),
+                ShelfKind.RECENTLY_ADDED to listOf("New file" to "3 days ago"),
+            ),
+            presenter.state.value.shelves.map { shelf -> shelf.kind to shelf.rows.map { it.track.title to it.note } },
+        )
+    }
+
+    @Test
+    fun ageLabelsReadAsPlainRelativeTime() {
+        val day = 24L * 60 * 60 * 1000
+        assertEquals(
+            listOf("Today", "Yesterday", "6 days ago", "1 week ago", "4 weeks ago", "1 month ago", "11 months ago", "2 years ago"),
+            listOf(0L, 1, 6, 7, 29, 30, 364, 800).map { ageLabel(1_000 * day, 1_000 * day - it * day) },
         )
     }
 
@@ -221,12 +379,18 @@ class HomePresenterTest {
         spotifyPlaylists: StateFlow<List<Playlist>> = MutableStateFlow(emptyList()),
         nowPlaying: StateFlow<NowPlayingState> = MutableStateFlow(NowPlayingState()),
         settings: StateFlow<AppSettings> = MutableStateFlow(AppSettings()),
-        playFavoritesTracks: () -> Boolean = { false },
+        playFavoritesTracks: (Boolean) -> Boolean = { false },
+        savedTracks: StateFlow<List<Track>> = MutableStateFlow(emptyList()),
+        playHistory: StateFlow<PlayHistory> = MutableStateFlow(PlayHistory.EMPTY),
+        recentlyAdded: StateFlow<List<AddedTrack>> = MutableStateFlow(emptyList()),
+        clock: () -> Long = { 0 },
         scope: CoroutineScope = backgroundScope,
     ) = HomePresenter(
         recentlyPlayed = recentlyPlayed,
         homePins = homePins,
         favoriteIds = favoriteIds,
+        savedTracks = savedTracks,
+        spotifyTracks = MutableStateFlow(emptyList()),
         spotifyState = spotifyState,
         youtubeState = youtubeState,
         localState = localState,
@@ -236,6 +400,13 @@ class HomePresenterTest {
         spotifyPlaylists = spotifyPlaylists,
         nowPlaying = nowPlaying,
         settings = settings,
+        ready = MutableStateFlow(true),
+        sources = SourcesPresenter(
+            settings, MutableStateFlow(com.universalmusic.player.app.SourceTools()),
+            localState, localTracks, spotifyState, youtubeState,
+            desktop = true, folderPicker = true, defaultMusicFolder = { "" }, recheckTools = {}, scope = scope,
+        ).state,
+        pickFolder = {},
         defaultMusicFolder = { "" },
         tracksInLocalFolder = { emptyList() },
         loadSpotifyPlaylistTracks = { emptyList() },
@@ -246,7 +417,11 @@ class HomePresenterTest {
         resumeListeningSession = {},
         moveHomePin = { _, _ -> },
         unpinHome = {},
+        pinSuggestionHome = {},
         scope = scope,
+        playHistory = playHistory,
+        recentlyAdded = recentlyAdded,
+        clock = clock,
     )
 }
 

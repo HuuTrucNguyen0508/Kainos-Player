@@ -37,7 +37,7 @@ Handoff: Cleartext HTTP removed; hub uses self-signed TLS with SHA-256 pin in `k
 | Local-heart rematch by filename after vault sync | Done |
 | **HTTPS + pinned hub leaf cert (SHA-256 DER)** | Done |
 | Cleartext `kainos-homesync:1` / HTTP | Rejected |
-| In-app QR render + camera scan | Deferred |
+| In-app QR render + camera scan | Done (`kainos-pair:3` link with the hub pin; CameraX + ZXing scan, then the same code compare) |
 | Content-hash local canonical ids | Deferred |
 
 ### Security floor (current)
@@ -102,7 +102,7 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 ## Local hearts (post Phase 3)
 
 - Wire id: `localkey:lc1:<hash>` when known; `localfile:<basename>` (lowercase) remains the fallback. Device `local:` ids stay on-device.
-- Home-LAN heart ops: YouTube + localfile only (not Spotify — same account already covers Spotify).
+- Home-LAN heart ops: YouTube, localfile, and Spotify-scoped app hearts. Spotify ops cross only when both documents carry the same `spotifyAccountId`; the hub reply and the v1 downgrade omit them for any other peer.
 - When the basename is missing on a peer, Sync now lists pending transfers; confirm copies the blob, then rematch hearts.
 
 ## Architecture
@@ -157,6 +157,14 @@ The hub serves `/kainos-sync/v2/{hearts,playlists,vault/index}` alongside v1. He
 
 Clients try v2 first and retry v1 only on 404. The pinned client's normal error validation is disabled for these versioned POST requests so 404 can reach the fallback decision; explicit status checks still reject auth/server failures. v1 bodies/responses restore basename IDs and clear keys. Ambiguous heart basenames with distinct known keys are omitted from v1 rather than merged. The pairing URI and health/blob routes are unchanged. Keep v1 for one release after this cutover, then remove it.
 
-396 tests pass across the extracted modules. Live loopback HTTPS tests cover new hub/v2 clients, old-client v1 routes, new pinned-client fallback to a v1-only hub, encrypted vault indexes and blob transfer. These fixtures use temporary certificates/data and do not use the user's pairing. Actual old/new APK and desktop interoperability, Android SAF cost and manual playback/UI checks remain with the user. Do not downgrade the user's installed app merely to run a compatibility test; use an isolated old-build profile/device.
+The full JVM test suite passes across the extracted modules. Live loopback HTTPS tests cover new hub/v2 clients, old-client v1 routes, new pinned-client fallback to a v1-only hub, encrypted vault indexes and blob transfer. These fixtures use temporary certificates/data and do not use the user's pairing. Actual old/new APK and desktop interoperability, Android SAF cost and manual playback/UI checks remain with the user. Do not downgrade the user's installed app merely to run a compatibility test; use an isolated old-build profile/device.
+
+## Home pins, 2026-11-04
+
+`POST /kainos-sync/v3/pins` exchanges a `HomePinsSyncDocument`: live portable pins in Home order (Kainos playlists, and Spotify playlists under a known `spotifyAccountId`), unpin tombstones, and the stamp of the last reorder. Each pin and tombstone carries a `(revision, deviceId)` stamp and the newest wins per kind and target. The order of shared pins follows the newer reorder stamp; adding or removing a pin never bumps it, so a pin added on one device does not undo a reorder made on the other. Album and folder pins never travel and keep their slots. A receiver applies Spotify pins only when both documents carry the same account, and the hub strips them from replies to other accounts. A Kainos pin whose playlist is missing on the receiver is skipped without a tombstone and adopted on a later sync once the playlist exists. Hubs without the route answer 404 and the client skips pins; the v1 and v2 routes are unchanged. Schema 8 adds `home_pin_tombstone` and the order stamp columns on `library_meta`.
+
+## Cached audio, 2026-11-04
+
+`POST /kainos-sync/v3/cached-audio` exchanges a `CachedAudioSyncDocument`: this device's offers (hearted `audio-cache/` entries named by their immutable cache file, the `fileToken`), the owners it already holds, and its `spotifyAccountId`. The hub remembers the client's offers and replies with its own. The client plans a download for each hub offer it hearts and lacks, and an upload for each of its offers the hub lacks; a `spotify:` owner (a YouTube match) is offered only when both devices carry the same known account. Spotify DRM audio is never cached, so it is never offered. `GET …/cached-audio/blob?owner&token` serves 206 ranges of the file the hub's index names for that owner (never a path), `GET …/cached-audio/hash` its SHA-256, and `PUT …/cached-audio/blob?owner&token&offset&total&sha256` accepts chunks of an offered file only. Both directions stage under `audio-cache/incoming/` (outside the budget), check the destination budget against its pinned and now-playing downloads before a byte moves, publish only when the staged bytes match the SHA-256, and then enter the cache through the normal put, which evicts the oldest unpinned download if needed. Any failure deletes the staged file; Transfer again restarts. Hubs without the route answer 404 and the client skips cached audio.
 
 See [module ownership](../ARCHITECTURE.md) and the root `HANDOVER.md` for build commands, installed APK and current verification.

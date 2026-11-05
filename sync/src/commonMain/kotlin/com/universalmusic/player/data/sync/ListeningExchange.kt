@@ -28,6 +28,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -233,6 +234,17 @@ class HttpListeningHubClient(
 }
 
 suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrowser): ListeningHubClient {
+    val endpoint = try {
+        resolvePairedHub(hub, http, browser)
+    } catch (err: Throwable) {
+        http.close()
+        throw err
+    }
+    return HttpListeningHubClient(endpoint, http)
+}
+
+/** The stored hub address when it answers, otherwise the one mDNS advertises; throws when neither does. */
+internal suspend fun resolvePairedHub(hub: PairedPeer, http: HttpClient, browser: HubBrowser): HubEndpoint {
     val resolver = HubEndpointResolver(
         browser = browser,
         probe = { endpoint ->
@@ -244,18 +256,9 @@ suspend fun openListeningHub(hub: PairedPeer, http: HttpClient, browser: HubBrow
         log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
     )
     val stored = hub.lastKnownHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, hub.lastKnownPort) }
-    val result = try {
-        resolver.resolve(stored, hub.fingerprint.hex)
-    } catch (err: Throwable) {
-        http.close()
-        throw err
-    }
-    return when (result) {
-        is ResolveResult.Resolved -> HttpListeningHubClient(result.endpoint, http)
-        is ResolveResult.HubNotFound -> {
-            http.close()
-            throw IllegalStateException(result.reason)
-        }
+    return when (val result = resolver.resolve(stored, hub.fingerprint.hex)) {
+        is ResolveResult.Resolved -> result.endpoint
+        is ResolveResult.HubNotFound -> throw IllegalStateException(result.reason)
     }
 }
 
@@ -416,9 +419,16 @@ class ListeningDeliveryRunner(
 
     private suspend fun run() {
         var retrying = false
+        var failures = 0
         while (true) {
-            if (retrying && retryInProcess()) withTimeoutOrNull(retryMs) { requests.receive() } else requests.receive()
+            if (retrying && retryInProcess()) {
+                val wait = (retryMs * (1L shl (failures - 1).coerceIn(0, 4))).coerceAtMost(300_000L)
+                // Position publications stay conflated; only a new foreground visit bypasses backoff.
+                withTimeoutOrNull(wait) { foregroundRequested.first { it } }
+                requests.tryReceive()
+            } else requests.receive()
             val exchangeOnForeground = foregroundRequested.getAndUpdate { false }
+            if (exchangeOnForeground) failures = 0
             retrying = try {
                 if (!isAppForeground() && delivery.canDeliverPending()) scheduleBackground()
                 delivery.deliverPending(exchangeOnForeground) == DeliveryOutcome.RETRY && delivery.canDeliverPending()
@@ -428,6 +438,7 @@ class ListeningDeliveryRunner(
                 PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening runner failed: ${err.message ?: err}")
                 true
             }
+            failures = if (retrying) failures + 1 else 0
             if (exchangeOnForeground && !foregroundRequested.value) onForegroundExchangeCompleted()
         }
     }

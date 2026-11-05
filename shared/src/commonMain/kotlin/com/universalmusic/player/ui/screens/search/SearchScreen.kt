@@ -1,6 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.reportsTextInputFocus
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,27 +12,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.platform.encodeUrl
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
@@ -43,13 +42,16 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.ProviderStatusRow
-import com.universalmusic.player.ui.components.TrackRow
 
 @Composable
 internal fun SearchScreen(
     presenter: SearchPresenter,
-    onPlayTrackInList: (List<Track>, Int, query: String) -> Unit,
+    onPlayTrackInList: (List<Track>, Int) -> Unit,
+    onPlayPlaylist: (List<Track>, Int, Boolean) -> Unit,
+    trackActions: TrackActionsPresenter,
     requestFocus: Boolean = false,
+    onOpenSettings: (SettingsTarget) -> Unit = {},
+    openLink: (String) -> Unit = ::openUrl,
 ) {
     val state by presenter.state.collectAsState()
     val query = state.query
@@ -61,7 +63,7 @@ internal fun SearchScreen(
     val spotify = state.spotify
     val youtube = state.youtube
     val downloads = state.downloads
-    val providersConfigured = state.providersConfigured
+    val openPlaylist by presenter.playlist.collectAsState()
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -69,7 +71,18 @@ internal fun SearchScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // The results keep their scroll while a playlist is open: their list state is held above this branch.
+    openPlaylist?.let { page ->
+        SearchPlaylistScreen(
+            presenter = page,
+            trackActions = trackActions,
+            availability = presenter::trackAvailability,
+            downloads = downloads,
+            onBack = { presenter.closePlaylist() },
+            onPlay = onPlayPlaylist,
+            openLink = openLink,
+        )
+    } ?: Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = query,
             onValueChange = presenter::setQuery,
@@ -80,7 +93,7 @@ internal fun SearchScreen(
                 .reportsTextInputFocus(),
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-            placeholder = { Text("Search Spotify and YouTube") },
+            placeholder = { Text(state.searchHint) },
             trailingIcon = {
                 if (query.isNotEmpty()) {
                     IconButton(onClick = { presenter.setQuery("") }) {
@@ -118,10 +131,23 @@ internal fun SearchScreen(
         val playlists = state.playlists
         val tracks = state.tracks
         when {
-            !providersConfigured -> EmptyState(
-                "Connect a provider",
-                "Search uses Spotify and YouTube only. Add a Spotify Client ID and/or YouTube Data API key in Settings. Local files stay in Library.",
-            )
+            state.searchable.isEmpty() -> Column {
+                EmptyState(
+                    "Search needs Spotify or YouTube",
+                    "Search covers those two services. Your local files have their own search in Library.",
+                )
+                Row(
+                    Modifier.padding(horizontal = 32.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = { onOpenSettings(SettingsTarget.YouTubeKey) }) { Text("Set up YouTube") }
+                    OutlinedButton(onClick = {
+                        onOpenSettings(
+                            if (spotify == ProviderState.NOT_CONFIGURED) SettingsTarget.SpotifyClientId else SettingsTarget.SpotifySignIn,
+                        )
+                    }) { Text("Set up Spotify") }
+                }
+            }
             loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
             error != null -> Text(
                 error,
@@ -129,28 +155,32 @@ internal fun SearchScreen(
                 modifier = Modifier.padding(20.dp),
             )
             query.isBlank() -> EmptyState(
-                "Search Spotify and YouTube",
-                "Local files are not included here — use Library search for your folders.",
+                state.searchHint,
+                "Your local files are not included here. Library has its own search for those.",
             )
             tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
                 CircularProgressIndicator(Modifier.padding(24.dp))
             } else {
                 EmptyState(
                     "No matches for \"${query.trim()}\"",
-                    "Nothing matched on Spotify or YouTube. Try a different title or artist, or check provider status above.",
+                    "Nothing matched on ${state.searchable.joinToString(" or ") { it.title }}. Try a different title or artist.",
                 )
             }
             else -> LazyColumn(state = listState) {
                 val trackList = tracks.orEmpty()
+                item(key = "results-heading") {
+                    SectionRule(state.searchable.joinToString(" and ") { it.title }, Modifier.padding(horizontal = 20.dp))
+                }
                 itemsIndexed(trackList, key = { index, track -> "track:${track.canonicalId}:$index" }) { _, track ->
                     val youtubeSource = track.sourceFor(ProviderId.YOUTUBE_MUSIC)
                     fun openYouTube() {
                         youtubeSource?.let {
-                            openUrl("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
+                            openLink("https://www.youtube.com/watch?v=${encodeUrl(it.providerTrackId)}")
                         }
                     }
-                    TrackRow(
-                        track,
+                    ActionTrackRow(
+                        track = track,
+                        actions = trackActions,
                         availability = remember(track, downloads) {
                             presenter.trackAvailability(track)
                         },
@@ -160,47 +190,28 @@ internal fun SearchScreen(
                             } else {
                                 val index = trackList.indexOfFirst { it.canonicalId == track.canonicalId }
                                     .coerceAtLeast(0)
-                                onPlayTrackInList(trackList, index, query.trim())
+                                onPlayTrackInList(trackList, index)
                             }
                         },
                         modifier = Modifier.padding(horizontal = 8.dp),
-                        trailing = {
-                            if (youtubeSource != null) {
-                                var menuOpen by remember(track.canonicalId) { mutableStateOf(false) }
-                                Row {
-                                    IconButton(onClick = { menuOpen = true }) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = "More actions for ${track.title}")
-                                    }
-                                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                        DropdownMenuItem(
-                                            text = { Text("Open YouTube") },
-                                            onClick = {
-                                                menuOpen = false
-                                                openYouTube()
-                                            },
-                                        )
-                                    }
-                                }
-                            }
+                        extras = if (youtubeSource != null) {
+                            listOf(TrackMenuExtra("Open YouTube", Icons.AutoMirrored.Filled.OpenInNew, ::openYouTube))
+                        } else {
+                            emptyList()
                         },
                     )
                 }
-                itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
-                    TextButton(
-                        onClick = {
-                            val id = encodeUrl(playlist.source.providerEntityId)
-                            when (playlist.source.provider) {
-                                ProviderId.YOUTUBE_MUSIC ->
-                                    openUrl("https://www.youtube.com/playlist?list=$id")
-                                ProviderId.SPOTIFY ->
-                                    openUrl("https://open.spotify.com/playlist/$id")
-                                else -> Unit
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                    ) {
-                        Text("${playlist.title} · Open on ${playlist.source.provider.displayName}")
+                if (playlists.isNotEmpty()) {
+                    item(key = "playlists-heading") {
+                        SectionRule("Playlists", Modifier.padding(horizontal = 20.dp).padding(top = 12.dp))
                     }
+                }
+                itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
+                    PlaylistResultRow(
+                        playlist = playlist,
+                        onClick = { presenter.openPlaylist(playlist) },
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
             }
         }

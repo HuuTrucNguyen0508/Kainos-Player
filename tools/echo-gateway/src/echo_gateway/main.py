@@ -6,7 +6,9 @@ import hmac
 import json
 import logging
 import uuid
+import re
 from collections.abc import AsyncGenerator, AsyncIterator
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -44,7 +46,21 @@ logger = logging.getLogger("echo_gateway")
 
 MAX_ALEXA_BODY_BYTES = 256 * 1024
 
+class StreamTokenFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn keeps the request target in args; also handle preformatted records.
+        redact = lambda value: re.sub(r"(/stream/t/)[^/?\s]+", r"\1[redacted]", value)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact(arg) if isinstance(arg, str) else arg for arg in record.args)
+        if isinstance(record.msg, str):
+            record.msg = redact(record.msg)
+        return True
+
+
 def configure_logging() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, StreamTokenFilter) for item in access.filters):
+        access.addFilter(StreamTokenFilter())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -91,6 +107,13 @@ class EncoderResponse(StreamingResponse):
 def create_app(settings: Settings | None = None) -> Starlette:
     configure_logging()
     cfg = settings or Settings.from_env()
+    local_only = cfg.host in {"127.0.0.1", "::1", "localhost"} and urlsplit(cfg.public_base_url).hostname in {
+        "127.0.0.1", "::1", "localhost",
+    }
+    if cfg.skip_alexa_signature_verify and not local_only:
+        raise ValueError("SKIP_ALEXA_SIGNATURE_VERIFY=true requires a local loopback HOST and PUBLIC_BASE_URL")
+    if not cfg.alexa_skill_id and not (cfg.skip_alexa_signature_verify and local_only):
+        raise ValueError("Set ALEXA_SKILL_ID=amzn1.ask.skill.<your-skill-id> in .env, then recreate the gateway container")
     transcoder = StreamTranscoder(cfg)
     library = Library(cfg.music_root)
     scan = LibraryScan(cfg, library)
@@ -336,7 +359,15 @@ def create_app(settings: Settings | None = None) -> Starlette:
 
     async def alexa(request: Request) -> Response:
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
-        body = await _read_limited(request, MAX_ALEXA_BODY_BYTES)
+        if not cfg.skip_alexa_signature_verify and (
+            not request.headers.get("SignatureCertChainUrl") or not request.headers.get("Signature-256")
+        ):
+            return JSONResponse({"error": "signature_headers"}, status_code=400)
+        try:
+            async with asyncio.timeout(10):
+                body = await _read_limited(request, MAX_ALEXA_BODY_BYTES)
+        except TimeoutError:
+            return JSONResponse({"error": "request_timeout"}, status_code=408)
         if body is None:
             logger.warning("alexa_reject request_id=%s category=body_too_large", request_id)
             return JSONResponse(

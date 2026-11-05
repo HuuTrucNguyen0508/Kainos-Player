@@ -5,11 +5,11 @@ import com.universalmusic.player.domain.model.QualityTier
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.exists
 import kotlin.io.path.isExecutable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -29,21 +29,15 @@ class JvmYouTubeStreamResolver(
         if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) return@withContext null
         val binary = binaryLocator() ?: return@withContext null
         val watchUrl = "https://www.youtube.com/watch?v=$id"
-        val process = ProcessBuilder(
+        val command = ProcessBuilder(
             binary.toAbsolutePath().toString(),
             "-f", "ba/bestaudio/best",
             "-j",
             "--no-playlist",
             "--no-warnings",
             watchUrl,
-        ).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        val finished = process.waitFor(90, TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            return@withContext null
-        }
-        if (process.exitValue() != 0) return@withContext null
+        )
+        val output = runInterruptible { command.readOutputWithin(90_000) } ?: return@withContext null
         val payload = output.lineSequence()
             .map { it.trim() }
             .firstOrNull { it.startsWith("{") && it.endsWith("}") }
@@ -52,6 +46,25 @@ class JvmYouTubeStreamResolver(
             ?: return@withContext null
         val url = info.url?.takeIf { it.startsWith("http") } ?: return@withContext null
         ResolvedYouTubeAudio(url = url, quality = info.toAudioQuality())
+    }
+
+    override suspend fun mix(videoId: String): List<YouTubeMixEntry> = withContext(Dispatchers.IO) {
+        val id = videoId.trim()
+        require(id.isNotEmpty() && id.none { it.isWhitespace() || it == '"' || it == '\'' || it == '&' }) {
+            "unsafe video id"
+        }
+        val binary = binaryLocator() ?: error("yt-dlp not found")
+        val command = ProcessBuilder(
+            binary.toAbsolutePath().toString(),
+            "--flat-playlist",
+            "-J",
+            "--playlist-end", MIX_LENGTH.toString(),
+            "--no-warnings",
+            "https://www.youtube.com/watch?v=$id&list=RD$id",
+        )
+        val output = runInterruptible { command.readOutputWithin(90_000) }
+            ?: error("yt-dlp failed reading the Mix")
+        parseYtDlpMix(output)
     }
 
     @Serializable
@@ -85,6 +98,34 @@ class JvmYouTubeStreamResolver(
     }
 }
 
+private const val MIX_LENGTH = 50
+
+private val mixJson = Json { ignoreUnknownKeys = true }
+
+@Serializable
+private data class YtDlpPlaylist(val entries: List<YtDlpEntry?> = emptyList())
+
+@Serializable
+private data class YtDlpEntry(
+    val id: String? = null,
+    val title: String? = null,
+    val channel: String? = null,
+    val uploader: String? = null,
+    val duration: Double? = null,
+)
+
+/** Videos of a `yt-dlp --flat-playlist -J` playlist dump, in order. */
+internal fun parseYtDlpMix(output: String): List<YouTubeMixEntry> =
+    mixJson.decodeFromString(YtDlpPlaylist.serializer(), output).entries.mapNotNull { entry ->
+        val id = entry?.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        YouTubeMixEntry(
+            videoId = id,
+            title = entry.title.orEmpty(),
+            channel = entry.channel ?: entry.uploader,
+            durationSeconds = entry.duration?.toLong(),
+        )
+    }
+
 internal fun findYtDlpBinary(): Path? {
     System.getenv("KAINOS_YT_DLP")?.trim()?.takeIf { it.isNotEmpty() }?.let { env ->
         Paths.get(env).takeIf { it.isExecutableFile() }?.let { return it }
@@ -94,10 +135,8 @@ internal fun findYtDlpBinary(): Path? {
     val fromCwd = Paths.get(System.getProperty("user.dir", ".")).resolve("tools").resolve("yt-dlp")
     if (fromCwd.isExecutableFile()) return fromCwd
     val which = runCatching {
-        val process = ProcessBuilder("which", "yt-dlp").redirectErrorStream(true).start()
-        val path = process.inputStream.bufferedReader().readLine()?.trim().orEmpty()
-        val ok = process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0
-        if (ok && path.isNotEmpty()) Paths.get(path).takeIf { it.isExecutableFile() } else null
+        ProcessBuilder("which", "yt-dlp").readOutputWithin(5_000)?.trim()
+            ?.takeIf { it.isNotEmpty() }?.let { Paths.get(it).takeIf { path -> path.isExecutableFile() } }
     }.getOrNull()
     return which
 }

@@ -1,6 +1,8 @@
 package com.universalmusic.player.data.library
 
 import kotlinx.coroutines.CompletableDeferred
+import com.universalmusic.player.data.backup.BackupRestoreCounts
+import com.universalmusic.player.data.sync.emptyPortableTrack
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.putPreservingOnFailure
 import com.universalmusic.player.data.cache.withoutHeartedAudioCache
@@ -20,7 +22,6 @@ import com.universalmusic.player.data.sync.compacted
 import com.universalmusic.player.data.sync.favoriteIdsFromOps
 import com.universalmusic.player.data.sync.forHeartsSync
 import com.universalmusic.player.data.sync.isLocalFileHeartCanonicalId
-import com.universalmusic.player.data.sync.isPortableHeartCanonicalId
 import com.universalmusic.player.data.sync.isProviderHeartCanonicalId
 import com.universalmusic.player.data.sync.isSpotifyHeartCanonicalId
 import com.universalmusic.player.data.sync.mergeFavoriteMetadata
@@ -63,10 +64,18 @@ class LibraryRepository(
     private val _recent = MutableStateFlow<List<Track>>(emptyList())
     val recentlyPlayed: StateFlow<List<Track>> = _recent.asStateFlow()
 
+    /**
+     * Pins, portable unpins and the last reorder change together through [updatePins], so a sync merge
+     * on another thread and a tap cannot overwrite each other's edit.
+     */
+    private val pinState = MutableStateFlow(HomePinsState(emptyList(), emptyList(), HomePinStamp()))
     private val _homePins = MutableStateFlow<List<PersistedHomePin>>(emptyList())
     val homePins: StateFlow<List<PersistedHomePin>> = _homePins.asStateFlow()
 
     private var spotifyAccountId: String? = null
+
+    /** The Spotify account that scopes Spotify app hearts here; null when signed out or unknown. */
+    val currentSpotifyAccountId: String? get() = spotifyAccountId
     private var heartOps: List<HeartOp> = emptyList()
     private val persistMutex = Mutex()
     private var persistJob: Job? = null
@@ -78,6 +87,18 @@ class LibraryRepository(
 
     fun pinOf(kind: HomePinKind, targetId: String): PersistedHomePin? =
         _homePins.value.firstOrNull { it.kind == kind && it.targetId == targetId }
+
+    /**
+     * Applies [transform] atomically; it may run more than once, so it must only compute. Publishing
+     * repeats until [homePins] matches the state, so a slower thread cannot leave older pins showing.
+     */
+    private fun updatePins(transform: (HomePinsState) -> HomePinsState) {
+        pinState.update(transform)
+        do {
+            val pins = pinState.value.pins
+            _homePins.value = pins
+        } while (pinState.value.pins !== pins)
+    }
 
     /**
      * Add or refresh a Home pin. Does not delete or mutate the underlying playlist/album/folder.
@@ -94,37 +115,65 @@ class LibraryRepository(
     ): PersistedHomePin? {
         val trimmedTarget = targetId.trim()
         if (trimmedTarget.isEmpty()) return null
-        val existing = pinOf(kind, trimmedTarget)
-        val pin = PersistedHomePin(
-            id = existing?.id ?: newHomePinId(),
-            kind = kind,
-            targetId = trimmedTarget,
-            title = title.trim().ifBlank { existing?.title.orEmpty() }.ifBlank { trimmedTarget },
-            subtitle = subtitle ?: existing?.subtitle,
-            artworkUrl = artworkUrl ?: existing?.artworkUrl,
-            providerEntityId = providerEntityId ?: existing?.providerEntityId,
-            provider = provider ?: existing?.provider,
-        )
-        if (!pin.isValidShape()) return null
-        _homePins.update { current ->
-            if (existing != null) {
-                current.map { if (it.id == existing.id) pin else it }
-            } else {
-                current + pin
-            }.migratedHomePins()
+        var result: PersistedHomePin? = null
+        updatePins { state ->
+            val existing = state.pins.firstOrNull { it.kind == kind && it.targetId == trimmedTarget }
+            val pin = PersistedHomePin(
+                id = existing?.id ?: newHomePinId(),
+                kind = kind,
+                targetId = trimmedTarget,
+                title = title.trim().ifBlank { existing?.title.orEmpty() }.ifBlank { trimmedTarget },
+                subtitle = subtitle ?: existing?.subtitle,
+                artworkUrl = artworkUrl ?: existing?.artworkUrl,
+                providerEntityId = providerEntityId ?: existing?.providerEntityId,
+                provider = provider ?: existing?.provider,
+                syncStamp = existing?.syncStamp,
+            ).takeIf { it.isValidShape() }
+            result = pin
+            when {
+                pin == null -> state
+                existing != null -> state.copy(pins = state.pins.map { if (it.id == existing.id) pin else it }.migratedHomePins())
+                else -> state.withAddedPins(listOf(pin))
+            }
         }
-        schedulePersist()
-        return pin
+        if (result != null) schedulePersist()
+        return result
     }
 
-    /** Remove the pin only; the playlist/album/folder remains. */
+    /** Appends new pins; portable ones get a fresh stamp that beats any earlier unpin of the same target. */
+    private fun HomePinsState.withAddedPins(added: List<PersistedHomePin>): HomePinsState {
+        val stamp = nextStamp()
+        val stamped = added.map { if (it.forHomeSync() != null) it.copy(syncStamp = stamp) else it }
+        val keys = stamped.mapTo(HashSet()) { pinKey(it.kind, it.targetId) }
+        return copy(
+            pins = (pins + stamped).migratedHomePins(),
+            tombstones = tombstones.filterNot { pinKey(it.kind, it.targetId) in keys },
+        )
+    }
+
+    private fun HomePinsState.nextStamp(): HomePinStamp {
+        val newest = (pins.mapNotNull { it.syncStamp } + tombstones.map { it.stamp } + orderStamp).maxOf { it.revision }
+        return HomePinStamp(maxOf(clock(), newest + 1), deviceIdProvider())
+    }
+
+    /** Remove the pin only; the playlist/album/folder remains. Unpinning a portable pin is synced. */
     fun unpinHome(pinId: String): Boolean {
-        val before = _homePins.value
-        val after = before.filterNot { it.id == pinId }
-        if (after.size == before.size) return false
-        _homePins.value = after
-        schedulePersist()
-        return true
+        var removed = false
+        updatePins { state ->
+            val pin = state.pins.firstOrNull { it.id == pinId }
+            removed = pin != null
+            when {
+                pin == null -> state
+                pin.forHomeSync() == null -> state.copy(pins = state.pins - pin)
+                else -> state.copy(
+                    pins = state.pins - pin,
+                    tombstones = state.tombstones.filterNot { it.kind == pin.kind && it.targetId == pin.targetId } +
+                        HomePinTombstone(pin.kind, pin.targetId, state.nextStamp()),
+                )
+            }
+        }
+        if (removed) schedulePersist()
+        return removed
     }
 
     fun unpinHome(kind: HomePinKind, targetId: String): Boolean {
@@ -132,29 +181,36 @@ class LibraryRepository(
         return unpinHome(pin.id)
     }
 
-    fun reorderHomePins(orderedPinIds: List<String>): Boolean {
-        val current = _homePins.value
-        if (current.isEmpty()) return false
+    fun reorderHomePins(orderedPinIds: List<String>): Boolean = reorderPins { current ->
         val byId = current.associateBy { it.id }
         val reordered = orderedPinIds.mapNotNull { byId[it] }
         val missing = current.filter { it.id !in orderedPinIds }
-        if (reordered.size + missing.size != current.size) return false
-        _homePins.value = (reordered + missing).migratedHomePins()
-        schedulePersist()
-        return true
+        if (current.isEmpty() || reordered.size + missing.size != current.size) null
+        else (reordered + missing).migratedHomePins()
     }
 
-    fun moveHomePin(pinId: String, delta: Int): Boolean {
-        val current = _homePins.value.toMutableList()
+    fun moveHomePin(pinId: String, delta: Int): Boolean = reorderPins { current ->
         val index = current.indexOfFirst { it.id == pinId }
-        if (index < 0) return false
-        val target = (index + delta).coerceIn(0, current.lastIndex)
-        if (target == index) return false
-        val item = current.removeAt(index)
-        current.add(target, item)
-        _homePins.value = current
-        schedulePersist()
-        return true
+        val target = if (index < 0) index else (index + delta).coerceIn(0, current.lastIndex)
+        if (target == index) null
+        else current.toMutableList().apply { add(target, removeAt(index)) }
+    }
+
+    /** A reorder that changes the order of portable pins is synced; the newest reorder wins. */
+    private fun reorderPins(reorder: (List<PersistedHomePin>) -> List<PersistedHomePin>?): Boolean {
+        fun List<PersistedHomePin>.portableOrder() = filter { it.forHomeSync() != null }.map { it.id }
+        var changed = false
+        updatePins { state ->
+            val next = reorder(state.pins)
+            changed = next != null
+            when {
+                next == null -> state
+                next.portableOrder() == state.pins.portableOrder() -> state.copy(pins = next)
+                else -> state.copy(pins = next, orderStamp = state.nextStamp())
+            }
+        }
+        if (changed) schedulePersist()
+        return changed
     }
 
     fun toggleFavorite(track: Track): Boolean {
@@ -219,14 +275,13 @@ class LibraryRepository(
             }
             schedulePersist()
         }
+        apply(sanitized)
         val cache = metadataCache
         val repoScope = scope
         if (cache != null && repoScope != null) {
             repoScope.launch {
                 apply(enrichFromCache(sanitized))
             }
-        } else {
-            apply(sanitized)
         }
     }
 
@@ -245,20 +300,19 @@ class LibraryRepository(
 
     /**
      * Load disk snapshot, scope Spotify entries to [activeSpotifyAccountId], hydrate artwork from cache.
+     * A null id means the account is unverified (offline, /me failed), not disconnected: keep the
+     * stored scope. Only [setSpotifyAccountId] on an explicit disconnect or a verified switch drops data.
      */
     suspend fun load(activeSpotifyAccountId: String?) {
-        try {
-            val rawStore = store ?: return
-            val raw = rawStore.read().migrated(deviceIdProvider())
-            val scoped = raw.scopedToSpotifyAccount(activeSpotifyAccountId)
-            if (scoped != raw) {
-                rawStore.write(scoped)
-            }
-            applySnapshot(scoped)
-            metadataCache?.evictExpired(clock())
-        } finally {
-            loaded.complete(Unit)
+        val rawStore = store ?: return
+        val raw = rawStore.read().migrated(deviceIdProvider())
+        val scoped = activeSpotifyAccountId?.let(raw::scopedToSpotifyAccount) ?: raw
+        if (scoped != raw) {
+            rawStore.write(scoped)
         }
+        applySnapshot(scoped)
+        loaded.complete(Unit)
+        metadataCache?.evictExpired(clock())
     }
 
     fun applySnapshot(snapshot: UserLibrarySnapshot) {
@@ -268,37 +322,75 @@ class LibraryRepository(
         _favorites.value = migrated.favoriteIds.toSet()
         _saved.value = migrated.remembered.map { it.toDomain() }
         _recent.value = migrated.recents.map { it.toDomain() }
-        _homePins.value = migrated.homePins.migratedHomePins()
+        updatePins { HomePinsState(migrated.homePins.migratedHomePins(), migrated.homePinTombstones, migrated.homePinOrderStamp) }
     }
 
     /** Drop Spotify-scoped app data when the signed-in account changes or disconnects. */
     suspend fun setSpotifyAccountId(accountId: String?) {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
         if (accountId == spotifyAccountId) return
         val scoped = toSnapshot().scopedToSpotifyAccount(accountId)
         applySnapshot(scoped)
         store?.write(scoped)
     }
 
-    fun toSnapshot(): UserLibrarySnapshot = UserLibrarySnapshot(
-        version = USER_LIBRARY_FORMAT_VERSION,
-        spotifyAccountId = spotifyAccountId,
-        favoriteIds = _favorites.value.toList().sorted(),
-        heartOps = heartOps.compacted(),
-        remembered = _saved.value.map { it.toPersisted(clock()) },
-        recents = _recent.value.map { it.toPersisted(clock()) },
-        homePins = _homePins.value.migratedHomePins(),
-    )
+    fun toSnapshot(): UserLibrarySnapshot {
+        val pins = pinState.value
+        return UserLibrarySnapshot(
+            version = USER_LIBRARY_FORMAT_VERSION,
+            spotifyAccountId = spotifyAccountId,
+            favoriteIds = _favorites.value.toList().sorted(),
+            heartOps = heartOps.compacted(),
+            remembered = _saved.value.map { it.toPersisted(clock()) },
+            recents = _recent.value.map { it.toPersisted(clock()) },
+            homePins = pins.pins.migratedHomePins(),
+            homePinTombstones = pins.tombstones,
+            homePinOrderStamp = pins.orderStamp,
+        )
+    }
+
+    fun exportHomePinsSyncDocument(): HomePinsSyncDocument =
+        pinState.value.exportForHomeSync(deviceIdProvider(), spotifyAccountId)
+
+    /**
+     * Applies a peer's pins (see [mergeHomePinsSync]) and returns this device's document after the merge.
+     * A Kainos playlist pin is added only when its playlist is in [livePlaylistIds].
+     */
+    suspend fun mergeAndPersistHomePins(remote: HomePinsSyncDocument, livePlaylistIds: Set<String>): HomePinsSyncDocument {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        persistJob?.cancel()
+        persistJob = null
+        persistMutex.withLock {
+            val account = spotifyAccountId
+            updatePins { local ->
+                mergeHomePinsSync(local, remote, account) {
+                    it.kind != HomePinKind.KAINOS_PLAYLIST || it.targetId in livePlaylistIds
+                }
+            }
+            store?.write(toSnapshot())
+        }
+        return exportHomePinsSyncDocument()
+    }
 
     fun exportHeartsSyncDocument(): HeartsSyncDocument {
         val favorites = _favorites.value
         val deviceId = deviceIdProvider()
         val now = clock()
-        // Home-LAN hearts: YouTube + portable local files only. Spotify is already
-        // available on both devices via the same account / Web API — not mirrored here.
-        val youtubeMeta = _saved.value
-            .filter { it.canonicalId in favorites && it.canonicalId.startsWith("yt:") }
+        // Spotify app hearts travel only under a known account; the receiver and the hub's
+        // reply drop them unless the peer is signed into that same account.
+        val account = spotifyAccountId
+        fun exportsProviderHeart(id: String) =
+            id.startsWith("yt:") || (account != null && isSpotifyHeartCanonicalId(id))
+        val providerMeta = _saved.value
+            .filter { it.canonicalId in favorites && exportsProviderHeart(it.canonicalId) }
             .mapNotNull { it.toPersisted(0).forHeartsSync() }
-        val youtubeOps = heartOps.compacted().filter { it.canonicalId.startsWith("yt:") }
+        val providerOps = heartOps.compacted().mapNotNull { op ->
+            when {
+                op.canonicalId.startsWith("yt:") -> op
+                !exportsProviderHeart(op.canonicalId) || (op.spotifyAccountId ?: account) != account -> null
+                else -> op.copy(spotifyAccountId = account)
+            }
+        }
         val localOpsById = heartOps.compacted().associateBy { it.canonicalId }
         val localExports = _saved.value
             .filter { it.canonicalId.startsWith("local:") }
@@ -313,10 +405,20 @@ class LibraryRepository(
             .filter { it.canonicalId in favorites && isPortableLocalHeartCanonicalId(it.canonicalId) }
             .mapNotNull { it.toPersisted(0).forHeartsSync() }
         val pendingLocalFileOps = heartOps.compacted().filter { isPortableLocalHeartCanonicalId(it.canonicalId) }
-        val localfileOps = localExports.map { it.first } + pendingLocalFileOps
+        // A first-seen unheart has no remembered track. Its persisted identity is
+        // enough to keep the tombstone portable without adding a Library row.
+        val rememberedIds = _saved.value.mapTo(HashSet()) { it.canonicalId }
+        val localTombstones = heartOps.compacted().mapNotNull { op ->
+            if (op.action != HeartAction.UNFAVORITE || !op.canonicalId.startsWith("local:")) return@mapNotNull null
+            if (op.canonicalId in rememberedIds) return@mapNotNull null
+            val identity = op.localSyncIdentity() ?: return@mapNotNull null
+            val portableId = identity.portableId ?: return@mapNotNull null
+            op.copy(canonicalId = portableId, localIdentity = identity)
+        }
+        val localfileOps = localExports.map { it.first } + localTombstones + pendingLocalFileOps
         val localfileMeta = localExports.filter { it.first.action == HeartAction.FAVORITE }.map { it.second } + pendingLocalFileMeta
         val opsById = LinkedHashMap<String, HeartOp>()
-        for (op in youtubeOps + localfileOps) {
+        for (op in providerOps + localfileOps) {
             val existing = opsById[op.canonicalId]
             if (existing == null || op.revision > existing.revision ||
                 (op.revision == existing.revision && op.deviceId > existing.deviceId)
@@ -330,7 +432,7 @@ class LibraryRepository(
             ops = opsById.values.toList().collapseLocalSyncAliases(
                 localfileMeta.mapNotNull { it.localSyncIdentity() } + localfileOps.mapNotNull { it.localSyncIdentity() },
             ),
-            favoritesMetadata = (youtubeMeta + localfileMeta).portableFavoriteMetadata(),
+            favoritesMetadata = (providerMeta + localfileMeta).portableFavoriteMetadata(),
         )
     }
 
@@ -342,43 +444,67 @@ class LibraryRepository(
      * onto device `local:` tracks after the file is present.
      */
     suspend fun mergeAndPersistSyncState(remote: HeartsSyncDocument): HeartsSyncDocument {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
         persistJob?.cancel()
         persistJob = null
         val deltas = mutableListOf<Pair<Track, Boolean>>()
         persistMutex.withLock {
             val before = _favorites.value
-            val known = (_saved.value + localTrackCatalog()).mapNotNull { it.toPersisted(0).localSyncIdentity() } +
+            val deviceTracks = (localTrackCatalog() + _saved.value)
+                .filter { it.canonicalId.startsWith("local:") }
+                .distinctBy { it.canonicalId }
+            val deviceIndex = LocalSyncIdentityIndex(deviceTracks)
+            val deviceById = deviceTracks.associateBy { it.canonicalId }
+            val known = (_saved.value + deviceTracks).mapNotNull { it.toPersisted(0).localSyncIdentity() } +
                 heartOps.mapNotNull { it.localSyncIdentity() } + remote.ops.mapNotNull { it.localSyncIdentity() } +
                 remote.favoritesMetadata.mapNotNull { it.localSyncIdentity() }
             val aliases = localSyncAliases(known)
             fun canonicalMetadata(track: PersistedTrack): PersistedTrack = aliases[track.canonicalId]?.let {
                 track.copy(canonicalId = it, localContentKey = localKeyHeartContentKey(it))
             } ?: track
-            val mergedOps = mergeHeartOps(
+            val wireOps = mergeHeartOps(
                 localOps = heartOps.collapseLocalSyncAliases(known),
-                remoteOps = remote.ops.filterNot { isSpotifyHeartCanonicalId(it.canonicalId) }.collapseLocalSyncAliases(known),
+                remoteOps = remote.ops.collapseLocalSyncAliases(known),
                 localSpotifyAccountId = spotifyAccountId,
                 remoteSpotifyAccountId = remote.spotifyAccountId,
-            ).compacted()
-            // Preserve device-local favorite ids; portable wire ids come from ops.
-            val portableFavorites = mergedOps.favoriteIdsFromOps()
+            )
+            val mergedOps = wireOps.map { op ->
+                // Resolve wire aliases before publishing or saving. A later rematch may
+                // suspend or fail, leaving both ids visible for the same device track.
+                val match = if (isPortableLocalHeartCanonicalId(op.canonicalId)) {
+                    op.localSyncIdentity()?.let(deviceIndex::match)
+                } else null
+                if (match == null) op else op.copy(
+                    canonicalId = match.canonicalId,
+                    localIdentity = match.localSyncIdentity()?.let {
+                        it.copy(contentKey = it.contentKey ?: op.localSyncIdentity()?.contentKey)
+                    },
+                )
+            }.compacted()
+            val opFavorites = mergedOps.favoriteIdsFromOps()
+            val opIds = mergedOps.mapTo(HashSet()) { it.canonicalId }
             val localOnlyFavorites = before.filter {
-                it.startsWith("local:") && !isPortableHeartCanonicalId(it)
+                it.startsWith("local:") && it !in opIds
             }
-            val after = portableFavorites + localOnlyFavorites
+            val after = opFavorites + localOnlyFavorites
 
             val localRemembered = _saved.value.map { canonicalMetadata(it.toPersisted(clock())) }
             val mergedMeta = mergeFavoriteMetadata(
                 local = localRemembered,
                 remote = remote.favoritesMetadata.map(::canonicalMetadata),
-                favoriteIds = after,
-            )
+                favoriteIds = after + wireOps.favoriteIdsFromOps(),
+            ).map { persisted ->
+                val match = if (isPortableLocalHeartCanonicalId(persisted.canonicalId)) {
+                    persisted.localSyncIdentity()?.let(deviceIndex::match)
+                } else null
+                if (match == null) persisted else persisted.copy(canonicalId = match.canonicalId)
+            }.filter { it.canonicalId in after }
             val rememberedById = LinkedHashMap<String, Track>()
             for (track in _saved.value) {
                 rememberedById[track.canonicalId] = track
             }
             for (persisted in mergedMeta) {
-                val existing = rememberedById[persisted.canonicalId]
+                val existing = rememberedById[persisted.canonicalId] ?: deviceById[persisted.canonicalId]
                 rememberedById[persisted.canonicalId] = if (existing != null) {
                     // Keep local cache sources; overlay portable metadata fields.
                     existing.copy(
@@ -406,7 +532,9 @@ class LibraryRepository(
                 val have = rememberedById.keys
                 for (id in after) {
                     if (id in have) continue
-                    val persisted = mergedMeta.firstOrNull { it.canonicalId == id } ?: continue
+                    val persisted = mergedMeta.firstOrNull { it.canonicalId == id }
+                        ?: deviceById[id]?.toPersisted(clock())
+                        ?: continue
                     add(persisted.toDomain().withPersistedSourcesOnly())
                 }
             }.distinctBy { it.canonicalId }
@@ -426,7 +554,7 @@ class LibraryRepository(
                 deltas += track to false
             }
 
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         for ((track, nowFavorite) in deltas) {
             onFavoriteChanged?.invoke(track, nowFavorite)
@@ -480,7 +608,7 @@ class LibraryRepository(
             heartOps = ops
             _favorites.value = favorites
             _saved.value = saved.distinctBy { it.canonicalId }
-            store?.write(toSnapshot())
+            if (loaded.isCompleted) store?.write(toSnapshot())
         }
         for ((track, nowFavorite) in deltas) {
             onFavoriteChanged?.invoke(track, nowFavorite)
@@ -500,12 +628,19 @@ class LibraryRepository(
         val op = HeartOp(
             canonicalId = canonicalId,
             action = action,
-            revision = clock(),
+            revision = maxOf(clock(), (heartOps.maxOfOrNull { it.revision } ?: 0L) + 1),
             deviceId = deviceIdProvider(),
             spotifyAccountId = if (canonicalId.startsWith("spotify:")) spotifyAccountId else null,
             localIdentity = currentLocalTrack(track).localSyncIdentity(),
         )
         heartOps = (heartOps + op).compacted()
+    }
+
+    suspend fun flush() {
+        if (!loaded.isCompleted) return
+        persistJob?.cancel()
+        persistJob = null
+        persistMutex.withLock { store?.write(toSnapshot()) }
     }
 
     private fun schedulePersist() {
@@ -530,6 +665,128 @@ class LibraryRepository(
             artwork = art?.let { url -> track.artwork?.copy(url = url) ?: Artwork(url) },
             sources = track.withPersistedSourcesOnly().sources,
         )
+    }
+
+    /** Every heart in portable form for a backup file: no `local:` ids, paths or stream URLs. */
+    fun backupHearts(): List<PersistedTrack> {
+        val savedById = _saved.value.associateBy { it.canonicalId }
+        val catalogById = localTrackCatalog().associateBy { it.canonicalId }
+        val opsById = heartOps.associateBy { it.canonicalId }
+        return _favorites.value.sorted().mapNotNull { id ->
+            val track = savedById[id] ?: catalogById[id]
+            when {
+                id.startsWith("local:") -> track?.let { currentLocalTrack(it).copy(canonicalId = id) }
+                    ?.toPersisted(0)?.toLocalFileHeartExport(deviceId = "", revision = 0)?.second
+                isProviderHeartCanonicalId(id) -> track?.toPersisted(0)?.forHeartsSync() ?: emptyPortableTrack(id)
+                isPortableLocalHeartCanonicalId(id) -> (track?.toPersisted(0)
+                    ?: opsById[id]?.localSyncIdentity()?.basename?.let { name ->
+                        PersistedTrack(id, title = name, sources = listOf(PersistedSource(ProviderId.LOCAL.name, name)))
+                    })?.forHeartsSync()
+                else -> null
+            }
+        }.distinctBy { it.canonicalId }
+    }
+
+    /**
+     * Adds each heart in [hearts] that is not hearted here yet and never removes one. A portable local heart
+     * maps onto the matching library file when there is one; otherwise it waits for the file. Spotify hearts
+     * apply only when this device is signed in to [backupSpotifyAccountId]. With [apply] false nothing changes.
+     */
+    suspend fun restoreBackupHearts(
+        hearts: List<PersistedTrack>,
+        backupSpotifyAccountId: String?,
+        apply: Boolean,
+    ): BackupRestoreCounts {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        if (!apply) return planBackupHearts(hearts, backupSpotifyAccountId).counts
+        persistJob?.cancel()
+        persistJob = null
+        val plan = persistMutex.withLock {
+            val plan = planBackupHearts(hearts, backupSpotifyAccountId)
+            val savedIds = _saved.value.mapTo(HashSet()) { it.canonicalId }
+            for ((track, identity) in plan.added) {
+                heartOps = (heartOps + HeartOp(
+                    canonicalId = track.canonicalId,
+                    action = HeartAction.FAVORITE,
+                    revision = maxOf(clock(), (heartOps.maxOfOrNull { it.revision } ?: 0L) + 1),
+                    deviceId = deviceIdProvider(),
+                    spotifyAccountId = if (isSpotifyHeartCanonicalId(track.canonicalId)) spotifyAccountId else null,
+                    localIdentity = identity,
+                )).compacted()
+            }
+            _favorites.value = _favorites.value + plan.added.map { it.first.canonicalId }
+            _saved.value = plan.added.map { it.first }.filter { it.canonicalId !in savedIds } + _saved.value
+            store?.write(toSnapshot())
+            plan
+        }
+        for ((track, _) in plan.added) onFavoriteChanged?.invoke(track, true)
+        return plan.counts
+    }
+
+    private class BackupHeartsPlan(val added: List<Pair<Track, LocalSyncIdentity?>>, val counts: BackupRestoreCounts)
+
+    private fun planBackupHearts(hearts: List<PersistedTrack>, backupSpotifyAccountId: String?): BackupHeartsPlan {
+        val deviceTracks = (localTrackCatalog() + _saved.value)
+            .filter { it.canonicalId.startsWith("local:") }
+            .distinctBy { it.canonicalId }
+        val index = LocalSyncIdentityIndex(deviceTracks)
+        val favorites = _favorites.value.toMutableSet()
+        val added = mutableListOf<Pair<Track, LocalSyncIdentity?>>()
+        var already = 0
+        var spotifySkipped = 0
+        for (portable in hearts.mapNotNull { it.forHeartsSync() }) {
+            val id = portable.canonicalId
+            if (isSpotifyHeartCanonicalId(id) && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
+                spotifySkipped += 1
+                continue
+            }
+            val identity = portable.localSyncIdentity()
+            val match = if (isPortableLocalHeartCanonicalId(id)) identity?.let(index::match) else null
+            val track = match ?: portable.toDomain().withPersistedSourcesOnly()
+            if (!favorites.add(track.canonicalId)) {
+                already += 1
+                continue
+            }
+            added += track to (match?.let { currentLocalTrack(it).localSyncIdentity() } ?: identity)
+        }
+        return BackupHeartsPlan(added, BackupRestoreCounts(heartsAdded = added.size, heartsAlready = already, spotifySkipped = spotifySkipped))
+    }
+
+    /**
+     * Appends each portable pin in [pins] whose kind and target are not pinned yet, after the current pins.
+     * Kainos playlist pins need their playlist in [livePlaylistIds]; Spotify pins need [backupSpotifyAccountId]
+     * to be this device's account. With [apply] false nothing changes.
+     */
+    suspend fun restoreBackupPins(
+        pins: List<PersistedHomePin>,
+        backupSpotifyAccountId: String?,
+        livePlaylistIds: Set<String>,
+        apply: Boolean,
+    ): BackupRestoreCounts {
+        check(loaded.isCompleted) { "Storage has not loaded successfully" }
+        val current = _homePins.value
+        val pinned = current.mapTo(HashSet()) { pinKey(it.kind, it.targetId) }
+        val usedIds = current.mapTo(HashSet()) { it.id }
+        val added = mutableListOf<PersistedHomePin>()
+        var already = 0
+        var spotifySkipped = 0
+        for (pin in pins.portableForHomeSync()) {
+            if (pin.isSpotifyPlaylistPin() && (spotifyAccountId == null || spotifyAccountId != backupSpotifyAccountId)) {
+                spotifySkipped += 1
+                continue
+            }
+            if (pin.kind == HomePinKind.KAINOS_PLAYLIST && pin.targetId !in livePlaylistIds) continue
+            if (!pinned.add(pinKey(pin.kind, pin.targetId))) {
+                already += 1
+                continue
+            }
+            added += if (usedIds.add(pin.id)) pin else pin.copy(id = newHomePinId())
+        }
+        if (apply && added.isNotEmpty()) {
+            updatePins { it.withAddedPins(added) }
+            flush()
+        }
+        return BackupRestoreCounts(pinsAdded = added.size, pinsAlready = already, spotifySkipped = spotifySkipped)
     }
 
     companion object {

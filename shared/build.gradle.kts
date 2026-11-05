@@ -59,13 +59,47 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
         }
+        jvmTest.dependencies {
+            implementation(compose.desktop.currentOs)
+            implementation(compose.desktop.uiTestJUnit4)
+        }
+        jvmMain.dependencies {
+            implementation(libs.zxing.core)
+        }
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.camera.camera2)
+            implementation(libs.androidx.camera.lifecycle)
+            implementation(libs.androidx.camera.view)
+            implementation(libs.zxing.core)
         }
     }
 }
 
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
+}
+
+val jvmTests = tasks.named<Test>("jvmTest") {
+    exclude("**/SkinGalleryTest*")
+}
+
+tasks.register<Test>("skinGallery") {
+    group = "verification"
+    description = "Render the skin component gallery as PNGs."
+    dependsOn("jvmTestClasses")
+    testClassesDirs = jvmTests.get().testClassesDirs
+    classpath = jvmTests.get().classpath
+    filter { includeTestsMatching("*.SkinGalleryTest") }
+    val galleryDir = layout.buildDirectory.dir("skin-gallery")
+    systemProperty("kainos.skinGalleryDir", galleryDir.get().asFile.absolutePath)
+    systemProperty("java.awt.headless", "true")
+    doFirst {
+        val directory = galleryDir.get().asFile
+        check(!directory.exists() || directory.deleteRecursively()) { "Could not clear the old skin gallery" }
+    }
+    outputs.dir(galleryDir)
+    outputs.upToDateWhen { false }
+    outputs.doNotCacheIf("Gallery uses the host system fonts") { true }
 }

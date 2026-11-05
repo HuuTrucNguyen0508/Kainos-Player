@@ -6,7 +6,6 @@ import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.settings.AppSettings
-import com.universalmusic.player.data.spotify.SpotifyConnectDevice
 import com.universalmusic.player.data.sync.HOME_LAN_SYNC_DEFAULT_PORT
 import com.universalmusic.player.data.sync.HomeLanSyncController
 import com.universalmusic.player.data.sync.HomeLanTrust
@@ -15,6 +14,14 @@ import com.universalmusic.player.data.sync.PairedPeer
 import com.universalmusic.player.data.sync.PairingAttempt
 import com.universalmusic.player.data.sync.PairingCode
 import com.universalmusic.player.data.sync.HubPairingSession
+import com.universalmusic.player.data.sync.parseHubPairingLink
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -32,7 +39,6 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.AuthSession
 import com.universalmusic.player.platform.SpotifyWebPlaybackState
 import com.universalmusic.player.platform.authenticateSpotify
-import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,8 +141,8 @@ internal data class ProviderActionState(
     val busy: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
-    val devices: List<SpotifyConnectDevice> = emptyList(),
-    val devicesLoaded: Boolean = false,
+    /** Where the action was started, which is where its result belongs. Null for the connected-account tools. */
+    val spot: SettingsTarget? = null,
 )
 
 internal class SettingsConnectPresenter(
@@ -153,7 +159,6 @@ internal class SettingsConnectPresenter(
     private val beginLogin: suspend () -> AuthSession,
     private val completeLogin: suspend (String) -> Unit,
     private val disconnectAccount: suspend () -> Unit,
-    private val loadDevices: suspend () -> List<SpotifyConnectDevice>,
     private val prepareReceiver: suspend () -> Boolean,
     private val refresh: suspend () -> Unit,
     private val scope: CoroutineScope,
@@ -169,9 +174,9 @@ internal class SettingsConnectPresenter(
     ) { base, loading, error, operation -> base.copy(libraryLoading = loading, libraryError = error, action = operation) }
         .stateIn(scope, SharingStarted.Eagerly, base())
 
-    private fun perform(operation: suspend () -> String?) {
+    private fun perform(spot: SettingsTarget? = null, operation: suspend () -> String?) {
         if (action.value.busy || !ready.value) return
-        action.update { it.copy(busy = true, error = null, notice = null) }
+        action.update { it.copy(busy = true, error = null, notice = null, spot = spot) }
         scope.launch {
             try {
                 val notice = operation()
@@ -186,13 +191,17 @@ internal class SettingsConnectPresenter(
         }
     }
 
-    fun saveCredentials(clientId: String, apiKey: String) = perform {
-        updateSettings { it.copy(spotifyClientId = clientId.trim().takeIf(String::isNotBlank),
-            youtubeDataApiKey = apiKey.trim().takeIf(String::isNotBlank)) }
-        "Provider settings saved."
+    fun saveSpotifyClientId(clientId: String) = perform(SettingsTarget.SpotifyClientId) {
+        updateSettings { it.copy(spotifyClientId = clientId.trim().takeIf(String::isNotBlank)) }
+        "Client ID saved."
     }
 
-    fun connect() = perform {
+    fun saveYouTubeKey(apiKey: String) = perform(SettingsTarget.YouTubeKey) {
+        updateSettings { it.copy(youtubeDataApiKey = apiKey.trim().takeIf(String::isNotBlank)) }
+        "API key saved."
+    }
+
+    fun connect() = perform(SettingsTarget.SpotifySignIn) {
         val login = beginLogin()
         val redirect = authenticateSpotify(login.authorizationUrl, login.redirectScheme)
         if (redirect == null) "Finish signing in in your browser to connect Spotify."
@@ -204,31 +213,8 @@ internal class SettingsConnectPresenter(
         }
     }
 
-    fun disconnect() = perform { disconnectAccount(); null }
-    fun openSpotify() = perform {
-        check(ensureSpotifyConnectClientAvailable()) {
-            "Install the Spotify app to use this phone as a Connect device, or pick another online device below."
-        }
-        "Spotify opened. Sign in if needed, then refresh devices and select this phone."
-    }
-
-    fun refreshDevices() = perform {
-        val devices = loadDevices()
-        action.update { it.copy(devices = devices, devicesLoaded = true) }
-        val selected = settings.value.spotifyPlaybackDeviceId
-        if (selected != null && devices.none { it.id == selected }) {
-            updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
-            "Previous Spotify device went offline. Select another device below."
-        } else if (devices.isEmpty()) "No Connect devices yet. Open Spotify somewhere, then refresh."
-        else "${devices.size} Spotify device${if (devices.size == 1) "" else "s"} found."
-    }
-
-    fun selectDevice(device: SpotifyConnectDevice) = perform {
-        updateSettings { it.copy(spotifyPlaybackDeviceId = device.id, spotifyPlaybackDeviceName = device.name) }
-        "Spotify will play on ${device.name}."
-    }
-
-    fun setupReceiver() = perform {
+    fun disconnect() = perform(SettingsTarget.SpotifySignIn) { disconnectAccount(); null }
+    fun setupReceiver() = perform(SettingsTarget.SpotifyPlayback) {
         check(prepareReceiver()) {
             (playback.value as? SpotifyWebPlaybackState.Failed)?.reason?.let(::spotifyPlaybackFailureMessage)
                 ?: "Spotify receiver setup failed. Try setup again."
@@ -250,7 +236,6 @@ internal class SettingsConnectPresenter(
             container.spotifyWebPlayback.state, container.spotifyLibraryLoading, container.spotifyLibraryError,
             { container.config }, !container.spotifyWebPlayback.requiresStreamingScope, container::updateSettings,
             container.spotify::beginLogin, container.spotify::completeLogin, container::disconnectSpotify,
-            container.spotify::getConnectDevices,
             { container.spotifyWebPlayback.prepareAuthentication() != null }, container::refreshSpotifyLibrary, scope,
         )
     }
@@ -259,7 +244,8 @@ internal class SettingsConnectPresenter(
 internal sealed interface PairingUiState {
     data object Idle : PairingUiState
     data object Searching : PairingUiState
-    data class Found(val hubs: List<DiscoveredHub>) : PairingUiState
+    /** [scanned] marks a hub read from the PC's QR code rather than found on the network. */
+    data class Found(val hubs: List<DiscoveredHub>, val scanned: Boolean = false) : PairingUiState
     data class Confirming(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
     data class WaitingForPc(val attemptId: String, val hub: DiscoveredHub, val code: PairingCode) : PairingUiState
     data class Paired(val peer: PairedPeer) : PairingUiState
@@ -279,6 +265,7 @@ internal class SettingsSyncPresenter(
     private val controller: HomeLanSyncController,
     private val scope: CoroutineScope,
     private val discoveryTimeoutMs: Long = 10_000,
+    private val pairingLinkRefreshMs: Long = 10_000,
 ) {
     private val operation = MutableStateFlow(false to (null as String?))
     private val pairing = MutableStateFlow<PairingUiState>(PairingUiState.Idle)
@@ -291,6 +278,23 @@ internal class SettingsSyncPresenter(
         SettingsSyncUiState(status, trust, incoming, pairing, op.first, op.second)
     }.stateIn(scope, SharingStarted.Eagerly,
         SettingsSyncUiState(controller.status.value, controller.trust.value, controller.incomingPairing.value))
+
+    /**
+     * The QR code this PC shows while its hub listens; null on a phone. Read again every
+     * [pairingLinkRefreshMs] while shown, so a new Wi-Fi address reaches the code.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val pairingLink: StateFlow<String?> = controller.status.map { it.hubListening }.distinctUntilChanged()
+        .flatMapLatest { listening ->
+            if (!listening) flowOf<String?>(null) else flow {
+                while (true) {
+                    emit(controller.pairingLink())
+                    delay(pairingLinkRefreshMs)
+                }
+            }
+        }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.WhileSubscribed(), null)
 
     fun setNotice(message: String) { operation.value = operation.value.first to message }
 
@@ -321,6 +325,21 @@ internal class SettingsSyncPresenter(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Throwable) { pairing.value = PairingUiState.Failed(failure.message ?: "Could not find a PC. Try again.") }
         }
+    }
+
+    /** Lists the PC a scanned code names; pairing starts only when the user taps it, then both screens compare codes. */
+    fun scanned(raw: String) {
+        if (session != null) return
+        pairingJob?.cancel()
+        pairing.value = parseHubPairingLink(raw).fold(
+            onSuccess = { PairingUiState.Found(listOf(it), scanned = true) },
+            onFailure = { PairingUiState.Failed(it.message ?: "This is not a Kainos pairing code.") },
+        )
+    }
+
+    /** The camera could not scan, for example because the permission was refused. */
+    fun scanUnavailable(reason: String) {
+        if (session == null) pairing.value = PairingUiState.Failed(reason)
     }
 
     fun pair(hub: DiscoveredHub) {
@@ -393,6 +412,13 @@ internal class SettingsSyncPresenter(
     fun transfer(path: String, direction: VaultCopyDirection, confirm: Boolean) = run {
         (if (confirm) controller.confirmVaultTransfer(path, direction)
         else controller.dismissVaultTransfer(path, direction)).getOrThrow()
+    }
+    fun transferCachedAudio(ownerCanonicalId: String, direction: VaultCopyDirection, confirm: Boolean) = run {
+        (if (confirm) controller.confirmCachedAudioTransfer(ownerCanonicalId, direction)
+        else controller.dismissCachedAudioTransfer(ownerCanonicalId, direction)).getOrThrow()
+    }
+    fun transferAll(confirm: Boolean) = run {
+        (if (confirm) controller.confirmAllVaultTransfers() else controller.dismissAllVaultTransfers()).getOrThrow()
     }
     fun resolve(path: String, keepLocal: Boolean) = run {
         (if (keepLocal) controller.resolveConflictKeepLocal(path)

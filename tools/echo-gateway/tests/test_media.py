@@ -48,7 +48,7 @@ def stream_of(body: dict) -> dict:
 
 
 def relative_url(url: str) -> str:
-    return url.removeprefix("https://example.test")
+    return url.removeprefix("http://127.0.0.1:8787")
 
 
 def loudness(data: bytes, directory: Path) -> float:

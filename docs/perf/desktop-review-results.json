@@ -1,0 +1,75 @@
+{
+  "S1": {
+    "baseline": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 502.8407525,
+        "p90": 510.805981,
+        "min": 495.990448,
+        "max": 524.188915
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 693.7591305000001,
+        "p90": 702.508306,
+        "min": 677.632802,
+        "max": 707.221212
+      }
+    },
+    "verify": {
+      "first_draw_ms": {
+        "n": 10,
+        "median": 519.497278,
+        "p90": 533.117636,
+        "min": 511.115249,
+        "max": 533.341505
+      },
+      "library_interactive_ms": {
+        "n": 10,
+        "median": 704.7906085,
+        "p90": 718.274995,
+        "min": 696.2944,
+        "max": 720.360272
+      }
+    }
+  },
+  "S2": {
+    "baseline": {
+      "press_to_started_ms": {
+        "n": 10,
+        "median": 98.55417299999999,
+        "p90": 101.330829,
+        "min": 93.466824,
+        "max": 103.428224
+      },
+      "ffprobe_processes": {
+        "n": 10,
+        "median": 0.0,
+        "p90": 0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "candidate": {
+      "press_to_started_ms": {
+        "n": 10,
+        "median": 95.9097155,
+        "p90": 99.089445,
+        "min": 93.341715,
+        "max": 99.511736
+      },
+      "ffprobe_processes": {
+        "n": 10,
+        "median": 0.0,
+        "p90": 0,
+        "min": 0,
+        "max": 0
+      }
+    }
+  },
+  "errors": {
+    "S1": 0,
+    "S2": 0
+  },
+  "conditions": "Fresh isolated JVMs, warm OS cache, private Xvfb for S1; mpv ao=null for S2; exclusive machine lock; same packages except S2 playback jar. Load S1 0.93, S2 2.51, 24 CPUs."
+}

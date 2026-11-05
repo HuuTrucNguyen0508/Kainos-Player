@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.playlist.toDomainPlaylist
@@ -8,6 +10,7 @@ import com.universalmusic.player.domain.matching.FuzzyMatcher
 import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artist
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -29,6 +32,8 @@ internal fun libraryQueueSongs(
     localOnly: Boolean,
     favoritesOnly: Boolean,
     favorites: Set<String>,
+    readyOffline: Boolean = false,
+    offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ): List<Track> {
     val catalog = if (localOnly) {
         local
@@ -36,7 +41,7 @@ internal fun libraryQueueSongs(
         (local + saved + spotify).distinctBy(Track::canonicalId)
     }
     val filtered = catalog.filter { !favoritesOnly || it.canonicalId in favorites }
-    return sort.sort(filtered)
+    return sort.sort(if (readyOffline) filtered.filter { offlineTrack(it) != null } else filtered)
 }
 
 internal fun libraryDisplaySongs(queueSongs: List<Track>, needle: String): List<Track> {
@@ -127,7 +132,17 @@ internal fun libraryFilteredSpotifyPlaylists(
 }
 
 internal fun libraryLocalCount(queueSongs: List<Track>): Int =
-    queueSongs.count { it.sources.any { s -> s.provider == ProviderId.LOCAL } }
+    queueSongs.count { it.sources.any { s -> s.provider == ProviderId.LOCAL && !s.isHeartedCache() } }
+
+/** Songs that play from a downloaded `audio-cache/` file rather than a library file. */
+internal fun libraryCachedCount(queueSongs: List<Track>): Int =
+    queueSongs.count { track ->
+        track.sources.any { it.isHeartedCache() } &&
+            track.sources.none { it.provider == ProviderId.LOCAL && !it.isHeartedCache() }
+    }
+
+private fun PlaybackSource.isHeartedCache(): Boolean =
+    provider == ProviderId.LOCAL && providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX)
 
 internal fun librarySpotifyCount(queueSongs: List<Track>): Int =
     queueSongs.count { it.sources.any { s -> s.provider == ProviderId.SPOTIFY } }
@@ -168,4 +183,44 @@ private fun Playlist.matchesLibraryQuery(needle: String): Boolean {
     if (needle.isEmpty()) return true
     val text = TrackNormalizer.fold(listOfNotNull(title, ownerName, description).joinToString(" "))
     return FuzzyMatcher.matches(needle, text)
+}
+
+/** One index per catalog/filter/sort snapshot; query changes reuse folded metadata. */
+internal data class LibrarySearchIndex(
+    private val songs: List<Track>,
+    private val albums: List<Album>,
+    private val artists: List<LibraryArtistEntry>,
+) {
+    private val songKeys by lazy { songs.map { it.librarySearchKey() } }
+    private val keysById by lazy { songs.indices.associate { songs[it].canonicalId to songKeys[it] } }
+    private val albumKeys by lazy {
+        albums.map { TrackNormalizer.fold(listOf(it.title, it.artists.joinToString(" ") { a -> a.name }).joinToString(" ")) }
+    }
+    private val artistKeys by lazy { artists.map { TrackNormalizer.fold(it.artist.name) } }
+
+    /** Complete lazy normalization before publishing this snapshot to the UI. */
+    fun warm() {
+        songKeys.size
+        keysById.size
+        albumKeys.size
+        artistKeys.size
+    }
+
+    fun songs(needle: String): List<Track> {
+        if (needle.isEmpty()) return songs
+        return songs.indices
+            .mapNotNull { i -> songKeys[i].score(needle)?.let { i to it } }
+            .sortedByDescending { it.second }
+            .map { songs[it.first] }
+    }
+
+    fun albums(needle: String): List<Album> = if (needle.isEmpty()) albums else albums.filterIndexed { i, album ->
+        FuzzyMatcher.matches(needle, albumKeys[i]) || album.tracks.any {
+            (keysById[it.canonicalId] ?: it.librarySearchKey()).score(needle) != null
+        }
+    }
+
+    fun artists(needle: String): List<LibraryArtistEntry> = if (needle.isEmpty()) artists else artists.filterIndexed { i, _ ->
+        FuzzyMatcher.matches(needle, artistKeys[i])
+    }
 }

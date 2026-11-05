@@ -34,6 +34,18 @@ class QueueControllerTest {
     }
 
     @Test
+    fun playNextOnEmptyQueueKeepsFirstTrackCurrent() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        queue.playNext(track("A", "X", provider = ProviderId.SPOTIFY))
+        queue.playNext(track("B", "X", provider = ProviderId.SPOTIFY))
+        queue.addToQueue(track("C", "X", provider = ProviderId.SPOTIFY))
+        assertEquals(0, queue.queue.value.currentIndex)
+        assertEquals("A", queue.queue.value.current?.track?.title)
+        assertEquals(listOf("B", "C"), queue.queue.value.upcoming.map { it.track.title })
+    }
+
+    @Test
     fun removeAdjustsCurrentIndex() {
         var n = 0
         val queue = QueueController { "id-${n++}" }

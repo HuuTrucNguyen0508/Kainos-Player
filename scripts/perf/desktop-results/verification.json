@@ -1,0 +1,86 @@
+{
+  "base": "5087402",
+  "jvm": {
+    "tests": 927,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 3
+  },
+  "launcher_checks": 7,
+  "checks_log": "/tmp/kainos-desktop-accepted-checks.log",
+  "e2e_log": "/tmp/kainos-desktop-accepted-e2e/run.log",
+  "duration_cases": [
+    "stale-flac",
+    "stale-wav",
+    "hires-flac",
+    "unknown-flac"
+  ],
+  "rejected_cached_duration": true,
+  "fallback_missing": true,
+  "fallback_stale": true,
+  "schema_change": false,
+  "phone_used": false,
+  "duration_results": {
+    "stale-flac": {
+      "errors": 0,
+      "duration_ms": [
+        2000
+      ],
+      "ffprobe_processes": {
+        "n": 1,
+        "median": 0,
+        "p90": 0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "stale-wav": {
+      "errors": 0,
+      "duration_ms": [
+        2000
+      ],
+      "ffprobe_processes": {
+        "n": 1,
+        "median": 4,
+        "p90": 4,
+        "min": 4,
+        "max": 4
+      }
+    },
+    "hires-flac": {
+      "errors": 0,
+      "duration_ms": [
+        2000
+      ],
+      "ffprobe_processes": {
+        "n": 1,
+        "median": 0,
+        "p90": 0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "unknown-flac": {
+      "errors": 0,
+      "duration_ms": [
+        2000
+      ],
+      "ffprobe_processes": {
+        "n": 1,
+        "median": 4,
+        "p90": 4,
+        "min": 4,
+        "max": 4
+      }
+    }
+  },
+  "rejected_cached_duration_result": {
+    "errors": 1,
+    "observed_duration_ms": 123000,
+    "expected_duration_ms": 2000
+  },
+  "production_commits": [
+    "db9a2e1",
+    "281b111"
+  ]
+}

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kainos Player — Redesign directions, October 2026</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#1C1D1F;--fg:#ECECE8;--mute:#9A9B98;--line:rgba(255,255,255,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 "Helvetica Neue",Inter,"Segoe UI",Arial,sans-serif;padding:48px 40px 80px;max-width:1240px;margin:0 auto}
+h1{font-size:34px;font-weight:400;letter-spacing:-.02em}
+.lead{color:var(--mute);max-width:70ch;margin-top:10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:36px}
+.card{display:block;text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#232426;transition:transform .15s ease,border-color .15s ease}
+.card:hover,.card:focus-visible{transform:translateY(-2px);border-color:rgba(255,255,255,.3);outline:none}
+.pv{height:190px;position:relative;overflow:hidden;display:grid;grid-template-columns:150px 1fr 120px;gap:8px;padding:12px}
+.pv i{display:block}
+.pv .nav{display:grid;gap:5px;align-content:start}
+.pv .nav i{height:9px;border-radius:2px;width:70%}
+.pv .main{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-content:start}
+.pv .main i{aspect-ratio:1}
+.pv .main .h{grid-column:1/5;height:16px;aspect-ratio:auto;width:60%}
+.pv .np{display:grid;gap:6px;align-content:start}
+.pv .np .art{aspect-ratio:1;position:relative}
+.pv .np i.t{height:8px;width:85%}.pv .np i.t2{height:6px;width:55%}
+.pv .np .ctl{display:flex;gap:4px}.pv .np .ctl i{width:12px;height:12px;border-radius:50%}
+.body{padding:16px 18px 18px}
+.body h2{font-size:20px;font-weight:500}
+.body h2 span{color:var(--mute);font-weight:400;margin-left:8px;font-size:14px}
+.body p{color:#C9CAC6;margin-top:6px;font-size:14px}
+.body .sw{display:flex;gap:4px;margin-top:12px}.body .sw i{width:26px;height:14px;border-radius:3px;border:1px solid rgba(255,255,255,.1)}
+.rec{margin-top:40px;border-top:1px solid var(--line);padding-top:24px;max-width:78ch}
+.rec h2{font-size:20px;font-weight:500}
+.rec p{margin-top:10px;color:#C9CAC6}
+.rec p+p{margin-top:8px}
+.notes{margin-top:28px;color:var(--mute);font-size:13px;max-width:78ch;line-height:1.6}
+/* 1 Liner Notes */
+.d1 .pv{background:#ECEDE8}.d1 .nav i{background:#C9CBC5}.d1 .nav i:first-child{background:#16181A;width:40%}
+.d1 .main .h{background:#16181A;height:3px;width:100%}.d1 .main i{background:#B9BCC6}.d1 .main i:nth-child(3){background:#3B4D8A}.d1 .main i:nth-child(4){background:#B5652A}.d1 .main i:nth-child(6){background:#E2E3DD}
+.d1 .np{border-left:1px solid #C9CBC5;padding-left:8px}.d1 .np .art{background:linear-gradient(160deg,#9FB1DD,#3B4D8A 55%,#141B33);box-shadow:0 0 40px 10px rgba(124,143,191,.35)}
+.d1 .np .t{background:#16181A}.d1 .np .t2{background:#7C8FBF}.d1 .np .ctl i{background:#16181A}.d1 .np .ctl i:first-child{background:#1E3DB8}
+/* 2 Nocturne */
+.d2 .pv{background:#070A12}.d2 .nav i{background:rgba(255,255,255,.12)}.d2 .nav i:first-child{background:rgba(255,255,255,.3);width:40%}
+.d2 .main .h{background:linear-gradient(90deg,#2C5A8F,transparent);height:28px;width:100%;border-radius:6px}.d2 .main i{background:#182236;border-radius:4px}.d2 .main i:nth-child(3){background:#3B4D8A}.d2 .main i:nth-child(5){background:#6D5F9A}
+.d2 .np{background:radial-gradient(ellipse at 50% 20%,#2D6FB8,#070A12 70%);border-radius:8px;padding:8px}.d2 .np .art{background:radial-gradient(circle at 35% 30%,#8FD0FF,#2D6FB8 45%,#0A1E3F);border-radius:5px;box-shadow:0 0 30px #5EA8E8}
+.d2 .np .t{background:#E9EDF5}.d2 .np .t2{background:#5EA8E8}.d2 .np .ctl i{background:rgba(255,255,255,.3)}.d2 .np .ctl i:first-child{background:#5EA8E8}.d2 .np .ctl i:nth-child(3){background:#fff}
+/* 3 Faceplate */
+.d3 .pv{background:#2B2825}.d3 .nav i{background:#3A3633;height:12px;width:90%}.d3 .nav i:first-child{box-shadow:inset 0 0 0 1px #F0A030}
+.d3 .main .h{background:#D9D3C7;height:10px;width:100%}.d3 .main i{background:#221F1C;border:1px solid #3A3633}.d3 .main i:nth-child(3){background:#C76A2E}.d3 .main i:nth-child(4){background:#9FB8A6}
+.d3 .np{background:linear-gradient(180deg,#EFEAE0,#D9D3C7);padding:8px;border-radius:3px}.d3 .np .art{background:#141210;padding:5px}.d3 .np .art::after{content:"";position:absolute;inset:5px 5px 10px;background:radial-gradient(circle at 35% 30%,#8FD0FF,#2D6FB8 45%,#0A1E3F)}.d3 .np .art::before{content:"";position:absolute;left:5px;right:5px;bottom:4px;height:3px;background:#4FA3C7;box-shadow:0 0 6px #4FA3C7;z-index:1}
+.d3 .np .t{background:#1E1B18}.d3 .np .t2{background:#F0A030}.d3 .np .ctl i{background:linear-gradient(180deg,#F5F1E8,#C6BFB1);border:1px solid #8E8679}
+/* 4 Loud */
+.d4 .pv{background:#F7F6F2}.d4 .nav{grid-auto-flow:column;grid-column:1/3;gap:0;border:2px solid #000;height:22px;align-content:stretch}.d4 .nav i{height:auto;width:auto;border-right:2px solid #000}.d4 .nav i:first-child{background:#000}.d4 .nav i:nth-child(2){background:#FF2D7A}
+.d4 .pv{grid-template-rows:22px 1fr}.d4 .main{grid-row:2}.d4 .np{grid-row:1/3;grid-column:3}
+.d4 .main i{border:2px solid #000;background:#fff}.d4 .main .h{background:#000;height:12px;width:80%;border:0}.d4 .main i:nth-child(3){background:#F28C28}.d4 .main i:nth-child(5){background:#0E1512}
+.d4 .np{border-left:2px solid #000;padding-left:8px}.d4 .np .art{border:2px solid #000;background:linear-gradient(135deg,#2F6BD6 0 50%,#0B1F4A 50%);box-shadow:8px 8px 0 #2F6BD6}
+.d4 .np .t{background:#000;height:10px}.d4 .np .t2{background:#000}.d4 .np .ctl i{border:2px solid #000;border-radius:0;background:#fff}.d4 .np .ctl i:first-child{background:#FF2D7A}.d4 .np .ctl i:nth-child(3){background:#000}
+/* 5 Folio */
+.d5 .pv{background:#E8EAE9;background-image:radial-gradient(circle at 1px 1px,rgba(21,24,27,.08) 1px,transparent 1.5px);background-size:14px 14px}.d5 .nav i{background:#C9CECD;height:1px;width:100%}.d5 .nav i:first-child{background:#15181B;height:12px;width:55%;border-radius:0}
+.d5 .main .h{background:transparent;border-bottom:1px solid #B5BAB9;height:14px;width:100%;border-radius:0}.d5 .main i{background:#F9FAF9;border:1px solid #C6CBCA;border-radius:5px}.d5 .main i:nth-child(3){box-shadow:inset 0 -3px 0 #1E4BD8}.d5 .main i:nth-child(4){box-shadow:inset 0 -3px 0 #30A46C}.d5 .main i:nth-child(6){box-shadow:inset 0 -3px 0 #E5484D}
+.d5 .np{border-left:1px solid #B5BAB9;padding-left:8px}.d5 .np .art{background:radial-gradient(ellipse at 50% 60%,rgba(47,117,132,.35),transparent 65%);display:grid;place-items:center}.d5 .np .art::after{content:"";width:70%;height:70%;background:#163E49;border-radius:4px;border:1px solid #C6CBCA}
+.d5 .np .t{background:#15181B}.d5 .np .t2{background:#2F7584;height:2px;width:30%}.d5 .np .ctl i{border:1px solid #B5BAB9;background:#F9FAF9}.d5 .np .ctl i:nth-child(2){background:#15181B;border-color:#15181B}
+</style></head><body>
+<h1>Kainos Player: five redesign directions</h1>
+<p class="lead">Static mockups, October 2026. Directions 1–4 came first; direction 5 (Folio) was added after the launcher redesign so the two apps can share one look. Each file shows desktop Home with the Now Playing pane, desktop Library (Songs), and phone Now Playing, Home, Search and Settings → Appearance. Everything shown is an existing feature; nothing is invented. Fonts render with system fallbacks, so the intended faces are named in each header.</p>
+
+<div class="grid">
+<a class="card d1" href="direction-1-liner-notes.html"><div class="pv"><div class="nav"><i></i><i></i><i></i><i></i><i></i></div><div class="main"><i class="h"></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="np"><span class="art"></span><i class="t"></i><i class="t2"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>1. Liner Notes<span>editorial</span></h2><p>A record sleeve on cool paper: one serif voice for titles, ruled ledgers instead of cards, cobalt for “on”, and album light as ink bleeding through the page.</p><div class="sw"><i style="background:#ECEDE8"></i><i style="background:#16181A"></i><i style="background:#5B6168"></i><i style="background:#1E3DB8"></i><i style="background:#7C8FBF"></i></div></div></a>
+
+<a class="card d2" href="direction-2-nocturne.html"><div class="pv"><div class="nav"><i></i><i></i><i></i><i></i><i></i></div><div class="main"><i class="h"></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="np"><span class="art"></span><i class="t"></i><i class="t2"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>2. Nocturne<span>cinematic dark</span></h2><p>A dark room lit by the record that is playing: the cover blurred across the player, and its sampled colour as the only accent, so the app re-tints for every song.</p><div class="sw"><i style="background:#070A12"></i><i style="background:#0E1320"></i><i style="background:#E9EDF5"></i><i style="background:#8A93A6"></i><i style="background:#5EA8E8"></i></div></div></a>
+
+<a class="card d2" href="direction-2-nocturne-v2.html"><div class="pv" style="background:#1A0A12"><div class="nav"><i></i><i></i><i></i><i></i><i></i></div><div class="main"><i class="h" style="background:linear-gradient(90deg,#3C1B2E,transparent)"></i><i style="background:#2A1220"></i><i></i><i style="background:#2A1220"></i><i></i><i style="background:#2A1220"></i><i style="background:#2A1220"></i></div><div class="np" style="background:radial-gradient(ellipse at 50% 20%,#2D6FB8,#1A0A12 70%)"><span class="art"></span><i class="t" style="background:#F4E9EA"></i><i class="t2" style="background:linear-gradient(90deg,#6AAEE6,#fff);box-shadow:0 0 6px #6AAEE6"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>2, revised. Nocturne v2<span>new palettes, custom seek bar</span></h2><p>The same room in three new nights, Darkroom (oxblood), Pine (green-teal) and Smoke (violet-graphite), with an in-page switcher; plus four seek bar studies, with Filament, a lit wire in the cover colour, applied throughout.</p><div class="sw"><i style="background:#1A0A12"></i><i style="background:#2A1220"></i><i style="background:#F4E9EA"></i><i style="background:#A88D95"></i><i style="background:#E8B06B"></i></div></div></a>
+
+<a class="card d3" href="direction-3-faceplate.html"><div class="pv"><div class="nav"><i></i><i></i><i></i><i></i></div><div class="main"><i class="h"></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="np"><span class="art"></span><i class="t"></i><i class="t2"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>3. Faceplate<span>analog hi-fi</span></h2><p>A 1970s integrated amp: aluminium faceplate on a dark chassis, push-buttons with travel, a volume knob, amber readouts, and album light as an LED strip and signal meter.</p><div class="sw"><i style="background:#2B2825"></i><i style="background:#D9D3C7"></i><i style="background:#1E1B18"></i><i style="background:#F0A030"></i><i style="background:#4FA3C7"></i></div></div></a>
+
+<a class="card d4" href="direction-4-loud.html"><div class="pv"><div class="nav"><i></i><i></i><i></i><i></i><i></i></div><div class="main"><i class="h"></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="np"><span class="art"></span><i class="t"></i><i class="t2"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>4. Loud<span>graphic / brutalist</span></h2><p>A gig poster: chalk, 3 px black rules, wide display type for every title, magenta only for “on”, and album light as a flat offset colour slab with no blur anywhere.</p><div class="sw"><i style="background:#F7F6F2"></i><i style="background:#000"></i><i style="background:#FF2D7A"></i><i style="background:#D8D7D2"></i><i style="background:#2F6BD6"></i></div></div></a>
+<a class="card d5" href="direction-5-folio.html"><div class="pv"><div class="nav"><i></i><i></i><i></i><i></i><i></i></div><div class="main"><i class="h"></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="np"><span class="art"></span><i class="t"></i><i class="t2"></i><span class="ctl"><i></i><i></i><i></i><i></i></span></div></div>
+<div class="body"><h2>5. Folio<span>sibling of the launcher</span></h2><p>The music app as another page of the Folio launcher: paper with a dotted grid, ink serif and ghost numerals, hairline ledgers, the launcher's icon tiles and now-playing slip, a ruled seek scale, and the same seven tints in both apps. Album light as an ink wash. An alternative to Nocturne, not a replacement.</p><div class="sw"><i style="background:#E8EAE9"></i><i style="background:#15181B"></i><i style="background:#5F666C"></i><i style="background:#1E4BD8"></i><i style="background:#2F7584"></i></div></div></a>
+<a class="card d6" href="direction-6-caelestia.html"><div class="pv" style="background:#110d11 radial-gradient(ellipse at 20% 110%,#5a2f6e,transparent 55%)"><div class="nav" style="padding-top:2px"><i style="background:#dfbbe2;width:14px;height:22px;border-radius:7px"></i><i style="background:#1d181e;border-radius:4px"></i><i style="background:#1d181e;border-radius:4px"></i><i style="background:#1d181e;border-radius:4px"></i><i style="background:#1d181e;border-radius:4px"></i></div><div class="main"><i class="h" style="background:#241e24;height:28px;width:100%;border-radius:10px"></i><i style="background:#1d181e;border-radius:8px"></i><i style="background:#65496a;border-radius:8px"></i><i style="background:#1d181e;border-radius:8px"></i><i style="background:#463648;border-radius:8px"></i><i style="background:#1d181e;border-radius:8px"></i><i style="background:#1d181e;border-radius:8px"></i></div><div class="np" style="background:rgba(23,18,23,.85);border-radius:14px;padding:8px"><span class="art" style="background:radial-gradient(circle at 50% 60%,#2F7584,#163E49 60%);border-radius:10px;box-shadow:0 0 24px 4px rgba(79,142,156,.45)"></span><i class="t" style="background:#efe2ec;border-radius:3px"></i><i class="t2" style="background:#dfbbe2;height:4px;border-radius:2px;width:70%"></i><span class="ctl"><i style="background:#d6c0d6;border-radius:4px"></i><i style="background:#463648"></i><i style="background:#dfbbe2;border-radius:4px;width:20px"></i><i style="background:#463648"></i></span></div></div>
+<div class="body"><h2>6. Caelestia<span>desktop only, follows the shell theme</span></h2><p>The Linux window wears the Caelestia shell's own skin: its rounding scale, Google Sans Flex, 85% surfaces over the wallpaper blur, tonal buttons that square off when on, and the shell's wavy seek bar. Colours are read live from scheme.json; an in-page switcher shows four schemes, one light. Album light stays inside the cover card. The phone keeps Folio; a side-by-side section shows what the two share.</p><div class="sw"><i style="background:#110d11"></i><i style="background:#1d181e"></i><i style="background:#efe2ec"></i><i style="background:#dfbbe2"></i><i style="background:#ffcdd7"></i></div></div></a>
+</div>
+
+<section class="rec">
+<h2>Recommendation: build Nocturne (2)</h2>
+<p>It is the direction that grows out of what already works in Kainos: the album light you like, the Obsidian-Music-inspired island, the atmospheric Home, and the fact that most of your schemes are dark. It also maps most directly to Compose: a blurred copy of the cover painter behind the Now Playing surface, the existing <code>rememberAlbumLight</code> colour promoted to <code>primary</code>, and glass surfaces via a translucent container colour. Phone Now Playing is the screen you see most, and Nocturne makes it the best of the four.</p>
+<p>If you want a sharper break from “another dark music app”, Faceplate (3) is the most characterful and still practical; its contained LED-strip album light is cheaper to render than a blur. Liner Notes (1) is the right choice if you want a light-first app and a library that reads like a catalogue. Loud (4) is the riskiest and the most fun; it would suit a “Signal” scheme inside another direction rather than being the whole app.</p>
+</section>
+
+<p class="notes">Shared conventions across all four: Search is Spotify + YouTube with the autoplay toggle shown off; Library keeps its own fuzzy search, the Local files only and Favorites only chips, Sort and Play all / Play favorites above a sticky header, and six availability states (local, cached, downloading, waiting, unavailable, failed); Now Playing shows the quality readout, heart, shuffle with a clear on-state, repeat off/all/one, seek, volume on desktop, sleep timer and queue, with the back control given its own row away from the artwork; the desktop Home hides its session card while the side pane is open, and the phone Home shows the resume card instead. Nothing shown requires anything web-only.</p>
+</body></html>

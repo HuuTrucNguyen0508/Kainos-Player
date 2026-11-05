@@ -11,6 +11,7 @@ import com.universalmusic.player.data.session.SessionSnapshot
 import com.universalmusic.player.data.session.StoredPeerListening
 import com.universalmusic.player.data.sync.LocalSyncIdentityIndex
 import com.universalmusic.player.data.sync.localSyncIdentity
+import com.universalmusic.player.domain.model.RepeatMode
 
 const val HANDOFF_MAX_AGE_MS = 24L * 60 * 60 * 1000
 
@@ -75,21 +76,32 @@ fun decideHandoff(
     return HandoffDecision.Load(PeerHandoff(listening.deviceId, listening.revision, listening.lastActiveAtMs, state))
 }
 
-fun PeerHandoff.toSessionSnapshot(localTracks: LocalSyncIdentityIndex, nowMs: Long): SessionSnapshot {
-    val entries = state.queue.entries
+fun PeerHandoff.toSessionSnapshot(localTracks: LocalSyncIdentityIndex, nowMs: Long): SessionSnapshot =
+    state.toSessionSnapshot(localTracks, nowMs, RemoteSession(deviceId, revision.value, lastActiveAtMs))
+
+/** Resolves each portable entry to this device's matching local track when it has one. */
+internal fun ListeningState.toSessionSnapshot(
+    localTracks: LocalSyncIdentityIndex,
+    nowMs: Long,
+    remoteSession: RemoteSession?,
+    repeat: RepeatMode = RepeatMode.OFF,
+): SessionSnapshot {
+    val current = requireNotNull(current) { "A snapshot needs a current entry" }
+    val entries = queue.entries
     val items = entries.map { entry ->
         val portable = entry.track.track
         val matched = portable.localSyncIdentity()?.let(localTracks::match)?.toPersisted(nowMs)
         PersistedQueueItem(entry.itemId, matched ?: portable)
     }
-    val elapsedMs = if (state.isPlaying) (nowMs - state.positionAtMs).coerceAtLeast(0L) else 0L
+    val elapsedMs = if (isPlaying) (nowMs - positionAtMs).coerceAtLeast(0L) else 0L
     val durationMs = current.track.track.durationMs
-    val positionMs = (state.positionMs + elapsedMs).let { position -> durationMs?.let(position::coerceAtMost) ?: position }
+    val positionMs = (positionMs + elapsedMs).let { position -> durationMs?.let(position::coerceAtMost) ?: position }
     return SessionSnapshot(
         items = items,
         currentIndex = entries.indexOfFirst { it.itemId == current.itemId },
         positionMs = positionMs,
-        shuffle = state.shuffle,
-        remoteSession = RemoteSession(deviceId, revision.value, lastActiveAtMs),
+        shuffle = shuffle,
+        repeat = repeat.name,
+        remoteSession = remoteSession,
     )
 }

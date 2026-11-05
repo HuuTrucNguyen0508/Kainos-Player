@@ -7,6 +7,7 @@ import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.Artist
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderCapabilities
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
@@ -23,6 +24,7 @@ import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.encodeUrl
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
+import com.universalmusic.player.platform.fetchLibrespotTrackRadio
 import com.universalmusic.player.platform.secureRandomBytes
 import com.universalmusic.player.platform.sha256Bytes
 import io.ktor.client.HttpClient
@@ -56,6 +58,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 private const val AUTH_URL = "https://accounts.spotify.com/authorize"
 private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
 private const val API = "https://api.spotify.com/v1"
+private const val PLAYLIST_PAGE_SIZE = 50
 private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
 private const val OBSERVE_RATE_LIMIT_DEFAULT_MS = 30_000L
 private val SCOPES = listOf(
@@ -107,73 +110,33 @@ class SpotifyProvider(
     private var pendingLogin: PendingLogin? = null
     private var premium: Boolean = false
     private var userId: String? = null
-    private var activePlaybackDeviceId: String? = null
-    private var recommendationsAccess: SpotifyRecommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
+    private var playbackReceiverGeneration = 0L
+    private var playbackDeviceId: String? = null
+    private var playbackTrackId: String? = null
+    private var activePlaybackDeviceId: String?
+        get() = playbackDeviceId.takeIf { playbackReceiverGeneration == webPlayback.receiverGeneration }
+        set(value) {
+            playbackDeviceId = value
+            playbackReceiverGeneration = webPlayback.receiverGeneration
+        }
+
+    /** Receiver generation whose current track [webPlayback] loaded itself; null when Connect started it. */
+    private var directPlaybackGeneration: Long? = null
+    private val playingDirectly: Boolean
+        get() = directPlaybackGeneration == webPlayback.receiverGeneration
 
     /** Spotify user id for the signed-in account, when known. */
     fun currentUserId(): String? = userId
 
-    /** Cached feasibility of `/v1/recommendations` for this Client ID. */
-    fun recommendationsAccess(): SpotifyRecommendationsAccess = recommendationsAccess
-
     /**
-     * Probe `/v1/recommendations` once (or return cached result).
-     * Does not invent alternatives when the endpoint is forbidden.
+     * Spotify's own radio for [seed] (the "inspired by" mix librespot reads), skipping
+     * [excludeCanonicalIds]. Throws with the reason when the radio cannot be read.
      */
-    suspend fun ensureRecommendationsAccess(): SpotifyRecommendationsAccess {
-        if (recommendationsAccess != SpotifyRecommendationsAccess.UNKNOWN) return recommendationsAccess
-        val token = runCatching { accessToken() }.getOrNull()
-            ?: return SpotifyRecommendationsAccess.UNKNOWN
-        val response = http.get("$API/recommendations") {
-            bearerAuth(token)
-            parameter("seed_tracks", "11dFghVXANMlKmJXsNCbNl") // Spotify sample track id
-            parameter("limit", 1)
+    suspend fun radio(seed: Track, excludeCanonicalIds: Set<String>): List<Track> {
+        val trackId = requireNotNull(seed.sourceFor(ProviderId.SPOTIFY)?.providerTrackId) {
+            "${seed.canonicalId} is not a Spotify track"
         }
-        recommendationsAccess = when (response.status.value) {
-            in 200..299 -> SpotifyRecommendationsAccess.AVAILABLE
-            401 -> SpotifyRecommendationsAccess.UNKNOWN
-            403, 404 -> SpotifyRecommendationsAccess.UNAVAILABLE
-            429 -> SpotifyRecommendationsAccess.UNKNOWN
-            else -> SpotifyRecommendationsAccess.UNAVAILABLE
-        }
-        return recommendationsAccess
-    }
-
-    /**
-     * Seeded recommendations when [ensureRecommendationsAccess] is [SpotifyRecommendationsAccess.AVAILABLE].
-     * Returns failure (not liked-song shuffle) when the endpoint is unavailable.
-     */
-    suspend fun getRecommendations(seedTrackIds: List<String>, limit: Int = 20): Result<List<Track>> {
-        val seeds = seedTrackIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(5)
-        if (seeds.isEmpty()) return Result.success(emptyList())
-        return when (ensureRecommendationsAccess()) {
-            SpotifyRecommendationsAccess.UNAVAILABLE -> Result.failure(
-                IllegalStateException(
-                    "Spotify recommendations/radio is not available for this Client ID. " +
-                        "Kainos will not substitute Liked Songs shuffle.",
-                ),
-            )
-            SpotifyRecommendationsAccess.UNKNOWN -> Result.failure(
-                IllegalStateException("Spotify recommendations availability is unknown. Try again after signing in."),
-            )
-            SpotifyRecommendationsAccess.AVAILABLE -> runCatching {
-                val token = accessToken()
-                val response = http.get("$API/recommendations") {
-                    bearerAuth(token)
-                    parameter("seed_tracks", seeds.joinToString(","))
-                    parameter("limit", limit.coerceIn(1, 50))
-                }
-                if (!response.status.isSuccess()) {
-                    if (response.status.value == 403 || response.status.value == 404) {
-                        recommendationsAccess = SpotifyRecommendationsAccess.UNAVAILABLE
-                    }
-                    response.errorMessage("Spotify recommendations")
-                }
-                response.body<SpotifyRecommendationsResponse>()
-                    .tracks
-                    .mapNotNull { it.toDomainOrNull(premium) }
-            }
-        }
+        return fetchLibrespotTrackRadio(trackId, excludeCanonicalIds)
     }
 
     suspend fun restore() {
@@ -292,8 +255,9 @@ class SpotifyProvider(
         authMutex.withLock { pendingLogin = null }
         premium = false
         userId = null
-        recommendationsAccess = SpotifyRecommendationsAccess.UNKNOWN
         activePlaybackDeviceId = null
+        playbackTrackId = null
+        directPlaybackGeneration = null
         _state.value = if (config.hasSpotifyCredentials) ProviderState.AUTH_REQUIRED else ProviderState.NOT_CONFIGURED
     }
 
@@ -376,23 +340,38 @@ class SpotifyProvider(
      * developer Client ID. Liked songs stay on `/me/tracks`.
      */
     suspend fun getPlaylistTracks(playlistId: String): List<Track> {
-        val id = playlistId.trim()
-        if (id.isEmpty()) return emptyList()
-        val token = accessToken()
+        if (playlistId.isBlank()) return emptyList()
         val result = mutableListOf<Track>()
-        var offset = 0
+        var cursor: String? = null
         do {
-            val response = http.get("$API/playlists/$id/items") {
-                bearerAuth(token)
-                parameter("limit", 50)
-                parameter("offset", offset)
-                parameter("additional_types", "track")
-            }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist items")
-            result += response.items.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) }
-            offset += response.items.size
-            if (response.items.isEmpty()) break
-        } while (response.next != null)
+            val page = getPlaylistTracksPage(playlistId, cursor)
+            result += page.tracks
+            cursor = page.next
+        } while (cursor != null)
         return result
+    }
+
+    /**
+     * One page of up to 50 entries from `/playlists/{id}/items`, starting at the offset in [cursor]
+     * (null for the first page). Entries Spotify cannot show (removed or local files) are skipped,
+     * so a page may hold fewer tracks than it covered.
+     */
+    suspend fun getPlaylistTracksPage(playlistId: String, cursor: String?): PlaylistTracksPage {
+        val id = playlistId.trim()
+        require(id.isNotEmpty()) { "Playlist id is required" }
+        val offset = cursor?.toIntOrNull() ?: 0
+        val response = http.get("$API/playlists/$id/items") {
+            bearerAuth(accessToken())
+            parameter("limit", PLAYLIST_PAGE_SIZE)
+            parameter("offset", offset)
+            parameter("additional_types", "track")
+        }.successBody<SpotifyPaging<SpotifyPlaylistTrack>>("Spotify playlist items")
+        val more = response.next != null && response.items.isNotEmpty()
+        return PlaylistTracksPage(
+            tracks = response.items.mapNotNull { it.resolvedTrack()?.toDomainOrNull(premium) },
+            next = if (more) (offset + response.items.size).toString() else null,
+            total = response.total,
+        )
     }
 
     override suspend fun getStream(track: Track): PlaybackSource? {
@@ -453,15 +432,18 @@ class SpotifyProvider(
         if (currentTimeMillis() > deadlineMs) {
             error(
                 "Spotify playback timed out while starting the in-app receiver or Connect transfer. " +
-                    "Check Settings → Connect, then try again.",
+                    "Check Settings → Music sources, then try again.",
             )
         }
     }
 
-    private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long) {
+    private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long, positionMs: Long = 0) {
+        if (positionMs <= 0 && !requireExplicitPlaybackDevice && startDirectPlayback(spotifyTrackId)) return
+        directPlaybackGeneration = null
         val token = accessToken()
         ensureWithinConnectDeadline(deadlineMs)
         val target = resolvePlaybackTarget(token, deadlineMs)
+        val targetGeneration = webPlayback.receiverGeneration
         // #region agent log
         debugSpotifyLog(
             "H1",
@@ -491,7 +473,7 @@ class SpotifyProvider(
                 bearerAuth(token)
                 parameter("device_id", target.deviceId)
                 contentType(ContentType.Application.Json)
-                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId")))
+                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId"), positionMs = positionMs.coerceAtLeast(0)))
             }
             if (response.status.isSuccess()) {
                 // #region agent log
@@ -502,13 +484,12 @@ class SpotifyProvider(
                     mapOf("attempt" to attempt + 1),
                 )
                 // #endregion
-                if (target.kainosLocal) {
-                    ensureMaxLocalReceiverVolume(token, target.deviceId)
-                }
                 if (requireExplicitPlaybackDevice) {
                     confirmPlaybackOnTarget(token, target, spotifyTrackId)
                 }
+                playbackTrackId = spotifyTrackId
                 activePlaybackDeviceId = target.deviceId
+                playbackReceiverGeneration = targetGeneration
                 return
             }
             lastError = runCatching { response.bodyAsText() }.getOrNull()
@@ -526,6 +507,20 @@ class SpotifyProvider(
             delay(250L * (attempt + 1))
         }
         error("Spotify Connect playback failed${lastError?.let { ": $it" }.orEmpty()}")
+    }
+
+    /**
+     * Every Connect start costs several sequential Web API calls plus Spotify's push back to the
+     * receiver, which is slow on mobile data. An in-process receiver can load the track itself.
+     */
+    private suspend fun startDirectPlayback(spotifyTrackId: String): Boolean {
+        val generation = webPlayback.receiverGeneration
+        // A receiver recovered mid-load is not the one that loaded the track.
+        if (!webPlayback.playTrack(spotifyTrackId) || generation != webPlayback.receiverGeneration) return false
+        playbackTrackId = spotifyTrackId
+        activePlaybackDeviceId = null
+        directPlaybackGeneration = generation
+        return true
     }
 
     suspend fun getConnectDevices(): List<SpotifyConnectDevice> =
@@ -625,7 +620,7 @@ class SpotifyProvider(
         val selectedId = selectedPlaybackDeviceId()?.trim().orEmpty()
         if (selectedId.isEmpty()) {
             error(
-                "Choose a Spotify Connect device in Settings → Spotify output before playing. " +
+                "Choose a Spotify Connect device in Now Playing → Spotify output before playing. " +
                     "Pick this phone, a computer, a speaker, or any other available device.",
             )
         }
@@ -656,9 +651,10 @@ class SpotifyProvider(
         if (device.isRestricted) {
             error(
                 "${device.displayName()} cannot be controlled through Spotify. " +
-                    "Choose another Spotify device in Settings → Spotify output.",
+                    "Choose another Spotify device in Now Playing → Spotify output.",
             )
         }
+
         requireSpotifyVolume(device)
         return ConnectPlaybackTarget(
             deviceId = selectedId,
@@ -693,30 +689,30 @@ class SpotifyProvider(
         error(
             "Spotify playback on $label was not confirmed. " +
                 "Open Spotify on that device, check its volume and output, then try again. " +
-                "Or pick a different Connect device in Settings → Spotify output.",
+                "Or pick a different Connect device in Now Playing → Spotify output.",
         )
     }
 
-    /**
-     * Local mpv/ExoPlayer run at full gain. librespot defaults to 50% Connect soft-volume on a log
-     * scale, which sounds much quieter. Force the in-app receiver to 100% when we start playback;
-     * failures here must not block audio (device may still be registering).
-     */
-    private suspend fun ensureMaxLocalReceiverVolume(token: String, deviceId: String) {
-        val response = runCatching {
-            http.put("$API/me/player/volume") {
+    suspend fun setConnectVolume(volume: Float) {
+        try {
+            if (webPlayback.setVolume(volume)) return
+            if (clock() < observeCooldownUntilMs) return
+            val token = accessToken()
+            val response = http.put("$API/me/player/volume") {
                 bearerAuth(token)
-                parameter("volume_percent", 100)
-                parameter("device_id", deviceId)
+                parameter("volume_percent", (volume.coerceIn(0f, 1f) * 100).toInt())
+                activePlaybackDeviceId?.let { parameter("device_id", it) }
             }
-        }.getOrNull() ?: return
-        if (!response.status.isSuccess()) {
-            debugSpotifyLog(
-                "H1",
-                "SpotifyProvider.ensureMaxLocalReceiverVolume",
-                "volume bump skipped",
-                mapOf("status" to response.status.value),
-            )
+            if (response.status == HttpStatusCode.TooManyRequests) {
+                observeCooldownUntilMs = clock() + response.retryAfterMs(OBSERVE_RATE_LIMIT_DEFAULT_MS)
+            }
+            if (!response.status.isSuccess()) {
+                com.universalmusic.player.platform.PlaybackTrace.log("Spotify", "volume update failed: ${response.status.value}")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            com.universalmusic.player.platform.PlaybackTrace.log("Spotify", "volume update failed: ${failure::class.simpleName}")
         }
     }
 
@@ -751,7 +747,7 @@ class SpotifyProvider(
             SpotifyWebPlaybackFailure.LibrespotNotFound ->
                 "librespot is not installed. Run scripts/install-librespot.sh, then try again."
             SpotifyWebPlaybackFailure.LibrespotAuthenticationRequired ->
-                "Spotify in-app playback needs a one-time librespot sign-in. Open Settings and select Set up in-app playback."
+                "Spotify in-app playback needs a one-time librespot sign-in. Open Settings → Music sources and choose Set up in-app Spotify playback."
             is SpotifyWebPlaybackFailure.LibrespotExited ->
                 describeLibrespotConnectionFailure(reason.detail)
                     ?: reason.detail
@@ -791,6 +787,7 @@ class SpotifyProvider(
     }
 
     suspend fun pauseConnectPlayback() {
+        if (playingDirectly && webPlayback.pause()) return
         val response = http.put("$API/me/player/pause") {
             bearerAuth(accessToken())
             activePlaybackDeviceId?.let { parameter("device_id", it) }
@@ -800,15 +797,28 @@ class SpotifyProvider(
         response.requireSuccess("Spotify Connect pause")
     }
 
-    suspend fun resumeConnectPlayback() {
+    suspend fun resumeConnectPlayback() = resumeConnectPlayback(0)
+
+    suspend fun resumeConnectPlayback(positionMs: Long) {
+        val trackId = playbackTrackId
+        fun receiverReplaced() = trackId != null && playbackReceiverGeneration != webPlayback.receiverGeneration
+        if (!receiverReplaced() && playingDirectly && webPlayback.resume()) return
+        // The token fetch can suspend across a receiver recovery, so check again before choosing the device.
+        val token = if (receiverReplaced()) null else accessToken()
+        if (token == null || receiverReplaced()) {
+            startConnectPlaybackLocked(checkNotNull(trackId), currentTimeMillis() + CONNECT_PLAYBACK_TIMEOUT_MS, positionMs)
+            return
+        }
+        val device = activePlaybackDeviceId
         val response = http.put("$API/me/player/play") {
-            bearerAuth(accessToken())
-            activePlaybackDeviceId?.let { parameter("device_id", it) }
+            bearerAuth(token)
+            device?.let { parameter("device_id", it) }
         }
         response.requireSuccess("Spotify Connect resume")
     }
 
     suspend fun seekConnectPlayback(positionMs: Long) {
+        if (playingDirectly && webPlayback.seek(positionMs)) return
         val response = http.put("$API/me/player/seek") {
             bearerAuth(accessToken())
             parameter("position_ms", positionMs.coerceAtLeast(0))
@@ -1043,10 +1053,10 @@ private fun selectedDeviceMissingMessage(
     val available = alternatives.joinToString { "${it.name} (${it.type})" }
     return if (available.isNotEmpty()) {
         "The Spotify device saved in Settings is offline (id ${selectedId.take(8)}…). " +
-            "Choose another device under Settings → Spotify output. Available now: $available."
+            "Choose another device under Now Playing → Spotify output. Available now: $available."
     } else {
         "The Spotify device saved in Settings is offline. Open Spotify on this phone or another " +
-            "Premium device, then refresh devices in Settings → Spotify output and select one."
+            "Premium device, then refresh devices in Now Playing → Spotify output and select one."
     }
 }
 

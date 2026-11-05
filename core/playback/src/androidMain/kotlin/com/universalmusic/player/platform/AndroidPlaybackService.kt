@@ -1,5 +1,7 @@
 package com.universalmusic.player.platform
 
+import android.widget.Toast
+import androidx.media3.session.DefaultMediaNotificationProvider
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -38,18 +40,27 @@ class AndroidPlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "onCreate")
+        setListener(object : MediaSessionService.Listener {
+            override fun onForegroundServiceStartNotAllowedException() = foregroundPlaybackDenied()
+        })
+        setMediaNotificationProvider(ForegroundSafeNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build(),
+            ::foregroundPlaybackDenied,
+        ))
         silenceUri = ensureSilenceFile(this)
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
-        val exo = ExoPlayer.Builder(this).build().apply {
+        val levelling = LevellingAudioProcessor()
+        val exo = ExoPlayer.Builder(this, LevellingRenderersFactory(this, levelling)).build().apply {
+            setWakeMode(C.WAKE_MODE_NETWORK)
             setAudioAttributes(audioAttributes, true)
             setHandleAudioBecomingNoisy(true)
             addListener(exoTrace)
             addAnalyticsListener(exoAnalyticsTrace)
         }
-        val player = KainosForwardingPlayer(exo)
+        val player = KainosForwardingPlayer(exo, levelling)
         forwardingPlayer = player
         AndroidMediaControls.attachPlayer(player)
         val session = MediaSession.Builder(this, player)
@@ -65,6 +76,12 @@ class AndroidPlaybackService : MediaSessionService() {
                 session.setMediaButtonPreferences(mediaButtonPreferences(next))
             }
         }
+    }
+
+    private fun foregroundPlaybackDenied() {
+        PlaybackTrace.log("Session3", "foreground promotion denied; pausing transport, reopen app to resume")
+        AndroidMediaControls.pause()
+        Toast.makeText(this, "Open Kainos Player and press Play to resume playback", Toast.LENGTH_LONG).show()
     }
 
     private fun trace(message: String) = PlaybackTrace.log("Exo", message)

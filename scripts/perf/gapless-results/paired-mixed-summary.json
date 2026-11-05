@@ -1,0 +1,147 @@
+{
+  "baseline": {
+    "ffprobe_processes": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0,
+      "min": 0,
+      "max": 0
+    },
+    "idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "idle_rss_kib": {
+      "n": 10,
+      "median": 107576.0,
+      "p90": 121000,
+      "min": 103564,
+      "max": 123592
+    },
+    "mpv_idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "natural_pcm_boundary_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "natural_pcm_silence_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "pause_ack_ms": {
+      "n": 10,
+      "median": 1.1804139999999999,
+      "p90": 1.237955,
+      "min": 1.012004,
+      "max": 1.359965
+    },
+    "pcm_resolution_ms": {
+      "n": 10,
+      "median": 5.0,
+      "p90": 5,
+      "min": 5,
+      "max": 5
+    },
+    "press_to_started_ms": {
+      "n": 10,
+      "median": 105.084467,
+      "p90": 108.622638,
+      "min": 102.673126,
+      "max": 113.535142
+    },
+    "resume_ack_ms": {
+      "n": 10,
+      "median": 0.855503,
+      "p90": 1.228035,
+      "min": 0.685773,
+      "max": 1.506806
+    }
+  },
+  "candidate": {
+    "ffprobe_processes": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0,
+      "min": 0,
+      "max": 0
+    },
+    "idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "idle_rss_kib": {
+      "n": 10,
+      "median": 106330.0,
+      "p90": 108144,
+      "min": 102908,
+      "max": 110612
+    },
+    "mpv_idle_cpu_percent": {
+      "n": 10,
+      "median": 0.0,
+      "p90": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "natural_pcm_boundary_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "natural_pcm_silence_ms": {
+      "n": 10,
+      "median": 45.0,
+      "p90": 45.0,
+      "min": 45.0,
+      "max": 45.0
+    },
+    "pause_ack_ms": {
+      "n": 10,
+      "median": 1.225885,
+      "p90": 1.436806,
+      "min": 1.058375,
+      "max": 1.501746
+    },
+    "pcm_resolution_ms": {
+      "n": 10,
+      "median": 5.0,
+      "p90": 5,
+      "min": 5,
+      "max": 5
+    },
+    "press_to_started_ms": {
+      "n": 10,
+      "median": 125.1930835,
+      "p90": 129.528856,
+      "min": 116.569005,
+      "max": 133.484028
+    },
+    "resume_ack_ms": {
+      "n": 10,
+      "median": 0.886374,
+      "p90": 1.024054,
+      "min": 0.721253,
+      "max": 1.060104
+    }
+  },
+  "errors": 0
+}

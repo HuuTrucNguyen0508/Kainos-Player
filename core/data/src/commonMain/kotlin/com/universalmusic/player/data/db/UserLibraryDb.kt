@@ -1,5 +1,9 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.library.HomePinStamp
+import com.universalmusic.player.data.library.HomePinTombstone
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.USER_LIBRARY_FORMAT_VERSION
@@ -11,34 +15,43 @@ import com.universalmusic.player.data.sync.LocalSyncIdentity
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
-internal fun KainosDatabase.readUserLibrary(): UserLibrarySnapshot = UserLibrarySnapshot(
-    version = USER_LIBRARY_FORMAT_VERSION,
-    spotifyAccountId = userLibraryQueries.selectMeta().executeAsOneOrNull()?.spotify_account_id,
-    favoriteIds = userLibraryQueries.selectFavorites().executeAsList(),
-    heartOps = userLibraryQueries.selectHeartOps().executeAsList().map { row ->
-        HeartOp(
-            canonicalId = row.canonical_id,
-            action = HeartAction.valueOf(row.action),
-            revision = row.revision,
-            deviceId = row.device_id,
-            spotifyAccountId = row.spotify_account_id,
-            localIdentity = row.local_identity_json?.let { storageJson.decodeFromString<LocalSyncIdentity>(it) },
-        )
-    },
-    remembered = userLibraryQueries.selectRemembered().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedTrack>(json)
-    },
-    recents = userLibraryQueries.selectRecents().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedTrack>(json)
-    },
-    homePins = userLibraryQueries.selectHomePins().executeAsList().map { json ->
-        storageJson.decodeFromString<PersistedHomePin>(json)
-    },
-)
+internal fun KainosDatabase.readUserLibrary(strict: Boolean = false): UserLibrarySnapshot {
+    val meta = userLibraryQueries.selectMeta().executeAsOneOrNull()
+    return UserLibrarySnapshot(
+        version = USER_LIBRARY_FORMAT_VERSION,
+        spotifyAccountId = meta?.spotify_account_id,
+        favoriteIds = userLibraryQueries.selectFavorites().executeAsList(),
+        heartOps = userLibraryQueries.selectHeartOps().executeAsList().mapNotNull { row ->
+            readStorageRow(strict) { HeartOp(
+                canonicalId = row.canonical_id,
+                action = HeartAction.valueOf(row.action),
+                revision = row.revision,
+                deviceId = row.device_id,
+                spotifyAccountId = row.spotify_account_id,
+                localIdentity = row.local_identity_json?.let { storageJson.decodeFromString<LocalSyncIdentity>(it) },
+            ) }
+        },
+        remembered = userLibraryQueries.selectRemembered().executeAsList().mapNotNull { json ->
+            readStorageRow(strict) { storageJson.decodeFromString<PersistedTrack>(json) }
+        },
+        recents = userLibraryQueries.selectRecents().executeAsList().mapNotNull { json ->
+            readStorageRow(strict) { storageJson.decodeFromString<PersistedTrack>(json) }
+        },
+        homePins = userLibraryQueries.selectHomePins().executeAsList().mapNotNull { json ->
+            readStorageRow(strict) { storageJson.decodeFromString<PersistedHomePin>(json) }
+        },
+        homePinTombstones = userLibraryQueries.selectHomePinTombstones().executeAsList().mapNotNull { row ->
+            readStorageRow(strict) {
+                HomePinTombstone(HomePinKind.valueOf(row.kind), row.target_id, HomePinStamp(row.revision, row.device_id))
+            }
+        },
+        homePinOrderStamp = meta?.let { HomePinStamp(it.pin_order_revision, it.pin_order_device_id) } ?: HomePinStamp(),
+    )
+}
 
 /** Store inputs remain snapshots; only changed rows are written inside the caller's transaction. */
 internal fun KainosDatabase.writeUserLibrary(snapshot: UserLibrarySnapshot) {
-    val previous = readUserLibrary()
+    val previous = readUserLibrary(strict = true)
     syncOrderedRows(previous.favoriteIds, snapshot.favoriteIds, userLibraryQueries::deleteFavoriteAt) { position, id ->
         userLibraryQueries.insertFavorite(position, id)
     }
@@ -57,8 +70,20 @@ internal fun KainosDatabase.writeUserLibrary(snapshot: UserLibrarySnapshot) {
     syncOrderedRows(previous.homePins, snapshot.homePins, userLibraryQueries::deleteHomePinAt) { position, pin ->
         userLibraryQueries.insertHomePin(position, pin.id, pin.kind.name, pin.targetId, storageJson.encodeToString(pin))
     }
-    if (previous.spotifyAccountId != snapshot.spotifyAccountId || userLibraryQueries.selectMeta().executeAsOneOrNull() == null) {
-        userLibraryQueries.upsertMeta(snapshot.spotifyAccountId)
+    val oldTombstones = previous.homePinTombstones.associateBy { it.kind to it.targetId }
+    val newTombstones = snapshot.homePinTombstones.associateBy { it.kind to it.targetId }
+    (oldTombstones.keys - newTombstones.keys).forEach { (kind, targetId) ->
+        userLibraryQueries.deleteHomePinTombstone(kind.name, targetId)
+    }
+    newTombstones.values.filter { oldTombstones[it.kind to it.targetId] != it }.forEach {
+        userLibraryQueries.insertHomePinTombstone(it.kind.name, it.targetId, it.stamp.revision, it.stamp.deviceId)
+    }
+    if (previous.spotifyAccountId != snapshot.spotifyAccountId ||
+        previous.homePinOrderStamp != snapshot.homePinOrderStamp ||
+        userLibraryQueries.selectMeta().executeAsOneOrNull() == null
+    ) {
+        val order = snapshot.homePinOrderStamp
+        userLibraryQueries.upsertMeta(snapshot.spotifyAccountId, order.revision, order.deviceId)
     }
 }
 
@@ -76,8 +101,10 @@ internal fun <T> syncOrderedRows(
 }
 
 class DbUserLibraryStore(
-    private val storage: KainosStorage,
+    storage: KainosStorage,
 ) : UserLibraryStore {
+    private val storage = AreaStorage(storage, StorageArea.LIBRARY)
+
     override suspend fun read(): UserLibrarySnapshot = storage.read { it.readUserLibrary() }
 
     override suspend fun write(snapshot: UserLibrarySnapshot) {

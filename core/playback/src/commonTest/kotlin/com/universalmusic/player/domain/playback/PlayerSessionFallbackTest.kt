@@ -21,6 +21,51 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun truncatedStreamResolvesAgainAtItsPositionOnlyOnce() = runTest {
+        var calls = 0
+        val engine = RecordingEngine { calls++ }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("Stream", "Artist", provider = ProviderId.SAMPLE))
+        runCurrent()
+        engine.state.value = engine.state.value.copy(status = EngineStatus.FAILED, retryAtPositionMs = 420)
+        runCurrent()
+        assertEquals(2, calls)
+        assertEquals(420, engine.state.value.positionMs)
+        engine.state.value = engine.state.value.copy(status = EngineStatus.FAILED, retryAtPositionMs = 420)
+        runCurrent()
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun playRetriesAfterFailureOnLastItem() = runTest {
+        var calls = 0
+        val engine = RecordingEngine { if (++calls == 1) error("start failed") }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(track("Last", "Artist", provider = ProviderId.SAMPLE))
+        runCurrent()
+        session.playTransport()
+        runCurrent()
+        assertEquals(2, calls)
+        assertTrue(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun pauseDuringRebufferKeepsTheLoadedTrackAndPosition() = runTest {
+        val engine = RecordingEngine {}
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.playAwait(track("Song", "Artist", provider = ProviderId.SAMPLE))
+        engine.state.value = engine.state.value.copy(status = EngineStatus.BUFFERING, positionMs = 420)
+        runCurrent()
+        session.pauseTransport()
+        runCurrent()
+        assertEquals(EngineStatus.PAUSED, engine.state.value.status)
+        assertEquals(420, engine.state.value.positionMs)
+        session.playTransport()
+        runCurrent()
+        assertEquals(420, engine.state.value.positionMs)
+    }
+
+    @Test
     fun pauseWhileResolvingCancelsPendingPlayback() = runTest {
         var resolutions = 0
         val resolver = object : SourceResolver {
@@ -280,6 +325,7 @@ private class RecordingEngine(
 
     override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
         activePlayGeneration = playGeneration
+        state.value = EngineState(status = EngineStatus.BUFFERING, playGeneration = playGeneration)
         onPlay(handle)
         state.value = EngineState(
             status = EngineStatus.PLAYING,

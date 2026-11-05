@@ -1,0 +1,22 @@
+{
+  "pc_to_phone": {
+    "pause": true,
+    "resume": true,
+    "double_tap_100ms": true,
+    "sender_unaffected": "Playing"
+  },
+  "phone_to_pc": {
+    "pause": true,
+    "resume": true,
+    "double_tap_100ms": true,
+    "sender_unaffected": "Playing"
+  },
+  "production_commit": "afebc33",
+  "evidence_directory": "/tmp/kainos-remote2-proof-r3",
+  "audio": "mpv --no-config --ao=null",
+  "remote_applications_per_target": {
+    "pause": 2,
+    "play": 2
+  },
+  "screenshot_method": "ImageMagick import on owned Xvfb DISPLAY; X11 Robot input"
+}

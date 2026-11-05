@@ -7,6 +7,9 @@ import kotlinx.coroutines.CoroutineScope
 
 expect fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine
 
+/** False when the audio player the engine depends on is missing from this machine. */
+expect fun audioPlayerInstalled(): Boolean
+
 expect fun bindPlatformMediaControls(
     session: PlayerSession,
     scope: CoroutineScope,

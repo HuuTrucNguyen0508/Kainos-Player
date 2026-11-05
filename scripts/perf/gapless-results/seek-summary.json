@@ -1,0 +1,593 @@
+{
+  "cold": {
+    "summary": {
+      "base": {
+        "latency_ms": {
+          "median": 2.423809,
+          "p90": 2.7530791
+        },
+        "pcm_gap_ms": {
+          "median": 0.0,
+          "p90": 0.0
+        },
+        "spawns": {
+          "median": 0.0,
+          "p90": 0.0
+        }
+      },
+      "restart": {
+        "latency_ms": {
+          "median": 58.5936085,
+          "p90": 60.049243
+        },
+        "pcm_gap_ms": {
+          "median": 42.0,
+          "p90": 85.0
+        },
+        "spawns": {
+          "median": 1.0,
+          "p90": 1.0
+        }
+      },
+      "head": {
+        "latency_ms": {
+          "median": 5.1249295,
+          "p90": 5.4526441000000005
+        },
+        "pcm_gap_ms": {
+          "median": 0.0,
+          "p90": 0.0
+        },
+        "spawns": {
+          "median": 0.0,
+          "p90": 0.0
+        }
+      },
+      "storm": "SEEK_RESULT storm_spawns=0 final_position=3.899977\n"
+    },
+    "samples": [
+      {
+        "run": 0,
+        "variant": "base",
+        "latency_ms": 2.722634,
+        "spawns": 0.0,
+        "position": 3.999989,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 0,
+        "variant": "restart",
+        "latency_ms": 58.384523,
+        "spawns": 1.0,
+        "position": 3.999989,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 0,
+        "variant": "head",
+        "latency_ms": 4.930099,
+        "spawns": 0.0,
+        "position": 4.000049,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 1,
+        "variant": "base",
+        "latency_ms": 3.027085,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 1,
+        "variant": "restart",
+        "latency_ms": 60.045966,
+        "spawns": 1.0,
+        "position": 4.0,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 1,
+        "variant": "head",
+        "latency_ms": 5.2093,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 2,
+        "variant": "base",
+        "latency_ms": 2.196884,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 2,
+        "variant": "restart",
+        "latency_ms": 60.078736,
+        "spawns": 1.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 2,
+        "variant": "head",
+        "latency_ms": 5.79622,
+        "spawns": 0.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 3,
+        "variant": "base",
+        "latency_ms": 2.527505,
+        "spawns": 0.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 3,
+        "variant": "restart",
+        "latency_ms": 58.680264,
+        "spawns": 1.0,
+        "position": 4.000004,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 3,
+        "variant": "head",
+        "latency_ms": 4.939319,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 4,
+        "variant": "base",
+        "latency_ms": 2.274584,
+        "spawns": 0.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 4,
+        "variant": "restart",
+        "latency_ms": 58.506953,
+        "spawns": 1.0,
+        "position": 4.000002,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 4,
+        "variant": "head",
+        "latency_ms": 5.31239,
+        "spawns": 0.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 5,
+        "variant": "base",
+        "latency_ms": 2.455004,
+        "spawns": 0.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 5,
+        "variant": "restart",
+        "latency_ms": 58.983135,
+        "spawns": 1.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 5,
+        "variant": "head",
+        "latency_ms": 4.886749,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 6,
+        "variant": "base",
+        "latency_ms": 2.382164,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 6,
+        "variant": "restart",
+        "latency_ms": 58.473934,
+        "spawns": 1.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 6,
+        "variant": "head",
+        "latency_ms": 5.414469,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 7,
+        "variant": "base",
+        "latency_ms": 2.426884,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 7,
+        "variant": "restart",
+        "latency_ms": 59.245075,
+        "spawns": 1.0,
+        "position": 3.999991,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 7,
+        "variant": "head",
+        "latency_ms": 5.040559,
+        "spawns": 0.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 8,
+        "variant": "base",
+        "latency_ms": 2.420734,
+        "spawns": 0.0,
+        "position": 3.999989,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 8,
+        "variant": "restart",
+        "latency_ms": 57.585452,
+        "spawns": 1.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 8,
+        "variant": "head",
+        "latency_ms": 5.022779,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 9,
+        "variant": "base",
+        "latency_ms": 2.348474,
+        "spawns": 0.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 9,
+        "variant": "restart",
+        "latency_ms": 58.099803,
+        "spawns": 1.0,
+        "position": 3.999992,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 9,
+        "variant": "head",
+        "latency_ms": 5.20984,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      }
+    ]
+  },
+  "warm": {
+    "summary": {
+      "base": {
+        "latency_ms": {
+          "median": 1.0323815,
+          "p90": 1.204132
+        },
+        "pcm_gap_ms": {
+          "median": 0.0,
+          "p90": 42.0
+        },
+        "spawns": {
+          "median": 0.0,
+          "p90": 0.0
+        }
+      },
+      "restart": {
+        "latency_ms": {
+          "median": 55.716495,
+          "p90": 56.187116100000004
+        },
+        "pcm_gap_ms": {
+          "median": 84.5,
+          "p90": 85.0
+        },
+        "spawns": {
+          "median": 1.0,
+          "p90": 1.0
+        }
+      },
+      "head": {
+        "latency_ms": {
+          "median": 2.259219,
+          "p90": 2.3658481
+        },
+        "pcm_gap_ms": {
+          "median": 0.0,
+          "p90": 42.0
+        },
+        "spawns": {
+          "median": 0.0,
+          "p90": 0.0
+        }
+      },
+      "storm": "SEEK_RESULT storm_spawns=0 final_position=3.899977\n"
+    },
+    "samples": [
+      {
+        "run": 0,
+        "variant": "base",
+        "latency_ms": 1.105242,
+        "spawns": 0.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 0,
+        "variant": "restart",
+        "latency_ms": 55.661439,
+        "spawns": 1.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 0,
+        "variant": "head",
+        "latency_ms": 2.283374,
+        "spawns": 0.0,
+        "position": 4.000049,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 1,
+        "variant": "base",
+        "latency_ms": 1.044852,
+        "spawns": 0.0,
+        "position": 3.999992,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 1,
+        "variant": "restart",
+        "latency_ms": 55.343728,
+        "spawns": 1.0,
+        "position": 3.999994,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 1,
+        "variant": "head",
+        "latency_ms": 2.343824,
+        "spawns": 0.0,
+        "position": 4.000029,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 2,
+        "variant": "base",
+        "latency_ms": 0.689871,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 2,
+        "variant": "restart",
+        "latency_ms": 56.13611,
+        "spawns": 1.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 84
+      },
+      {
+        "run": 2,
+        "variant": "head",
+        "latency_ms": 2.237424,
+        "spawns": 0.0,
+        "position": 4.000061,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 3,
+        "variant": "base",
+        "latency_ms": 1.186502,
+        "spawns": 0.0,
+        "position": 4.000025,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 3,
+        "variant": "restart",
+        "latency_ms": 55.295989,
+        "spawns": 1.0,
+        "position": 4.000017,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 3,
+        "variant": "head",
+        "latency_ms": 2.564065,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 4,
+        "variant": "base",
+        "latency_ms": 0.846352,
+        "spawns": 0.0,
+        "position": 3.99999,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 4,
+        "variant": "restart",
+        "latency_ms": 55.507859,
+        "spawns": 1.0,
+        "position": 4.000003,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 4,
+        "variant": "head",
+        "latency_ms": 2.314414,
+        "spawns": 0.0,
+        "position": 3.999994,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 5,
+        "variant": "base",
+        "latency_ms": 1.362802,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 5,
+        "variant": "restart",
+        "latency_ms": 56.157901,
+        "spawns": 1.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 5,
+        "variant": "head",
+        "latency_ms": 2.271734,
+        "spawns": 0.0,
+        "position": 4.000047,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 6,
+        "variant": "base",
+        "latency_ms": 0.976032,
+        "spawns": 0.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 6,
+        "variant": "restart",
+        "latency_ms": 55.195819,
+        "spawns": 1.0,
+        "position": 3.999988,
+        "pcm_gap_ms": 84
+      },
+      {
+        "run": 6,
+        "variant": "head",
+        "latency_ms": 2.178494,
+        "spawns": 0.0,
+        "position": 4.000018,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 7,
+        "variant": "base",
+        "latency_ms": 1.156902,
+        "spawns": 0.0,
+        "position": 3.999986,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 7,
+        "variant": "restart",
+        "latency_ms": 56.450052,
+        "spawns": 1.0,
+        "position": 3.999993,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 7,
+        "variant": "head",
+        "latency_ms": 2.246704,
+        "spawns": 0.0,
+        "position": 3.999985,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 8,
+        "variant": "base",
+        "latency_ms": 0.995621,
+        "spawns": 0.0,
+        "position": 3.999987,
+        "pcm_gap_ms": 42
+      },
+      {
+        "run": 8,
+        "variant": "restart",
+        "latency_ms": 55.85687,
+        "spawns": 1.0,
+        "position": 3.999995,
+        "pcm_gap_ms": 84
+      },
+      {
+        "run": 8,
+        "variant": "head",
+        "latency_ms": 2.225114,
+        "spawns": 0.0,
+        "position": 4.000053,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 9,
+        "variant": "base",
+        "latency_ms": 1.019911,
+        "spawns": 0.0,
+        "position": 4.000018,
+        "pcm_gap_ms": 0
+      },
+      {
+        "run": 9,
+        "variant": "restart",
+        "latency_ms": 55.771551,
+        "spawns": 1.0,
+        "position": 3.999993,
+        "pcm_gap_ms": 85
+      },
+      {
+        "run": 9,
+        "variant": "head",
+        "latency_ms": 2.208184,
+        "spawns": 0.0,
+        "position": 3.999999,
+        "pcm_gap_ms": 0
+      }
+    ]
+  },
+  "artifacts": {
+    "/tmp/kainos-desktop-accepted-packages/baseline/playback-jvm-a977f65831d9501bad578adc8f60c86b.jar": "9bfd3e2db063a6bfd1d8520f5ab7727778e838fc8704a7b2b2e8e0bc9fcd542c",
+    "/tmp/kainos-desktop-accepted-packages/baseline/model-jvm-7c12f680bcb48855329a967bb4ec6d1c.jar": "7adc18ed67e35c4a1955f60b7bb6f94970428c278d12895d58980ae0d0f19a65",
+    "/tmp/kainos-seek-restart.jar": "6254abf6a4cba8a66496830b64fe250b854f8744be35f8685176f4bc9b3e9164",
+    "core/playback/build/libs/playback-jvm.jar": "22cf02bf248388765d7ed2889a828ba66ccf402e112539ee2c162d717a2f16f4"
+  },
+  "notes": [
+    "Ten interleaved fresh JVMs per arm per series. No samples discarded. Private Pulse sink, warm OS page cache, JDK 17, load around 1 on 24 CPUs.",
+    "Timer engine seek call to observer receipt of playback-restart; position validated. Cold series measures one seek; warm series audio includes the untimed warmup too.",
+    "Strict baseline within-noise criterion NOT met. Cold head adds about 2.70 ms, warm about 1.23 ms. Remaining cost has not been separately profiled.",
+    "Restart jar rebuilt from 0e3bd0b and byte-identical. Baseline model jar must match its old EngineState ABI.",
+    "Two failed calibrations retained at /tmp/kainos-seek-calibration and calibration2: wrong model ABI, then an overly strict lower bound rejecting mpv time-pos=3.999988 at a 4 second target. Corrected bound allows 1 ms."
+  ]
+}

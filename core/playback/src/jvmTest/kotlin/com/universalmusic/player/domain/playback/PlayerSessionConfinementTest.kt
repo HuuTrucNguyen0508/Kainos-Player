@@ -11,6 +11,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.lang.Runnable
 
 class PlayerSessionConfinementTest {
     @Test
@@ -73,6 +76,48 @@ class PlayerSessionConfinementTest {
             executor.shutdownNow()
         }
     }
+
+    @Test
+    fun sleepTimerCancelOnTheSessionThreadIsNotUndoneByAQueuedFadeStep() = runBlocking {
+        var sessionThread: Thread? = null
+        val executor = Executors.newSingleThreadExecutor { Thread(it, "kainos-session-test").also { t -> sessionThread = t } }
+        // Like Dispatchers.Main.immediate: calls made on the session thread run inline.
+        val sessionDispatcher = object : CoroutineDispatcher() {
+            override fun isDispatchNeeded(context: CoroutineContext) = Thread.currentThread() !== sessionThread
+            override fun dispatch(context: CoroutineContext, block: Runnable) = executor.execute(block)
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val engine = ThreadRecordingEngine()
+        try {
+            val session = PlayerSession(
+                engine = engine,
+                resolver = DefaultSourceResolver(),
+                scope = scope,
+                confineTo = sessionDispatcher,
+                workContext = Dispatchers.Default,
+            )
+            val clock = java.util.concurrent.atomic.AtomicLong(0L)
+            val timer = SleepTimerController(session, scope) { clock.get() }
+            withContext(sessionDispatcher) { timer.startDuration(60_000L) }
+
+            // Hold the session thread (as the UI thread is while it handles a click) long enough
+            // for the timer's next tick to compute a fade step, then cancel from that thread.
+            withContext(sessionDispatcher) {
+                clock.set(45_000L)
+                Thread.sleep(1_500)
+                timer.cancel()
+            }
+            repeat(3) {
+                withContext(sessionDispatcher) { }
+                Thread.sleep(50)
+            }
+
+            assertEquals(1f, engine.volumes.lastOrNull() ?: 1f, "cancel restores full volume and nothing lowers it again")
+        } finally {
+            scope.cancel()
+            executor.shutdownNow()
+        }
+    }
 }
 
 private class ThreadRecordingEngine : PlaybackEngine {
@@ -108,7 +153,10 @@ private class ThreadRecordingEngine : PlaybackEngine {
         state.value = EngineState(playGeneration = generation)
     }
 
+    val volumes = ConcurrentLinkedQueue<Float>()
+
     override fun setVolume(volume: Float) {
         record()
+        volumes += volume
     }
 }

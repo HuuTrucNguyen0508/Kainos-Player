@@ -1,5 +1,18 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import com.universalmusic.player.data.cache.TrackAvailability
+import com.universalmusic.player.ui.components.AccentBadge
+import com.universalmusic.player.ui.components.AvailabilityMark
+import com.universalmusic.player.ui.components.SectionRule
+import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.components.SourceMark
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,7 +39,7 @@ fun DownloadsSection(container: AppContainer) {
     val snapshot by presenter.state.collectAsState()
     val usedMiB = snapshot.bytesUsed / (1024 * 1024)
     val maxMiB = snapshot.maxBytes / (1024 * 1024)
-    Text("Downloads", style = MaterialTheme.typography.titleMedium)
+    SectionRule("Downloads")
     Text(
         "Hearted YouTube audio and YouTube matches for Spotify hearts can be cached. " +
             "Local files play from your folders. Spotify DRM audio is never downloaded.",
@@ -41,6 +54,7 @@ fun DownloadsSection(container: AppContainer) {
     if (snapshot.maxBytes > 0) {
         LinearProgressIndicator(
             progress = { (snapshot.bytesUsed.toFloat() / snapshot.maxBytes.toFloat()).coerceIn(0f, 1f) },
+            color = LocalKainosPalette.current.accent(Accents.cached, AccentUse.Mark),
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
     }
@@ -64,11 +78,7 @@ fun DownloadsSection(container: AppContainer) {
         }
     }
     if (snapshot.recentEvictions.isNotEmpty()) {
-        Text(
-            "Recent cache removals",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(top = 16.dp),
-        )
+        SectionRule("Recent cache removals", Modifier.padding(top = 16.dp))
         Text(
             "Pinned and currently playing items are never removed to free space.",
             style = MaterialTheme.typography.bodySmall,
@@ -91,9 +101,11 @@ private fun DownloadRow(
     onRemove: () -> Unit,
     onPinToggle: () -> Unit,
 ) {
+    val hair = LocalKainosPalette.current.hair
     Column(
         Modifier
             .fillMaxWidth()
+            .drawBehind { drawLine(hair, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
             .padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -101,19 +113,16 @@ private fun DownloadRow(
         Text(
             buildString {
                 append(item.artistLine)
-                append(" · ")
-                append(phaseLabel(item))
-                if (item.isSpotifyViaYouTubeMatch) append(" · YouTube match")
-                if (item.pinned) append(" · Pinned")
-                item.sizeBytes?.let { append(" · ${it / 1024} KiB") }
+                item.sizeBytes?.let { append(", ${it / 1024} KiB") }
             },
             style = MaterialTheme.typography.bodySmall,
-            color = if (item.phase == DownloadPhase.FAILED) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            AvailabilityMark(item.phase.availability, phaseLabel(item))
+            if (item.isSpotifyViaYouTubeMatch) SourceMark(SourceKind.YouTube, "YouTube match")
+            if (item.pinned) AccentBadge("Pinned", AccentSlot.Orange)
+        }
         item.errorMessage?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
@@ -122,10 +131,14 @@ private fun DownloadRow(
             if (progress != null) {
                 LinearProgressIndicator(
                     progress = { progress.coerceIn(0f, 1f) },
+                    color = LocalKainosPalette.current.accent(Accents.downloading, AccentUse.Mark),
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(
+                    color = LocalKainosPalette.current.accent(Accents.downloading, AccentUse.Mark),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,6 +152,14 @@ private fun DownloadRow(
         }
     }
 }
+
+private val DownloadPhase.availability: TrackAvailability
+    get() = when (this) {
+        DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK -> TrackAvailability.WAITING_FOR_NETWORK
+        DownloadPhase.DOWNLOADING -> TrackAvailability.DOWNLOADING
+        DownloadPhase.FAILED -> TrackAvailability.FAILED
+        DownloadPhase.CACHED -> TrackAvailability.CACHED
+    }
 
 private fun phaseLabel(item: DownloadItemState): String = when (item.phase) {
     DownloadPhase.QUEUED -> "Queued"

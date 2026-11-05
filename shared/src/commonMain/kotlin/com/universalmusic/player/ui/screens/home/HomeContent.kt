@@ -1,10 +1,16 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.history.HOME_SHELF_LIMIT
+import com.universalmusic.player.data.history.PlayHistory
+import com.universalmusic.player.data.history.REDISCOVER_AFTER_MS
 import com.universalmusic.player.data.library.HomePinKind
+import com.universalmusic.player.data.local.isLocationInFolder
+import com.universalmusic.player.data.local.AddedTrack
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.library.folderPinDisplayName
 import com.universalmusic.player.data.library.requiresNetworkToPlay
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
+import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
@@ -45,10 +51,15 @@ internal fun sessionFocusOf(
 internal fun homeSessionCardVisible(playerPaneVisible: Boolean, sessionFocus: SessionFocus?): Boolean =
     !playerPaneVisible && sessionFocus != null
 
+internal const val CONTINUE_LISTENING_ROWS = 6
+
+internal fun continueListeningLimit(columns: Int): Int = maxOf(8, columns * CONTINUE_LISTENING_ROWS)
+
 internal fun continueListeningTracks(
     recent: List<Track>,
     sessionFocus: SessionFocus?,
     playerPaneVisible: Boolean,
+    limit: Int = CONTINUE_LISTENING_ROWS * 2,
 ): List<Track> {
     val excludeId = when {
         playerPaneVisible -> null
@@ -59,8 +70,15 @@ internal fun continueListeningTracks(
     return recent
         .asSequence()
         .filter { excludeId == null || it.canonicalId != excludeId }
-        .take(8)
+        .take(limit)
         .toList()
+}
+
+/** Columns for the recents ledger: rows are about 360 dp wide before they stop reading as a ledger. */
+internal fun continueListeningColumns(widthDp: Int): Int = when {
+    widthDp >= 1200 -> 3
+    widthDp >= 760 -> 2
+    else -> 1
 }
 
 internal fun loadedDiscoverPlaylist(playlist: Playlist?): Playlist? =
@@ -129,38 +147,6 @@ internal fun ledgerSourceLabel(track: Track): String {
     return playable?.provider?.let { "Played from ${it.displayName}" } ?: "Not playable right now"
 }
 
-internal fun providerAttentionMessage(
-    localState: ProviderState,
-    spotifyState: ProviderState,
-    youtubeState: ProviderState,
-): String? {
-    val attention = listOf(
-        ProviderId.SPOTIFY to spotifyState,
-        ProviderId.YOUTUBE_MUSIC to youtubeState,
-        ProviderId.LOCAL to localState,
-    ).firstOrNull { (_, state) ->
-        state != ProviderState.AVAILABLE && state != ProviderState.LOADING
-    } ?: return null
-
-    val (provider, state) = attention
-    val shortName = when (provider) {
-        ProviderId.LOCAL -> "Local library"
-        ProviderId.SPOTIFY -> "Spotify"
-        ProviderId.YOUTUBE_MUSIC -> "YouTube"
-        ProviderId.SAMPLE -> provider.displayName
-    }
-    return when (state) {
-        ProviderState.AUTH_REQUIRED -> "$shortName needs sign-in · Open Settings"
-        ProviderState.NOT_CONFIGURED -> "$shortName not set up · Open Settings"
-        ProviderState.UNAVAILABLE -> "$shortName is offline · Open Settings"
-        ProviderState.RATE_LIMITED -> "$shortName is limited · Try again soon"
-        else -> {
-            val word = legendStateWord(state) ?: return null
-            "$shortName · $word · Open Settings"
-        }
-    }
-}
-
 internal fun legendStateWord(state: ProviderState): String? = when (state) {
     ProviderState.LOADING -> "Connecting"
     ProviderState.AUTH_REQUIRED -> "Sign in"
@@ -168,6 +154,216 @@ internal fun legendStateWord(state: ProviderState): String? = when (state) {
     ProviderState.UNAVAILABLE -> "Offline"
     ProviderState.RATE_LIMITED -> "Limited"
     ProviderState.AVAILABLE -> null
+}
+
+internal data class FavoritesSummary(
+    val count: Int,
+    val local: Int,
+    val spotify: Int,
+    val youtube: Int,
+    val covers: List<Artwork>,
+) {
+    companion object {
+        val EMPTY = FavoritesSummary(0, 0, 0, 0, emptyList())
+    }
+}
+
+internal const val FAVORITES_HERO_COVERS = 4
+
+internal fun favoritesSummary(favoriteIds: Set<String>, catalog: List<Track>): FavoritesSummary {
+    if (favoriteIds.isEmpty()) return FavoritesSummary.EMPTY
+    val byId = catalog.associateBy { it.canonicalId }
+    val covers = favoriteIds.sortedDescending()
+        .asSequence()
+        .mapNotNull { byId[it]?.artwork }
+        .distinctBy { it.url }
+        .take(FAVORITES_HERO_COVERS)
+        .toList()
+    var spotify = 0
+    var youtube = 0
+    favoriteIds.forEach { id ->
+        when {
+            id.startsWith("spotify:") -> spotify += 1
+            id.startsWith("yt:") -> youtube += 1
+        }
+    }
+    return FavoritesSummary(
+        count = favoriteIds.size,
+        local = favoriteIds.size - spotify - youtube,
+        spotify = spotify,
+        youtube = youtube,
+        covers = covers,
+    )
+}
+
+internal fun homeEyebrow(favorites: Int, localTracks: Int): String {
+    val parts = buildList {
+        if (favorites > 0) add("$favorites hearted")
+        if (localTracks > 0) add("$localTracks local ${if (localTracks == 1) "song" else "songs"}")
+    }
+    return if (parts.isEmpty()) "Your listening" else parts.joinToString(" · ")
+}
+
+/** Rows of the "Your library" ledger. Each opens the place where the listener acts on it. */
+internal enum class LibraryMark { LOCAL, HEARTS, PLAYLISTS, SPOTIFY, YOUTUBE }
+
+internal enum class LibraryDoor { LIBRARY, FAVORITES, SETTINGS, SEARCH, PICK_FOLDER, RETRY_LOCAL }
+
+internal data class LibraryLine(
+    val mark: LibraryMark,
+    val title: String,
+    val detail: String,
+    val door: LibraryDoor,
+    val settingsTarget: SettingsTarget? = null,
+)
+
+private fun tracksLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
+
+internal fun libraryLines(
+    sources: List<SourceReadiness>,
+    favorites: FavoritesSummary,
+    kainosPlaylistCount: Int,
+): List<LibraryLine> = buildList {
+    fun sourceLine(source: MusicSource, mark: LibraryMark): LibraryLine {
+        val readiness = sources.first { it.source == source }
+        val action = readiness.step?.action
+        return LibraryLine(
+            mark,
+            source.title,
+            if (source == MusicSource.Local && readiness.status == SourceStatus.Trouble) "${readiness.detail} · Retry"
+            else if (source == MusicSource.Local && readiness.status == SourceStatus.Ready) readiness.detail.removeSuffix(".")
+            else listOfNotNull(readiness.statusLabel, readiness.step?.label).joinToString(" · "),
+            when (action) {
+                SourceAction.RetryLocal -> LibraryDoor.RETRY_LOCAL
+                SourceAction.PickMusicFolder -> LibraryDoor.PICK_FOLDER
+                SourceAction.OpenLibrary, null -> LibraryDoor.LIBRARY
+                SourceAction.OpenSearch -> LibraryDoor.SEARCH
+                is SourceAction.OpenSettings -> LibraryDoor.SETTINGS
+            },
+            (action as? SourceAction.OpenSettings)?.target,
+        )
+    }
+    add(sourceLine(MusicSource.Local, LibraryMark.LOCAL))
+    add(
+        if (favorites.count > 0) {
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "${favorites.count} ${if (favorites.count == 1) "song" else "songs"} · Play favorites", LibraryDoor.FAVORITES)
+        } else {
+            LibraryLine(LibraryMark.HEARTS, "Hearted", "Heart songs from Now Playing or a song's menu", LibraryDoor.LIBRARY)
+        },
+    )
+    if (kainosPlaylistCount > 0) {
+        add(
+            LibraryLine(
+                LibraryMark.PLAYLISTS,
+                "Playlists",
+                "$kainosPlaylistCount Kainos ${if (kainosPlaylistCount == 1) "playlist" else "playlists"}",
+                LibraryDoor.LIBRARY,
+            ),
+        )
+    }
+    add(sourceLine(MusicSource.Spotify, LibraryMark.SPOTIFY))
+    add(sourceLine(MusicSource.YouTube, LibraryMark.YOUTUBE))
+}
+
+/** Something from the library the listener could pin, offered on Home while pins are few. */
+internal data class PinSuggestion(
+    val kind: HomePinKind,
+    val targetId: String,
+    val title: String,
+    val subtitle: String,
+    val artwork: Artwork?,
+    val providerEntityId: String? = null,
+) {
+    /** A suggestion plays through the same path as a pin, so the two never drift apart. */
+    fun asResolvedPin(): ResolvedHomePin = ResolvedHomePin(
+        PersistedHomePin(
+            id = "suggestion:${kind.name}:$targetId",
+            kind = kind,
+            targetId = targetId,
+            title = title,
+            subtitle = subtitle,
+            artworkUrl = artwork?.url,
+            providerEntityId = providerEntityId,
+        ),
+        PinStatus.READY,
+        subtitle,
+    )
+}
+
+internal const val PIN_SUGGESTION_LIMIT = 6
+
+/** Suggestions stop once the listener has pinned a few things of their own. */
+internal const val PIN_SUGGESTIONS_UNTIL_PINS = 3
+
+internal fun pinSuggestions(
+    homePins: List<PersistedHomePin>,
+    kainosPlaylists: List<PersistedKainosPlaylist>,
+    spotifyPlaylists: List<Playlist>,
+    spotifyState: ProviderState,
+    localTracks: List<Track>,
+    folders: List<String>,
+    folderTrackCounts: Map<String, Int>,
+    limit: Int = PIN_SUGGESTION_LIMIT,
+): List<PinSuggestion> {
+    if (homePins.size >= PIN_SUGGESTIONS_UNTIL_PINS) return emptyList()
+    val pinned = homePins.map { it.kind to it.targetId }.toSet()
+    val candidates = buildList {
+        kainosPlaylists
+            .filter { it.entries.isNotEmpty() }
+            .sortedByDescending { it.updatedAtMs }
+            .forEach { playlist ->
+                val art = playlist.entries.firstNotNullOfOrNull { it.track.artworkUrl }?.let { Artwork(it) }
+                add(
+                    PinSuggestion(
+                        HomePinKind.KAINOS_PLAYLIST,
+                        playlist.id,
+                        playlist.title,
+                        "Kainos · ${tracksLabel(playlist.entries.size)}",
+                        art,
+                    ),
+                )
+            }
+        folders.forEach { folder ->
+            val count = folderTrackCounts[folder] ?: 0
+            if (count > 0) {
+                add(PinSuggestion(HomePinKind.LOCAL_FOLDER, folder, folderPinDisplayName(folder), "Folder · ${tracksLabel(count)}", null))
+            }
+        }
+        localTracks
+            .filter { it.album != null }
+            .groupBy { it.album!!.canonicalId }
+            .values
+            .sortedWith(compareByDescending<List<Track>> { it.size }.thenBy { it.first().album!!.title })
+            .forEach { tracks ->
+                val album = tracks.first().album!!
+                add(
+                    PinSuggestion(
+                        HomePinKind.ALBUM,
+                        album.canonicalId,
+                        album.title,
+                        "Album · ${tracks.size} ${if (tracks.size == 1) "track" else "tracks"}",
+                        album.artwork ?: tracks.firstNotNullOfOrNull { it.artwork },
+                    ),
+                )
+            }
+        if (spotifyState == ProviderState.AVAILABLE) {
+            spotifyPlaylists.forEach { playlist ->
+                add(
+                    PinSuggestion(
+                        HomePinKind.PROVIDER_PLAYLIST,
+                        playlist.canonicalId,
+                        playlist.title,
+                        playlist.trackCount?.let { "Spotify · $it tracks" } ?: "Spotify playlist",
+                        playlist.artwork,
+                        providerEntityId = playlist.source.providerEntityId,
+                    ),
+                )
+            }
+        }
+    }
+    return candidates
+        .filter { (it.kind to it.targetId) !in pinned }
+        .take(limit)
 }
 
 internal fun resolveHomePins(
@@ -231,7 +427,7 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = kainosTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Kainos · $count tracks",
+                    "Kainos · ${tracksLabel(count)}",
                 )
             }
         }
@@ -267,12 +463,12 @@ internal fun resolveHomePin(
                 else -> ResolvedHomePin(
                     pin.copy(title = albumTitles[pin.targetId] ?: pin.title),
                     PinStatus.READY,
-                    "Album · $count tracks",
+                    "Album · ${tracksLabel(count)}",
                 )
             }
         }
         HomePinKind.LOCAL_FOLDER -> {
-            if (folders.none { it == pin.targetId }) {
+            if (folders.none { it == pin.targetId || isLocationInFolder(pin.targetId, it) }) {
                 ResolvedHomePin(
                     pin,
                     PinStatus.MISSING,
@@ -284,9 +480,64 @@ internal fun resolveHomePin(
                 if (count == 0) {
                     ResolvedHomePin(pin.copy(title = title), PinStatus.EMPTY, "Folder · no tracks yet")
                 } else {
-                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · $count tracks")
+                    ResolvedHomePin(pin.copy(title = title), PinStatus.READY, "Folder · ${tracksLabel(count)}")
                 }
             }
         }
     }
 }
+
+internal enum class ShelfKind { ON_REPEAT, REDISCOVER, RECENTLY_ADDED }
+
+/** [note] is the one fact that put the track on this shelf: its play count or how long ago. */
+internal data class ShelfRow(val track: Track, val note: String)
+
+internal data class HomeShelf(val kind: ShelfKind, val rows: List<ShelfRow>)
+
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
+internal fun ageLabel(nowMs: Long, thenMs: Long): String {
+    val days = ((nowMs - thenMs).coerceAtLeast(0) / DAY_MS).toInt()
+    fun count(n: Int, unit: String) = if (n == 1) "1 $unit ago" else "$n ${unit}s ago"
+    return when {
+        days < 1 -> "Today"
+        days < 2 -> "Yesterday"
+        days < 7 -> count(days, "day")
+        days < 30 -> count(days / 7, "week")
+        days < 365 -> count((days / 30).coerceAtMost(11), "month")
+        else -> count(days / 365, "year")
+    }
+}
+
+/**
+ * Home's history shelves, in display order, each left out when it has nothing to show.
+ * [catalog] supplies the freshest copy of a track (live local files first); history's own
+ * snapshot stands in for tracks no loaded catalog has.
+ */
+internal fun homeShelves(
+    history: PlayHistory,
+    favorites: Set<String>,
+    catalog: List<Track>,
+    recentlyAdded: List<AddedTrack>,
+    nowMs: Long,
+): List<HomeShelf> {
+    val byId = HashMap<String, Track>()
+    catalog.forEach { byId.putIfAbsent(it.canonicalId, it) }
+    val onRepeat = history.onRepeat.map { count ->
+        ShelfRow(byId[count.track.canonicalId] ?: count.track, if (count.plays == 1) "1 play" else "${count.plays} plays")
+    }
+    val rediscover = history.lastPlayedAtMs.entries
+        .filter { (id, last) -> id in favorites && nowMs - last >= REDISCOVER_AFTER_MS }
+        .sortedBy { it.value }
+        .mapNotNull { (id, last) -> byId[id]?.let { ShelfRow(it, ageLabel(nowMs, last)) } }
+        .take(HOME_SHELF_LIMIT)
+    val added = recentlyAdded.map { ShelfRow(it.track, ageLabel(nowMs, it.addedAtMs)) }
+    return listOf(
+        HomeShelf(ShelfKind.ON_REPEAT, onRepeat),
+        HomeShelf(ShelfKind.REDISCOVER, rediscover),
+        HomeShelf(ShelfKind.RECENTLY_ADDED, added),
+    ).filter { it.rows.isNotEmpty() }
+}
+
+/** Phones show four rows per shelf; wide windows fill each column to the same depth. */
+internal fun shelfRowLimit(columns: Int): Int = minOf(HOME_SHELF_LIMIT, columns * 4)

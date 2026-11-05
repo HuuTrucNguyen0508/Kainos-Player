@@ -1,7 +1,9 @@
 package com.universalmusic.player.data.cache
 
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.MatchReason
+import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.YouTubeAudioDownloader
@@ -112,7 +114,11 @@ class HeartedAudioCacheService(
 
     /** Fast path for play/library: attach LOCAL source when an entry is already known. */
     fun applyCacheToTrack(track: Track): Track {
-        val entry = known[track.canonicalId] ?: return track
+        val entry = known[track.canonicalId] ?: return track.copy(sources = track.sources.filterNot { source ->
+            val uri = (source.handle as? PlaybackHandle.Url)?.url
+            source.provider == ProviderId.LOCAL && source.providerTrackId.startsWith(HEARTED_AUDIO_CACHE_PROVIDER_PREFIX) &&
+                (uri == null || !cache.fileExists(uri))
+        })
         if (!cache.fileExists(entry.localUri)) {
             known.remove(track.canonicalId)
             return track.withoutHeartedAudioCache()
@@ -191,6 +197,7 @@ class HeartedAudioCacheService(
                         pinned = cache.isPinned(track.canonicalId),
                     )
                 } else {
+                    if (cache.isBudgetEvicted(track.canonicalId) && !cache.isPinned(track.canonicalId)) return@forEach
                     val failure = cache.failure(track.canonicalId)
                     if (failure != null) {
                         upsertDownload(
@@ -215,6 +222,7 @@ class HeartedAudioCacheService(
             mutationMutex.withLock {
             if (!current(canonicalId, token)) return@withLock
             cache.clearFailure(canonicalId)
+            notifyNetworkChanged()
             pending.remove(canonicalId)
             enqueue(track)
             }
@@ -296,12 +304,13 @@ class HeartedAudioCacheService(
     suspend fun searchMatchCandidates(track: Track, query: String? = null): List<Track> {
         val q = query?.trim()?.takeIf { it.isNotEmpty() } ?: buildSearchQuery(track)
         if (q.isEmpty()) return emptyList()
-        return runCatching { youtubeSearch(q) }.getOrDefault(emptyList())
+        return youtubeSearch(q)
     }
 
     suspend fun clear() {
         synchronized(youtubeQueue) {
             clearGeneration++
+            waitingForRetry = false
             active?.second?.cancel()
             pending.clear()
             known.clear()
@@ -316,8 +325,11 @@ class HeartedAudioCacheService(
 
     suspend fun stats(): HeartedAudioCacheStats = cache.stats()
 
+    @Volatile private var waitingForRetry = false
+
     fun notifyNetworkChanged() {
         if (!networkAvailable()) return
+        waitingForRetry = false
         var promoted = false
         _downloads.update { map ->
             map.mapValues { (_, item) ->
@@ -392,7 +404,7 @@ class HeartedAudioCacheService(
     private suspend fun drain() {
         for (unit in wake) {
             while (true) {
-                if (!networkAvailable()) {
+                if (waitingForRetry || !networkAvailable()) {
                     requeueAsWaitingForNetwork()
                     break
                 }
@@ -461,7 +473,7 @@ class HeartedAudioCacheService(
             withContext(NonCancellable) {
                 mutationMutex.withLock {
                     if (!current(job)) return@withLock
-                    cache.put(entry, EvictionRequest(protectedOwners() + cache.allPinnedIds()))
+                    putReportingEvictions(entry)
                     if (!current(job)) {
                         cache.remove(canonicalId, reason = "obsolete download")
                         return@withLock
@@ -482,8 +494,19 @@ class HeartedAudioCacheService(
             mutationMutex.withLock {
                 if (current(job)) {
                     val message = failure.message?.takeIf { it.isNotBlank() } ?: "Download failed."
-                    cache.recordFailure(HeartedCacheFailure(canonicalId, message, clock()))
-                    publish(job) { upsertDownload(job.track, DownloadPhase.FAILED, errorMessage = message) }
+                    if (isTransientDownloadFailure(failure, networkAvailable())) {
+                        synchronized(youtubeQueue) {
+                            waitingForRetry = true
+                            when (job.priority) {
+                                HeartedCachePriority.YOUTUBE -> youtubeQueue.addFirst(job)
+                                HeartedCachePriority.SPOTIFY -> spotifyQueue.addFirst(job)
+                            }
+                        }
+                        publish(job) { upsertDownload(job.track, DownloadPhase.WAITING_FOR_NETWORK, errorMessage = message) }
+                    } else {
+                        cache.recordFailure(HeartedCacheFailure(canonicalId, message, clock()))
+                        publish(job) { upsertDownload(job.track, DownloadPhase.FAILED, errorMessage = message) }
+                    }
                 }
             }
         } finally {
@@ -493,8 +516,80 @@ class HeartedAudioCacheService(
                     directory.listFiles()?.filter { it.name.startsWith("$base.") &&
                         normalizedAudioUri(it.absolutePath) !in referenced }?.forEach { it.delete() }
                 }
-                synchronized(youtubeQueue) { if (current(job)) pending.remove(canonicalId) }
+                synchronized(youtubeQueue) { if (current(job) && !waitingForRetry) pending.remove(canonicalId) }
             }
+        }
+    }
+
+    /** Caller holds [mutationMutex]. Budget evictions this put causes leave the download list and library. */
+    private suspend fun putReportingEvictions(entry: HeartedAudioCacheEntry) {
+        val before = cache.allEntries().map { it.ownerCanonicalId }.toSet()
+        try { cache.put(entry, EvictionRequest(protectedOwners() + cache.allPinnedIds())) }
+        finally {
+            val remaining = cache.allEntries().map { it.ownerCanonicalId }.toSet()
+            (before - remaining).forEach { removed ->
+                known.remove(removed)
+                _downloads.update { it - removed }
+                onRemoved(removed)
+            }
+        }
+    }
+
+    /**
+     * Fails before any byte of a Home sync copy moves when [sizeBytes] cannot fit beside the pinned and
+     * now-playing downloads, which the budget never evicts.
+     */
+    suspend fun checkRoomForCopy(ownerCanonicalId: String, sizeBytes: Long) {
+        val kept = protectedOwners() + cache.allPinnedIds() - ownerCanonicalId
+        val keptBytes = cache.allEntries().filter { it.ownerCanonicalId in kept }.sumOf { it.sizeBytes }
+        check(keptBytes + sizeBytes <= maxBytes) {
+            "Offline cache full: pinned and playing downloads leave no room for ${sizeBytes / (1024 * 1024)} MiB"
+        }
+    }
+
+    /** Taken when a Home sync copy starts; a clear, unheart or match change since then makes the copy stale. */
+    fun copyGeneration(ownerCanonicalId: String): Pair<Long, Long> = synchronized(youtubeQueue) {
+        (generations[ownerCanonicalId] ?: 0L) to clearGeneration
+    }
+
+    enum class CopyAdoption { ADOPTED, ALREADY_CACHED, STALE }
+
+    /**
+     * Enters a file another device copied (already at [entry]'s `localUri` in the audio directory) as an
+     * ordinary download, so it plays offline and shows as Cached. Refuses a copy started before a clear,
+     * unheart or match change ([generation] from [copyGeneration]), and keeps the existing file when this
+     * owner got cached meanwhile. Throws when the budget cannot make room. The caller deletes its copy
+     * unless this returned [CopyAdoption.ADOPTED].
+     */
+    suspend fun adoptCopiedFile(entry: HeartedAudioCacheEntry, generation: Pair<Long, Long>): CopyAdoption {
+        val owner = entry.ownerCanonicalId
+        // Nothing after the commit may be cancelled, or the caller would delete a file the index names.
+        return withContext(NonCancellable) {
+            val adopted = mutationMutex.withLock {
+                if (!current(owner, generation)) return@withLock CopyAdoption.STALE
+                if (cache.get(owner) != null) return@withLock CopyAdoption.ALREADY_CACHED
+                putReportingEvictions(entry)
+                val pinned = cache.isPinned(owner)
+                // A clear or unheart can land while the put suspends; publish only if none did, as downloads do.
+                val published = synchronized(youtubeQueue) {
+                    current(owner, generation).also { live ->
+                        if (!live) return@also
+                        known[owner] = entry
+                        trackMeta[owner]?.let { track ->
+                            upsertDownload(track, DownloadPhase.CACHED, youtubeVideoId = entry.youtubeVideoId,
+                                sizeBytes = entry.sizeBytes, progress = 1f, pinned = pinned)
+                        }
+                        onCached(owner, entry)
+                    }
+                }
+                if (!published) {
+                    cache.remove(owner, reason = "obsolete copy")
+                    return@withLock CopyAdoption.STALE
+                }
+                CopyAdoption.ADOPTED
+            }
+            if (adopted == CopyAdoption.ADOPTED) refreshSnapshot()
+            adopted
         }
     }
 
@@ -513,7 +608,7 @@ class HeartedAudioCacheService(
         }
         val query = buildSearchQuery(track)
         if (query.isEmpty()) return null
-        val candidates = try { youtubeSearch(query) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptyList() }
+        val candidates = youtubeSearch(query)
         val best = candidates
             .asSequence()
             .map { candidate -> matchConfidence(track, candidate) to candidate }
@@ -551,11 +646,13 @@ class HeartedAudioCacheService(
     }
 
     private suspend fun refreshSnapshot() = mutationMutex.withLock {
-        val stats = runCatching { cache.stats() }.getOrDefault(HeartedAudioCacheStats(0, 0))
-        val entries = runCatching { cache.allEntries() }.getOrDefault(emptyList())
-        val pins = runCatching { cache.allPinnedIds() }.getOrDefault(emptySet())
-        val failures = runCatching { cache.allFailures() }.getOrDefault(emptyMap())
-        val evictions = runCatching { cache.recentEvictions() }.getOrDefault(emptyList())
+        val stats = runCatching { cache.stats() }.logged(LOG_TAG, "stats read failed")
+            .getOrDefault(HeartedAudioCacheStats(0, 0))
+        val entries = runCatching { cache.allEntries() }.logged(LOG_TAG, "entries read failed").getOrDefault(emptyList())
+        val pins = runCatching { cache.allPinnedIds() }.logged(LOG_TAG, "pins read failed").getOrDefault(emptySet())
+        val failures = runCatching { cache.allFailures() }.logged(LOG_TAG, "failures read failed").getOrDefault(emptyMap())
+        val evictions = runCatching { cache.recentEvictions() }.logged(LOG_TAG, "evictions read failed")
+            .getOrDefault(emptyList())
         val active = _downloads.value
         val cachedItems = entries.map { entry ->
             val meta = trackMeta[entry.ownerCanonicalId]
@@ -613,3 +710,12 @@ class HeartedAudioCacheService(
 
 internal fun pathToFileUri(absolutePath: String): String =
     if (absolutePath.startsWith("file:")) absolutePath else File(absolutePath).toURI().toASCIIString()
+
+internal fun isTransientDownloadFailure(failure: Exception, online: Boolean): Boolean {
+    val message = failure.message.orEmpty().lowercase()
+    if (listOf("404", "410", "video unavailable", "private video", "removed", "no suitable", "cache full").any { it in message }) return false
+    return !online || failure is java.io.IOException ||
+        listOf("quota", "429", "500", "502", "503", "504", "timeout", "network", "connection", "download failed").any { it in message }
+}
+
+private const val LOG_TAG = "Downloads"

@@ -1,5 +1,6 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
 import com.universalmusic.player.data.cache.PlaybackSourceKind
 import com.universalmusic.player.data.cache.TrackAvailability
@@ -9,6 +10,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.SleepTimerState
 import com.universalmusic.player.domain.playback.formatSleepTimerRemaining
@@ -44,6 +46,17 @@ internal fun nowPlayingQualityLabel(
     hasResolved: Boolean,
 ): String? = quality?.label ?: if (hasTrack && !hasResolved) "quality checked on play" else null
 
+internal enum class QualityClass { HiRes, Cd, Lossy }
+
+internal fun qualityClass(quality: AudioQuality?): QualityClass? = when {
+    quality == null -> null
+    quality.tier == QualityTier.HI_RES -> QualityClass.HiRes
+    quality.tier == QualityTier.LOSSLESS &&
+        ((quality.bitDepth ?: 16) > 16 || (quality.sampleRateHz ?: 44_100) > 48_000) -> QualityClass.HiRes
+    quality.tier == QualityTier.LOSSLESS -> QualityClass.Cd
+    else -> QualityClass.Lossy
+}
+
 internal fun displayedProviderName(resolvedProviderName: String?, track: Track?): String? =
     resolvedProviderName ?: track?.sources?.firstOrNull()?.provider?.displayName
 
@@ -70,10 +83,23 @@ internal fun nowPlayingDetailLines(
     technicalDetail: String?,
     resolveReason: String?,
     fallbackMessage: String?,
+    levelling: Levelling? = null,
 ): List<String> = buildList {
     technicalDetail?.let(::add)
     resolveReason?.takeIf { it.isNotBlank() }?.let(::add)
     fallbackMessage?.let(::add)
+    levelling?.let { add(levellingLine(it)) }
+}
+
+/** Only what the engine reported doing; Spotify and unknown tracks get no line. */
+internal fun levellingLine(levelling: Levelling): String = when (levelling) {
+    Levelling.Off -> "Volume levelling is off"
+    Levelling.Untagged -> "No ReplayGain tags, so this track plays at its own level"
+    is Levelling.Applied -> {
+        val tenths = kotlin.math.round(levelling.gainDb * 10).toInt()
+        if (tenths == 0) "ReplayGain tags read; volume left unchanged"
+        else "Volume levelled by ${if (tenths > 0) "+" else "-"}${kotlin.math.abs(tenths) / 10}.${kotlin.math.abs(tenths) % 10} dB from ReplayGain tags"
+    }
 }
 
 internal fun showSpotifyOutput(
@@ -136,10 +162,11 @@ internal fun shuffleDisplay(on: Boolean): ShuffleDisplay = ShuffleDisplay(
 
 internal fun sleepTimerRemainingLabel(state: SleepTimerState): String? {
     if (!state.active) return null
-    return when (val mode = state.mode) {
+    val lead = if (state.fading) "Fading out" else "Sleep"
+    return when (state.mode) {
         is SleepTimerMode.Duration ->
-            state.remainingMs?.let { "Sleep · ${formatSleepTimerRemaining(it)}" } ?: "Sleep timer"
-        is SleepTimerMode.EndOfTrack -> "Sleep · end of track"
+            state.remainingMs?.let { "$lead · ${formatSleepTimerRemaining(it)}" } ?: "Sleep timer"
+        is SleepTimerMode.EndOfTrack -> "$lead · end of track"
         null -> "Sleep timer"
     }
 }

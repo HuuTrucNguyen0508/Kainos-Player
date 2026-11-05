@@ -1,0 +1,151 @@
+{
+  "date": "2026-10-31",
+  "device": "Pixel_10_Pro emulator, API 37, x86_64, SwiftShader",
+  "fixture": "120 silent WAV tracks, persistent scan/session data, one app heart",
+  "iterationsPerState": 15,
+  "guestCaches": "Macrobenchmark COLD clears shader and kernel page caches; host disk-image page cache not cleared",
+  "suppressedErrors": [
+    "EMULATOR",
+    "DEBUGGABLE"
+  ],
+  "measuredOptimizedApkSha256": "eb4d81d501e0db8f6ce55f2528724ff281ba018d29c0b4f5df1c065e345b8c28",
+  "states": {
+    "debug-none": {
+      "frameCount": {
+        "n": 15,
+        "median": 262.0,
+        "p90": 278.0,
+        "min": 251.0,
+        "max": 291.0
+      },
+      "timeToInitialDisplayMs": {
+        "n": 15,
+        "median": 1023.247084,
+        "p90": 1045.779,
+        "min": 993.150852,
+        "max": 1046.929956
+      },
+      "frameDurationCpuMs": {
+        "n": 15,
+        "median": 51.540724,
+        "p90": 52.282917,
+        "min": 50.82901,
+        "max": 52.611939
+      },
+      "frameOverrunMs": {
+        "n": 15,
+        "median": 52.319533,
+        "p90": 52.814379,
+        "min": 51.06545,
+        "max": 54.777374
+      },
+      "idleRssKiB": {
+        "n": 15,
+        "median": 169616,
+        "p90": 208384,
+        "min": 167784,
+        "max": 209416
+      }
+    },
+    "optimized-partial": {
+      "frameCount": {
+        "n": 15,
+        "median": 276.0,
+        "p90": 300.0,
+        "min": 258.0,
+        "max": 301.0
+      },
+      "timeToInitialDisplayMs": {
+        "n": 15,
+        "median": 655.246216,
+        "p90": 675.966512,
+        "min": 634.225929,
+        "max": 687.774662
+      },
+      "frameDurationCpuMs": {
+        "n": 15,
+        "median": 51.195381999999995,
+        "p90": 52.124031,
+        "min": 50.576529,
+        "max": 52.556278
+      },
+      "frameOverrunMs": {
+        "n": 15,
+        "median": 50.471442499999995,
+        "p90": 52.066358,
+        "min": 47.285230999999996,
+        "max": 52.245399500000005
+      },
+      "idleRssKiB": {
+        "n": 15,
+        "median": 151644,
+        "p90": 152584,
+        "min": 150432,
+        "max": 159580
+      }
+    },
+    "optimized-none": {
+      "frameCount": {
+        "n": 15,
+        "median": 264.0,
+        "p90": 292.0,
+        "min": 260.0,
+        "max": 296.0
+      },
+      "timeToInitialDisplayMs": {
+        "n": 15,
+        "median": 691.867883,
+        "p90": 720.498499,
+        "min": 663.787359,
+        "max": 724.276708
+      },
+      "frameDurationCpuMs": {
+        "n": 15,
+        "median": 51.194812,
+        "p90": 51.455622500000004,
+        "min": 50.3748475,
+        "max": 51.541454
+      },
+      "frameOverrunMs": {
+        "n": 15,
+        "median": 50.4044525,
+        "p90": 51.249599,
+        "min": 47.791842,
+        "max": 51.736327
+      },
+      "idleRssKiB": {
+        "n": 15,
+        "median": 153804,
+        "p90": 162012,
+        "min": 152732,
+        "max": 162996
+      }
+    }
+  },
+  "apkBytes": {
+    "debug": 31795904,
+    "optimized": 6328389
+  },
+  "runtimeChecks": {
+    "normalApk": [
+      "launch",
+      "Library",
+      "local play/pause/seek/next",
+      "Settings",
+      "Devices and sync",
+      "debug to optimized heart retention",
+      "optimized to debug heart retention"
+    ],
+    "instrumentationTarget": [
+      "Spotify login WebView",
+      "NewPipe live resolve/play/advance/pause"
+    ],
+    "blocked": "YouTube Search requires an unavailable Data API key",
+    "phonePending": [
+      "real-account Spotify playback",
+      "SAF and broader stored-data retention",
+      "real-device latency and controls",
+      "phone-PC sync when at home"
+    ]
+  }
+}

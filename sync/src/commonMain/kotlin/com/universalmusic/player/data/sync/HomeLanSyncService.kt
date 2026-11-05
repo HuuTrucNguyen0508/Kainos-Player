@@ -13,6 +13,7 @@ import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.homeLanHubAutostartEnabled
 import com.universalmusic.player.platform.setHomeLanHubAutostart
 import com.universalmusic.player.platform.homeLanDeviceName
+import com.universalmusic.player.platform.homeLanPairingAddress
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.platform.scheduleBackgroundListeningDelivery
 import com.universalmusic.player.platform.secureRandomBytes
@@ -64,6 +65,8 @@ class HomeLanSyncService(
     private val pairingClientFactory: (HubEndpoint, CertFingerprint) -> HomeLanPairingClient,
     private val identity: DeviceIdentity,
     private val vaultStore: HomeLanVaultStore,
+    /** This device's hearted audio cache as Home sync copies it; null leaves cached audio out of sync. */
+    private val cachedAudio: com.universalmusic.player.data.cache.CachedAudioCopies? = null,
     private val refreshLocalLibrary: suspend () -> Unit,
     private val rematchLocalHearts: suspend () -> Int = { 0 },
     private val rematchPlaylistLocals: suspend () -> Int = { 0 },
@@ -73,6 +76,8 @@ class HomeLanSyncService(
     private val hubPort: Int = HOME_LAN_SYNC_DEFAULT_PORT,
     private val hubBrowser: HubBrowser = platformHubBrowser(),
     private val deviceName: () -> String = ::homeLanDeviceName,
+    /** This PC's address on the home network, for its pairing QR code. */
+    private val lanAddress: () -> String? = ::homeLanPairingAddress,
     private val pairingPollMs: Long = 1_000,
     private val configureHubAutostart: (Boolean) -> Unit = ::setHomeLanHubAutostart,
     private val hubAutostartEnabled: () -> Boolean? = ::homeLanHubAutostartEnabled,
@@ -129,6 +134,8 @@ class HomeLanSyncService(
         val generation: Long,
         val role: HomeLanSyncRole,
     )
+
+    private fun livePlaylistIds(): Set<String> = playlists.playlists.value.mapTo(HashSet()) { it.id }
 
     private fun resolutionSource(target: PairedPeer) = synchronized(resolutionLock) {
         ResolutionSource(target, resolutionGeneration, _status.value.role)
@@ -207,6 +214,13 @@ class HomeLanSyncService(
     override fun discoverHubs(): Flow<DiscoveredHub> {
         val own = identity.fingerprint()
         return hubBrowser.browse().filter { CertFingerprint.parse(it.fp).let { fp -> fp != null && fp != own } }
+    }
+
+    override fun pairingLink(): String? {
+        if (!_status.value.hubListening) return null
+        val deviceId = settings().homeLanSyncDeviceId ?: return null
+        val host = lanAddress() ?: return null
+        return hubPairingLink(DiscoveredHub(identity.fingerprint().hex, deviceId, host, hubPort, "Kainos on ${deviceName()}"))
     }
 
     override suspend fun pairWith(hub: DiscoveredHub): HubPairingSession {
@@ -459,6 +473,17 @@ class HomeLanSyncService(
                         library.mergeAndPersistSyncState(remoteHearts)
                         val remotePlaylists = client.syncPlaylists().getOrThrow()
                         playlists.mergeAndPersistSyncState(remotePlaylists)
+                        val remotePins = client.syncHomePins().getOrThrow()
+                        remotePins?.let { library.mergeAndPersistHomePins(it, livePlaylistIds()) }
+                        var pendingAudio = emptyList<PendingCachedAudioTransfer>()
+                        val cachedAudioDetail = cachedAudio?.let { copies ->
+                            val local = cachedAudioDocument(deviceId, library, copies)
+                            val remote = client.syncCachedAudio(local).getOrThrow()
+                                ?: return@let "cached audio skipped (peer too old)"
+                            pendingAudio = planCachedAudioTransfers(local, remote, library.favoriteIds.value)
+                            "cached audio pending ↓${pendingAudio.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
+                                "↑${pendingAudio.count { it.direction == VaultCopyDirection.TO_REMOTE }}"
+                        }
                         val rematchedPortable = rematchLocalHearts()
                         val rematchedPlaylistLocals = rematchPlaylistLocals()
                         refreshLocalLibrary()
@@ -491,11 +516,13 @@ class HomeLanSyncService(
                         val detail = buildString {
                             append("Hearts (${remoteHearts.ops.size} peer ops)")
                             append("; playlists (${remotePlaylists.playlists.size} peer)")
+                            append(remotePins?.let { "; pins (${it.pins.size} peer)" } ?: "; pins skipped (peer too old)")
+                            cachedAudioDetail?.let { append("; $it") }
                             append("; $vaultDetail")
                             if (rematched > 0) append(", rematched $rematched local hearts")
                             if (rematchedPl > 0) append(", rematched $rematchedPl playlist locals")
-                            if (pending.isNotEmpty()) {
-                                append("; confirm ${pending.size} file transfer(s)")
+                            if (pending.isNotEmpty() || pendingAudio.isNotEmpty()) {
+                                append("; confirm ${pending.size + pendingAudio.size} file transfer(s)")
                             }
                         }
                         val now = clock()
@@ -514,6 +541,7 @@ class HomeLanSyncService(
                                 vaultProgress = null,
                                 pendingConflicts = conflicts,
                                 pendingTransfers = pending,
+                                pendingCachedAudio = pendingAudio,
                                 bytesTransferred = 0,
                                 bytesTotal = 0,
                             )
@@ -585,6 +613,145 @@ class HomeLanSyncService(
             )
         }
         Result.success("Skipped $path")
+    }
+
+    override suspend fun confirmCachedAudioTransfer(
+        ownerCanonicalId: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val target = syncTarget()
+            ?: return Result.failure(IllegalStateException("Not paired"))
+        val copies = cachedAudio
+            ?: return Result.failure(IllegalStateException("Cached audio sync is unavailable"))
+        val transfer = _status.value.pendingCachedAudio.firstOrNull {
+            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
+        } ?: return Result.failure(IllegalStateException("No pending cached audio for $ownerCanonicalId"))
+        runCatching {
+            val detail = withVaultSyncForeground("Cached audio transfer") {
+                clientFactory(target).use { client -> copyCachedAudio(copies, client, transfer, ::reportVaultProgress) }
+            }
+            _status.update {
+                it.copy(
+                    pendingCachedAudio = it.pendingCachedAudio - transfer,
+                    vaultProgress = null,
+                    bytesTransferred = 0,
+                    bytesTotal = 0,
+                    lastDetail = detail,
+                )
+            }
+            detail
+        }.onFailure { err ->
+            val message = err.message ?: err.toString()
+            _status.update { it.copy(lastError = message, vaultProgress = null) }
+        }
+    }
+
+    override suspend fun dismissCachedAudioTransfer(
+        ownerCanonicalId: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val skipped = _status.value.pendingCachedAudio.filter {
+            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
+        }
+        _status.update { it.copy(pendingCachedAudio = it.pendingCachedAudio - skipped.toSet()) }
+        Result.success("Skipped ${skipped.firstOrNull()?.offer?.title?.ifBlank { null } ?: ownerCanonicalId}")
+    }
+
+    private suspend fun copyCachedAudio(
+        copies: com.universalmusic.player.data.cache.CachedAudioCopies,
+        client: HomeLanSyncClient,
+        transfer: PendingCachedAudioTransfer,
+        onProgress: suspend (detail: String, transferred: Long, total: Long) -> Unit,
+    ): String {
+        val owner = transfer.offer.ownerCanonicalId
+        return executeCachedAudioTransfer(copies, client, transfer, { library.isFavorite(owner) }, onProgress)
+    }
+
+    /**
+     * Copies every pending vault and cached-audio transfer over one client. A failed file stays pending
+     * and the batch moves on, but [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the
+     * hub is likely gone) instead of waiting out a timeout per remaining file.
+     */
+    override suspend fun confirmAllVaultTransfers(): Result<String> = mutex.withLock {
+        val target = syncTarget()
+            ?: return Result.failure(IllegalStateException("Not paired"))
+        val vaultBatch = _status.value.pendingTransfers
+        val audioBatch = _status.value.pendingCachedAudio
+        val batchSize = vaultBatch.size + audioBatch.size
+        if (batchSize == 0) return Result.success("No pending transfers")
+        class Item(val name: String, val copy: suspend (HomeLanSyncClient, suspend (String, Long, Long) -> Unit) -> Unit,
+            val done: (HomeLanSyncStatus) -> HomeLanSyncStatus)
+        runCatching {
+            if (vaultBatch.isNotEmpty()) require(vaultStore.isConfigured()) { "Vault not configured" }
+            val copies = cachedAudio
+            if (audioBatch.isNotEmpty()) requireNotNull(copies) { "Cached audio sync is unavailable" }
+            val items = vaultBatch.map { transfer ->
+                Item(transfer.relPath, { client, progress -> executeVaultTransfer(vaultStore, client, transfer, onProgress = progress) }) {
+                    it.copy(pendingTransfers = it.pendingTransfers.filterNot { t ->
+                        t.relPath == transfer.relPath && t.direction == transfer.direction
+                    })
+                }
+            } + audioBatch.map { transfer ->
+                Item(transfer.offer.title.ifBlank { transfer.offer.ownerCanonicalId },
+                    { client, progress -> copyCachedAudio(copies!!, client, transfer, progress) }) {
+                    it.copy(pendingCachedAudio = it.pendingCachedAudio - transfer)
+                }
+            }
+            var transferred = 0
+            var vaultTransferred = 0
+            val failures = mutableListOf<String>()
+            var consecutiveFailures = 0
+            withVaultSyncForeground("Vault transfer") {
+                clientFactory(target).use { client ->
+                    for ((index, item) in items.withIndex()) {
+                        if (consecutiveFailures >= VAULT_BATCH_MAX_CONSECUTIVE_FAILURES) break
+                        try {
+                            item.copy(client) { detail, done, total ->
+                                reportVaultProgress("${index + 1}/$batchSize · $detail", done, total)
+                            }
+                            transferred++
+                            if (index < vaultBatch.size) vaultTransferred++
+                            consecutiveFailures = 0
+                            _status.update(item.done)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (err: Throwable) {
+                            consecutiveFailures++
+                            failures += "${item.name}: ${err.message ?: err}"
+                        }
+                    }
+                }
+            }
+            if (vaultTransferred > 0) {
+                refreshLocalLibrary()
+                rematchLocalHearts()
+            }
+            val summary = buildString {
+                append("Transferred $transferred of $batchSize")
+                if (failures.isNotEmpty()) append(", ${failures.size} failed")
+                val notTried = batchSize - transferred - failures.size
+                if (notTried > 0) append(", $notTried not tried")
+            }
+            _status.update {
+                it.copy(
+                    vaultProgress = null,
+                    bytesTransferred = 0,
+                    bytesTotal = 0,
+                    lastDetail = summary,
+                    lastError = failures.firstOrNull()?.let { first -> "Transfer failed: $first" },
+                )
+            }
+            summary
+        }.onFailure { err ->
+            val message = err.message ?: err.toString()
+            _status.update { it.copy(lastError = message, vaultProgress = null) }
+        }
+    }
+
+    override suspend fun dismissAllVaultTransfers(): Result<String> = mutex.withLock {
+        val count = _status.value.pendingTransfers.size + _status.value.pendingCachedAudio.size
+        _status.update { it.copy(pendingTransfers = emptyList(), pendingCachedAudio = emptyList()) }
+        Result.success("Skipped $count transfers")
     }
 
     override suspend fun tombstoneVaultPath(relPath: String): Result<String> = mutex.withLock {
@@ -710,6 +877,8 @@ class HomeLanSyncService(
                         pairing = pairingHost,
                         onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
                         onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
+                        onHomePins = { remote -> library.mergeAndPersistHomePins(remote, livePlaylistIds()) },
+                        cachedAudio = cachedAudio?.let { CachedAudioHost({ deviceId }, library, it) },
                         vault = vaultStore.takeIf { it.isConfigured() },
                         heartedVaultFileNames = {
                             if (settings().homeLanSyncVaultHeartsOnly) heartedLocalAudioFileNames(library) else null
@@ -994,6 +1163,8 @@ internal fun trustFailureOf(err: Throwable): String? {
     val pinMismatch = generateSequence(err) { it.cause }.any { HUB_PIN_MISMATCH in (it.message ?: "") }
     return if (pinMismatch) HOME_LAN_IDENTITY_CHANGED else null
 }
+
+private const val VAULT_BATCH_MAX_CONSECUTIVE_FAILURES = 3
 
 fun ByteArray.toHex(): String =
     joinToString("") { b -> ((b.toInt() and 0xff) + 0x100).toString(16).substring(1) }

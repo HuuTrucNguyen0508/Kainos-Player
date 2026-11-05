@@ -6,6 +6,9 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import com.universalmusic.player.domain.playback.Levelling
+import com.universalmusic.player.domain.playback.ReplayGain
 import androidx.media3.exoplayer.ExoPlayer
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -15,8 +18,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - Keeps notification/island metadata in sync for both local ExoPlayer and Spotify backends
  * - Emits [Player.Listener] events when overlay playback state changes (ExoPlayer stays paused on silence)
  */
-class KainosForwardingPlayer(
+class KainosForwardingPlayer internal constructor(
     private val exo: ExoPlayer,
+    private val levellingGain: LevellingAudioProcessor,
 ) : ForwardingPlayer(exo) {
     private val listeners = CopyOnWriteArrayList<Player.Listener>()
 
@@ -77,10 +81,50 @@ class KainosForwardingPlayer(
             if (spotifyActive) return
             listeners.forEach { it.onMediaMetadataChanged(mediaMetadata) }
         }
+
+        override fun onTracksChanged(tracks: Tracks) = onAudioTracks(tracks)
     }
 
     init {
         exo.addListener(exoForwarder)
+    }
+
+    private var levellingEnabled = true
+    private var tracksKnown = false
+    private var replayGain: ReplayGain? = null
+
+    /** What levelling does to Exo's current item; null until its audio track is known. Main thread. */
+    var levelling: Levelling? = null
+        private set
+    var onLevellingChanged: ((Levelling?) -> Unit)? = null
+
+    fun setLevelling(enabled: Boolean) {
+        levellingEnabled = enabled
+        applyLevelling()
+    }
+
+    /** Called with each item's tracks, which carry the tags; empty while the next item loads. */
+    internal fun onAudioTracks(tracks: Tracks) {
+        tracksKnown = !tracks.isEmpty
+        replayGain = replayGainOf(tracks)
+        applyLevelling()
+    }
+
+    /** The audio sink applies the gain itself; this only reports what it does for the playing item. */
+    private fun applyLevelling() {
+        levellingGain.enabled = levellingEnabled
+        val gainDb = replayGain?.takeIf { levellingEnabled }?.let(::androidLevellingGainDb)
+        val next = when {
+            !tracksKnown -> null
+            !levellingEnabled -> Levelling.Off
+            gainDb == null -> Levelling.Untagged
+            else -> Levelling.Applied(gainDb)
+        }
+        if (next != levelling) {
+            levelling = next
+            trace("levelling=$next")
+            onLevellingChanged?.invoke(next)
+        }
     }
 
     override fun addListener(listener: Player.Listener) {
@@ -227,6 +271,11 @@ class KainosForwardingPlayer(
     fun updateOverlayPosition(positionMs: Long, durationMs: Long?) {
         overlayPositionMs = positionMs.coerceAtLeast(0L)
         overlayDurationMs = durationMs?.takeIf { it > 0 } ?: overlayDurationMs
+    }
+
+    fun useSpotifyAudioFocus(active: Boolean) {
+        exo.setAudioAttributes(exo.audioAttributes, !active)
+        if (active) exo.pause()
     }
 
     fun setSpotifyActive(active: Boolean) {
@@ -411,6 +460,8 @@ class KainosForwardingPlayer(
         Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
         Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
         -> canSeek
+        // The item after the current one is a gapless successor the session owns, not a queue to jump into.
+        Player.COMMAND_SEEK_TO_MEDIA_ITEM -> false
         else -> super.isCommandAvailable(command)
     }
 
@@ -421,6 +472,7 @@ class KainosForwardingPlayer(
             .add(Player.COMMAND_SEEK_TO_PREVIOUS)
             .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            .remove(Player.COMMAND_SEEK_TO_MEDIA_ITEM)
         if (!canSkipNext) {
             builder.remove(Player.COMMAND_SEEK_TO_NEXT)
             builder.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)

@@ -13,9 +13,8 @@ enum class SourceSelectionMode {
 data class PlaybackPreferences(
     val sourceSelection: SourceSelectionMode = SourceSelectionMode.AUTOMATIC,
     val preferredProvider: ProviderId? = null,
-    val crossfadeMs: Int = 0,
     val gapless: Boolean = true,
-    val normalizeVolume: Boolean = false,
+    val volumeLevelling: Boolean = true,
 ) {
     companion object {
         val Default = PlaybackPreferences()

@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.SourceSelectionMode
+import com.universalmusic.player.platform.platformLabel
 
 @Composable
 internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
@@ -37,22 +38,48 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
             }
         }
         Text(
-            "Gapless playback and volume normalization are not available yet.",
+            PLAYBACK_BEHAVIOUR_NOTE,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SettingToggle(
-            "Autoplay similar tracks after Search (default off)",
-            settings.searchAutoplayEnabled,
+            "Even out the volume of local files",
+            settings.volumeLevelling,
         ) {
-            presenter.change { current -> current.copy(searchAutoplayEnabled = it) }
+            presenter.change { current -> current.copy(volumeLevelling = it) }
         }
         Text(
-            "When on, finishing a Search result queue can append one continuation batch. " +
-                "Manually queued tracks stay ahead of autoplay. Spotify radio uses /recommendations only when " +
-                "this Client ID is allowed; otherwise Spotify continuation is skipped (no Liked Songs shuffle).",
+            levellingNote(platformLabel()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingToggle(
+            "Start the source's radio from Search",
+            settings.searchRadioEnabled,
+        ) {
+            presenter.change { current -> current.copy(searchRadioEnabled = it) }
+        }
+        Text(
+            "A Spotify result continues with Spotify radio and a YouTube result with its YouTube Mix; " +
+                "sources are never mixed. Off: the picked track plays, then only same-source results " +
+                "from the list. Tracks you queue stay ahead of the radio.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+}
+
+/** Fixed behaviour with no switch in the app. */
+internal const val PLAYBACK_BEHAVIOUR_NOTE =
+    "Local files play gaplessly, one into the next. Spotify and YouTube tracks have a short gap. " +
+        "Spotify uses its Loud volume normalization."
+
+internal fun levellingNote(platform: String): String {
+    val reach = if (platform == "Android") {
+        "Android can only turn loud tracks down, not quiet ones up."
+    } else {
+        "Quiet tracks are raised only as far as their peaks allow."
+    }
+    return "Uses each file's ReplayGain tags so local tracks play near Spotify's level. $reach " +
+        "Files without tags and YouTube play at their own level. Details in Now Playing show what was applied."
 }

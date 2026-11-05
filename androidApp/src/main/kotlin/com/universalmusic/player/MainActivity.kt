@@ -11,14 +11,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
 import com.universalmusic.player.platform.AndroidPlaybackService
+import com.universalmusic.player.platform.BackupFilePickerRelay
 import com.universalmusic.player.platform.MusicFolderPickerRelay
+import com.universalmusic.player.platform.launchBackupOpenPicker
+import com.universalmusic.player.platform.launchBackupSavePicker
 import com.universalmusic.player.platform.initAndroidPlatform
 import com.universalmusic.player.platform.launchMusicFolderPicker
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.ui.UniversalMusicApp
+import com.universalmusic.player.ui.theme.resolveTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
@@ -41,17 +51,36 @@ class MainActivity : ComponentActivity() {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         runCatching {
             contentResolver.takePersistableUriPermission(uri, flags)
-        }
+        }.logged("Local", "folder access may not survive a restart")
         MusicFolderPickerRelay.complete(uri.toString())
     }
+
+    private val saveBackup = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? -> BackupFilePickerRelay.complete(uri) }
+
+    private val openBackup = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? -> BackupFilePickerRelay.complete(uri) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         initAndroidPlatform(applicationContext)
         launchMusicFolderPicker = { openMusicFolder.launch(null) }
+        launchBackupSavePicker = { name -> saveBackup.launch(name) }
+        // Many file managers report .json as plain text or octet-stream.
+        launchBackupOpenPicker = { openBackup.launch(arrayOf("application/json", "text/*", "application/octet-stream")) }
         val container = ensureAppContainer()
         setContent {
+            val settings by container.settings.collectAsState()
+            val dark = resolveTheme(settings, isSystemInDarkTheme(), null, platform = "Android").palette.isDark
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
             UniversalMusicApp(container)
         }
         requestLocalMediaPermission()
@@ -62,6 +91,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         ensureAppContainer().apply {
             enableListeningHandoff()
+            enableGuiPlayer()
             onAppForeground()
         }
     }
@@ -77,6 +107,8 @@ class MainActivity : ComponentActivity() {
         if (launchMusicFolderPicker != null) {
             launchMusicFolderPicker = null
         }
+        launchBackupSavePicker = null
+        launchBackupOpenPicker = null
         super.onDestroy()
     }
 

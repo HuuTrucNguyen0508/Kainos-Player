@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Repeat the real GUI takeover test on two CPUs with competing CPU load.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
+iterations="${1:-100}"
+cpus="${KAINOS_STRESS_CPUS:-$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:2])))')}"
+work="$(mktemp -d)"
+load_pids=()
+cleanup() {
+    for pid in "${load_pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+    for pid in "${load_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+    rm -rf "$work"
+}
+trap cleanup EXIT
+exec 9>/tmp/kainos-perf.lock
+flock -s 9
+cat > "$work/classpath.gradle" <<'GRADLE'
+allprojects {
+    tasks.withType(Test).configureEach {
+        if (path == ':sync:jvmTest') {
+            doFirst { new File(System.getenv('KAINOS_STRESS_CLASSPATH')).text = classpath.asPath }
+        }
+    }
+}
+GRADLE
+export KAINOS_STRESS_CLASSPATH="$work/classpath"
+./gradlew :sync:jvmTest --tests '*HubLifecycleRegressionTest.javaSigterm*' \
+    --no-configuration-cache --init-script "$work/classpath.gradle" --rerun \
+    --console=plain
+classpath="$(cat "$work/classpath")"
+cat > "$work/HubTakeoverRepeat.java" <<'JAVA'
+import org.junit.runner.*;
+public class HubTakeoverRepeat {
+    public static void main(String[] args) throws Exception {
+        int failures = 0;
+        Class<?> test = Class.forName("com.universalmusic.player.data.sync.HubLifecycleRegressionTest");
+        for (int i = 1; i <= Integer.parseInt(args[0]); i++) {
+            Result result = new JUnitCore().run(Request.method(test,
+                "javaSigtermExitDuringGuiTakeoverIsAnExplicitUnitSuccess"));
+            failures += result.getFailureCount();
+            System.out.println("iteration=" + i + " failures=" + result.getFailureCount());
+            for (var failure : result.getFailures()) System.out.println(failure.getTrace());
+        }
+        System.out.println("totalFailures=" + failures);
+        if (failures != 0) System.exit(1);
+    }
+}
+JAVA
+"$JAVA_HOME/bin/javac" -cp "$classpath" "$work/HubTakeoverRepeat.java"
+for worker in 1 2; do
+    taskset -c "$cpus" yes > /dev/null &
+    load_pids+=("$!")
+done
+printf 'CPUs=%s competingWorkers=2 iterations=%s\n' "$cpus" "$iterations"
+taskset -c "$cpus" "$JAVA_HOME/bin/java" -cp "$work:$classpath" HubTakeoverRepeat "$iterations"

@@ -10,7 +10,7 @@ data class PlaybackSource(
 )
 
 sealed interface PlaybackHandle {
-    data class Url(val url: String) : PlaybackHandle
+    data class Url(val url: String, val startPositionMs: Long = 0, val durationMs: Long? = null) : PlaybackHandle
 
     data class ProviderPlayback(
         val provider: ProviderId,

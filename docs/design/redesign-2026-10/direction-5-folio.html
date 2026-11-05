@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kainos Player — Direction 5: Folio</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+ --paper:#E8EAE9;--ink:#15181B;--muted:#5F666C;--accent:#1E4BD8;--tile:#F9FAF9;--tileborder:#C6CBCA;--tilehi:#fff;
+ --hair:#C9CECD;--rule:#B5BAB9;--sheet:#F4F5F4;--field:#fff;--grain:rgba(21,24,27,.055);--shadow:rgba(21,24,27,.22);
+ --h-red:#E5484D;--h-orange:#FF8A3D;--h-yellow:#F5B800;--h-green:#30A46C;--h-teal:#12A594;--h-blue:#2D8CFF;--h-purple:#6E56CF;--h-pink:#F06292;--h-gray:#707785;
+ --ad:#1B2440;--ap:#F6E7C8;--au:#7B4FD0;
+ --al:#3E7F8E; /* album light sample: Saltwater Cathedral */
+ --font:system-ui,Roboto,"Segoe UI","Noto Sans",sans-serif;
+ --serif:"Iowan Old Style","Palatino Linotype","Book Antiqua","Noto Serif",Georgia,serif;
+ --ease:cubic-bezier(.3,.7,.3,1)}
+html{color-scheme:light}html.dark{color-scheme:dark}
+body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--font);padding:32px 40px 80px;position:relative}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(circle at 1px 1px,var(--grain) 1px,transparent 1.5px) 0 0/14px 14px}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+svg{display:block}
+svg.g{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;width:18px;height:18px}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important}}
+
+/* ---------- page chrome ---------- */
+.intro{max-width:1224px;padding:8px 0 0}
+.intro .kick{font-family:var(--serif);font-style:italic;font-size:15px;color:var(--muted)}
+.intro h1{position:relative;display:inline-block;font-family:var(--serif);font-weight:400;font-size:64px;line-height:1;letter-spacing:-.02em;margin-top:6px}
+.intro h1 .ghost{position:absolute;left:-.12em;top:-.28em;font-size:2.2em;letter-spacing:-.06em;color:transparent;-webkit-text-stroke:1px color-mix(in srgb,var(--ink) 26%,transparent);pointer-events:none;z-index:-1}
+.intro p{max-width:68ch;margin-top:18px;font-size:15.5px;line-height:1.6}
+.meta{display:grid;grid-template-columns:1.1fr 1fr 1.2fr;gap:0;margin-top:30px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.meta>div{padding:14px 16px 16px;border-right:1px solid var(--hair)}.meta>div:first-child{padding-left:0}.meta>div:last-child{border-right:0}
+.meta h3{font-family:var(--serif);font-style:italic;font-weight:400;font-size:15px;color:var(--muted);margin-bottom:8px}
+.meta .t1{font-family:var(--serif);font-size:24px;line-height:1.15}.meta .t2{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.5}
+.sw{display:flex;gap:8px;flex-wrap:wrap}
+.sw span{display:block;width:92px}.sw i{display:block;height:40px;border-radius:9px;border:1px solid var(--tileborder);box-shadow:inset 0 1px 0 var(--tilehi)}
+.sw b{display:block;font-size:10.5px;color:var(--muted);font-weight:400;margin-top:4px;font-variant-numeric:tabular-nums;white-space:nowrap}
+h2.sec{font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.2;margin:52px 0 14px;letter-spacing:-.01em}
+h2.sec span{font-family:var(--font);font-size:13px;color:var(--muted);margin-left:10px}
+.note{color:var(--muted);font-size:13px;max-width:78ch;margin-top:10px;line-height:1.55}
+/* review control */
+.ctl{position:fixed;left:10px;top:10px;z-index:200;display:flex;flex-direction:column;gap:4px;padding:8px;border-radius:12px;background:rgba(18,19,24,.92);color:#fff;font-size:12px;font-family:system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.ctl b{font-weight:600;opacity:.6;margin-top:4px;font-size:11px}
+.ctl .row{display:flex;flex-wrap:wrap;gap:4px;max-width:210px}
+.ctl button{padding:5px 8px;border-radius:7px;background:rgba(255,255,255,.1);min-height:28px;color:#fff}
+.ctl button[aria-pressed=true]{background:#fff;color:#111}
+body.noui .ctl{display:none}
+
+/* ---------- Folio pieces, shared with the launcher ---------- */
+.sc{position:relative;overflow:hidden;color:var(--ink);background:var(--paper);font-family:var(--font);font-size:14px}
+.sc .wall{position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 1px 1px,var(--grain) 1px,transparent 1.5px) 0 0/14px 14px}
+.sc>*:not(.wall){position:relative}
+.ic{position:relative;width:var(--sz,54px);height:var(--sz,54px);display:grid;place-items:center;flex:none;border-radius:14px;background:var(--tile);border:1px solid var(--tileborder);box-shadow:inset 0 1px 0 var(--tilehi)}
+.ic::after{content:"";position:absolute;left:32%;right:32%;bottom:8px;height:2px;border-radius:1px;background:var(--c,transparent)}
+.ic svg.g{width:52%;height:52%;stroke-width:1.5;transform:translateY(-2px);color:var(--ink)}
+.art{width:48px;height:48px;border-radius:8px;overflow:hidden;flex:none;background:var(--ad)}
+.art svg{width:100%;height:100%}
+.slip{display:flex;align-items:center;gap:14px;width:100%;padding:8px 14px 8px 10px;min-height:64px;border-radius:12px;background:var(--tile);border:1px solid var(--tileborder);box-shadow:inset 0 1px 0 var(--tilehi),0 1px 0 var(--hair);text-align:left}
+.slip .art{transform:rotate(-3deg);box-shadow:0 1px 2px var(--shadow)}
+.slip .t{flex:1;min-width:0}
+.slip .t b{display:block;font-family:var(--serif);font-weight:400;font-size:17px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slip .t span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.playmark{width:34px;height:34px;border-radius:50%;border:1px solid var(--rule);display:grid;place-items:center;color:var(--ink);flex:none}
+.playmark svg{width:14px;height:14px;fill:currentColor;stroke:none;margin-left:1px}
+.ledger{width:100%;display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.lg{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;text-align:left;gap:2px;padding:7px 10px;min-height:52px;font-size:13.5px;line-height:1.25}
+.lg .k{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.lg .k svg{width:15px;height:15px;color:var(--accent)}
+.lg b{font-weight:600;font-variant-numeric:tabular-nums}
+.lg .sub{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.lg-w{border-right:1px solid var(--hair)}
+.lg-m{grid-column:1/-1;border-top:1px solid var(--hair);flex-direction:row;align-items:center;gap:8px;min-height:48px}
+.rule-search{display:flex;align-items:center;width:100%;height:48px;font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink);flex:none}
+.rule-search::before,.rule-search::after{content:"";flex:1;height:1px;background:var(--rule)}
+.rule-search span{display:flex;align-items:center;gap:8px;padding:0 14px}
+.rule-search svg{width:17px;height:17px}
+.wk{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);letter-spacing:.04em}
+.wk em{font-style:italic;font-family:var(--serif);font-size:13.5px;letter-spacing:0}
+.stage{position:relative;display:grid;place-items:center;height:116px;width:100%;margin-top:2px}
+.ghost{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--serif);font-size:134px;line-height:1;letter-spacing:-.06em;font-variant-numeric:tabular-nums;color:transparent;-webkit-text-stroke:1px color-mix(in srgb,var(--ink) 30%,transparent);pointer-events:none}
+.stage .day{position:relative;top:.1em;font-family:var(--serif);font-size:48px;line-height:1;letter-spacing:-.02em}
+.mon{font-size:13.5px;color:var(--muted);margin-top:4px}
+.seg{display:flex;gap:4px;align-items:center}
+.seg button{min-height:32px;padding:0 12px;border-radius:999px;font-size:13.5px;color:var(--muted)}
+.seg button.on{background:var(--ink);color:var(--paper);font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--rule);font-size:13px;color:var(--ink)}
+.chip i{width:14px;height:14px;border-radius:50%;border:1px solid var(--rule);display:grid;place-items:center;font-style:normal}
+.chip.on{border-color:var(--ink)}.chip.on i{background:var(--ink);border-color:var(--ink)}
+.chip.on i::after{content:"";width:6px;height:3px;border-left:1.5px solid var(--paper);border-bottom:1.5px solid var(--paper);transform:translateY(-1px) rotate(-45deg)}
+.dock{display:grid;grid-template-columns:repeat(4,1fr);justify-items:center;flex:none;margin:6px -6px 0;padding:10px 6px 8px;border-radius:16px;background:var(--sheet);border:1px solid var(--hair);box-shadow:0 1px 0 var(--hair),0 8px 16px -10px var(--shadow)}
+.dock .app{display:flex;flex-direction:column;align-items:center;gap:5px}
+.dock .lb{font-size:11.5px;color:var(--muted)}
+.dock .on .lb{color:var(--ink)}
+.dock .ic{--sz:50px}
+.dock .on .ic{--c:var(--accent)}
+.mark{display:inline-block;width:14px;height:2px;border-radius:1px;background:var(--c,var(--rule));vertical-align:middle;flex:none}
+.sp{color:var(--muted)}
+.row2{display:flex;align-items:center;gap:12px}
+
+/* ---------- album light as ink wash ---------- */
+.washbox{position:relative;display:grid;place-items:center}
+.washbox::before{content:"";position:absolute;inset:-14% -18%;border-radius:50%;background:radial-gradient(ellipse at 50% 55%,color-mix(in srgb,var(--al) 28%,transparent),transparent 62%);pointer-events:none}
+.bigart{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--tileborder);box-shadow:inset 0 1px 0 var(--tilehi),0 10px 22px -14px var(--shadow)}
+.bigart svg{width:100%;height:100%}
+.almark{height:2px;border-radius:1px;background:var(--al);margin:12px auto 0;width:44px}
+
+/* ---------- Now Playing (shared by phone, pane, side-by-side) ---------- */
+.np{display:flex;flex-direction:column;height:100%;padding:0 22px 20px}
+.np .top{display:flex;align-items:center;gap:6px;min-height:56px;margin-top:4px}
+.np .top .back{display:flex;align-items:center;gap:6px;min-height:48px;padding:0 10px 0 2px;font-family:var(--serif);font-style:italic;font-size:15.5px}
+.np .top .r{margin-left:auto;display:flex;gap:4px}
+.np .top .r button{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;color:var(--ink)}
+.np .title{display:flex;align-items:flex-start;gap:12px;margin-top:18px}
+.np .title h2{font-family:var(--serif);font-weight:400;font-size:27px;line-height:1.1;letter-spacing:-.01em;flex:1;min-width:0}
+.np .title p{font-size:14.5px;color:var(--muted);margin-top:5px}
+.np .heart{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--rule);flex:none;margin-top:-4px;color:var(--ink)}
+.np .heart.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.np .heart.on svg{fill:currentColor}
+.np .ledger{margin-top:14px}
+.np .ledger .lg{min-height:46px}
+/* seek: a ruled scale */
+.scale{position:relative;height:44px;margin-top:14px}
+.scale .base{position:absolute;left:0;right:0;top:14px;height:1px;background:var(--rule)}
+.scale .done{position:absolute;left:0;top:13px;height:3px;background:var(--ink);border-radius:2px}
+.scale .tk{position:absolute;top:10px;width:1px;height:9px;background:var(--rule);transform:translateX(-.5px)}
+.scale .tk.big{top:7px;height:15px;background:var(--muted)}
+.scale .tk b{position:absolute;left:0;top:19px;transform:translateX(-50%);font-family:var(--serif);font-weight:400;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.scale .dot{position:absolute;top:14.5px;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--paper);transform:translate(-50%,-50%)}
+.times{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--serif);font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:.01em;line-height:1}
+.times span{color:var(--muted);font-size:16px}
+.times .left{font-size:13px;color:var(--muted);font-family:var(--font);font-style:italic;font-family:var(--serif)}
+.tr{display:flex;align-items:center;justify-content:space-between;margin-top:18px}
+.tr button{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;color:var(--ink);position:relative}
+.tr button svg.g{width:22px;height:22px}
+.tr .play{width:68px;height:68px;background:var(--ink);color:var(--paper)}
+.tr .play svg{width:26px;height:26px;fill:currentColor;stroke:none;margin-left:3px}
+.tr .on{background:var(--ink);color:var(--paper)}
+.tr .on::after{content:"";position:absolute;left:50%;bottom:-7px;width:14px;height:2px;border-radius:1px;background:var(--accent);transform:translateX(-50%)}
+.tr .rep sup{position:absolute;top:9px;right:7px;font-family:var(--serif);font-size:10px;line-height:1;width:12px;height:12px;border-radius:50%;background:var(--paper);color:var(--ink);display:grid;place-items:center}
+.tr .rep.on sup{background:var(--paper);color:var(--ink)}
+.aux{margin-top:auto;border-top:1px solid var(--hair)}
+.aux .ln{display:flex;align-items:center;gap:10px;min-height:48px;font-size:13.5px;border-bottom:1px solid var(--hair)}
+.aux .ln:last-child{border-bottom:0}
+.aux .ln em{font-family:var(--serif);font-style:italic;font-size:15px}
+.aux .ln .v{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+.aux svg.g{width:18px;height:18px}
+.vol{flex:1;position:relative;height:20px;margin:0 6px}
+.vol .base{position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule)}
+.vol .tk{position:absolute;top:7px;width:1px;height:7px;background:var(--rule)}
+.vol .done{position:absolute;left:0;top:9px;height:3px;background:var(--ink);border-radius:2px}
+.vol .dot{position:absolute;top:10.5px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--paper);transform:translate(-50%,-50%)}
+.upnext{margin-top:14px}
+.upnext .h{display:flex;align-items:baseline;justify-content:space-between;font-family:var(--serif);font-style:italic;font-size:15px;padding-bottom:6px;border-bottom:1px solid var(--rule)}
+.upnext .h span{font-family:var(--font);font-style:normal;font-size:12.5px;color:var(--muted)}
+.upnext .qr{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;min-height:46px;border-bottom:1px solid var(--hair);font-size:13.5px}
+.upnext .qr .art{width:34px;height:34px;border-radius:6px}
+.upnext .qr small{display:block;color:var(--muted);font-size:12px}
+.upnext .qr em{font-style:normal;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px}
+
+/* ---------- phone frames ---------- */
+.phones{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.ph{width:390px;height:844px;border-radius:44px;border:8px solid #16171b;box-shadow:0 0 0 1px #2c2d33,0 30px 60px -30px rgba(0,0,0,.6);display:flex;flex-direction:column}
+.ph .sb{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:14px;font-weight:600;letter-spacing:.01em;flex:none}
+.ph .sb svg{width:16px;height:16px;fill:currentColor}
+.ph .body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 18px}
+.ph .pill{position:absolute;bottom:8px;left:50%;width:118px;height:4px;border-radius:2px;background:var(--ink);opacity:.5;transform:translateX(-50%)}
+.ph .np{padding:0 4px 26px}
+.ph .bigart{width:318px;height:318px}
+.ph .foot{margin-top:auto;padding-bottom:18px;flex:none}
+.ph .foot .slip{margin-top:0}
+/* home */
+.alm{display:flex;flex-direction:column;align-items:center;text-align:center;margin-top:18px}
+.alm .mon{margin-top:2px}
+.alm .slip{margin-top:14px}
+.alm .ledger{margin-top:14px}
+.pinned{margin-top:10px}
+.ph .h3{display:flex;align-items:baseline;justify-content:space-between;min-height:40px;font-family:var(--serif);font-style:italic;font-size:16px}
+.ph .h3 span{font-family:var(--font);font-style:normal;font-size:12.5px;color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:94px;justify-items:center;align-content:start}
+.tile{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%}
+.tile .ic{--sz:58px;padding:0}
+.tile .ic .art{width:34px;height:34px;border-radius:7px;transform:translateY(-3px)}
+.tile .lb{font-size:12px;line-height:1.15;color:var(--ink);text-align:center;max-width:88px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .lb small{display:block;color:var(--muted);font-size:11px}
+/* search */
+.field{display:flex;align-items:center;gap:10px;min-height:52px;margin-top:12px;border-bottom:1px solid var(--ink);font-size:17px}
+.field svg.g{color:var(--muted)}
+.field .cur{width:1px;height:20px;background:var(--ink)}
+.field .x{margin-left:auto;color:var(--muted);font-size:13px}
+.srow{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;min-height:62px;border-bottom:1px solid var(--hair)}
+.srow .art{width:44px;height:44px;border-radius:7px}
+.srow>span{min-width:0}
+.srow .artw{position:relative}
+.srow .artw .mark{position:absolute;left:50%;bottom:-6px;transform:translateX(-50%)}
+.srow b{font-weight:400;display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow small{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
+.srow .src{font-size:12px;color:var(--muted)}
+.toggle{display:flex;align-items:center;gap:10px;min-height:48px;font-size:13.5px}
+.toggle .sw2{margin-left:auto;width:40px;height:22px;border-radius:11px;border:1px solid var(--rule);position:relative;flex:none}
+.toggle .sw2::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--muted)}
+.toggle .sw2.on{background:var(--ink);border-color:var(--ink)}.toggle .sw2.on::after{left:21px;background:var(--paper)}
+.toggle .st{color:var(--muted);font-size:12.5px}
+/* settings */
+.crumb{font-size:13px;color:var(--muted);margin-top:8px}
+.crumb b{color:var(--ink);font-weight:500}
+.ph h1.set{font-family:var(--serif);font-weight:400;font-size:36px;line-height:1;letter-spacing:-.02em;margin-top:6px}
+.sh{font-family:var(--serif);font-style:italic;font-size:15.5px;margin-top:14px;padding-bottom:6px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline}
+.sh span{font-family:var(--font);font-style:normal;font-size:12.5px;color:var(--muted)}
+.tint{display:grid;grid-template-columns:22px 1fr auto;gap:12px;align-items:center;min-height:43px;border-bottom:1px solid var(--hair);width:100%}
+.tint i{width:17px;height:17px;border-radius:50%;border:1px solid var(--rule);display:grid;place-items:center}
+.tint.on i{background:var(--ink);border-color:var(--ink)}
+.tint.on i::after{content:"";width:6px;height:3px;border-left:1.5px solid var(--paper);border-bottom:1.5px solid var(--paper);transform:translateY(-1px) rotate(-45deg)}
+.tint b{font-weight:400;font-size:15px}
+.tint small{display:block;color:var(--muted);font-size:12px}
+.tint .pv{display:flex;gap:3px}
+.tint .pv i{width:16px;height:16px;border-radius:4px;border:1px solid var(--hair)}
+.srow2{display:flex;align-items:center;gap:10px;min-height:48px;border-bottom:1px solid var(--hair);font-size:14px}
+.srow2 .seg{margin-left:auto}
+.srow2 small{display:block;color:var(--muted);font-size:12px}
+
+/* ---------- desktop ---------- */
+.scalebox{width:1224px;height:765px;overflow:hidden;border-radius:14px;border:1px solid var(--tileborder);box-shadow:0 24px 50px -30px var(--shadow)}
+.desk{width:1440px;height:900px;transform:scale(.85);transform-origin:0 0;display:grid;grid-template-columns:minmax(0,1fr) 440px;grid-template-rows:64px 1fr}
+@media (max-width:1320px){.scalebox{width:936px;height:585px}.desk{transform:scale(.65)}}
+.desk.full{grid-template-columns:1fr}
+.bar{grid-column:1/2;min-width:0;overflow:hidden;display:flex;align-items:center;gap:4px;padding:0 36px;border-bottom:1px solid var(--rule);white-space:nowrap}
+.bar .brand{font-family:var(--serif);font-size:21px;margin-right:34px;letter-spacing:-.01em}
+.bar .tab{text-decoration:none;position:relative;display:flex;align-items:center;gap:8px;min-height:40px;padding:0 14px;color:var(--muted);font-size:14.5px}
+.bar .tab.on{color:var(--ink)}
+.bar .tab.on::after{content:"";position:absolute;left:14px;width:22px;bottom:4px;height:2px;border-radius:1px;background:var(--accent)}
+.bar .tab svg.g{width:16px;height:16px}
+.bar .r{margin-left:auto;display:flex;gap:18px;align-items:center;color:var(--muted);font-size:13px}
+.bar .r b{color:var(--ink);font-weight:500}
+.main{grid-column:1/2;padding:14px 36px 0;overflow:hidden;display:flex;flex-direction:column}
+.pane{grid-row:1/3;grid-column:2/3;border-left:1px solid var(--rule);display:flex;flex-direction:column;overflow:hidden}
+.pane .np{padding:0 30px 22px}
+.pane .np .top{min-height:60px}
+.pane .bigart{width:228px;height:228px}
+.pane .np .title{margin-top:12px}
+.pane .aux .ln{min-height:42px}
+.pane .upnext{margin-top:10px}
+.pane .upnext .qr{min-height:42px}
+.pane .np .title h2{font-size:25px}
+.dhero{display:grid;grid-template-columns:1fr auto;align-items:center;gap:40px;margin-top:4px}
+.dhero .alm{align-items:flex-start;text-align:left;margin-top:0}
+.dhero .stage{place-items:center start;height:116px;justify-items:start}
+.dhero .ghost{place-items:center start;left:-.03em}
+.dhero .playbig{display:flex;align-items:center;gap:14px;font-family:var(--serif);font-size:18px;min-height:48px;padding:0 20px 0 8px;border-radius:999px;border:1px solid var(--rule)}
+.dhero .playbig .playmark{border-color:var(--ink);background:var(--ink);color:var(--paper)}
+.dtiles{display:grid;grid-template-columns:repeat(6,1fr);gap:18px;margin-top:8px}
+.dtile{display:flex;flex-direction:column;align-items:flex-start;gap:9px}
+.dtile .ic{--sz:100%;aspect-ratio:1;width:100%;height:auto;border-radius:16px;padding:0}
+.dtile .ic::after{left:14px;right:auto;width:26px;bottom:12px}
+.dtile .ic .art{width:58%;height:58%;border-radius:10px;transform:translateY(-6px)}
+.dtile .lb{font-size:14.5px;line-height:1.2}
+.dtile .lb small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:22px;border-top:1px solid var(--rule)}
+.cols>div{padding:8px 0 0}
+.cols>div:first-child{padding-right:26px;border-right:1px solid var(--hair)}
+.cols>div:last-child{padding-left:26px}
+.cols .h3{display:flex;align-items:baseline;justify-content:space-between;font-family:var(--serif);font-style:italic;font-size:16px;min-height:36px}
+.cols .h3 span{font-family:var(--font);font-style:normal;font-size:12.5px;color:var(--muted)}
+.rrow{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;min-height:60px;border-top:1px solid var(--hair);font-size:14.5px}
+.rrow .art{width:44px;height:44px;border-radius:7px}
+.rrow b{font-weight:400;display:block}.rrow small{display:block;color:var(--muted);font-size:12.5px}
+.rrow em{font-style:normal;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:8px}
+/* library */
+.lhead{display:flex;align-items:flex-end;justify-content:space-between;gap:20px}
+.lhead h1{font-family:var(--serif);font-weight:400;font-size:60px;line-height:.95;letter-spacing:-.03em;margin-left:-2px}
+.lhead .sub{font-size:13.5px;color:var(--muted);margin-top:8px}
+.lhead .fld{display:flex;align-items:center;gap:10px;width:380px;min-height:44px;border-bottom:1px solid var(--ink);font-size:16px;white-space:nowrap}
+.lhead .fld svg.g{color:var(--muted)}
+.lhead .fld .hint{margin-left:auto;font-family:var(--serif);font-style:italic;font-size:13px;color:var(--muted)}
+.tools{display:flex;align-items:center;gap:10px;margin-top:16px}
+.tools .seg{margin-right:14px}
+.tools .gap{flex:1}
+.tools .sort{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--muted);min-height:36px;padding:0 10px}
+.tools .sort b{color:var(--ink);font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 16px;border-radius:999px;border:1px solid var(--rule);font-size:13.5px;white-space:nowrap}
+.btn.fill{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn svg{width:12px;height:12px;fill:currentColor}
+.thead{position:sticky;top:0;display:grid;grid-template-columns:36px 1fr 1fr 200px 64px;gap:14px;font-family:var(--serif);font-style:italic;font-size:13.5px;color:var(--muted);padding:12px 12px 8px;margin-top:14px;background:var(--paper);border-bottom:1px solid var(--ink)}
+.thead span:last-child{text-align:right}
+.trow{display:grid;grid-template-columns:36px 1fr 1fr 200px 64px;gap:14px;align-items:center;min-height:48px;padding:0 12px;border-bottom:1px solid var(--hair);font-size:14.5px}
+.trow .n{color:var(--muted);font-variant-numeric:tabular-nums;font-family:var(--serif)}
+.trow b{font-weight:400;display:flex;align-items:center;gap:8px}
+.trow b svg{width:13px;height:13px;fill:var(--ink);stroke:none}
+.trow small{display:block;color:var(--muted);font-size:12.5px}
+.trow .alb{color:var(--muted)}
+.trow .d{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-family:var(--serif)}
+.av{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted)}
+.av.local{color:var(--ink)}.av.local .mark{background:var(--accent)}
+.av.cached .mark{background:var(--h-green)}.av.dl .mark{background:var(--h-yellow)}
+.av.wait .mark{background:transparent;border:1px solid var(--muted);height:0}
+.av.un .mark{background:var(--rule)}.av.fail .mark{background:var(--h-red)}
+.trow.now{background:var(--tile);border-bottom-color:var(--tileborder);box-shadow:inset 2px 0 0 var(--al)}
+.trow.now b{font-family:var(--serif);font-size:16px}
+.cmp{display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap}
+.cmp .cap{width:390px;font-size:13px;color:var(--muted);margin-top:10px;font-family:var(--serif);font-style:italic;font-size:14px}
+/* launcher almanac, reduced */
+.lau{display:flex;flex-direction:column;padding:0 18px 26px;height:100%}
+.lau .alm{margin-top:auto}
+.lau .wk i{font-style:normal;width:17px;height:17px;line-height:17px;text-align:center;border-radius:50%}
+.lau .wk i.on{color:var(--paper);background:var(--ink);font-weight:600}
+.lau .clock{font-family:var(--serif);font-size:36px;letter-spacing:.01em;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:4px}
+.lau .ledger{margin-top:6px}
+.lau .slip{margin-top:10px}
+.lau .apps{margin-top:auto;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:96px;justify-items:center;align-content:start;padding-top:12px}
+.lau .app{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}
+.lau .app .lb{font-size:12.5px}
+.lau .dock{grid-template-columns:repeat(5,1fr);padding:12px 6px 10px;margin-top:4px}
+</style></head>
+<body>
+<div class="ctl" id="ctl"></div>
+
+<header class="intro">
+ <div class="kick">Direction 5 of 5, an alternative to Nocturne</div>
+ <h1><span class="ghost" aria-hidden="true">5</span>Folio</h1>
+ <p>The music app as another page of the launcher's almanac. Same paper and dotted grid, same ink serif for the thing that matters on each screen and a ghost numeral behind it, same hairline ledgers instead of cards, and the launcher's own now-playing slip reused as the mini player, so opening Kainos from the home screen feels like turning a page rather than switching apps. The launcher's icon tile, an outlined rounded square with a short coloured underline, becomes the pinned-item tile and the tab dock; the week strip's filled ink circle marks everything that is "on". Dark mode is the launcher's warm charcoal paper, not black, and the tint picker in Settings offers the same seven tints as the launcher, so one choice can run across both.</p>
+ <div class="meta">
+  <div><h3>Type pairing</h3><div class="t1">Iowan Old Style <span class="sp">with</span> the system sans</div><div class="t2">Serif (Iowan Old Style, Palatino, Noto Serif, Georgia fallbacks) for titles, screen names, ghost numerals and tabular time readouts; italic serif for soft accents and section rules. System sans (Roboto on Android, Noto Sans here) at 12–15 px for everything else. Identical stacks to the launcher.</div></div>
+  <div><h3>Palette, live from the tint</h3><div class="sw" id="sw"></div><div class="t2" style="margin-top:10px">Accent is the launcher's accent and marks only the active tab, the seek dot and local availability. Spotify and YouTube carry the launcher's green and red hue marks, never logos.</div></div>
+  <div><h3>Album light, reinterpreted</h3><div class="t1">An ink wash and a coloured rule</div><div class="t2">The sampled cover colour (saturation clamped per scheme, as <code>AlbumLight.kt</code> already does) is mixed into the paper at 28% and laid behind the cover as a soft radial wash that fades to paper, and drawn once more as a 44 px rule under the cover, where an app tile carries its mark. The same wash tints the mini slip and the current row in Library. No glow, no blur. In Compose: a radial brush behind the artwork plus one <code>HorizontalDivider</code> coloured by <code>rememberAlbumLight</code>.</div></div>
+ </div>
+</header>
+
+<h2 class="sec">Desktop, Home with the Now Playing side pane<span>1440 × 900, scaled</span></h2>
+<div class="scalebox"><div class="desk sc" id="deskHome"></div></div>
+
+<h2 class="sec">Desktop, Library<span>Songs, chips, sort, sticky ledger header, availability</span></h2>
+<div class="scalebox"><div class="desk full sc" id="deskLib"></div></div>
+
+<h2 class="sec">Phone<span>Now Playing, Home, Search, Settings → Appearance, 390 × 844</span></h2>
+<div class="phones" id="phones"></div>
+
+<h2 class="sec">Side by side with the launcher<span>Folio home's now-playing slip, then Kainos Now Playing for the same track</span></h2>
+<div class="cmp" id="cmp"></div>
+<p class="note">Everything shown is an existing feature: Search is Spotify plus YouTube with the autoplay toggle off; Library keeps fuzzy search, the Local files only and Favorites only chips, Sort and Play all / Play favorites above the sticky header, and the six availability states; Now Playing has the quality readout, heart, shuffle with a visible on state, repeat off/all/one, seek, desktop volume, sleep timer and queue, and the back control on its own row. Desktop Home hides its session card while the side pane is open; the phone Home shows the resume hero instead. Nothing needs anything web-only.</p>
+
+<script>
+/* ---------- tints and tokensFor, copied from folio-home-v2.html ---------- */
+const hex2rgb=h=>{h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
+const mix=(a,b,t)=>{const A=hex2rgb(a),B=hex2rgb(b);return '#'+A.map((x,i)=>Math.round(x+(B[i]-x)*t).toString(16).padStart(2,'0')).join('')};
+const HUES=['red','orange','yellow','green','teal','blue','purple','pink','gray'];
+const TINTS={
+ folio:{name:'Folio',art:{deep:'#1B2440',pale:'#F6E7C8',h:'#B8352F #E07B39 #F2A541 #3F8F6E #1FA39B #3A64D8 #7B4FD0 #D63D8E'},
+  light:{paper:'#E8EAE9',sheet:'#F4F5F4',field:'#FFFFFF',tile:'#F9FAF9',hair:'#C9CECD',rule:'#B5BAB9',ink:'#15181B',muted:'#5F666C',accent:'#1E4BD8',h:'#E5484D #FF8A3D #F5B800 #30A46C #12A594 #2D8CFF #6E56CF #F06292 #707785',tileborder:'#C6CBCA',tilehi:'#FFFFFF'},
+  dark:{paper:'#1E1D1B',sheet:'#262523',field:'#2E2D2A',tile:'#2A2927',hair:'#3B3A37',rule:'#4A4844',ink:'#ECE9E2',muted:'#9A978F',accent:'#8FA3FF',h:'#E5484D #FF8A3D #F5B800 #30A46C #12A594 #2D8CFF #6E56CF #F06292 #707785',tileborder:'#3D3B38',tilehi:'#333130'}},
+ everforest:{name:'Everforest',art:{deep:'#232A2E',pale:'#D3C6AA'},
+  light:{paper:'#FDF6E3',sheet:'#F4F0D9',field:'#FFFBEF',tile:'#FFFBEF',hair:'#E0DCC7',rule:'#BDC3AF',ink:'#5C6A72',muted:'#829181',accent:'#8DA101',h:'#F85552 #F57D26 #DFA000 #8DA101 #35A77C #3A94C5 #DF69BA #DF69BA #939F91'},
+  dark:{paper:'#2D353B',sheet:'#343F44',field:'#3D484D',tile:'#343F44',hair:'#475258',rule:'#4F585E',ink:'#D3C6AA',muted:'#9DA9A0',accent:'#A7C080',h:'#E67E80 #E69875 #DBBC7F #A7C080 #83C092 #7FBBB3 #D699B6 #D699B6 #859289'}},
+ catppuccin:{name:'Catppuccin',art:{deep:'#11111B',pale:'#F5E0DC'},
+  light:{paper:'#EFF1F5',sheet:'#E6E9EF',field:mix('#EFF1F5','#FFFFFF',.7),tile:mix('#EFF1F5','#FFFFFF',.55),hair:'#CCD0DA',rule:'#ACB0BE',ink:'#4C4F69',muted:'#6C6F85',accent:'#179299',h:'#D20F39 #FE640B #DF8E1D #40A02B #179299 #1E66F5 #8839EF #EA76CB #8C8FA1'},
+  dark:{paper:'#1E1E2E',sheet:mix('#1E1E2E','#313244',.45),field:'#313244',tile:mix('#1E1E2E','#313244',.6),hair:'#45475A',rule:'#585B70',ink:'#CDD6F4',muted:'#A6ADC8',accent:'#94E2D5',h:'#F38BA8 #FAB387 #F9E2AF #A6E3A1 #94E2D5 #89B4FA #CBA6F7 #F5C2E7 #9399B2'}},
+ gruvbox:{name:'Gruvbox',art:{deep:'#1D2021',pale:'#FBF1C7'},
+  light:{paper:'#FBF1C7',sheet:'#F2E5BC',field:'#F9F5D7',tile:'#F9F5D7',hair:'#D5C4A1',rule:'#BDAE93',ink:'#3C3836',muted:'#7C6F64',accent:'#AF3A03',h:'#9D0006 #AF3A03 #B57614 #79740E #427B58 #076678 #8F3F71 #8F3F71 #928374'},
+  dark:{paper:'#282828',sheet:'#32302F',field:'#3C3836',tile:'#32302F',hair:'#504945',rule:'#665C54',ink:'#EBDBB2',muted:'#A89984',accent:'#FE8019',h:'#FB4934 #FE8019 #FABD2F #B8BB26 #8EC07C #83A598 #D3869B #D3869B #928374'}},
+ nord:{name:'Nord',art:{deep:'#2E3440',pale:'#ECEFF4'},
+  light:{paper:'#ECEFF4',sheet:'#E5E9F0',field:mix('#ECEFF4','#FFFFFF',.6),tile:mix('#ECEFF4','#FFFFFF',.5),hair:'#D8DEE9',rule:mix('#D8DEE9','#4C566A',.2),ink:'#2E3440',muted:'#4C566A',accent:'#5E81AC',h:'#BF616A #D08770 #EBCB8B #A3BE8C #8FBCBB #5E81AC #B48EAD #B48EAD #4C566A'},
+  dark:{paper:'#2E3440',sheet:mix('#2E3440','#3B4252',.5),field:'#3B4252',tile:'#3B4252',hair:'#434C5E',rule:'#4C566A',ink:'#ECEFF4',muted:mix('#D8DEE9','#4C566A',.3),accent:'#88C0D0',h:'#BF616A #D08770 #EBCB8B #A3BE8C #8FBCBB #81A1C1 #B48EAD #B48EAD #616E88'}},
+ rosepine:{name:'Rosé Pine',art:{deep:'#191724',pale:'#E0DEF4'},
+  light:{paper:'#FAF4ED',sheet:'#FFFAF3',field:'#FFFAF3',tile:'#FFFAF3',hair:'#DFDAD9',rule:'#CECACD',ink:'#575279',muted:'#797593',accent:'#907AA9',h:'#B4637A #D7827E #EA9D34 #56949F #56949F #286983 #907AA9 #D7827E #9893A5'},
+  dark:{paper:'#191724',sheet:'#1F1D2E',field:'#26233A',tile:'#1F1D2E',hair:'#403D52',rule:'#524F67',ink:'#E0DEF4',muted:'#908CAA',accent:'#C4A7E7',h:'#EB6F92 #EBBCBA #F6C177 #9CCFD8 #9CCFD8 #31748F #C4A7E7 #EBBCBA #6E6A86'}},
+ tokyonight:{name:'Tokyo Night',art:{deep:'#16161E',pale:'#C0CAF5'},
+  light:{paper:'#E1E2E7',sheet:'#E9E9ED',field:mix('#E9E9ED','#FFFFFF',.5),tile:mix('#E9E9ED','#FFFFFF',.4),hair:'#C4C8DA',rule:'#A8AECB',ink:'#3760BF',muted:'#68709A',accent:'#9854F1',h:'#F52A65 #B15C00 #8C6C3E #587539 #118C74 #2E7DE9 #9854F1 #D20065 #848CB5'},
+  dark:{paper:'#1A1B26',sheet:'#1F2335',field:'#292E42',tile:'#1F2335',hair:'#3B4261',rule:'#414868',ink:'#C0CAF5',muted:'#737AA2',accent:'#BB9AF7',h:'#F7768E #FF9E64 #E0AF68 #9ECE6A #73DACA #7AA2F7 #BB9AF7 #FF007C #565F89'}}
+};
+function tokensFor(id,mode){
+  const fam=TINTS[id],v=fam[mode],dark=mode==='dark';
+  const rgba=(h,a)=>{const [r,g,b]=hex2rgb(h);return `rgba(${r},${g},${b},${a})`};
+  const t={paper:v.paper,ink:v.ink,muted:v.muted,accent:v.accent,sheet:v.sheet,field:v.field,tile:v.tile,hair:v.hair,rule:v.rule,
+    tileborder:v.tileborder||v.hair,tilehi:v.tilehi||(dark?mix(v.tile,v.ink,.06):mix(v.tile,'#FFFFFF',.7)),
+    grain:rgba(v.ink,dark?.045:.055),shadow:dark?'rgba(0,0,0,.6)':rgba(v.ink,.22)};
+  v.h.split(' ').forEach((c,i)=>t['h-'+HUES[i]]=c);
+  const art=(fam.art.h||fam.dark.h).split(' ');
+  Object.assign(t,{ad:fam.art.deep,ap:fam.art.pale,au:art[6],ab:art[5],ag:art[3],ao:art[1]});
+  /* Kainos only: the album-light sample, clamped per scheme like AlbumLight.kt */
+  t.al=dark?'#5FA6B4':'#2F7584';
+  return t;
+}
+
+/* ---------- glyphs ---------- */
+const G={
+ play:'M8 5l11 7-11 7z',pause:'M7 5h3.5v14H7z M13.5 5H17v14h-3.5z',
+ prev:'M18 6v12L8 12z M6 6v12',next:'M6 6v12l10-6z M18 6v12',
+ shuffle:'M3 7h3.5c2 0 3.5 1 4.5 2.5L14 14.5c1 1.5 2.5 2.5 4.5 2.5H21 M18 4.5l3 2.5-3 2.5 M18 14.5l3 2.5-3 2.5 M3 17h3.5c2 0 3.5-1 4.5-2.5 M14 9.5c1-1.5 2.5-2.5 4.5-2.5H21',
+ repeat:'M4 11V9a3 3 0 0 1 3-3h12 M16 3l3 3-3 3 M20 13v2a3 3 0 0 1-3 3H5 M8 21l-3-3 3-3',
+ heart:'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z',
+ search:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+ home:'M4 11l8-7 8 7v9h-5v-6h-6v6H4z',
+ library:'M4 5h3v14H4z M10 5h3v14h-3z M15.5 5.6l3-.6 3.3 13.4-3 .7z',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5 M12 18.5V21 M3 12h2.5 M18.5 12H21 M5.6 5.6l1.8 1.8 M16.6 16.6l1.8 1.8 M5.6 18.4l1.8-1.8 M16.6 7.4l1.8-1.8"/>',
+ back:'M14 5l-7 7 7 7',more:'<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+ moon:'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',queue:'M4 7h11 M4 12h11 M4 17h7 M19 6v9 M19 15a2 2 0 1 1-4 0 2 2 0 0 1 4 0z',
+ vol:'M4 10v4h3l4 3V7l-4 3z M15 9a4 4 0 0 1 0 6 M18 6.5a8 8 0 0 1 0 11',
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5 M12 19v2.5 M2.5 12H5 M19 12h2.5 M5.3 5.3l1.8 1.8 M16.9 16.9l1.8 1.8 M5.3 18.7l1.8-1.8 M16.9 7.1l1.8-1.8"/>',
+ mail:'M3 6h18v12H3z M3 7l9 6 9-6',music:'M9 17V5l10-2v12 M9 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z M19 15a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z',
+ phone:'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A17 17 0 0 1 3 6a2 2 0 0 1 2-2z',
+ video:'M3 8a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M10 9v6l5-3z',
+ foldmap:'M3 6.5L9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z M9 4v13.5 M15 6.5V20',
+ nonogram:'M9 9h11v11H9z M12.67 9v11 M16.33 9v11 M9 12.67h11 M9 16.33h11 M4 10.8h2.5 M4 14.5h2.5 M4 18.2h2.5 M10.8 4v2.5 M14.5 4v2.5 M18.2 4v2.5',
+ mine:'M4 4h16v16H4z M10 7.5v10 M10 7.5h6.5l-2 2.6 2 2.6H10 M8 17.5h4',spark:'M12 3c.7 5 3.7 8.1 9 9-5.3.9-8.3 4-9 9-.7-5-3.7-8.1-9-9 5.3-.9 8.3-4 9-9z',
+ pmail:'M3 6h18v12H3z M3 6l5.5 6L12 9l3.5 3L21 6',t3:'M3.5 7h8 M7.5 7v11 M14 7h6l-3.5 4.5a3.5 3.5 0 1 1-3.2 5.3',
+ lion:'<circle cx="12" cy="12.5" r="8" stroke-dasharray="2.3 1.7"/><path d="M8.2 9.6h.6 M15.2 9.6h.6 M12 12.3l-1.6 1.9h3.2z M12 14.2v1.5 M9.6 16.8c.8.5 1.6.7 2.4.7s1.6-.2 2.4-.7 M9.4 7.2c-.3-.4-.3-1-.1-1.7 M14.6 7.2c.3-.4.3-1 .1-1.7"/>'};
+const svg=(g,cls)=>{const d=G[g];return `<svg class="${cls||''}" viewBox="0 0 24 24" aria-hidden="true">${d.startsWith('<')?d:`<path d="${d}"/>`}</svg>`};
+const gl=g=>svg(g,'g');
+const fill=g=>`<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor"><path d="${G[g]}"/></svg>`;
+
+/* ---------- covers: generated, themed by the tint's art colours ---------- */
+const COVERS={
+ mobius:`<rect width="60" height="60" style="fill:var(--ad)"/><path d="M30 30c-6-10-19-10-19 0s13 10 19 0 19-10 19 0-13 10-19 0" style="fill:none;stroke:var(--ap);stroke-width:2.6"/><path d="M30 30c-6-10-19-10-19 0" style="fill:none;stroke:var(--au);stroke-width:2.6"/><rect x="10" y="49" width="40" height="1.5" style="fill:var(--ap)" opacity=".5"/>`,
+ salt:`<rect width="60" height="60" fill="#163E49"/><path d="M0 38c10-6 20-6 30 0s20 6 30 0v22H0z" fill="#2F7584"/><path d="M0 44c10-6 20-6 30 0s20 6 30 0" fill="none" stroke="#9FD3DD" stroke-width="1.2"/><path d="M30 8l9 26H21z" fill="none" stroke="#E8EAE9" stroke-width="1.4"/><circle cx="30" cy="22" r="2.2" fill="#E8EAE9"/>`,
+ brass:`<rect width="60" height="60" fill="#F0DDB4"/><circle cx="30" cy="30" r="17" fill="none" stroke="#8A5A1E" stroke-width="2"/><circle cx="30" cy="30" r="9" fill="none" stroke="#8A5A1E" stroke-width="2"/><path d="M13 47h34" stroke="#8A5A1E" stroke-width="2"/>`,
+ wires:`<rect width="60" height="60" fill="#2B2F3A"/><path d="M5 20h50 M5 30h50 M5 40h50" stroke="#C9CFDB" stroke-width="1"/><path d="M14 12v36 M46 12v36" stroke="#E5484D" stroke-width="2"/>`,
+ vinyl:`<rect width="60" height="60" fill="#1B1B1B"/><circle cx="30" cy="30" r="24" fill="none" stroke="#3A3A3A" stroke-width="10"/><circle cx="30" cy="30" r="9" fill="#C9492E"/><circle cx="30" cy="30" r="2" fill="#1B1B1B"/>`,
+ sunday:`<rect width="60" height="60" fill="#F3E7D3"/><circle cx="30" cy="36" r="14" fill="#E07B39"/><rect y="40" width="60" height="20" fill="#5B3B2A"/>`,
+ night:`<rect width="60" height="60" fill="#20264A"/><rect x="8" y="22" width="44" height="18" rx="3" fill="#F2A541"/><circle cx="16" cy="44" r="4" fill="#111"/><circle cx="44" cy="44" r="4" fill="#111"/>`,
+ ferric:`<rect width="60" height="60" fill="#5A2E22"/><path d="M8 50L30 10l22 40z" fill="#C25A3A"/><path d="M18 50L30 28l12 22z" fill="#F6E7C8"/>`,
+ orbit:`<rect width="60" height="60" fill="#0E1A2B"/><circle cx="30" cy="30" r="18" fill="none" stroke="#7FB3FF" stroke-width="1.2"/><circle cx="30" cy="30" r="6" fill="#DCE8FF"/><circle cx="46" cy="24" r="2.2" fill="#F5B800"/>`,
+ late:`<rect width="60" height="60" fill="#36305A"/><rect x="10" y="14" width="40" height="32" rx="2" fill="none" stroke="#D7CFFF" stroke-width="1.4"/><rect x="18" y="22" width="24" height="16" fill="#8A7BE0"/>`,
+ liked:`<rect width="60" height="60" fill="#3F2B5F"/><path d="M30 46s-15-9-15-21a8 8 0 0 1 15-5 8 8 0 0 1 15 5c0 12-15 21-15 21z" fill="#E8DFFF"/>`,
+ pale:`<rect width="60" height="60" fill="#E7EFE4"/><circle cx="20" cy="36" r="9" fill="#9FC39C"/><circle cx="38" cy="26" r="12" fill="#C9DEC4"/>`,
+ commute:`<rect width="60" height="60" fill="#2F4C3B"/><path d="M8 44l44-28" stroke="#CFE7D8" stroke-width="2"/><path d="M8 52l44-28" stroke="#CFE7D8" stroke-width="1"/>`};
+const art=(c,cls)=>`<span class="art ${cls||''}"><svg viewBox="0 0 60 60" aria-hidden="true">${COVERS[c]}</svg></span>`;
+const SRC={sp:{n:'Spotify',c:'var(--h-green)'},yt:{n:'YouTube',c:'var(--h-red)'},lo:{n:'Local',c:'var(--ink)'},kp:{n:'Kainos',c:'var(--accent)'},fo:{n:'Folder',c:'var(--muted)'}};
+const mark=s=>`<i class="mark" style="--c:${SRC[s].c}"></i>`;
+
+/* ---------- Now Playing ---------- */
+const fmt=s=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+function seek(pos,dur){
+  const p=s=>(s/dur*100).toFixed(2)+'%';let t='';
+  for(let s=0;s<=dur;s+=30){const big=s%60===0;t+=`<i class="tk ${big?'big':''}" style="left:${p(s)}">${big&&s>0?`<b>${s/60}</b>`:''}</i>`}
+  return `<div class="scale" role="slider" aria-label="Seek" aria-valuenow="${pos}" aria-valuemax="${dur}" tabindex="0"><div class="base"></div>${t}<div class="done" style="width:${p(pos)}"></div><i class="dot" style="left:${p(pos)}"></i></div>`;
+}
+function np(o){
+  const {title,artist,cover,from,quality,source,pos,dur,desktop,count}=o;
+  return `<section class="np" aria-label="Now Playing">
+   <div class="top"><button class="back">${gl('back')}<span>Playing from ${from}</span></button>
+    <div class="r"><button aria-label="Sleep timer">${gl('moon')}</button><button aria-label="More">${gl('more')}</button></div></div>
+   <div class="washbox"><div class="bigart"><svg viewBox="0 0 60 60" aria-hidden="true">${COVERS[cover]}</svg></div></div>
+   <div class="almark" aria-hidden="true"></div>
+   <div class="title"><div><h2>${title}</h2><p>${artist}</p></div><button class="heart on" aria-label="Hearted" aria-pressed="true">${gl('heart')}</button></div>
+   <div class="ledger"><div class="lg lg-w"><span class="k"><b>${quality[0]}</b></span><span class="sub">${quality[1]}</span></div><div class="lg"><span class="k">${mark(source)}<b style="font-weight:500">${SRC[source].n}${source==='lo'?' file':''}</b></span><span class="sub">${o.where}</span></div></div>
+   <div class="times" style="margin-top:14px"><b style="font-weight:400">${fmt(pos)}</b><span class="left">${fmt(dur-pos)} left</span><span>${fmt(dur)}</span></div>
+   ${seek(pos,dur)}
+   <div class="tr">
+    <button class="on" aria-label="Shuffle on" aria-pressed="true">${gl('shuffle')}</button>
+    <button aria-label="Previous">${gl('prev')}</button>
+    <button class="play" aria-label="Pause">${fill('pause')}</button>
+    <button aria-label="Next">${gl('next')}</button>
+    <button class="rep on" aria-label="Repeat one" aria-pressed="true">${gl('repeat')}<sup>1</sup></button>
+   </div>
+   <div class="aux">
+    ${desktop?`<div class="ln">${gl('vol')}<div class="vol" role="slider" aria-label="Volume" aria-valuenow="72" tabindex="0"><div class="base"></div>${[0,25,50,75,100].map(v=>`<i class="tk" style="left:${v}%"></i>`).join('')}<div class="done" style="width:72%"></div><i class="dot" style="left:72%"></i></div><span class="v">72</span></div>`:''}
+    <div class="ln">${gl('moon')}<em>Sleep</em><span class="sp">after this track</span><span class="v">3:34</span></div>
+    <div class="ln">${gl('queue')}<em>Queue</em><span class="sp">shuffled</span><span class="v">${count}</span></div>
+   </div>
+   ${desktop?`<div class="upnext"><div class="h">Up next<span>Compact player</span></div>
+    <div class="qr">${art('salt')}<div>Driftwood Choir<small>Mira Okonkwo</small></div><em>4:02</em></div>
+    <div class="qr">${art('brass')}<div>Comet Lines<small>Yusuf Adeyemi Quartet</small></div><em>6:31</em></div></div>`:''}
+  </section>`;
+}
+const SALT={title:'Saltwater Cathedral',artist:'Mira Okonkwo',cover:'salt',from:'Vinyl rips',quality:['FLAC 24-bit / 96 kHz','Nyquist 48 kHz, PCM'],source:'lo',where:'This phone, hearted',pos:134,dur:348,count:312};
+
+/* ---------- phone chrome ---------- */
+const sb=t=>`<div class="sb"><span>${t||'21:47'}</span><span style="display:flex;gap:6px;align-items:center"><svg viewBox="0 0 24 24"><path d="M3 20v-4h3v4zM8 20v-8h3v8zM13 20V8h3v12zM18 20V4h3v16z"/></svg><svg viewBox="0 0 24 24"><path d="M12 20l-2.3-2.3a3.2 3.2 0 0 1 4.6 0zM6.4 14.7l-1.8-1.8a10.5 10.5 0 0 1 14.8 0l-1.8 1.8a8 8 0 0 0-11.2 0zM2.9 11.2L1 9.4a15.5 15.5 0 0 1 22 0l-1.9 1.8a13 13 0 0 0-18.2 0z"/></svg><span style="font-size:13px">84</span></span></div>`;
+const phone=(inner,t)=>`<div class="ph sc"><div class="wall"></div>${sb(t)}<div class="body">${inner}</div><div class="pill"></div></div>`;
+const TABS=[['home','Home'],['search','Search'],['library','Library'],['gear','Settings']];
+const dock=on=>`<div class="dock" role="tablist">${TABS.map(([g,n])=>`<button class="app ${n===on?'on':''}" role="tab" aria-selected="${n===on}"><span class="ic">${gl(g)}</span><span class="lb">${n}</span></button>`).join('')}</div>`;
+const mini=()=>`<button class="slip" aria-label="Open Now Playing">${art('salt')}<span class="t"><b>Saltwater Cathedral</b><span>Mira Okonkwo, 2:14 of 5:48</span></span><span class="playmark">${fill('pause')}</span></button>`;
+const foot=on=>`<div class="foot">${mini()}${dock(on)}</div>`;
+const tile=(c,n,s,sub)=>`<button class="tile"><span class="ic" style="--c:${SRC[s].c}">${art(c)}</span><span class="lb">${n}<small>${sub||SRC[s].n}</small></span></button>`;
+const PINS=[['late','Late shift','kp','Kainos playlist'],['liked','Liked Songs','sp','Spotify'],['brass','Brass Mornings','lo','Local album'],['vinyl','Vinyl rips','fo','Folder'],['sunday','Sunday pressing','sp','Spotify playlist'],['wires','Hollow Season','sp','Spotify album']];
+
+const homePh=phone(`
+ <section class="alm">
+  <span class="wk"><em>Thursday evening</em></span>
+  <span class="stage"><span class="ghost" aria-hidden="true">2:14</span><span class="day">Resume</span></span>
+  <span class="mon">Paused 2 hours ago in Vinyl rips</span>
+  <button class="slip">${art('salt')}<span class="t"><b>Saltwater Cathedral</b><span>Mira Okonkwo, 3:34 left</span></span><span class="playmark">${fill('play')}</span></button>
+  <div class="ledger">
+   <button class="lg lg-w"><span class="k">${gl('spark')}<b>Discover Weekly</b></span><span class="sub">30 new songs, updated Monday</span></button>
+   <button class="lg"><span class="k">${gl('heart')}<b>4 hearted</b></span><span class="sub">this week, 2 cached</span></button>
+  </div>
+ </section>
+ <div class="pinned"><div class="h3">Pinned<span>Edit</span></div>
+  <div class="tiles">${PINS.slice(0,4).map(p=>tile(p[0],p[1],p[2])).join('')}${tile('commute','Commute','kp')}${tile('pale','Pale Gardens','lo')}</div></div>
+ ${foot('Home')}`);
+
+const RES=[['wires','Glass Harbour','The Northern Wires, Hollow Season','sp'],['wires','Hollow Season','Album, 2019, 11 songs','sp'],['night','The Northern Wires, live at Rough Trade','Rough Trade, 48 min','yt'],['ferric','Ashfall','The Northern Wires','sp'],['orbit','Glass Harbour (acoustic session)','Lantern Sessions, 5:12','yt'],['commute','The Northern Wires','Artist','sp'],['wires','Hollow Season, full album','Topic channel, 44 min','yt']];
+const searchPh=phone(`
+ <div class="field">${gl('search')}<span>northern wires</span><i class="cur"></i><span class="x">Clear</span></div>
+ <div class="toggle"><span>Autoplay after results end</span><span class="st">Off</span><span class="sw2" role="switch" aria-checked="false"></span></div>
+ <div class="rule-search" style="height:40px"><span>Spotify and YouTube</span></div>
+ ${RES.map(r=>`<button class="srow"><span class="artw">${art(r[0])}${mark(r[3])}</span><span><b>${r[1]}</b><small>${r[2]}</small></span><span class="src">${SRC[r[3]].n}</span></button>`).join('')}
+ ${foot('Search')}`);
+
+const tintRow=(id,on)=>{const v=TINTS[id],l=v.light,d=v.dark;return `<button class="tint ${on?'on':''}" aria-pressed="${on}"><i></i><span><b>${v.name}</b><small>${id==='folio'?'The launcher default':id==='everforest'?'Soft green paper':id==='catppuccin'?'Cool pastel':id==='gruvbox'?'Retro warm':id==='nord'?'Arctic blue-grey':id==='rosepine'?'Dusty rose':'Blue night'}</small></span><span class="pv"><i style="background:${l.paper}"></i><i style="background:${l.accent}"></i><i style="background:${d.paper}"></i><i style="background:${d.accent}"></i></span></button>`};
+const settingsPh=()=>phone(`
+ <div class="crumb">Settings › <b>Appearance</b></div>
+ <h1 class="set">Appearance</h1>
+ <div class="sh">Tint<span>same set as the launcher</span></div>
+ ${Object.keys(TINTS).map(id=>tintRow(id,id===state.tint)).join('')}
+ <div class="srow2"><span>Light or dark<small>or follow the phone</small></span><div class="seg">${[['light','Light'],['dark','Dark'],['system','System']].map(([v,n])=>`<button class="${state.mode===v?'on':''}">${n}</button>`).join('')}</div></div>
+ ${foot('Settings')}`);
+
+/* ---------- desktop ---------- */
+const bar=on=>`<header class="bar"><span class="brand">Kainos Player</span>${TABS.map(([g,n])=>`<a class="tab ${n===on?'on':''}" href="#">${gl(g)}${n}</a>`).join('')}
+ <div class="r"><span><b>Downloads</b> 2</span><span><b>Spotify</b> connected</span><span><b>Synced</b> 14:02</span></div></header>`;
+const deskHome=`${bar('Home')}
+ <main class="main">
+  <div class="dhero">
+   <section class="alm">
+    <span class="wk"><em>Thursday evening</em><span>week 42</span></span>
+    <span class="stage"><span class="ghost" aria-hidden="true">30</span><span class="day">Discover Weekly</span></span>
+    <span class="mon">30 new songs picked for you, updated Monday, 1 h 52 min</span>
+   </section>
+   <button class="playbig"><span class="playmark">${fill('play')}</span>Play Discover Weekly</button>
+  </div>
+  <div class="h3" style="display:flex;justify-content:space-between;align-items:baseline;font-family:var(--serif);font-style:italic;font-size:17px;margin-top:22px;padding-bottom:10px;border-bottom:1px solid var(--rule)">Pinned<span style="font:12.5px var(--font);color:var(--muted)">Edit pins</span></div>
+  <div class="dtiles" style="margin-top:16px">${PINS.map(p=>`<button class="dtile"><span class="ic" style="--c:${SRC[p[2]].c}">${art(p[0])}</span><span class="lb">${p[1]}<small>${p[3]}</small></span></button>`).join('')}</div>
+  <div class="cols">
+   <div><div class="h3">Recent<span>Last 7 days</span></div>
+    <div class="rrow">${art('salt')}<div><b>Saltwater Cathedral</b><small>Mira Okonkwo</small></div><em>${mark('lo')}Now</em></div>
+    <div class="rrow">${art('brass')}<div><b>Comet Lines</b><small>Yusuf Adeyemi Quartet</small></div><em>${mark('lo')}2 h ago</em></div>
+    <div class="rrow">${art('wires')}<div><b>Glass Harbour</b><small>The Northern Wires</small></div><em>${mark('sp')}Yesterday</em></div></div>
+   <div><div class="h3">Hearted this week<span>4 songs</span></div>
+    <div class="rrow">${art('night')}<div><b>Night Bus to Ostrava</b><small>Lenka Hořák</small></div><em>${mark('sp')}Spotify</em></div>
+    <div class="rrow">${art('ferric')}<div><b>Ferric</b><small>Halden &amp; Vos</small></div><em>${mark('yt')}YouTube</em></div>
+    <div class="rrow">${art('orbit')}<div><b>Low Orbit</b><small>Tendril</small></div><em>${mark('lo')}Local</em></div></div>
+  </div>
+ </main>
+ <aside class="pane">${np({...SALT,where:'Vinyl rips, hearted',desktop:true})}</aside>`;
+
+const ROWS=[['Carrier Wave','Tendril','Static Bloom','un','Unavailable','4:18'],['Comet Lines','Yusuf Adeyemi Quartet','Brass Mornings','local','Local, FLAC','6:31',1],['Driftwood Choir','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','4:02'],['Ferric','Halden &amp; Vos','Ferric','dl','Downloading, 62%','5:10',1],['Ghosts in the Hallway','Wren Castellan','Single','fail','Failed, retry','3:29'],['Glass Harbour','The Northern Wires','Hollow Season','cached','Cached','4:55'],['Low Orbit','Tendril','Static Bloom','local','Local, FLAC','3:47',1],['Night Bus to Ostrava','Lenka Hořák','Marginalia','cached','Cached','4:40',1],['Pale Gardens','Iso Tanaka','Pale Gardens','local','Local, FLAC','7:12'],['Saltwater Cathedral','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','5:48',1,1],['Tideline','Cassiopeia Reyes','Tideline','wait','Waiting for Wi‑Fi','4:03'],['Vespers','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','3:58']];
+const deskLib=`${bar('Library')}
+ <main class="main">
+  <div class="lhead"><div><h1>Library</h1><div class="sub">96 hearted of 1,844 songs, 312 local files</div></div>
+   <div class="fld">${gl('search')}<span>sltwtr cath</span><i class="cur" style="width:1px;height:18px;background:var(--ink)"></i><span class="hint">Enter plays the top match</span></div></div>
+  <div class="tools"><div class="seg"><button class="on">Songs</button><button>Albums</button><button>Artists</button><button>Playlists</button></div>
+   <span class="chip"><i></i>Local files only</span><span class="chip on"><i></i>Favorites only</span><div class="gap"></div>
+   <span class="sort">Sort <b>Title</b></span><span class="btn">Play favorites</span><span class="btn fill">${fill('play')}Play all, 1,844</span></div>
+  <div class="thead"><span>No.</span><span>Title</span><span>Album</span><span>Availability</span><span>Time</span></div>
+  ${ROWS.map((r,i)=>`<div class="trow ${r[7]?'now':''}"><span class="n">${i+1}</span><div><b>${r[0]}${fill('heart')}</b><small>${r[1]}</small></div><span class="alb">${r[2]}</span><span class="av ${r[3]}"><i class="mark"></i>${r[4]}</span><span class="d">${r[5]}</span></div>`).join('')}
+ </main>`;
+
+/* ---------- launcher frame, reduced Almanac II ---------- */
+const APPS=[['nonogram','Nonogram','purple'],['foldmap','Maps','green'],['mine','Minesweeper','teal'],['video','YouTube','red']];
+const DOCKA=[['phone','green'],['spark','yellow'],['pmail','purple'],['t3','orange'],['lion','blue']];
+const launcher=phone(`
+ <section class="lau"><section class="alm">
+  <span class="wk">${'MTWTFSS'.split('').map((c,i)=>`<i class="${i===5?'on':''}">${c}</i>`).join('')}<em>week 42</em></span>
+  <span class="stage"><span class="ghost" aria-hidden="true">18</span><span class="day">Saturday</span></span>
+  <span class="mon">18 October</span><span class="clock">14:32</span>
+  <div class="ledger"><div class="lg lg-w"><span class="k">${gl('sun')}<b>10°</b> Clear</span><span class="sub">high 16, low 9</span></div><div class="lg"><span class="k"><b style="color:var(--accent)">19:30</b> Dinner at 8Bite</span><span class="sub">next up, in 5 hours</span></div>
+   <div class="lg lg-m"><span class="k">${gl('mail')}<b>3 unread</b></span><span class="sub">Lena Ortiz: Table for Saturday at 8Bite</span></div></div>
+  <button class="slip">${art('mobius')}<span class="t"><b>MOBIUS</b><span>Pretty Patterns, Kainos Player</span></span></button>
+ </section>
+ <div class="apps">${APPS.map(a=>`<button class="app"><span class="ic" style="--c:var(--h-${a[2]})">${gl(a[0])}</span><span class="lb">${a[1]}</span></button>`).join('')}</div>
+ <div class="rule-search"><span>${gl('search')}Search</span></div>
+ <div class="dock">${DOCKA.map(a=>`<button class="app"><span class="ic" style="--c:var(--h-${a[1]})">${gl(a[0])}</span></button>`).join('')}</div></section>`,'14:32');
+const MOB={title:'MOBIUS',artist:'Pretty Patterns',cover:'mobius',from:'Liked Songs',quality:['16-bit / 44.1 kHz','Spotify, Loud normalisation'],source:'sp',where:'Spotify Connect, hearted',pos:71,dur:254,count:1208};
+
+/* ---------- state and render ---------- */
+const q=new URLSearchParams(location.search);
+const state={mode:q.get('mode')||'light',tint:q.get('tint')||'folio'};
+if(!TINTS[state.tint])state.tint='folio';
+if(q.get('ui')==='0')document.body.classList.add('noui');
+const mq=matchMedia('(prefers-color-scheme: dark)');
+const mode=()=>state.mode==='system'?(mq.matches?'dark':'light'):state.mode;
+function applyTheme(){
+  const T=tokensFor(state.tint,mode());
+  for(const k in T)document.documentElement.style.setProperty('--'+k,T[k]);
+  document.documentElement.classList.toggle('dark',mode()==='dark');
+  document.getElementById('sw').innerHTML=[['paper','Paper'],['ink','Ink'],['muted','Muted'],['rule','Rule'],['accent','Accent'],['al','Album light']].map(([k,n])=>`<span><i style="background:${T[k]}"></i><b>${n} ${T[k].toUpperCase()}</b></span>`).join('');
+}
+function render(){
+  applyTheme();
+  document.getElementById('deskHome').innerHTML=`<div class="wall"></div>${deskHome}`;
+  document.getElementById('deskLib').innerHTML=`<div class="wall"></div>${deskLib}`;
+  document.getElementById('phones').innerHTML=phone(np(SALT))+homePh+searchPh+settingsPh();
+  document.getElementById('cmp').innerHTML=`<div>${launcher}<div class="cap">Folio launcher, Almanac II: the slip says what Kainos is playing.</div></div><div>${phone(np({...MOB,where:'Spotify Connect, hearted'}),'14:32')}<div class="cap">Kainos Now Playing for the same track, in the same tint.</div></div>`;
+  renderCtl();
+}
+function renderCtl(){
+  const ctl=document.getElementById('ctl');
+  const grp=(label,opts,cur,key)=>`<b>${label}</b><div class="row">${opts.map(([v,n])=>`<button data-k="${key}" data-v="${v}" aria-pressed="${cur===v}">${n}</button>`).join('')}</div>`;
+  ctl.innerHTML=grp('Tint',Object.entries(TINTS).map(([k,t])=>[k,t.name]),state.tint,'tint')+grp('Mode',[['light','Light'],['dark','Dark'],['system','System']],state.mode,'mode');
+  ctl.querySelectorAll('button').forEach(b=>b.onclick=()=>{state[b.dataset.k]=b.dataset.v;render()});
+}
+mq.addEventListener('change',()=>{if(state.mode==='system')render()});
+render();
+</script>
+</body></html>

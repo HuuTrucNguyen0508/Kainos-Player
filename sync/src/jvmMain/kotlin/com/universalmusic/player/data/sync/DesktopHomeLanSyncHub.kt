@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.data.library.HomePinsSyncDocument
+import com.universalmusic.player.data.library.forPeerSpotifyAccount
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.playlist.forV1Sync
 import com.universalmusic.player.platform.HomeLanHubConfig
@@ -16,7 +18,6 @@ import io.ktor.server.engine.sslConnector
 import io.ktor.server.netty.Netty
 import io.ktor.server.request.header
 import io.ktor.server.request.receiveChannel
-import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -27,6 +28,8 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import io.netty.handler.ssl.SslHandler
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.readByteArray
@@ -46,6 +49,7 @@ class DesktopHomeLanSyncHub(
     @Volatile
     private var lastActivityMs: Long = System.currentTimeMillis()
     private val vaultMutex = Mutex()
+    private val directIntents = RemoteDirectIntentReceiver()
     private val self = PairedPeer(config.deviceId, "This PC", identity.fingerprint, pairedAtMs = 0L)
     private val vault get() = config.vault
     private val listeningExchange = config.listening?.let { ListeningExchangeHost(it, config.deviceId, clock) }
@@ -159,13 +163,64 @@ class DesktopHomeLanSyncHub(
                         call.respondAnswer(host.fetchQueue(call.parameters["hash"].orEmpty()), ContentType.Application.Json)
                     }
                 }
+                config.remote?.let { host ->
+                    post(HOME_LAN_SYNC_PATH_V3_REMOTE_POLL) {
+                        val peer = call.pairedPeer() ?: return@post
+                        val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
+                        val request = runCatching { json.decodeFromString<RemotePollRequest>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed poll", status = HttpStatusCode.BadRequest)
+                        call.respondRemote(host.poll(peer, request)) { json.encodeToString(it.copy(directIntentLease = directIntents.lease(peer.deviceId))) }
+                    }
+                    post(HOME_LAN_SYNC_PATH_V3_REMOTE_COMMAND) {
+                        val deadline = TimeSource.Monotonic.markNow() + REMOTE_COMMAND_REQUEST_TIMEOUT_MS.milliseconds
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val player = config.guiPlayer()
+                            ?: return@post call.respondText("This hub has no player", status = HttpStatusCode.Conflict)
+                        val body = call.receiveOrRespondTooLarge(MAX_REMOTE_BODY_BYTES) ?: return@post
+                        val intent = runCatching { json.decodeFromString<RemoteDirectIntent>(body) }.getOrNull()
+                        if (intent != null) {
+                            call.respondText(json.encodeToString(directIntents.apply(peer.deviceId, intent, player)), ContentType.Application.Json)
+                            return@post
+                        }
+                        val command = runCatching { json.decodeFromString<RemoteCommand>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed command", status = HttpStatusCode.BadRequest)
+                        val reply = try {
+                            player.apply(command, deadline)
+                        } catch (_: RemoteCommandExpired) {
+                            return@post call.respondText("Command expired", status = HttpStatusCode.RequestTimeout)
+                        }
+                        call.respondText(json.encodeToString(reply), ContentType.Application.Json)
+                    }
+                    post("$HOME_LAN_SYNC_PATH_V3_REMOTE_TRANSFER/{epoch}/{seq}") {
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val seq = call.parameters["seq"]?.toLongOrNull()
+                            ?: return@post call.respondText("Malformed sequence", status = HttpStatusCode.BadRequest)
+                        val body = call.receiveOrRespondTooLarge(MAX_QUEUE_BODY_BYTES) ?: return@post
+                        val reply = runCatching { json.decodeFromString<RemoteTransferReply>(body) }.getOrNull()
+                            ?: return@post call.respondText("Malformed transfer", status = HttpStatusCode.BadRequest)
+                        call.respondRemote(host.receiveTransfer(peer, call.parameters["epoch"].orEmpty(), seq, reply)) { "" }
+                    }
+                    put("$HOME_LAN_SYNC_PATH_V3_REMOTE_ARTWORK/{key}") {
+                        val peer = call.pairedPeer() ?: return@put
+                        val bytes = call.receiveBytesOrRespondTooLarge(REMOTE_ARTWORK_MAX_BYTES.toLong()) ?: return@put
+                        call.respondRemote(host.receiveArtwork(peer, call.parameters["key"].orEmpty(), bytes)) { "" }
+                    }
+                    get("$HOME_LAN_SYNC_PATH_V3_REMOTE_ARTWORK/{key}") {
+                        call.pairedPeer() ?: return@get
+                        val bytes = host.hubArtwork(call.parameters["key"].orEmpty())
+                            ?: return@get call.respondText("No artwork", status = HttpStatusCode.NotFound)
+                        call.respondBytes(bytes, ContentType.Application.OctetStream)
+                    }
+                }
                 for (path in listOf(HOME_LAN_SYNC_PATH_HEARTS, HOME_LAN_SYNC_PATH_V2_HEARTS)) {
                     post(path) {
                         call.pairedPeer() ?: return@post
                         touchActivity()
-                        val body = call.receiveText()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
                         val remote = json.decodeFromString<HeartsSyncDocument>(body)
-                        val localAfter = config.onHearts(remote)
+                        val localAfter = config.onHearts(remote).forPeerSpotifyAccount(remote.spotifyAccountId)
                         call.respondText(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_HEARTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,
@@ -176,13 +231,74 @@ class DesktopHomeLanSyncHub(
                     post(path) {
                         call.pairedPeer() ?: return@post
                         touchActivity()
-                        val body = call.receiveText()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
                         val remote = json.decodeFromString<PlaylistsSyncDocument>(body)
                         val localAfter = config.onPlaylists(remote)
                         call.respondText(
                             json.encodeToString(if (path == HOME_LAN_SYNC_PATH_PLAYLISTS) localAfter.forV1Sync() else localAfter),
                             ContentType.Application.Json,
                         )
+                    }
+                }
+                config.onHomePins?.let { onHomePins ->
+                    post(HOME_LAN_SYNC_PATH_V3_PINS) {
+                        call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        val remote = json.decodeFromString<HomePinsSyncDocument>(body)
+                        val localAfter = onHomePins(remote).forPeerSpotifyAccount(remote.spotifyAccountId)
+                        call.respondText(json.encodeToString(localAfter), ContentType.Application.Json)
+                    }
+                }
+                config.cachedAudio?.let { host ->
+                    post(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO) {
+                        val peer = call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        call.respondAnswer(host.exchange(peer, body), ContentType.Application.Json)
+                    }
+                    get(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB) {
+                        val peer = call.pairedPeer() ?: return@get
+                        touchActivity()
+                        val owner = call.request.queryParameters["owner"].orEmpty()
+                        val token = call.request.queryParameters["token"].orEmpty()
+                        val size = host.size(peer, owner, token)
+                            ?: return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        val range = parseHubBlobRange(call.request.header(HttpHeaders.Range), size)
+                        if (range == null) {
+                            call.response.header(HttpHeaders.ContentRange, "bytes */$size")
+                            call.respondText("Range not satisfiable", status = HttpStatusCode.RequestedRangeNotSatisfiable)
+                            return@get
+                        }
+                        val bytes = host.read(peer, owner, token, range.first, (range.last - range.first + 1).toInt())
+                            ?: return@get call.respondText("Cached file changed; sync again", status = HttpStatusCode.Conflict)
+                        call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                        call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
+                        call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
+                    }
+                    get(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_HASH) {
+                        val peer = call.pairedPeer() ?: return@get
+                        touchActivity()
+                        val hash = host.hash(peer, call.request.queryParameters["owner"].orEmpty(),
+                            call.request.queryParameters["token"].orEmpty())
+                            ?: return@get call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        call.respondText(hash)
+                    }
+                    put(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO_BLOB) {
+                        val peer = call.pairedPeer() ?: return@put
+                        touchActivity()
+                        val params = call.request.queryParameters
+                        val offset = params["offset"]?.toLongOrNull()
+                        val total = params["total"]?.toLongOrNull()
+                        val sha256 = params["sha256"].orEmpty()
+                        if (offset == null || total == null || offset !in 0L until total || sha256.isBlank()) {
+                            call.respondText("Missing or invalid offset/total/sha256", status = HttpStatusCode.BadRequest)
+                            return@put
+                        }
+                        val chunk = call.receiveBytesOrRespondTooLarge(MAX_BLOB_BODY_BYTES) ?: return@put
+                        val answer = host.receive(peer, params["owner"].orEmpty(), params["token"].orEmpty(),
+                            offset, total, sha256, chunk)
+                        call.respondText(answer.body, ContentType.Text.Plain, HttpStatusCode.fromValue(answer.status))
                     }
                 }
                 for (path in listOf(HOME_LAN_SYNC_PATH_VAULT_INDEX, HOME_LAN_SYNC_PATH_V2_VAULT_INDEX)) {
@@ -194,7 +310,8 @@ class DesktopHomeLanSyncHub(
                             call.respondText("Vault not configured", status = HttpStatusCode.BadRequest)
                             return@post
                         }
-                        val remote = json.decodeFromString<VaultIndexDocument>(call.receiveText())
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        val remote = json.decodeFromString<VaultIndexDocument>(body)
                         vaultMutex.withLock {
                             val mergedTombs = mergeTombstones(store.loadTombstones(), remote.tombstones)
                             store.saveTombstones(mergedTombs)
@@ -219,7 +336,7 @@ class DesktopHomeLanSyncHub(
                         return@get
                     }
                     val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
-                    if (rel.isBlank()) {
+                    if (rel.isBlank() || rel.substringAfterLast('.', "").lowercase() !in VAULT_AUDIO_EXTENSIONS) {
                         call.respondText("Missing path", status = HttpStatusCode.BadRequest)
                         return@get
                     }
@@ -243,6 +360,22 @@ class DesktopHomeLanSyncHub(
                     call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/$size")
                     call.respondBytes(bytes, ContentType.Application.OctetStream, HttpStatusCode.PartialContent)
                 }
+                get(HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH) {
+                    call.pairedPeer() ?: return@get
+                    touchActivity()
+                    val store = vault
+                    if (store == null || !store.isConfigured()) {
+                        call.respondText("Vault not configured", status = HttpStatusCode.BadRequest)
+                        return@get
+                    }
+                    val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
+                    val hash = store.contentSha256(rel)
+                    if (hash == null) {
+                        call.respondText("Not found", status = HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    call.respondText(hash)
+                }
                 put(HOME_LAN_SYNC_PATH_VAULT_BLOB) {
                     call.pairedPeer() ?: return@put
                     touchActivity()
@@ -254,7 +387,7 @@ class DesktopHomeLanSyncHub(
                     val rel = call.request.queryParameters["path"]?.normalizeVaultRelPath().orEmpty()
                     val offset = call.request.queryParameters["offset"]?.toLongOrNull()
                     val total = call.request.queryParameters["total"]?.toLongOrNull()
-                    if (rel.isBlank() || offset == null || total == null ||
+                    if (rel.isBlank() || rel.substringAfterLast('.', "").lowercase() !in VAULT_AUDIO_EXTENSIONS || offset == null || total == null ||
                         total !in 0L..VAULT_MAX_FILE_BYTES || offset !in 0L..total
                     ) {
                         call.respondText("Missing or invalid path/offset/total", status = HttpStatusCode.BadRequest)
@@ -285,6 +418,7 @@ class DesktopHomeLanSyncHub(
                 }
             }
         }
+        config.remote?.start()
         engine.start(wait = false)
         server = engine
         listening = true
@@ -293,6 +427,8 @@ class DesktopHomeLanSyncHub(
 
     override suspend fun stop() {
         listening = false
+        // Held polls would otherwise keep Netty's grace period busy for their whole hold.
+        config.remote?.stop()
         server?.stop(1_000, 2_000)
         server = null
     }
@@ -317,6 +453,22 @@ class DesktopHomeLanSyncHub(
             else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
         if (body == null) respondText("Request too large", status = HttpStatusCode.PayloadTooLarge)
         return body?.decodeToString()
+    }
+
+    private suspend fun ApplicationCall.receiveBytesOrRespondTooLarge(limit: Long): ByteArray? {
+        val declared = request.header(HttpHeaders.ContentLength)?.toLongOrNull()
+        val body = if (declared != null && declared > limit) null
+            else receiveChannel().readRemaining(limit + 1).readByteArray().takeIf { it.size <= limit }
+        if (body == null) respondText("Request too large", status = HttpStatusCode.PayloadTooLarge)
+        return body
+    }
+
+    private suspend fun <T> ApplicationCall.respondRemote(reply: RemoteHostReply<T>, encode: suspend (T) -> String) = when (reply) {
+        is RemoteHostReply.Ok -> {
+            val body = encode(reply.value)
+            if (body.isEmpty()) respond(HttpStatusCode.NoContent) else respondText(body, ContentType.Application.Json)
+        }
+        is RemoteHostReply.Refused -> respondText(reply.reason, status = HttpStatusCode.fromValue(reply.status))
     }
 
     private suspend fun ApplicationCall.respondAnswer(answer: HubAnswer, type: ContentType) =
@@ -349,6 +501,8 @@ private const val MAX_PAIRING_BODY_BYTES = 4_096L
 
 private const val MAX_LISTENING_BODY_BYTES = 64L * 1024
 
+private const val MAX_REMOTE_BODY_BYTES = 256L * 1024
+
 private const val MAX_QUEUE_BODY_BYTES = 16L * 1024 * 1024
 
 private const val MAX_BLOB_BODY_BYTES: Long = VAULT_BLOB_CHUNK_BYTES.toLong()
@@ -372,3 +526,6 @@ internal fun parseHubBlobRange(header: String?, size: Long): LongRange? {
     if (start < 0L || start >= size || end < start) return null
     return start..minOf(end, maxEnd(start))
 }
+
+// Room for large libraries while bounding authenticated document buffering.
+private const val MAX_LIBRARY_BODY_BYTES = 64L * 1024 * 1024

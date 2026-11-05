@@ -1,0 +1,29 @@
+{
+  "implementation_commit": "1a0ff8fcd49f4b5d1b7648c36c484d32a96c5df7",
+  "schema_migration": false,
+  "gradle_exit": 0,
+  "command": "python scripts/perf/gapless-checks.py",
+  "counts": {
+    "tests": 962,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 3
+  },
+  "gate_log": "/tmp/gapless-verified-source-gate.log",
+  "playback_summary": "warmup-playback-summary.json",
+  "startup_summary": "warmup-cds-startup-summary.json",
+  "library_summary": "warmup-cds-library-summary.json",
+  "idle_summary": "warmup-idle-summary.json",
+  "lifecycle": "SIGTERM, SIGKILL and missing mpv passed with no live orphan; idle has no audio output or Pulse stream",
+  "fallback": "Forced first mpv spawn failure; packaged full playback probe passed silently",
+  "fallback_log": "/tmp/gapless-warm-head-fallback.log",
+  "e2e": "5/5 proofs including process-death recovery passed",
+  "e2e_log": "/tmp/gapless-verified-e2e.log",
+  "final_pcm_command": "flock -x /tmp/kainos-perf.lock python scripts/perf/gapless-pcm.py --out /tmp/gapless-committed-head-pcm",
+  "final_pcm_results": "/tmp/gapless-committed-head-pcm/results.json",
+  "quota_weekly_used_percent": 18,
+  "user_data_touched": false,
+  "phone_used": false,
+  "measurement_note": "Press endpoint is externally observed playback-restart after warm-up, not acoustic onset. OS page cache not dropped. Ten interleaved pairs per timing metric, no discarded runs. Paused-start-only guard was verified in the final source gate after timings.",
+  "raw_capture_policy": "Raw captures remain temporary under /tmp; summaries and harnesses are committed."
+}

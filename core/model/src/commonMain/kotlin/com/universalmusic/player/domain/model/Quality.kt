@@ -59,7 +59,7 @@ data class AudioQuality(
                 if (confidence == QualityConfidence.ASSUMED) add("assumed")
                 codec?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it.uppercase()) }
                 bitrateKbps?.takeIf { it > 0 }?.let { add("$it kbps") }
-                if (tier == QualityTier.LOSSLESS || tier == QualityTier.HI_RES) {
+                run {
                     bitDepth?.let { add("${it}-bit") }
                     sampleRateHz?.takeIf { it > 0 }?.let { add(formatAudioRate(it)) }
                 }
@@ -81,7 +81,7 @@ data class AudioQuality(
                 }
             }
             val parts = buildList {
-                if (confidence == QualityConfidence.ASSUMED) add("Format assumed from the file type")
+                if (confidence == QualityConfidence.ASSUMED) add("Format assumed")
                 bitDepth?.takeIf { it > 0 }?.let { add("${it}-bit") }
                 sampleRateHz?.takeIf { it > 0 }?.let { add(formatAudioRate(it)) }
                 nyquistHz?.takeIf { it > 0 }?.let { add("Nyquist ${formatAudioRate(it)}") }
@@ -125,3 +125,11 @@ fun refineQualityTier(
         else -> base
     }
 }
+
+/** Typical decoded Spotify output, never a claim of lossless source audio. */
+val spotifyPlaybackQuality = AudioQuality(
+    tier = QualityTier.HIGH,
+    sampleRateHz = 44_100,
+    bitDepth = 16,
+    confidence = QualityConfidence.ASSUMED,
+)

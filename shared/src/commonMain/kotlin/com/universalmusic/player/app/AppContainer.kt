@@ -1,11 +1,18 @@
 package com.universalmusic.player.app
 
+import com.universalmusic.player.data.backup.BackupRestoreCounts
+import com.universalmusic.player.data.backup.KainosBackupFile
+import com.universalmusic.player.data.backup.KainosBackupService
 import com.universalmusic.player.data.cache.MetadataArtworkCache
 import com.universalmusic.player.data.cache.MetadataCacheStats
+import com.universalmusic.player.data.cache.CachedAudioCopies
 import com.universalmusic.player.data.cache.HeartedAudioCacheService
 import com.universalmusic.player.data.cache.HeartedAudioCacheStats
 import com.universalmusic.player.data.cache.toLocalPlaybackSource
+import com.universalmusic.player.data.cache.offlineOnly
+import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.data.config.AppConfig
+import com.universalmusic.player.data.history.ListeningHistory
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
@@ -23,6 +30,7 @@ import com.universalmusic.player.data.local.cacheKey
 import com.universalmusic.player.data.local.createLocalContentKeyReader
 import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
 import com.universalmusic.player.data.local.isLocationInFolder
+import com.universalmusic.player.domain.playback.ListeningNotReady
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -41,19 +49,21 @@ import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
 import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
-import com.universalmusic.player.data.spotify.SpotifyRecommendationsAccess
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
-import com.universalmusic.player.domain.continuation.ContinuationOutcome
-import com.universalmusic.player.domain.continuation.SearchAutoplayController
-import com.universalmusic.player.domain.continuation.SearchContinuationFetcher
+import com.universalmusic.player.domain.continuation.SourceRadio
+import com.universalmusic.player.domain.continuation.planSearchPlayback
+import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
+import com.universalmusic.player.domain.model.PlaylistTracksPage
+import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
 import com.universalmusic.player.platform.createSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.createYouTubeAudioDownloader
+import com.universalmusic.player.platform.audioPlayerInstalled
 import com.universalmusic.player.platform.createYouTubeStreamResolver
 import com.universalmusic.player.platform.createHeartedAudioCache
 import kotlinx.coroutines.CancellationException
@@ -68,6 +78,11 @@ import com.universalmusic.player.domain.playback.PlayerSession
 import com.universalmusic.player.domain.playback.FlushResult
 import com.universalmusic.player.domain.playback.HandoffPeer
 import com.universalmusic.player.domain.playback.ListeningHandoff
+import com.universalmusic.player.domain.playback.ListenTracker
+import com.universalmusic.player.domain.playback.RemotePlayerAdapter
+import com.universalmusic.player.data.sync.RemoteLinkHost
+import com.universalmusic.player.data.sync.listeningDeliveryTarget
+import com.universalmusic.player.data.sync.openPairedRemoteLink
 import com.universalmusic.player.domain.playback.NowPlayingRecorder
 import com.universalmusic.player.domain.playback.SleepTimerController
 import com.universalmusic.player.domain.provider.MusicProvider
@@ -79,10 +94,13 @@ import com.universalmusic.player.platform.createHomeLanSyncHub
 import com.universalmusic.player.platform.createHomeLanVaultStore
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.platformDeviceIdentity
+import com.universalmusic.player.platform.platformLabel
+import com.universalmusic.player.platform.homeLanDeviceName
 import com.universalmusic.player.data.sync.HttpHomeLanPairingClient
 import com.universalmusic.player.platform.homeLanHubPort
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.createHttpClient
+import com.universalmusic.player.platform.logged
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.platform.createLocalLibraryScanCache
 import com.universalmusic.player.platform.createLocalTrackSource
@@ -92,6 +110,8 @@ import com.universalmusic.player.platform.createPlaybackEngine
 import com.universalmusic.player.platform.createSettingsStore
 import com.universalmusic.player.platform.createListeningExchangeStore
 import com.universalmusic.player.platform.createListeningStore
+import com.universalmusic.player.platform.createPlayHistoryStore
+import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.createTokenStore
 import com.universalmusic.player.platform.createUserLibraryStore
 import com.universalmusic.player.platform.createKainosPlaylistStore
@@ -120,20 +140,28 @@ enum class UiRequest {
     FOCUS_LIBRARY_SEARCH,
 }
 
-class AppContainer {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+class AppContainer(
+    httpClient: io.ktor.client.HttpClient? = null,
+    private val startupMark: (String) -> Unit = {},
+) {
+    val failures = AppFailures.open
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + AppFailures.handler)
+
     private val defaults: AppConfig = loadAppConfig()
     var config: AppConfig = defaults
         private set
-    val http = createHttpClient()
+    val http = httpClient ?: createHttpClient()
+    init { startupMark("http_end") }
     val tokens = createTokenStore()
     val settingsStore: SettingsStore = createSettingsStore()
     val userLibraryStore: UserLibraryStore = createUserLibraryStore()
     val kainosPlaylistStore: KainosPlaylistStore = createKainosPlaylistStore()
     val listeningStore: ListeningStore = createListeningStore()
+    val listeningHistory = ListeningHistory(createPlayHistoryStore(), scope, ::currentTimeMillis)
     private val foregroundHandoff = ForegroundHandoff { requestHandoff() }
     private val listeningExchange = PeerNotifyingExchangeStore(createListeningExchangeStore(), foregroundHandoff::onPeerChanged)
 
+    init { startupMark("stores_end") }
     private val foreground = AppForegroundState()
     val metadataCache: MetadataArtworkCache = createMetadataArtworkCache()
     private val _settings = MutableStateFlow(AppSettings())
@@ -156,6 +184,7 @@ class AppContainer {
         deviceIdProvider = { _settings.value.homeLanSyncDeviceId ?: "local" },
         localTrackCatalog = { local.libraryTracks.value },
     )
+    val backup = KainosBackupService(library, kainosPlaylists, { _settings.value }, { transform -> updateSettings(transform) })
     val matcher = TrackMatcher()
     private val sampleUnavailable = MutableStateFlow(ProviderState.UNAVAILABLE)
     val local = LocalMusicProvider(
@@ -168,6 +197,7 @@ class AppContainer {
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
     private var localLibraryRefreshJob: Job? = null
+    private val pickingMusicFolder = MutableStateFlow(false)
     private lateinit var spotifyProvider: SpotifyProvider
     val spotifyWebPlayback = createSpotifyWebPlaybackHost(
         tokenSupplier = { spotifyProvider.validAccessToken() },
@@ -179,11 +209,14 @@ class AppContainer {
     ).also {
         spotifyProvider = it
     }
+    private val _sourceTools = MutableStateFlow(SourceTools())
+    val sourceTools: StateFlow<SourceTools> = _sourceTools.asStateFlow()
     val youtubeStreams = createYouTubeStreamResolver()
     val youtube = YouTubeMusicProvider(http, config, youtubeStreams)
+    private val heartedAudioCache = createHeartedAudioCache()
     val heartedAudio = HeartedAudioCacheService(
         scope = scope,
-        cache = createHeartedAudioCache(),
+        cache = heartedAudioCache,
         downloader = createYouTubeAudioDownloader(youtubeStreams),
         youtubeSearch = { query -> youtube.search(query).tracks },
         matcher = matcher,
@@ -200,6 +233,7 @@ class AppContainer {
             else service.cancelAndRemove(track.canonicalId)
         }
     }
+    private val cachedAudioCopies = CachedAudioCopies(heartedAudioCache, heartedAudio)
     val homeLanVault = createHomeLanVaultStore(
         vaultRootProvider = { _settings.value.homeLanSyncVaultFolder },
     )
@@ -227,9 +261,19 @@ class AppContainer {
                     rematchPlaylistLocalsByFileName()
                     kainosPlaylists.exportSyncDocument()
                 },
+                onHomePins = config.onHomePins?.let { mergePins ->
+                    { remote ->
+                        library.awaitLoaded()
+                        kainosPlaylists.awaitLoaded()
+                        mergePins(remote)
+                    }
+                },
+                cachedAudio = config.cachedAudio,
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
                 listening = config.listening,
+                remote = remoteHost,
+                guiPlayer = { remotePlayer.takeIf { guiPlayerEnabled.value } },
             ))
         },
         clientFactory = { peer ->
@@ -240,6 +284,7 @@ class AppContainer {
         },
         identity = platformDeviceIdentity(),
         vaultStore = homeLanVault,
+        cachedAudio = cachedAudioCopies,
         refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
@@ -249,6 +294,7 @@ class AppContainer {
         isAppForeground = { foreground.isVisible },
         onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
     )
+    init { startupMark("providers_end") }
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
     val ready = _ready.asStateFlow()
@@ -264,19 +310,14 @@ class AppContainer {
     val spotifyLibraryLoading = _spotifyLibraryLoading.asStateFlow()
     private val libraryMutex = Mutex()
 
-    val searchContinuation = SearchContinuationFetcher(spotify = spotify, youtube = youtube)
-    val searchAutoplay = SearchAutoplayController(
-        autoplayEnabled = { _settings.value.searchAutoplayEnabled },
-        fetchContinuation = { seed, query, exclude ->
-            searchContinuation.fetch(seed, query, exclude)
-        },
-    )
-
     val player = PlayerSession(
         engine = createPlaybackEngine(SpotifyPlaybackController(
             spotify::startConnectPlayback, spotify::pauseConnectPlayback,
             spotify::resumeConnectPlayback, spotify::seekConnectPlayback,
             observe = spotify::observeConnectPlayback,
+            receiverEvents = spotifyWebPlayback.receiverEvents,
+            setVolume = spotify::setConnectVolume,
+            resumeAt = spotify::resumeConnectPlayback,
         )),
         resolver = resolver,
         scope = scope,
@@ -291,26 +332,53 @@ class AppContainer {
         },
         isFavorite = library::isFavorite,
         prepareTrack = { heartedAudio.applyCacheToTrack(it) },
-        onQueueExhausted = { exclude ->
-            when (val outcome = searchAutoplay.requestContinuation(exclude)) {
-                is ContinuationOutcome.Appended -> outcome.tracks
-                else -> emptyList()
-            }
-        },
         confineTo = playbackDispatcher(),
         workContext = Dispatchers.Default,
         persistence = NowPlayingRecorder(
             store = PublicationNotifyingStore(listeningStore) { homeLanSync.requestListeningDelivery() },
             scope = scope,
         ),
+        radioFor = { provider -> if (_settings.value.searchRadioEnabled) sourceRadio(provider) else null },
     ).also {
         currentPlayingCanonicalId = { it.nowPlaying.value.track?.canonicalId }
     }
+    init {
+        scope.launch {
+            val tracker = ListenTracker(::currentTimeMillis)
+            player.nowPlaying.collect { state -> tracker.observe(state)?.let(listeningHistory::record) }
+        }
+    }
+    init { startupMark("player_end") }
     val sleepTimer = SleepTimerController(
         player = player,
         scope = scope,
     )
     val listeningHandoff = ListeningHandoff(listeningExchange, player, localTracks = { local.libraryTracks.value })
+
+    /** Set only by a GUI entry point; a `--hub-only` process never lets remote devices see or drive its player. */
+    private val guiPlayerEnabled = MutableStateFlow(false)
+    private val remotePlayer = RemotePlayerAdapter(player, scope)
+    private val remoteHost = RemoteLinkHost(hubName = ::homeLanDeviceName)
+    val remoteControl = RemoteControl(
+        scope = scope,
+        settings = settings,
+        isDesktop = platformLabel() == "Linux",
+        host = remoteHost,
+        player = remotePlayer,
+        handoff = listeningHandoff,
+        guiPlayer = guiPlayerEnabled,
+        linkWanted = remoteLinkWanted(
+            visible = foreground.visible,
+            active = player.nowPlaying.map { it.isPlaying || it.buffering }.distinctUntilChanged(),
+        ),
+        clientTarget = {
+            _settings.value.takeIf { _ready.value }
+                ?.listeningDeliveryTarget(platformLabel() == "Linux", platformDeviceIdentity().fingerprint())
+        },
+        openLink = ::openPairedRemoteLink,
+        onLinkConnected = { homeLanSync.requestListeningDelivery() },
+        pressable = { foreground.isVisible },
+    )
     private val handoffRequests = Channel<Unit>(Channel.CONFLATED)
 
     private val settingsUpdater = AppSettingsUpdater(scope, settingsStore, _settings, { applyProviderSettings(it) }) {
@@ -345,32 +413,40 @@ class AppContainer {
 
     fun consumeLibraryTypeAhead(): String = _libraryTypeAhead.getAndUpdate { "" }
 
-    fun playTracks(tracks: List<Track>, startIndex: Int = 0) {
-        searchAutoplay.clearSearchSession()
-        player.play(tracks, startIndex = startIndex)
+    /** [offlineOnly] plays only the on-disk copies, so no entry can fall back to a stream. */
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0, offlineOnly: Boolean = false) {
+        player.play(if (offlineOnly) offlineQueue(tracks, ::offlineTrack) else tracks, startIndex = startIndex)
     }
 
-    fun playSearchResults(tracks: List<Track>, startIndex: Int, query: String) {
-        searchAutoplay.beginSearchPlayback(tracks, query)
-        player.play(tracks, startIndex = startIndex)
+    /** The picked result keeps its source: that source's radio follows it, or its same-source results. */
+    fun playSearchResults(tracks: List<Track>, startIndex: Int) {
+        val plan = planSearchPlayback(tracks, startIndex, radioEnabled = _settings.value.searchRadioEnabled)
+        player.play(plan.tracks, startIndex = plan.startIndex, continuation = plan.radio?.let(::sourceRadio))
     }
+
+    private fun sourceRadio(provider: ProviderId) = SourceRadio(provider, fetch = { seed, exclude ->
+        when (provider) {
+            ProviderId.SPOTIFY -> spotify.radio(seed, exclude)
+            ProviderId.YOUTUBE_MUSIC -> youtube.mix(seed)
+            else -> error("$provider has no radio")
+        }
+    })
 
     fun clearPlaybackQueue() {
-        searchAutoplay.clearSearchSession()
         player.clearQueue()
     }
-
-    suspend fun spotifyRecommendationsAccess(): SpotifyRecommendationsAccess =
-        spotify.ensureRecommendationsAccess()
 
     fun requestUi(request: UiRequest) {
         _uiRequests.trySend(request)
     }
 
     init {
+        monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
+        startupMark("mpris_begin")
         bindPlatformMediaControls(player, scope) { track ->
             library.toggleFavorite(track).also(player::setFavorite)
         }
+        startupMark("mpris_end")
         // The Now Playing / media-session heart follows the library, including hearts that
         // arrive from Home sync while the same track keeps playing.
         scope.launch {
@@ -396,26 +472,31 @@ class AppContainer {
                 }
         }
         scope.launch {
-            val raw = settingsStore.read()
-            val loaded = migrateLocalLibrarySettings(raw)
-            if (loaded != raw) settingsStore.write(loaded)
-            _settings.value = loaded
-            homeLanSync.hydrateFromSettings(loaded)
-            if (loaded.homeLanSyncHubAutostart) {
-                homeLanSync.setHubAutostartEnabled(true)
+            AppFailures.reporting {
+                val raw = settingsStore.read()
+                val loaded = migrateLocalLibrarySettings(raw)
+                if (loaded != raw) settingsStore.write(loaded)
+                _settings.value = loaded
+                homeLanSync.hydrateFromSettings(loaded)
+                if (loaded.homeLanSyncHubAutostart) {
+                    homeLanSync.setHubAutostartEnabled(true)
+                }
+                player.updatePreferences(loaded.toPlaybackPreferences())
+                player.setVolume(loaded.playbackVolume)
+                applyProviderSettings(loaded, clearSessionOnChange = false)
             }
-            player.updatePreferences(loaded.toPlaybackPreferences())
-            player.setVolume(loaded.playbackVolume)
-            applyProviderSettings(loaded, clearSessionOnChange = false)
-            library.load(spotify.currentUserId())
-            kainosPlaylists.load()
+            startupMark("library_load_begin")
+            AppFailures.reporting { library.load(spotify.currentUserId()) }
+            startupMark("library_load_end")
+            AppFailures.reporting { kainosPlaylists.load() }
+            AppFailures.reporting { listeningHistory.load() }
             val favorites = library.favoriteIds.value
             val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
             heartedAudio.enqueueMissing(hearted)
-            runCatching { local.hydrateFromCache() }
+            AppFailures.reporting { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            player.initializePersistence()
+            AppFailures.reporting { player.initializePersistence() }
             _ready.value = true
             foreground.onReady {
                 foregroundHandoff.onForeground()
@@ -427,10 +508,19 @@ class AppContainer {
             _ready.first { it }
             for (request in handoffRequests) runHandoff()
         }
+        scope.launch {
+            _ready.first { it }
+            spotifyWebPlayback.state.collect { recheckSourceTools() }
+        }
     }
 
     fun enableListeningHandoff() {
         foregroundHandoff.enable()
+    }
+
+    /** Lets paired devices show and control this process's player; only GUI entry points call it. */
+    fun enableGuiPlayer() {
+        guiPlayerEnabled.value = true
     }
 
     private fun requestHandoff() {
@@ -518,7 +608,18 @@ class AppContainer {
 
     suspend fun heartedAudioCacheStats(): HeartedAudioCacheStats = heartedAudio.stats()
 
+    /** Restores [file], then maps its portable local hearts and playlist entries onto files in the library. */
+    suspend fun restoreBackup(file: KainosBackupFile): BackupRestoreCounts {
+        val counts = backup.restore(file)
+        rematchLocalHeartsByFileName()
+        rematchPlaylistLocalsByFileName()
+        return counts
+    }
+
     fun trackAvailability(track: Track) = heartedAudio.availabilityFor(track)
+
+    /** [track] with its cached audio attached and every stream removed, or null when it needs network. */
+    fun offlineTrack(track: Track): Track? = heartedAudio.applyCacheToTrack(track).offlineOnly()
 
     fun retryHeartedDownload(canonicalId: String) = heartedAudio.retry(canonicalId)
 
@@ -603,7 +704,8 @@ class AppContainer {
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }.getOrNull()
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
+            .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
         if (fromLibrespot != null) return fromLibrespot
         return findDiscoverWeekly(playlists)
     }
@@ -616,9 +718,10 @@ class AppContainer {
         if (cached?.source?.providerEntityId == id && cached.tracks.isNotEmpty()) {
             return cached.tracks
         }
-        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.getOrElse { emptyList() }
-        if (webTracks.isNotEmpty()) return webTracks
-        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }.getOrNull()
+        val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
+        webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
+            .logged("Spotify", "playlist load through librespot failed").getOrNull()
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
             if (cached?.source?.providerEntityId == id || configured == id) {
@@ -626,8 +729,35 @@ class AppContainer {
             }
             return fromLibrespot.tracks
         }
-        return emptyList()
+        return webTracks.getOrThrow()
     }
+
+    /**
+     * One page of a Spotify or YouTube playlist opened from Search; [cursor] is null for the first page.
+     * Spotify playlists the Web API refuses (its own editorial and algorithmic lists) fall back to
+     * librespot on the first page, which returns every song at once.
+     */
+    suspend fun loadProviderPlaylistPage(source: ProviderEntityRef, cursor: String?): PlaylistTracksPage =
+        when (source.provider) {
+            ProviderId.YOUTUBE_MUSIC -> youtube.getPlaylistTracksPage(source.providerEntityId, cursor)
+            ProviderId.SPOTIFY -> {
+                val web = runCatching { spotify.getPlaylistTracksPage(source.providerEntityId, cursor) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .logged("Spotify", "playlist page load failed")
+                val page = web.getOrNull()
+                if (cursor != null || (page != null && page.tracks.isNotEmpty())) {
+                    web.getOrThrow()
+                } else {
+                    val whole = runCatching { fetchLibrespotDiscoverWeekly(source.providerEntityId) }
+                        .onFailure { if (it is CancellationException) throw it }
+                        .logged("Spotify", "playlist load through librespot failed").getOrNull()
+                    whole?.tracks?.takeIf { it.isNotEmpty() }
+                        ?.let { PlaylistTracksPage(it, next = null, total = it.size) }
+                        ?: web.getOrThrow()
+                }
+            }
+            else -> error("${source.provider.displayName} playlists do not open in Kainos")
+        }
 
     private var volumePersistJob: Job? = null
 
@@ -643,8 +773,10 @@ class AppContainer {
     }
 
     fun onAppForeground() {
+        heartedAudio.notifyNetworkChanged()
         foregroundHandoff.onForeground()
         foreground.isVisible = true
+        remoteControl.onAppVisible()
         if (_ready.value) homeLanSync.onAppForeground()
     }
 
@@ -656,11 +788,16 @@ class AppContainer {
 
     /** Write the listening session now (app exit / backgrounding) instead of waiting for the next checkpoint. */
     suspend fun flushListeningSession() {
+        AppFailures.reporting { library.flush() }
+        AppFailures.reporting { kainosPlaylists.flush() }
         when (val result = player.flushPersistence()) {
             is FlushResult.Committed -> result.exportUnavailable?.let {
                 PlaybackTrace.log("Recorder", "flushed; local listening export unavailable: $it")
             }
-            is FlushResult.Failed -> PlaybackTrace.log("Recorder", "flush failed: ${result.cause.message}")
+            is FlushResult.Failed -> when (result.cause) {
+                is ListeningNotReady -> PlaybackTrace.log("Recorder", "flush skipped: startup restore still running")
+                else -> AppFailures.report(result.cause)
+            }
         }
     }
 
@@ -685,10 +822,8 @@ class AppContainer {
                 if (failure is CancellationException) throw failure
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"
             }
-        runCatching { local.enrichContentKeys() }
-            .onFailure { if (it is CancellationException) throw it }
-        runCatching { local.enrichEmbeddedArtwork() }
-            .onFailure { if (it is CancellationException) throw it }
+        runCatching { local.enrichContentKeys() }.logged("Local", "content key pass failed")
+        runCatching { local.enrichEmbeddedArtwork() }.logged("Local", "embedded artwork pass failed")
     }
 
     /**
@@ -744,9 +879,11 @@ class AppContainer {
         return favoriteIds.mapNotNull { byId[it] }
     }
 
-    fun playFavorites(): Boolean {
+    /** [shuffle] turns shuffle on before the queue builds, so the fresh order starts with the first heart. */
+    fun playFavorites(shuffle: Boolean = false): Boolean {
         val tracks = resolveFavoriteTracks()
         if (tracks.isEmpty()) return false
+        if (shuffle && !player.queueState.value.shuffle) player.toggleShuffle()
         playTracks(tracks, startIndex = 0)
         return true
     }
@@ -801,10 +938,11 @@ class AppContainer {
         scope.launch {
             val picked = pickMusicFolder() ?: return@launch
             updateSettings { current ->
-                val base = if (current.localMusicFoldersConfigured) {
-                    current.localMusicFolders
-                } else {
-                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                val base = when {
+                    current.localMusicFoldersConfigured -> current.localMusicFolders
+                    // A default folder that gave us nothing should not linger beside the listener's choice.
+                    local.libraryTracks.value.isEmpty() -> emptyList()
+                    else -> listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
                 val nextFolders = (base + picked).distinct()
                 current.copy(
@@ -831,15 +969,33 @@ class AppContainer {
         return listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
     }
 
+    /** The listener can install a tool while the app runs, so this runs again on request. */
+    fun recheckSourceTools() {
+        scope.launch(Dispatchers.IO) {
+            // NewPipe initialises on first probe; that cost must stay out of cold start.
+            _ready.first { it }
+            _sourceTools.value = SourceTools(
+                audioPlayer = audioPlayerInstalled(),
+                youtubeExtractor = youtubeStreams.isAvailable(),
+                spotifyReceiver = spotifyWebPlayback.receiverSetup(),
+            )
+        }
+    }
+
     fun addLocalMusicFolderFromPicker() {
-        if (!supportsMusicFolderPicker()) return
+        if (!supportsMusicFolderPicker() || !pickingMusicFolder.compareAndSet(false, true)) return
         scope.launch {
-            val picked = pickMusicFolder() ?: return@launch
+            val picked = try {
+                pickMusicFolder()
+            } finally {
+                pickingMusicFolder.value = false
+            } ?: return@launch
             updateSettings { current ->
-                val base = if (current.localMusicFoldersConfigured) {
-                    current.localMusicFolders
-                } else {
-                    listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
+                val base = when {
+                    current.localMusicFoldersConfigured -> current.localMusicFolders
+                    // A default folder that gave us nothing should not linger beside the listener's choice.
+                    local.libraryTracks.value.isEmpty() -> emptyList()
+                    else -> listOfNotNull(defaultLocalMusicFolder().takeIf { it.isNotBlank() })
                 }
                 val nextFolders = (base + picked).distinct()
                 val firstExplicitRoot = !current.localMusicFoldersConfigured ||
@@ -921,9 +1077,9 @@ private fun playbackDispatcher(): CoroutineDispatcher =
 
 lateinit var appContainer: AppContainer
 
-fun ensureAppContainer(): AppContainer {
+fun ensureAppContainer(httpClient: io.ktor.client.HttpClient? = null, startupMark: (String) -> Unit = {}): AppContainer {
     if (!::appContainer.isInitialized) {
-        appContainer = AppContainer()
+        appContainer = AppContainer(httpClient, startupMark)
     }
     return appContainer
 }

@@ -1,5 +1,6 @@
 package com.universalmusic.player.domain.playback
 
+import com.universalmusic.player.domain.failure.AppFailures
 import com.universalmusic.player.data.session.HandoffClaim
 import com.universalmusic.player.data.session.HandoffRequest
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -18,6 +19,7 @@ import com.universalmusic.player.data.session.QueueProjection
 import com.universalmusic.player.data.session.persistedItems
 import com.universalmusic.player.data.session.toSessionSnapshot
 import com.universalmusic.player.domain.model.PlaybackQueue
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QueueItem
 import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.currentTimeMillis
@@ -44,6 +46,9 @@ sealed interface FlushResult {
     data class Failed(val cause: Throwable) : FlushResult
 }
 
+/** Backgrounding during startup flushes before restore finishes. Not durable yet, but nothing went wrong. */
+class ListeningNotReady : IllegalStateException("Listening persistence has not initialized")
+
 internal class SessionCapture(
     val sequence: Long,
     val queue: PlaybackQueue,
@@ -53,6 +58,7 @@ internal class SessionCapture(
     val lastActiveAtMs: Long?,
     val origin: PublicationOrigin,
     val remoteSession: RemoteSession?,
+    val radio: ProviderId?,
 )
 
 private class PersistenceIntent(val private: SessionCapture, val local: SessionCapture?) {
@@ -90,7 +96,7 @@ class NowPlayingRecorder(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
-        trace("restore read failed: ${error.message}")
+        AppFailures.report(error)
         null
     }
 
@@ -107,8 +113,9 @@ class NowPlayingRecorder(
         origin: PublicationOrigin,
         local: Boolean,
         remoteSession: RemoteSession?,
+        radio: ProviderId?,
     ): Long {
-        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin, remoteSession)
+        val capture = SessionCapture(++sequence, queue, positionMs, isPlaying, capturedAtMs, lastActiveAtMs, origin, remoteSession, radio)
         val intent = PersistenceIntent(capture, capture.takeIf { local })
         pending.update { waiting -> waiting?.then(intent) ?: intent }
         return capture.sequence
@@ -209,7 +216,7 @@ class NowPlayingRecorder(
         return ListeningCommit(
             writerId = writerId,
             sequence = private.sequence,
-            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs).copy(remoteSession = private.remoteSession),
+            snapshot = private.queue.toSessionSnapshot(persisted(private.queue), private.positionMs).copy(remoteSession = private.remoteSession, radio = private.radio),
             origin = private.origin,
             local = local,
             committedAtMs = clock(),

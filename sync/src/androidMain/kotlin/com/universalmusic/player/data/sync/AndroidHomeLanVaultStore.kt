@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.local.createLocalContentKeyReader
+import com.universalmusic.player.platform.PlaybackTrace
 import java.util.concurrent.ConcurrentHashMap
 import android.content.Context
 import android.database.Cursor
@@ -11,6 +12,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -20,7 +22,7 @@ class AndroidHomeLanVaultStore(
     context: Context,
     private val vaultRootProvider: () -> String?,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
-) : HomeLanVaultStore {
+) : CheckedVaultStore {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val stateFile = File(appContext.filesDir, "vault-sync-state.json")
@@ -74,6 +76,12 @@ class AndroidHomeLanVaultStore(
         }
 
     override suspend fun writeRange(relPath: String, offset: Long, data: ByteArray, totalSize: Long): Boolean =
+        writeCheckedRange(relPath, offset, data, totalSize, "") {}
+
+    override suspend fun writeCheckedRange(
+        relPath: String, offset: Long, data: ByteArray, totalSize: Long,
+        expectedHash: String, beforePublish: suspend () -> Unit,
+    ): Boolean =
         withContext(Dispatchers.IO) {
             val path = relPath.normalizeVaultRelPath()
             require(path.isNotBlank()) { "Blank vault path" }
@@ -114,7 +122,11 @@ class AndroidHomeLanVaultStore(
                 throw err
             }
             if (received != totalSize) return@withContext false
-            publishStaged(tree, parentId, stagingUri, stagingName, fileName, totalSize)
+            beforePublish()
+            if (expectedHash.isNotBlank()) {
+                check(sha256Hex(stagingUri) == expectedHash) { "Source $relPath changed during download; sync again" }
+            }
+            publishVaultFile(SafVaultFolder(tree, parentId), fileName, totalSize)
             true
         }
 
@@ -129,67 +141,68 @@ class AndroidHomeLanVaultStore(
         Unit
     }
 
-    /**
-     * Replaces [fileName] with the fully staged document. Preferred path: move the old copy
-     * aside, rename staging into place, then drop the old copy (the old file survives until the
-     * new one is in place). Providers without rename support fall back to a verified copy.
-     */
-    private fun publishStaged(
-        tree: Uri,
-        parentId: String,
-        stagingUri: Uri,
-        stagingName: String,
-        fileName: String,
-        totalSize: Long,
-    ) {
-        val backupName = "$fileName.kainos-old"
-        findChild(tree, parentId, backupName)?.let {
-            runCatching {
-                DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, it.documentId))
+    private fun sha256Hex(document: Uri): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        (resolver.openInputStream(document) ?: error("Cannot read $document")).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
             }
         }
-        val existing = findChild(tree, parentId, fileName)
-        if (existing != null) {
-            val existingUri = DocumentsContract.buildDocumentUriUsingTree(tree, existing.documentId)
-            runCatching { DocumentsContract.renameDocument(resolver, existingUri, backupName) }
+        return digest.digest().toHex()
+    }
+
+    private inner class SafVaultFolder(private val tree: Uri, private val folderId: String) : VaultFolder {
+        private val folderUri get() = DocumentsContract.buildDocumentUriUsingTree(tree, folderId)
+
+        private fun child(name: String): ChildDoc? =
+            (queryChildren(DocumentsContract.buildChildDocumentsUriUsingTree(tree, folderId))
+                ?: error("Cannot list vault folder")).firstOrNull { it.displayName == name }
+
+        private fun uri(name: String): Uri = DocumentsContract.buildDocumentUriUsingTree(
+            tree,
+            (child(name) ?: error("$name is not in the vault folder")).documentId,
+        )
+
+        override fun find(name: String) = child(name)?.let { VaultDocument(it.size) }
+
+        override fun rename(from: String, to: String) {
+            val document = uri(from)
+            // Null only means the document id did not change.
+            val renamed = DocumentsContract.renameDocument(resolver, document, to) ?: document
+            if (find(to) == null && find(from) == null) DocumentsContract.renameDocument(resolver, renamed, from)
         }
-        val finalFree = findChild(tree, parentId, fileName) == null
-        if (finalFree) {
-            runCatching { DocumentsContract.renameDocument(resolver, stagingUri, fileName) }
+
+        override fun create(name: String) {
+            // Android's FileUtils appends the extension of any MIME type that disagrees with the
+            // name, so song.aac as audio/mp4 lands on another name. Only octet-stream keeps it.
+            val created = DocumentsContract.createDocument(resolver, folderUri, "application/octet-stream", name)
+                ?: error("Cannot create $name in vault")
+            if (find(name) == null) {
+                runCatching { DocumentsContract.deleteDocument(resolver, created) }
+                error("Vault provider did not keep the name $name")
+            }
         }
-        val published = findChild(tree, parentId, fileName)
-        val stagingGone = findChild(tree, parentId, stagingName) == null
-        // Some providers report no size column; the staged length was already verified.
-        if (published != null && stagingGone && (published.size == null || published.size == totalSize)) {
-            findChild(tree, parentId, backupName)?.let {
-                runCatching {
-                    DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, it.documentId))
+
+        override fun copy(from: String, to: String) {
+            if (find(to) == null) create(to)
+            (resolver.openInputStream(uri(from)) ?: error("Cannot read $from")).use { input ->
+                (resolver.openFileDescriptor(uri(to), "wt") ?: error("Cannot write $to")).use { descriptor ->
+                    FileOutputStream(descriptor.fileDescriptor).use { output ->
+                        input.copyTo(output)
+                        output.channel.force(true)
+                    }
                 }
             }
-            return
         }
-        // Fallback: provider refused rename (or renamed to another name). Copy staged bytes over.
-        val staged = findChild(tree, parentId, stagingName)
-            ?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.documentId) }
-            ?: error("Staged vault file for $fileName vanished during publish")
-        val target = published?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.documentId) }
-            ?: DocumentsContract.createDocument(
-                resolver,
-                DocumentsContract.buildDocumentUriUsingTree(tree, parentId),
-                mimeForAudioName(fileName),
-                fileName,
-            )
-            ?: error("Cannot create $fileName in vault")
-        val copied = resolver.openInputStream(staged)?.use { input ->
-            resolver.openOutputStream(target, "wt")?.use { output -> input.copyTo(output) }
-        } ?: error("Cannot copy staged $fileName")
-        check(copied == totalSize) { "Publish of $fileName copied $copied of $totalSize bytes" }
-        runCatching { DocumentsContract.deleteDocument(resolver, staged) }
-        findChild(tree, parentId, backupName)?.let {
-            runCatching {
-                DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, it.documentId))
-            }
+
+        override fun delete(name: String) {
+            check(DocumentsContract.deleteDocument(resolver, uri(name))) { "Cannot delete $name from vault" }
         }
+
+        override fun sha256(name: String) = sha256Hex(uri(name))
     }
 
     private fun findStaging(relPath: String): Uri? {
@@ -242,10 +255,17 @@ class AndroidHomeLanVaultStore(
         into: MutableList<VaultFileEntry>,
     ) {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
-        val children = queryChildren(childrenUri) ?: return
+        val listed = queryChildren(childrenUri) ?: return
+        val interrupted = listed.mapNotNull { interruptedVaultFile(it.displayName) }.toSet()
+        val unsettled = interrupted.filterNot { file ->
+            runCatching { recoverVaultFile(SafVaultFolder(treeUri, documentId), file) }
+                .onFailure { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "vault recovery of $file failed: ${it.message}") }
+                .isSuccess
+        }
+        val children = if (interrupted.isEmpty()) listed else queryChildren(childrenUri) ?: return
         for (child in children) {
             val name = child.displayName
-            if (name.isBlank() || name == "." || name == "..") continue
+            if (name.isBlank() || name == "." || name == ".." || name in unsettled) continue
             val rel = if (prefix.isEmpty()) name else "$prefix/$name"
             if (child.isDirectory) {
                 walk(treeUri, child.documentId, rel.normalizeVaultRelPath(), into)

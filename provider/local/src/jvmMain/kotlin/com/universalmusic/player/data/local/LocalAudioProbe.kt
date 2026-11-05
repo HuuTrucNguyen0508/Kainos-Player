@@ -9,7 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
+import com.universalmusic.player.platform.readOutputWithin
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -204,7 +204,7 @@ private fun JsonElement?.asPositiveLong(): Long? {
 }
 
 private fun runFfprobe(path: Path): String? {
-    val process = runCatching {
+    val output = runCatching {
         ProcessBuilder(
             "ffprobe",
             "-v", "error",
@@ -214,18 +214,10 @@ private fun runFfprobe(path: Path): String? {
                 "format=duration:format_tags=title,artist,album,album_artist",
             "-of", "json",
             path.toAbsolutePath().normalize().toString(),
-        ).redirectErrorStream(true).start()
+        ).readOutputWithin(3_000)
     }.getOrNull() ?: return null
 
-    val finished = runCatching { process.waitFor(3, TimeUnit.SECONDS) }.getOrDefault(false)
-    if (!finished) {
-        process.destroyForcibly()
-        return null
-    }
-    if (process.exitValue() != 0) return null
-    return runCatching { process.inputStream.bufferedReader().readText() }
-        .getOrNull()
-        ?.takeIf { it.isNotBlank() }
+    return output.takeIf { it.isNotBlank() }
 }
 
 internal fun artCacheDir(dataDir: Path = DesktopIsolation.current.dataDir): Path {
@@ -243,7 +235,7 @@ private fun extractEmbeddedArtwork(audioPath: Path, size: Long, mtime: Long): Pa
         if (cachedSize in 1..LocalArtworkPolicy.MAX_ARTWORK_BYTES) return out
         runCatching { Files.deleteIfExists(out) }
     }
-    val process = runCatching {
+    val output = runCatching {
         ProcessBuilder(
             "ffmpeg",
             "-y",
@@ -253,15 +245,9 @@ private fun extractEmbeddedArtwork(audioPath: Path, size: Long, mtime: Long): Pa
             "-frames:v", "1",
             "-f", "image2",
             out.toString(),
-        ).redirectErrorStream(true).start()
-    }.getOrNull() ?: return null
-    val finished = runCatching { process.waitFor(5, TimeUnit.SECONDS) }.getOrDefault(false)
-    if (!finished) {
-        process.destroyForcibly()
-        runCatching { Files.deleteIfExists(out) }
-        return null
-    }
-    if (process.exitValue() != 0 || !Files.isRegularFile(out)) {
+        ).readOutputWithin(5_000)
+    }.getOrNull()
+    if (output == null || !Files.isRegularFile(out)) {
         runCatching { Files.deleteIfExists(out) }
         return null
     }

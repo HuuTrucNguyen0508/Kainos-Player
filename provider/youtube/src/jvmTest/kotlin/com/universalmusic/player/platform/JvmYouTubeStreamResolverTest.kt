@@ -44,6 +44,30 @@ class JvmYouTubeStreamResolverTest {
     }
 
     @Test
+    fun readsTheVideosMixFromYtDlpFlatPlaylistJson() = runBlocking {
+        val fixture = Files.createTempFile("yt-dlp-mix", ".json")
+        val args = Files.createTempFile("yt-dlp-args", ".txt")
+        Files.write(fixture, javaClass.getResourceAsStream("/yt-dlp-mix.json")!!.readBytes())
+        val script = Files.createTempFile("fake-yt-dlp", ".sh")
+        Files.writeString(script, "#!/bin/sh\necho \"$@\" > '$args'\ncat '$fixture'\n")
+        script.toFile().setExecutable(true)
+        try {
+            val mix = JvmYouTubeStreamResolver { script }.mix("4NRXx6U8ABQ")
+            assertEquals(
+                listOf("4NRXx6U8ABQ", "34Na4j8AVgA", "XXYlFuWEuKI", "rhTl_OyehF8"),
+                mix.map { it.videoId },
+            )
+            assertEquals(YouTubeMixEntry("34Na4j8AVgA", mix[1].title, "The Weeknd", 274), mix[1])
+            assertTrue(mix[1].title.startsWith("The Weeknd - Starboy"))
+            val invocation = Files.readString(args)
+            assertTrue("--flat-playlist" in invocation, invocation)
+            assertTrue("watch?v=4NRXx6U8ABQ&list=RD4NRXx6U8ABQ" in invocation, invocation)
+        } finally {
+            listOf(fixture, args, script).forEach(Files::deleteIfExists)
+        }
+    }
+
+    @Test
     fun rejectsBlankOrUnsafeVideoIds() = runBlocking {
         val resolver = JvmYouTubeStreamResolver {
             error("binary should not run")

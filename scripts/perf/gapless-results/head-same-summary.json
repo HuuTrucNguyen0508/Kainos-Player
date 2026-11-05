@@ -1,0 +1,73 @@
+{
+  "ffprobe_processes": {
+    "n": 10,
+    "median": 0.0,
+    "p90": 0,
+    "min": 0,
+    "max": 0
+  },
+  "idle_cpu_percent": {
+    "n": 10,
+    "median": 0.0,
+    "p90": 0.19988060332043725,
+    "min": 0.0,
+    "max": 0.2003284118275427
+  },
+  "idle_rss_kib": {
+    "n": 10,
+    "median": 108946.0,
+    "p90": 112760,
+    "min": 105272,
+    "max": 113556
+  },
+  "mpv_idle_cpu_percent": {
+    "n": 10,
+    "median": 0.0,
+    "p90": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "natural_pcm_boundary_ms": {
+    "n": 10,
+    "median": 0.0,
+    "p90": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "natural_pcm_silence_ms": {
+    "n": 10,
+    "median": 0.0,
+    "p90": 0.0,
+    "min": 0.0,
+    "max": 0.0
+  },
+  "pause_ack_ms": {
+    "n": 10,
+    "median": 1.231509,
+    "p90": 1.360434,
+    "min": 1.140333,
+    "max": 1.400164
+  },
+  "pcm_resolution_ms": {
+    "n": 10,
+    "median": 5.0,
+    "p90": 5,
+    "min": 5,
+    "max": 5
+  },
+  "press_to_started_ms": {
+    "n": 10,
+    "median": 126.5490125,
+    "p90": 130.945574,
+    "min": 122.483991,
+    "max": 132.048396
+  },
+  "resume_ack_ms": {
+    "n": 10,
+    "median": 0.871198,
+    "p90": 0.950013,
+    "min": 0.818742,
+    "max": 0.965263
+  },
+  "errors": 0
+}

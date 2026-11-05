@@ -108,12 +108,12 @@ def test_launch_plays_with_speech_and_full_metadata(echo: Echo):
     assert "expectedPreviousToken" not in item
     parsed = StreamToken.parse(item["token"])
     assert parsed is not None and parsed.base_ms == 0
-    assert item["url"] == f"https://example.test/stream/t/{STREAM_TOKEN}/{parsed.track_id}"
+    assert item["url"] == f"http://127.0.0.1:8787/stream/t/{STREAM_TOKEN}/{parsed.track_id}"
     metadata = directive["audioItem"]["metadata"]
     index = echo.library.get(parsed.track_id).relative_path.split()[1]
     assert metadata["title"] == f"Song {index}"
     assert metadata["subtitle"] == f"Artist {index}"
-    art = f"https://example.test/art/t/{STREAM_TOKEN}/{parsed.track_id}.jpg"
+    art = f"http://127.0.0.1:8787/art/t/{STREAM_TOKEN}/{parsed.track_id}.jpg"
     assert metadata["art"] == {"sources": [{"url": art}]}
     assert metadata["backgroundImage"] == {"sources": [{"url": art}]}
 

@@ -9,6 +9,11 @@ package com.universalmusic.player.data.local
  * `…/tree/<id>/document/<docId>` URIs built from that tree, so those compare as-is.
  */
 fun isLocationInFolder(location: String, folder: String): Boolean {
+    // A SAF subfolder is a document URI whose id ends at a directory; its files carry ids below it.
+    safDocument(folder)?.let { dir ->
+        val doc = safDocument(location) ?: return false
+        return doc.tree == dir.tree && (doc.id == dir.id || doc.id.startsWith("${dir.id}/"))
+    }
     val root = folderMatchKey(folder) ?: return false
     val path = folderMatchKey(location) ?: return false
     return path == root || path.startsWith("$root/")
@@ -59,3 +64,65 @@ fun percentDecodeUtf8(value: String): String {
     flush()
     return out.toString()
 }
+
+/**
+ * Folder names from library [root] down to the directory that holds the file at [location],
+ * or null when the file lies outside [root]. A SAF provider whose document ids are not paths
+ * gives no hierarchy, so its files sit directly in the root.
+ */
+fun localFolderSegments(location: String, root: String): List<String>? {
+    if (!isLocationInFolder(location, root)) return null
+    val relative = when (val doc = safDocument(location)) {
+        null -> folderMatchKey(location)!!.removePrefix(folderMatchKey(root)!!)
+        else -> {
+            val prefix = safTreeDocumentId(root)?.let(::safChildPrefix) ?: return emptyList()
+            if (!doc.id.startsWith(prefix)) return emptyList()
+            doc.id.substring(prefix.length)
+        }
+    }
+    return relative.split('/').dropLast(1).filter { it.isNotEmpty() }
+}
+
+/**
+ * The folder [segments] below library [root], in the form [isLocationInFolder] and Home folder
+ * pins take: a plain path on desktop, a SAF document URI inside the root's tree on Android.
+ */
+fun localSubfolderId(root: String, segments: List<String>): String {
+    if (segments.isEmpty()) return root
+    val path = segments.joinToString("/")
+    val treeId = safTreeDocumentId(root) ?: return root.trimEnd('/', '\\') + "/" + path
+    return root.trimEnd('/') + "/document/" + percentEncodeUriComponent(safChildPrefix(treeId) + path)
+}
+
+private class SafDocument(val tree: String, val id: String)
+
+/** `content://…/tree/<tree>/document/<id>` split into its tree URI and decoded document id. */
+private fun safDocument(uri: String): SafDocument? {
+    val marker = uri.indexOf("/document/")
+    if (marker < 0 || !uri.startsWith("content:") || "/tree/" !in uri.substring(0, marker)) return null
+    return SafDocument(uri.substring(0, marker), percentDecodeUtf8(uri.substring(marker + "/document/".length)))
+}
+
+/** Decoded document id of a SAF tree root URI (`…/tree/primary%3AMusic` → `primary:Music`). */
+private fun safTreeDocumentId(root: String): String? {
+    if (!root.startsWith("content:") || "/document/" in root) return null
+    val encoded = root.substringAfter("/tree/", "").substringBefore('/')
+    return encoded.takeIf { it.isNotEmpty() }?.let(::percentDecodeUtf8)
+}
+
+/** External storage ids are `volume:path`; the volume root `primary:` has children `primary:Music`. */
+private fun safChildPrefix(treeId: String): String = if (treeId.endsWith(':') || treeId.endsWith('/')) treeId else "$treeId/"
+
+/** Percent-encodes like Android's `Uri.encode`, which builds SAF document URIs. */
+private fun percentEncodeUriComponent(value: String): String = buildString {
+    for (byte in value.encodeToByteArray()) {
+        val c = byte.toInt() and 0xFF
+        if (c < 0x80 && (c.toChar().isLetterOrDigit() || c.toChar() in "_-!.~'()*")) {
+            append(c.toChar())
+        } else {
+            append('%').append(HEX[c shr 4]).append(HEX[c and 0xF])
+        }
+    }
+}
+
+private const val HEX = "0123456789ABCDEF"

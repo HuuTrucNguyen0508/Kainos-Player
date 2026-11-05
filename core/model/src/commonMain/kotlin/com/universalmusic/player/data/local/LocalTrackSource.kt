@@ -10,17 +10,22 @@ import com.universalmusic.player.domain.model.AudioQuality
  */
 fun interface LocalTrackSource {
     suspend fun scan(): List<LocalTrack>
+    suspend fun scanResult(previous: List<LocalTrack>): LocalScanResult = LocalScanResult(scan())
 }
 
-/** Desktop scans can reuse a previous snapshot when path, size, and mtime are unchanged. */
+/** Platform scans can reuse unchanged files and retain rows from unavailable configured roots. */
 interface IncrementalLocalTrackSource : LocalTrackSource {
-    suspend fun scanReusing(previous: List<LocalTrack>): IncrementalScan
+    suspend fun scanReusing(previous: List<LocalTrack>): LocalScanResult
+    override suspend fun scanResult(previous: List<LocalTrack>): LocalScanResult = scanReusing(previous)
 }
 
-data class IncrementalScan(
+/** Tracks include cached rows only from unavailable, still-configured roots. Root names are paths or tree URIs. */
+data class LocalScanResult(
     val tracks: List<LocalTrack>,
-    val reused: Int,
-    val probed: Int,
+    val reused: Int = 0,
+    val probed: Int = tracks.size,
+    val unavailableRoots: List<String> = emptyList(),
+    val readableRootCount: Int = 1,
 )
 
 data class LocalTrack(

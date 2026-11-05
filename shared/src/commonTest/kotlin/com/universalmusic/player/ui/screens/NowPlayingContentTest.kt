@@ -17,7 +17,9 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.ResolvedPlayback
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.NowPlayingState
+import com.universalmusic.player.domain.playback.SleepTimerMode
 import com.universalmusic.player.domain.playback.SleepTimerState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NowPlayingContentTest {
+    @Test
+    fun sleepLabelSaysFadingOutDuringTheFade() {
+        val duration = SleepTimerState(active = true, mode = SleepTimerMode.Duration(300_000L), remainingMs = 24_000L)
+        assertEquals("Sleep · 0:24", sleepTimerRemainingLabel(duration))
+        assertEquals("Fading out · 0:24", sleepTimerRemainingLabel(duration.copy(fading = true)))
+        val endOfTrack = SleepTimerState(active = true, mode = SleepTimerMode.EndOfTrack, fading = true)
+        assertEquals("Fading out · end of track", sleepTimerRemainingLabel(endOfTrack))
+        assertNull(sleepTimerRemainingLabel(SleepTimerState()))
+    }
+
     @Test
     fun qualityLabelsForSpotifyFlacAndUnknown() {
         val spotify = AudioQuality(
@@ -146,6 +158,24 @@ class NowPlayingPresenterTest {
     }
 
     @Test
+    fun detailsSayWhatLevellingDidToThisTrack() = runTest(UnconfinedTestDispatcher()) {
+        val now = MutableStateFlow(NowPlayingState(track = track("Song", "Artist", provider = ProviderId.LOCAL, canonicalId = "local:song")))
+        val presenter = nowPlayingPresenter(nowPlaying = now)
+        assertEquals(emptyList(), presenter.state.value.detailLines, "Spotify and unknown tracks get no line")
+        val expected = mapOf(
+            Levelling.Applied(-6.04) to "Volume levelled by -6.0 dB from ReplayGain tags",
+            Levelling.Applied(2.46) to "Volume levelled by +2.5 dB from ReplayGain tags",
+            Levelling.Applied(0.0) to "ReplayGain tags read; volume left unchanged",
+            Levelling.Untagged to "No ReplayGain tags, so this track plays at its own level",
+            Levelling.Off to "Volume levelling is off",
+        )
+        for ((levelling, line) in expected) {
+            now.value = now.value.copy(levelling = levelling)
+            assertEquals(listOf(line), presenter.state.value.detailLines)
+        }
+    }
+
+    @Test
     fun togglePlayPauseCallsTheTransportLambda() = runTest(UnconfinedTestDispatcher()) {
         var calls = 0
         val presenter = nowPlayingPresenter(togglePlayPauseAction = { calls += 1 })
@@ -198,4 +228,13 @@ class NowPlayingPresenterTest {
         cancelSleepAction = {},
         scope = scope,
     )
+
+    @Test
+    fun qualityClassPicksBadgeColour() {
+        assertEquals(QualityClass.Cd, qualityClass(AudioQuality(QualityTier.LOSSLESS, sampleRateHz = 44_100, bitDepth = 16)))
+        assertEquals(QualityClass.HiRes, qualityClass(AudioQuality(QualityTier.LOSSLESS, sampleRateHz = 96_000, bitDepth = 24)))
+        assertEquals(QualityClass.HiRes, qualityClass(AudioQuality(QualityTier.HI_RES)))
+        assertEquals(QualityClass.Lossy, qualityClass(AudioQuality(QualityTier.HIGH, bitrateKbps = 320)))
+        assertEquals(null, qualityClass(null))
+    }
 }

@@ -21,11 +21,6 @@ internal data class SpotifySearchResponse(
 )
 
 @Serializable
-internal data class SpotifyRecommendationsResponse(
-    val tracks: List<SpotifyTrack> = emptyList(),
-)
-
-@Serializable
 internal data class SpotifyTrack(
     val id: String,
     val name: String,
@@ -123,6 +118,7 @@ internal data class SpotifyTokenResponse(
 @Serializable
 internal data class SpotifyPlayRequest(
     val uris: List<String>,
+    @SerialName("position_ms") val positionMs: Long = 0,
 )
 
 @Serializable

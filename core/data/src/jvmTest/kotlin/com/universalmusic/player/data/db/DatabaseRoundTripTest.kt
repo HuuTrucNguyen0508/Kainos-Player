@@ -25,6 +25,7 @@ import com.universalmusic.player.data.sync.HeartAction
 import com.universalmusic.player.data.sync.HeartOp
 import com.universalmusic.player.data.sync.LocalSyncIdentity
 import com.universalmusic.player.domain.model.AudioQuality
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
@@ -132,6 +133,128 @@ class DatabaseRoundTripTest {
                 assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
                 assertEquals(0L, driver.row("SELECT count(*) FROM pragma_foreign_key_check").single())
             }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaSixKeepsLibraryRowsAndAddsAnEmptyPlayHistory() = runTest {
+        val directory = Files.createTempDirectory("kainos-v6-v7-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/6.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            listOf(
+                "INSERT INTO favorite VALUES (0, 'local:hearted')",
+                "INSERT INTO recent_track VALUES (0, 'yt:1', '{}')",
+                "INSERT INTO local_listening_export VALUES (0, 7, 1000, NULL)",
+            ).forEach { driver.execute(null, it, 0) }
+            KainosDatabase.Schema.migrate(driver, 6, KainosDatabase.Schema.version)
+            assertEquals(listOf(0L, "local:hearted"), driver.row("SELECT position, canonical_id FROM favorite"))
+            assertEquals(listOf("yt:1", "{}"), driver.row("SELECT canonical_id, track_json FROM recent_track"))
+            assertEquals(listOf(7L, 1000L), driver.row("SELECT revision, last_active_at_ms FROM local_listening_export"))
+            assertEquals(0L, driver.count("play_event"))
+            assertEquals(0L, driver.count("play_history_track"))
+            assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            val store = DbPlayHistoryStore(KainosStorage(openDriver = { driver }, clock = { 0 }))
+            val track = com.universalmusic.player.domain.model.Track("local:hearted", "Hearted", emptyList())
+            store.record(com.universalmusic.player.data.history.PlayEvent(track, 5_000, 60_000, completed = true), keepSinceMs = 0)
+            assertEquals(mapOf("local:hearted" to 5_000L), store.read(10_000).lastPlayedAtMs)
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaSevenKeepsTheSpotifyAccountAndPinsAndAddsNoPinTombstones() = runTest {
+        val directory = Files.createTempDirectory("kainos-v7-v8-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/7.db")!!.use { Files.copy(it, path) }
+            val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+            val pin = PersistedHomePin("pin:1", HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", title = "A")
+            listOf(
+                "INSERT INTO library_meta VALUES (0, 'account-a')",
+                "INSERT INTO home_pin VALUES (0, 'pin:1', 'KAINOS_PLAYLIST', 'kainos:playlist:a', '${storageJson.encodeToString(pin)}')",
+            ).forEach { driver.execute(null, it, 0) }
+            KainosDatabase.Schema.migrate(driver, 7, KainosDatabase.Schema.version)
+            assertEquals(listOf("account-a", 0L, ""), driver.row("SELECT spotify_account_id, pin_order_revision, pin_order_device_id FROM library_meta"))
+            assertEquals(0L, driver.count("home_pin_tombstone"))
+            assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            val snapshot = DbUserLibraryStore(KainosStorage(openDriver = { driver }, clock = { 0 })).read()
+            assertEquals("account-a", snapshot.spotifyAccountId)
+            assertEquals(listOf(pin), snapshot.homePins)
+            assertEquals(com.universalmusic.player.data.library.HomePinStamp(), snapshot.homePinOrderStamp)
+            driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaEightReadsTheOldSessionWithoutRadioAndThenKeepsTheRadio() {
+        val directory = Files.createTempDirectory("kainos-v8-v9-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/8.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                val item = PersistedQueueItem("q1", track("spotify:1", "One"))
+                listOf(
+                    "INSERT INTO session_state VALUES (0, 0, 0, 'OFF', '[]', 3000, 'LOCAL', NULL)",
+                    "INSERT INTO session_queue_item VALUES (0, 'q1', 'spotify:1', '${storageJson.encodeToString(item.track)}')",
+                ).forEach { driver.execute(null, it, 0) }
+                KainosDatabase.Schema.migrate(driver, 8, KainosDatabase.Schema.version)
+                val db = KainosDatabase(driver)
+                val old = SessionSnapshot(items = listOf(item), positionMs = 3000)
+                assertEquals(old, db.readSessionSnapshot())
+
+                db.writeSessionSnapshot(old.copy(radio = ProviderId.SPOTIFY), cached = null)
+                assertEquals(old.copy(radio = ProviderId.SPOTIFY), db.readSessionSnapshot())
+
+                driver.execute(null, "UPDATE session_state SET radio_provider = 'SOUNDCLOUD'", 0)
+                assertEquals(old, db.readSessionSnapshot())
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pinUnpinsAndTheLastReorderSurviveARestart() = runTest {
+        val directory = Files.createTempDirectory("kainos-pin-sync-restart")
+        try {
+            val path = directory.resolve("kainos.db")
+            var now = 1_000L
+            fun library() = LibraryRepository(
+                scope = this, store = DbUserLibraryStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })),
+                clock = { now }, deviceIdProvider = { "pc" },
+            )
+            val first = library()
+            first.load(activeSpotifyAccountId = "account-a")
+            first.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", title = "a")
+            now += 10
+            first.pinHome(HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:b", title = "b")
+            now += 10
+            first.moveHomePin(first.homePins.value.last().id, -1)
+            now += 10
+            first.unpinHome(first.homePins.value.last().id)
+            first.flush()
+
+            val reloaded = library()
+            reloaded.load(activeSpotifyAccountId = "account-a")
+            val doc = reloaded.exportHomePinsSyncDocument()
+            assertEquals(listOf("kainos:playlist:b"), doc.pins.map { it.targetId })
+            assertEquals(
+                listOf(com.universalmusic.player.data.library.HomePinTombstone(
+                    HomePinKind.KAINOS_PLAYLIST, "kainos:playlist:a", com.universalmusic.player.data.library.HomePinStamp(1_030, "pc"),
+                )),
+                doc.tombstones,
+            )
+            assertEquals(com.universalmusic.player.data.library.HomePinStamp(1_020, "pc"), doc.orderStamp)
+            assertEquals("account-a", doc.spotifyAccountId)
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -735,7 +858,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(6L, KainosDatabase.Schema.version)
+    assertEquals(9L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(
@@ -746,10 +869,11 @@ private fun SqlDriver.assertMigratedPreHs5Data() {
     assertEquals(PublicationOrigin.LOCAL, db.readSessionOrigin())
     assertNull(db.readLocalExport())
     assertEquals(
-        List(8) { 0L },
+        List(10) { 0L },
         listOf(
             "local_listening", "local_listening_queue", "local_listening_export",
             "peer_listening", "handoff_applied", "listening_writer_receipt", "listening_delivery", "listening_refusal",
+            "play_event", "play_history_track",
         ).map(::count),
     )
 }

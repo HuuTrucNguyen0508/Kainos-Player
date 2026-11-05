@@ -1,6 +1,7 @@
 package com.universalmusic.player.ui.screens
 
 import com.universalmusic.player.data.cache.DownloadItemState
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
@@ -14,6 +15,7 @@ internal data class LibraryUiState(
     val songSort: TrackSort,
     val localOnly: Boolean,
     val favoritesOnly: Boolean,
+    val readyOffline: Boolean,
     val favorites: Set<String>,
     val query: String,
     val needle: String,
@@ -22,18 +24,22 @@ internal data class LibraryUiState(
     val localTracks: List<Track>,
     val albums: List<Album>,
     val artists: List<LibraryArtistEntry>,
+    /** Configured music folders as trees; Favorites only keeps hearted files, the other chips change nothing. */
+    val folders: List<LibraryFolder>,
     val kainosRows: List<PersistedKainosPlaylist>,
     val kainosPlaylists: List<Playlist>,
     val spotifyPlaylistCatalog: List<Playlist>,
     val spotifyPlaylists: List<Playlist>,
     val pinnedKeys: Set<String>,
     val localCount: Int,
+    val cachedCount: Int,
     val spotifyCount: Int,
     val localState: ProviderState,
     val spotifyConnected: Boolean,
     val spotifyLoading: Boolean,
     val spotifyError: String?,
     val downloads: Map<String, DownloadItemState>,
+    val searchIndex: LibrarySearchIndex = LibrarySearchIndex(queueSongs, albums, artists),
 )
 
 internal fun LibraryUiState.withQuery(query: String): LibraryUiState {
@@ -42,14 +48,14 @@ internal fun LibraryUiState.withQuery(query: String): LibraryUiState {
     return copy(
         query = query,
         needle = needle,
-        songs = libraryDisplaySongs(queueSongs, needle),
-        albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, favorites), needle),
-        artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, favorites), needle),
+        songs = searchIndex.songs(needle),
+        albums = searchIndex.albums(needle),
+        artists = searchIndex.artists(needle),
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),
         spotifyPlaylists = libraryFilteredSpotifyPlaylists(
             spotifyPlaylistCatalog,
             needle,
-            localOnly,
+            localOnly || readyOffline,
             favoritesOnly,
         ),
     )
@@ -70,10 +76,13 @@ internal fun deriveLibraryUiState(
     spotifyState: ProviderState,
     downloads: Map<String, DownloadItemState>,
     query: String,
+    musicFolders: List<String> = emptyList(),
+    offlineTrack: (Track) -> Track? = Track::offlineOnly,
 ): LibraryUiState {
-    val needle = libraryNeedle(query)
+    val needle = ""
     val localOnly = settings.libraryLocalOnly
     val favoritesOnly = settings.libraryFavoritesOnly
+    val readyOffline = settings.libraryReadyOffline
     val queueSongs = libraryQueueSongs(
         local = localTracks,
         saved = saved,
@@ -82,30 +91,38 @@ internal fun deriveLibraryUiState(
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
         favorites = favorites,
+        readyOffline = readyOffline,
+        offlineTrack = offlineTrack,
     )
     return LibraryUiState(
         songSort = settings.librarySongSort,
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
+        readyOffline = readyOffline,
         favorites = favorites,
-        query = query,
+        query = "",
         needle = needle,
         queueSongs = queueSongs,
         songs = libraryDisplaySongs(queueSongs, needle),
         localTracks = localTracks,
         albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, favorites), needle),
         artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, favorites), needle),
+        folders = libraryFolderTree(
+            musicFolders,
+            if (favoritesOnly) localTracks.filter { it.canonicalId in favorites } else localTracks,
+        ),
         kainosRows = kainosRows,
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),
         spotifyPlaylistCatalog = spotifyPlaylists,
-        spotifyPlaylists = libraryFilteredSpotifyPlaylists(spotifyPlaylists, needle, localOnly, favoritesOnly),
+        spotifyPlaylists = libraryFilteredSpotifyPlaylists(spotifyPlaylists, needle, localOnly || readyOffline, favoritesOnly),
         pinnedKeys = libraryPinnedKeys(homePins),
         localCount = libraryLocalCount(queueSongs),
+        cachedCount = if (readyOffline) libraryCachedCount(queueSongs.mapNotNull(offlineTrack)) else 0,
         spotifyCount = librarySpotifyCount(queueSongs),
         localState = localState,
         spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED,
         spotifyLoading = spotifyLoading,
         spotifyError = spotifyError,
         downloads = downloads,
-    )
+    ).withQuery(query)
 }

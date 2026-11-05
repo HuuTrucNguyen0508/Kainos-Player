@@ -36,6 +36,137 @@ import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
     @Test
+    fun volumeRespects429RetryAfterAndSliderLevel() = runTest {
+        var now = 1000L
+        val levels = mutableListOf<String?>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), clock = { now }) { request ->
+            levels += request.url.parameters["volume_percent"]
+            respond("", HttpStatusCode.TooManyRequests, headersOf(HttpHeaders.RetryAfter, "30"))
+        }
+        provider.setConnectVolume(0.35f)
+        provider.setConnectVolume(0.8f)
+        assertEquals(listOf<String?>("35"), levels)
+        now += 30_000
+        provider.setConnectVolume(1f)
+        assertEquals(listOf<String?>("35", "100"), levels)
+    }
+
+    @Test
+    fun nativeVolumeUsesTheInProcessReceiverWithoutHttp() = runTest {
+        val volumes = mutableListOf<Float>()
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.Stopped)
+            override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = null
+            override suspend fun shutdown() = Unit
+            override suspend fun setVolume(volume: Float): Boolean { volumes += volume; return true }
+        }
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { error("No HTTP expected") }
+        provider.setConnectVolume(0.4f)
+        assertEquals(listOf(0.4f), volumes)
+    }
+
+    private class DirectReceiverFake(
+        private val loads: Boolean = true,
+        private val onLoad: DirectReceiverFake.() -> Unit = {},
+    ) : SpotifyWebPlaybackHost {
+        val calls = mutableListOf<String>()
+        override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+        override val requiresStreamingScope: Boolean = false
+        override var receiverGeneration: Long = 0L
+        override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player")
+        override suspend fun shutdown() = Unit
+        override suspend fun playTrack(trackId: String): Boolean {
+            calls += "load $trackId"
+            onLoad()
+            return loads
+        }
+        override suspend fun pause(): Boolean { calls += "pause"; return true }
+        override suspend fun resume(): Boolean { calls += "resume"; return true }
+        override suspend fun seek(positionMs: Long): Boolean { calls += "seek $positionMs"; return true }
+    }
+
+    private fun connectHandler(requests: MutableList<String>): suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData = { request ->
+        requests += request.method.value + " " + request.url.encodedPath
+        when (request.url.encodedPath) {
+            "/v1/me/player/devices" -> respondJson(
+                """{"devices":[{"id":"kainos-device","is_active":false,"is_restricted":false,"name":"Kainos Player","type":"Smartphone"}]}""",
+            )
+            else -> respond("", HttpStatusCode.NoContent)
+        }
+    }
+
+    @Test
+    fun inProcessReceiverLoadsAndControlsTheTrackWithoutHttp() = runTest {
+        val host = DirectReceiverFake()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { error("No HTTP expected: ${it.url}") }
+
+        provider.startConnectPlayback("song")
+        provider.pauseConnectPlayback()
+        provider.resumeConnectPlayback(42_000)
+        provider.seekConnectPlayback(90_000)
+
+        assertEquals(listOf("load song", "pause", "resume", "seek 90000"), host.calls)
+    }
+
+    @Test
+    fun failedDirectLoadFallsBackToConnectForStartAndTransport() = runTest {
+        val host = DirectReceiverFake(loads = false)
+        val requests = mutableListOf<String>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host, handler = connectHandler(requests))
+
+        provider.startConnectPlayback("song")
+        provider.pauseConnectPlayback()
+
+        assertEquals(listOf("load song"), host.calls)
+        assertEquals(
+            listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play", "PUT /v1/me/player/pause"),
+            requests,
+        )
+    }
+
+    @Test
+    fun receiverRecoveredDuringDirectLoadStartsThroughConnect() = runTest {
+        val host = DirectReceiverFake(onLoad = { receiverGeneration++ })
+        val requests = mutableListOf<String>()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host, handler = connectHandler(requests))
+
+        provider.startConnectPlayback("song")
+
+        assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+    }
+
+    @Test
+    fun resumeAfterReceiverRecoveryRestartsAtThePausedPositionThroughConnect() = runTest {
+        val host = DirectReceiverFake()
+        val bodies = mutableListOf<String>()
+        val requests = mutableListOf<String>()
+        val handler = connectHandler(requests)
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { request ->
+            if (request.url.encodedPath == "/v1/me/player/play") {
+                bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            }
+            handler(request)
+        }
+
+        provider.startConnectPlayback("song")
+        host.receiverGeneration++
+        provider.resumeConnectPlayback(42_000)
+
+        assertEquals(listOf("load song"), host.calls)
+        assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+        assertTrue(bodies.single().contains("42000"))
+    }
+
+    @Test
+    fun spotifyQualityDescribesAssumedDecodeWithoutLossless() {
+        val quality = com.universalmusic.player.domain.model.spotifyPlaybackQuality
+        assertEquals(com.universalmusic.player.domain.model.QualityConfidence.ASSUMED, quality.confidence)
+        assertTrue(quality.label.contains("16-bit"))
+        assertTrue(quality.label.contains("44.1 kHz"))
+        assertEquals(false, quality.label.contains("Lossless"))
+    }
+
+    @Test
     fun webPlayerIsActivatedBeforeStartingTheTrack() = runTest {
         val requests = mutableListOf<String>()
         val host = object : SpotifyWebPlaybackHost {
@@ -51,7 +182,7 @@ class SpotifyProviderTest {
         provider.startConnectPlayback("song")
 
         assertEquals(
-            listOf("/v1/me/player", "/v1/me/player/play", "/v1/me/player/volume"),
+            listOf("/v1/me/player", "/v1/me/player/play"),
             requests,
         )
     }
@@ -106,7 +237,6 @@ class SpotifyProviderTest {
                 "/v1/me/player/devices?",
                 "/v1/me/player?",
                 "/v1/me/player/play?device_id=kainos-device",
-                "/v1/me/player/volume?volume_percent=100&device_id=kainos-device",
             ),
             requests,
         )
@@ -323,6 +453,31 @@ class SpotifyProviderTest {
     }
 
     @Test
+    fun playlistPagesCarryTheNextOffsetAndTotal() = runTest {
+        val store = TokenStoreFake(AuthTokens("access"))
+        val provider = provider(store) { request ->
+            assertTrue(request.url.encodedPath.endsWith("/playlists/mix/items"))
+            assertEquals("50", request.url.parameters["limit"])
+            when (request.url.parameters["offset"]) {
+                "0" -> respondJson(
+                    """{"items":[{"item":{"id":"a","name":"One","type":"track"}},{"item":null}],"total":3,"next":"https://api.spotify.com/v1/playlists/mix/items?offset=2&limit=50"}""",
+                )
+                "2" -> respondJson("""{"items":[{"item":{"id":"b","name":"Two","type":"track"}}],"total":3,"next":null}""")
+                else -> error("Unexpected offset ${request.url.parameters["offset"]}")
+            }
+        }
+
+        val first = provider.getPlaylistTracksPage("mix", null)
+        assertEquals(listOf("One"), first.tracks.map { it.title })
+        assertEquals("2", first.next)
+        assertEquals(3, first.total)
+
+        val last = provider.getPlaylistTracksPage("mix", first.next)
+        assertEquals(listOf("Two"), last.tracks.map { it.title })
+        assertEquals(null, last.next)
+    }
+
+    @Test
     fun playlistItemsAcceptLegacyTrackFieldIfPresent() = runTest {
         val store = TokenStoreFake(AuthTokens("access"))
         val provider = provider(store) { request ->
@@ -356,6 +511,83 @@ class SpotifyProviderTest {
 
         assertEquals(listOf("Keep Me"), tracks.map { it.title })
         assertEquals(listOf("spotify:keep"), tracks.map { it.canonicalId })
+    }
+
+    @Test
+    fun explicitPlayAfterReceiverRecoveryRediscoversAndRestartsAtSavedPosition() = runTest {
+        var generation = 0L
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope = false
+            override val receiverGeneration get() = generation
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player Android")
+            override suspend fun shutdown() = Unit
+        }
+        val plays = mutableListOf<Pair<String?, String>>()
+        var discoveries = 0
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { request ->
+            when (request.url.encodedPath) {
+                "/v1/me/player/devices" -> {
+                    discoveries++
+                    val id = if (generation == 0L) "retired" else "replacement"
+                    respondJson("""{"devices":[{"id":"$id","name":"Kainos Player Android","is_active":false}]}""")
+                }
+                "/v1/me/player/play" -> {
+                    val body = (request.body as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString().orEmpty()
+                    plays += request.url.parameters["device_id"] to body
+                    respond("", HttpStatusCode.NoContent)
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+        provider.startConnectPlayback("song")
+        generation++
+        assertEquals(1, plays.size, "recovery must not autoplay")
+        provider.resumeConnectPlayback(12_345)
+        assertEquals("replacement", plays.last().first, "Play must not target the retired receiver")
+        assertEquals(2, discoveries)
+        val restart = Json.parseToJsonElement(plays.last().second).toString()
+        assertTrue(restart.contains("spotify:track:song"))
+        assertTrue(restart.contains("\"position_ms\":12345"), restart)
+        provider.resumeConnectPlayback(15_000)
+        assertEquals(2, discoveries, "ordinary resume must not rediscover or poll")
+        assertEquals("", plays.last().second, "ordinary resume keeps the receiver's current track")
+    }
+
+    @Test
+    fun recoveryDuringPlaysTokenFetchStillTargetsTheReplacementReceiver() = runTest {
+        var generation = 0L
+        val host = object : SpotifyWebPlaybackHost {
+            override val state = MutableStateFlow<SpotifyWebPlaybackState>(SpotifyWebPlaybackState.ConnectingSpotify)
+            override val requiresStreamingScope = false
+            override val receiverGeneration get() = generation
+            override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player Android")
+            override suspend fun shutdown() = Unit
+        }
+        var recoverOnNextRead = false
+        val tokens = TokenStoreFake(AuthTokens("access")).apply {
+            onRead = { if (recoverOnNextRead) { recoverOnNextRead = false; generation++ } }
+        }
+        val plays = mutableListOf<Pair<String?, String>>()
+        val provider = provider(tokens, host) { request ->
+            when (request.url.encodedPath) {
+                "/v1/me/player/devices" -> {
+                    val id = if (generation == 0L) "retired" else "replacement"
+                    respondJson("""{"devices":[{"id":"$id","name":"Kainos Player Android","is_active":false}]}""")
+                }
+                "/v1/me/player/play" -> {
+                    val body = (request.body as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString().orEmpty()
+                    plays += request.url.parameters["device_id"] to body
+                    respond("", HttpStatusCode.NoContent)
+                }
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+        provider.startConnectPlayback("song")
+        recoverOnNextRead = true
+        provider.resumeConnectPlayback(12_345)
+        assertEquals("replacement", plays.last().first, "Play must not go out without the replacement receiver")
+        assertTrue(plays.last().second.contains("spotify:track:song"), plays.last().second)
     }
 
     @Test
@@ -449,7 +681,7 @@ class SpotifyProviderTest {
             provider.startConnectPlayback("track")
         }
 
-        assertTrue(failure.message.orEmpty().contains("Settings"))
+        assertTrue(failure.message.orEmpty().contains("Spotify output"))
         assertEquals(0, requests)
     }
 
@@ -779,8 +1011,9 @@ class SpotifyProviderTest {
 private class TokenStoreFake(initial: AuthTokens? = null) : TokenStore {
     var value: AuthTokens? = initial
     var writes = 0
+    var onRead: () -> Unit = {}
 
-    override suspend fun read(provider: ProviderId): AuthTokens? = value
+    override suspend fun read(provider: ProviderId): AuthTokens? = value.also { onRead() }
 
     override suspend fun write(provider: ProviderId, tokens: AuthTokens) {
         writes++

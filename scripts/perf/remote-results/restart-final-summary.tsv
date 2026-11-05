@@ -1,0 +1,2 @@
+scenario	n	applied	p50_ms	p90_ms	p99_ms	request_drops	reply_drops	outcomes
+restart	10	10	201.64	202.08	213.04	0	0	{'STOPPED': 10}

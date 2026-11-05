@@ -2,8 +2,10 @@ package com.universalmusic.player.data.youtube
 
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.platform.ResolvedYouTubeAudio
+import com.universalmusic.player.platform.YouTubeMixEntry
 import com.universalmusic.player.platform.YouTubeStreamResolver
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -61,6 +63,80 @@ class YouTubeMusicProviderTest {
         } finally { http.close() }
     }
 
+    /** The `playlistItems` shape from the YouTube Data API v3 reference, trimmed to the fields Kainos reads. */
+    private val playlistItemsPage1 = """
+        {"kind":"youtube#playlistItemListResponse","etag":"e1","nextPageToken":"EAAaBlBUOkNESQ",
+         "items":[
+          {"kind":"youtube#playlistItem","id":"UExpdGVtMQ","snippet":{"title":"Night Drive","channelTitle":"Curator","videoOwnerChannelTitle":"Neon Coast","resourceId":{"kind":"youtube#video","videoId":"vid-a"},"position":0},"contentDetails":{"videoId":"vid-a"}},
+          {"kind":"youtube#playlistItem","id":"UExpdGVtMg","snippet":{"title":"Deleted video","channelTitle":"Curator","resourceId":{"kind":"youtube#video","videoId":"vid-gone"},"position":1},"contentDetails":{"videoId":"vid-gone"}},
+          {"kind":"youtube#playlistItem","id":"UExpdGVtMw","snippet":{"title":"Harbour Lights","channelTitle":"Curator","videoOwnerChannelTitle":"Tide","resourceId":{"kind":"youtube#video","videoId":"vid-b"},"position":2},"contentDetails":{"videoId":"vid-b"}}
+         ],
+         "pageInfo":{"totalResults":4,"resultsPerPage":3}}
+    """.trimIndent()
+
+    @Test
+    fun playlistPagesHydrateDurationsDropDeletedVideosAndFollowThePageToken() = runTest {
+        val requests = mutableListOf<String>()
+        val http = client(MockEngine { request ->
+            val params = request.url.parameters
+            requests += "${request.url.encodedPath}?${params["pageToken"] ?: params["id"] ?: ""}"
+            val response = when (request.url.encodedPath) {
+                "/youtube/v3/playlistItems" -> {
+                    assertEquals("PLlist", params["playlistId"])
+                    assertEquals("50", params["maxResults"])
+                    if (params["pageToken"] == null) playlistItemsPage1
+                    else """{"items":[{"id":"UExpdGVtNA","snippet":{"title":"Last","resourceId":{"videoId":"vid-c"}},"contentDetails":{"videoId":"vid-c"}}],"pageInfo":{"totalResults":4}}"""
+                }
+                // `videos` leaves out deleted and private ids.
+                "/youtube/v3/videos" -> when (params["id"]) {
+                    "vid-a,vid-gone,vid-b" -> """{"items":[
+                        {"id":"vid-a","snippet":{"title":"Night Drive","channelTitle":"Neon Coast"},"contentDetails":{"duration":"PT4M5S"}},
+                        {"id":"vid-b","snippet":{"title":"Harbour Lights","channelTitle":"Tide"},"contentDetails":{"duration":"PT1H2M"}}]}"""
+                    else -> """{"items":[{"id":"vid-c","snippet":{"title":"Last","channelTitle":"Tide"},"contentDetails":{"duration":"PT30S"}}]}"""
+                }
+                else -> error("Unexpected request ${request.url.encodedPath}")
+            }
+            respond(response, headers = jsonHeaders)
+        })
+        try {
+            val provider = YouTubeMusicProvider(http, config)
+            val first = provider.getPlaylistTracksPage("PLlist", null)
+            assertEquals(listOf("yt:vid-a", "yt:vid-b"), first.tracks.map { it.canonicalId })
+            assertEquals(listOf("Neon Coast", "Tide"), first.tracks.map { it.artists.single().name })
+            assertEquals(listOf(245_000L, 3_720_000L), first.tracks.map { it.durationMs })
+            assertEquals("EAAaBlBUOkNESQ", first.next)
+            assertEquals(4, first.total)
+
+            val last = provider.getPlaylistTracksPage("PLlist", first.next)
+            assertEquals(listOf("Last"), last.tracks.map { it.title })
+            assertNull(last.next)
+            assertEquals(
+                listOf(
+                    "/youtube/v3/playlistItems?", "/youtube/v3/videos?vid-a,vid-gone,vid-b",
+                    "/youtube/v3/playlistItems?EAAaBlBUOkNESQ", "/youtube/v3/videos?vid-c",
+                ),
+                requests,
+            )
+        } finally { http.close() }
+    }
+
+    @Test
+    fun aFailedPlaylistPageReportsQuotaWithoutTheKey() = runTest {
+        val http = client(MockEngine {
+            respond(
+                """{"error":{"code":403,"errors":[{"reason":"quotaExceeded"}]}}""",
+                status = HttpStatusCode.Forbidden,
+                headers = jsonHeaders,
+            )
+        })
+        try {
+            val provider = YouTubeMusicProvider(http, config)
+            val failure = assertFailsWith<IllegalStateException> { provider.getPlaylistTracksPage("PLlist", "tok") }
+            assertEquals("YouTube quota or rate limit reached. Try again later.", failure.message)
+            assertEquals(ProviderState.RATE_LIMITED, provider.state.value)
+        } finally { http.close() }
+    }
+
     @Test
     fun searchMarksTracksPlayableWhenStreamResolverIsAvailable() = runTest {
         val http = client(MockEngine { request ->
@@ -78,6 +154,10 @@ class YouTubeMusicProviderTest {
                 override fun isAvailable(): Boolean = true
                 override suspend fun resolveAudioUrl(videoId: String) =
                     ResolvedYouTubeAudio(url = "https://example.test/$videoId")
+                override suspend fun mix(videoId: String) = listOf(
+                    YouTubeMixEntry(videoId, "Song", "Artist", 60),
+                    YouTubeMixEntry("video-9", "Other Song", "Other Artist - Topic", 200),
+                )
             }
             val provider = YouTubeMusicProvider(http, config, streams)
             val track = provider.search("Song").tracks.single()
@@ -85,6 +165,11 @@ class YouTubeMusicProviderTest {
             assertTrue(provider.getCapabilities().playback)
             val stream = provider.getStream(track)
             assertEquals("https://example.test/video-1", (stream?.handle as? PlaybackHandle.Url)?.url)
+            val mix = provider.mix(track)
+            assertEquals(listOf("yt:video-1", "yt:video-9"), mix.map { it.canonicalId })
+            assertEquals("Other Artist - Topic", mix[1].artists.single().name)
+            assertEquals(200_000L, mix[1].durationMs)
+            assertEquals("video-9", mix[1].sourceFor(ProviderId.YOUTUBE_MUSIC)?.providerTrackId)
         } finally { http.close() }
     }
 

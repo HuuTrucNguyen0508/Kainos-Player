@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.db
 
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.data.session.ListeningCommit
 import com.universalmusic.player.data.session.ListeningRestore
 import com.universalmusic.player.data.session.ListeningState
@@ -23,8 +24,10 @@ private const val RECEIPT_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
  * Each commit is one transaction, so a reader never pairs a row with another commit's queue.
  */
 class DbListeningStore(
-    private val storage: KainosStorage,
+    storage: KainosStorage,
 ) : ListeningStore {
+    private val storage = AreaStorage(storage, StorageArea.LISTENING)
+
     private val writeMutex = Mutex()
     private var decodedQueue: StoredQueue? = null
     private val prunedFor = mutableSetOf<String>()

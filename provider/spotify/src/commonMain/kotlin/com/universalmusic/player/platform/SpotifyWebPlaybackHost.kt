@@ -50,6 +50,9 @@ fun interface SpotifyTokenSupplier {
 /** Connect receiver display name shared by Linux librespot and Android librespot-java. */
 const val KAINOS_SPOTIFY_DEVICE_NAME = "Kainos Player"
 
+/** Connect targets are matched by name, so two receivers sharing one would steal each other's playback. */
+const val KAINOS_SPOTIFY_ANDROID_DEVICE_NAME = "Kainos Player Android"
+
 /** User-facing hint when librespot cannot open a TCP session to a Spotify access point. */
 fun describeLibrespotConnectionFailure(detail: String?): String? {
     if (detail.isNullOrBlank()) return null
@@ -81,12 +84,30 @@ internal fun isRetryableLibrespotConnectFailure(failure: Throwable): Boolean {
         message.contains("timed out")
 }
 
+/** How far the in-app receiver is from playing, judged without starting it. */
+enum class SpotifyReceiverSetup { READY, NEEDS_SIGN_IN, NOT_INSTALLED }
+
 interface SpotifyWebPlaybackHost {
     val state: StateFlow<SpotifyWebPlaybackState>
+    /** Blocking file checks: call off the main thread. */
+    fun receiverSetup(): SpotifyReceiverSetup = SpotifyReceiverSetup.READY
+    val receiverEvents: SpotifyReceiverEvents? get() = null
     val requiresStreamingScope: Boolean get() = true
+    /** Recreated receivers have new device IDs; cached Connect targets belong to this generation. */
+    val receiverGeneration: Long get() = 0L
     suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice?
     /** One-time receiver setup via librespot OAuth (browser sign-in on Linux and Android). */
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()
+    suspend fun setVolume(volume: Float): Boolean = false
+    /**
+     * Starts [trackId] on an in-process receiver directly, skipping the Web API round trips
+     * through Spotify's servers. False when this host cannot, so the caller uses Connect.
+     */
+    suspend fun playTrack(trackId: String): Boolean = false
+    /** Transport for the track [playTrack] started. False falls back to the Web API. */
+    suspend fun pause(): Boolean = false
+    suspend fun resume(): Boolean = false
+    suspend fun seek(positionMs: Long): Boolean = false
     suspend fun shutdown()
 }
 

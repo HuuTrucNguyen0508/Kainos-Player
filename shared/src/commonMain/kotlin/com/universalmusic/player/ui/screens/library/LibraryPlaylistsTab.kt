@@ -38,7 +38,7 @@ import com.universalmusic.player.data.spotify.isDiscoverWeekly
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
-import com.universalmusic.player.ui.components.TrackRow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -49,6 +49,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
     listState: LazyListState,
     scope: CoroutineScope,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
     playlistBusyId: String?,
     onPlaylistBusyId: (String?) -> Unit,
     playlistError: String?,
@@ -65,7 +66,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
     onCreateDraft: (String?) -> Unit,
 ) {
     val showKainos = !state.favoritesOnly
-    val showSpotify = !state.localOnly && !state.favoritesOnly
+    val showSpotify = !state.localOnly && !state.readyOffline && !state.favoritesOnly
     val totalCount = (if (showKainos) state.kainosPlaylists.size else 0) +
         (if (showSpotify) state.spotifyPlaylists.size else 0)
     LibraryPlaylistDialogs(
@@ -90,7 +91,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
         EmptyState(
             if (state.needle.isEmpty()) {
                 when {
-                    state.localOnly -> "No Kainos playlists yet"
+                    state.localOnly || state.readyOffline -> "No Kainos playlists yet"
                     else -> "No playlists"
                 }
             } else {
@@ -99,6 +100,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
             when {
                 state.needle.isNotEmpty() -> "Try another playlist name."
                 state.localOnly -> "Create a Kainos playlist, or turn off Local files only to see Spotify playlists."
+                state.readyOffline -> "Create a Kainos playlist, or turn off Ready offline to see Spotify playlists."
                 else -> "Create a Kainos playlist or connect Spotify and refresh."
             },
         )
@@ -284,8 +286,9 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                             val entryId = state.kainosRows
                                 .firstOrNull { it.id == playlist.canonicalId }
                                 ?.entries?.getOrNull(index)?.entryId
-                            TrackRow(
+                            ActionTrackRow(
                                 track = track,
+                                actions = trackActions,
                                 onClick = { onPlayTracks(playlist.tracks, index) },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -385,6 +388,8 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                                                 } else {
                                                     onPlayTracks(tracks, 0)
                                                 }
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
                                             } catch (failure: Exception) {
                                                 onPlaylistError(
                                                     failure.message ?: "Could not load \"${playlist.title}\".",

@@ -3,6 +3,7 @@ package com.universalmusic.player.ui.screens
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
+import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
@@ -11,6 +12,11 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
+import com.universalmusic.player.platform.defaultLocalMusicFolder
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,6 +41,7 @@ internal class LibraryPresenter(
     private val spotifyState: StateFlow<ProviderState>,
     private val downloads: StateFlow<Map<String, DownloadItemState>>,
     private val scope: CoroutineScope,
+    private val catalogContext: CoroutineContext = EmptyCoroutineContext,
     private val refreshLocalLibrary: () -> Unit = {},
     private val refreshSpotifyLibrary: suspend () -> Unit = {},
     private val onPinHome: (
@@ -58,6 +65,10 @@ internal class LibraryPresenter(
     private val onTrackAvailability: (Track) -> TrackAvailabilityInfo = { track ->
         error("trackAvailability was not provided for ${track.canonicalId}")
     },
+    /** The track as it plays with no network (cached audio attached), or null when it cannot. */
+    private val offlineTrack: (Track) -> Track? = Track::offlineOnly,
+    /** The platform default music folder, browsed in Folders until the listener picks their own. */
+    private val defaultMusicFolder: () -> String = { "" },
 ) {
     private val queryText = MutableStateFlow("")
 
@@ -94,9 +105,10 @@ internal class LibraryPresenter(
             ::SpotifySlice,
         ),
         combine(kainosPlaylistRows, homePins, downloads, ::PinsSlice),
-        queryText,
-    ) { catalog, spotify, pins, query ->
-        derive(catalog, spotify, pins, query)
+    ) { catalog, spotify, pins ->
+        derive(catalog, spotify, pins, "").also { it.searchIndex.warm() }
+    }.flowOn(catalogContext).combine(queryText) { catalog, query ->
+        catalog.withQuery(query)
     }.stateIn(scope, SharingStarted.Eagerly, initialState())
 
     fun setQuery(value: String) {
@@ -112,6 +124,12 @@ internal class LibraryPresenter(
     fun toggleFavoritesOnly() {
         scope.launch {
             updateSettings { it.copy(libraryFavoritesOnly = !it.libraryFavoritesOnly) }
+        }
+    }
+
+    fun toggleReadyOffline() {
+        scope.launch {
+            updateSettings { it.copy(libraryReadyOffline = !it.libraryReadyOffline) }
         }
     }
 
@@ -205,6 +223,12 @@ internal class LibraryPresenter(
         spotifyState = spotify.providerState,
         downloads = pins.downloads,
         query = query,
+        musicFolders = configuredMusicFolders(
+            catalog.settings.localMusicFolders,
+            catalog.settings.localMusicFoldersConfigured,
+            defaultMusicFolder(),
+        ),
+        offlineTrack = offlineTrack,
     )
 
     companion object {
@@ -224,6 +248,7 @@ internal class LibraryPresenter(
             spotifyState = container.spotify.state,
             downloads = container.heartedAudio.downloads,
             scope = scope,
+            catalogContext = Dispatchers.Default,
             refreshLocalLibrary = container::refreshLocalLibrary,
             refreshSpotifyLibrary = container::refreshSpotifyLibrary,
             onPinHome = { kind, targetId, title, subtitle, artworkUrl, providerEntityId, provider ->
@@ -256,6 +281,8 @@ internal class LibraryPresenter(
                     }
             },
             onTrackAvailability = container::trackAvailability,
+            offlineTrack = container::offlineTrack,
+            defaultMusicFolder = ::defaultLocalMusicFolder,
         )
     }
 }

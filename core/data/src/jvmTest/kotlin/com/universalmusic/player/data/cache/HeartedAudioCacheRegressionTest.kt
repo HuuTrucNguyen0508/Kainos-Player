@@ -11,6 +11,26 @@ import kotlinx.coroutines.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HeartedAudioCacheRegressionTest {
+    @Test fun failedMatchSearchReachesTheDialogInsteadOfLookingLikeNoResults() = runTest {
+        val root = createTempDirectory("match-search").toFile()
+        try {
+            val service = HeartedAudioCacheService(
+                backgroundScope,
+                DefaultHeartedAudioCache(FileHeartedAudioCacheDisk(root.toPath())),
+                object : YouTubeAudioDownloader {
+                    override fun isAvailable() = true
+                    override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
+                        onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio = error("not used")
+                },
+                { error("YouTube quota exceeded") },
+            )
+            val track = Track(canonicalId = "yt:song", title = "Song", artists = emptyList())
+            assertEquals("YouTube quota exceeded", assertFails { service.searchMatchCandidates(track) }.message)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun entry(file: File, owner: String, video: String = "same-video") = HeartedAudioCacheEntry(
         owner, video, file.toURI().toASCIIString(), sizeBytes = file.length(), downloadedAtMs = 1,
     )

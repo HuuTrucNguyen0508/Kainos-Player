@@ -63,7 +63,7 @@ class MprisController(
                 },
             )?.cancel()
         }.onFailure { error ->
-            System.err.println("MprisController failed to start: ${error.message}")
+            com.universalmusic.player.platform.PlaybackTrace.log("Warning", "MprisController failed to start: ${error.message}")
             stop()
         }
     }
@@ -123,7 +123,7 @@ interface MprisMediaPlayer2Player : DBusInterface {
 }
 
 @Suppress("UNCHECKED_CAST")
-private class MprisFacade(
+internal class MprisFacade(
     private val session: PlayerSession,
     private val emitSeeked: (positionUs: Long) -> Unit,
 ) : MprisMediaPlayer2, MprisMediaPlayer2Player, Properties {
@@ -210,7 +210,7 @@ private class MprisFacade(
         if (now.isPlaying || now.buffering) session.pauseTransport()
     }
     override fun PlayPause() = session.togglePlayPause()
-    override fun Stop() = session.clearQueue()
+    override fun Stop() = session.stopTransport()
     override fun Play() = session.playTransport()
     override fun Seek(offset: Long) {
         val now = session.nowPlaying.value
@@ -260,10 +260,7 @@ private class MprisFacade(
                     "Playlist" -> RepeatMode.ALL
                     else -> return
                 }
-                var guard = 0
-                while (session.queueState.value.repeat != target && guard++ < 3) {
-                    session.cycleRepeat()
-                }
+                session.setRepeat(target)
             }
             "Volume" -> {
                 val want = when (raw) {

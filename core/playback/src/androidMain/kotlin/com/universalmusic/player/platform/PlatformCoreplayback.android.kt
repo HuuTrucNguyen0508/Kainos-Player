@@ -5,6 +5,8 @@ import com.universalmusic.player.domain.playback.PlaybackEngine
 actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine =
     AndroidPlaybackEngine(androidContext, spotify)
 
+actual fun audioPlayerInstalled(): Boolean = true
+
 actual fun bindPlatformMediaControls(
     session: com.universalmusic.player.domain.playback.PlayerSession,
     scope: kotlinx.coroutines.CoroutineScope,

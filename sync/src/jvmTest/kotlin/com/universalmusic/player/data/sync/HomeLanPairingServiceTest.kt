@@ -113,6 +113,41 @@ class HomeLanPairingServiceTest {
     }
 
     @Test
+    fun aListeningPcOffersAPairingLinkWithItsPinAndAddress() = runTest {
+        val directory = Files.createTempDirectory("kainos-pair-link").toFile()
+        try {
+            var settings = AppSettings(homeLanSyncEnabled = true, homeLanSyncRole = HomeLanSyncRole.HUB, homeLanSyncDeviceId = "pc")
+            val service = HomeLanSyncService(backgroundScope, { settings }, { settings = it(settings) },
+                LibraryRepository(), KainosPlaylistRepository(),
+                hubFactory = {
+                    object : HomeLanSyncHub {
+                        override var isListening = false
+                        override suspend fun start() { isListening = true }
+                        override suspend fun stop() { isListening = false }
+                        override fun touchActivity() = Unit
+                        override fun lastActivityAtMs(): Long? = null
+                    }
+                },
+                clientFactory = { error("No sync client needed") }, pairingClientFactory = noPairingClient(),
+                identity = FixedDeviceIdentity(hubPin.hex),
+                vaultStore = JvmHomeLanVaultStore({ directory.toString() }, directory.resolve("vault-state.json").toPath()),
+                refreshLocalLibrary = {}, isDesktop = true, hubPort = 43824, deviceName = { "studio" },
+                lanAddress = { "192.168.1.20" })
+            service.hydrateFromSettings(settings)
+            assertNull(service.pairingLink())
+            service.startHubIfNeeded()
+            assertEquals(
+                "kainos-pair:3?fp=${hubPin.hex}&id=pc&host=192.168.1.20&port=43824&name=Kainos%20on%20studio",
+                service.pairingLink(),
+            )
+            service.stopHub()
+            assertNull(service.pairingLink())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun failedIdentityResetPreservesTrustAndNeverReportsSuccess() = runTest {
         val directory = Files.createTempDirectory("kainos-reset-failure-service").toFile()
         val identityDirectory = directory.resolve("identity").toPath()

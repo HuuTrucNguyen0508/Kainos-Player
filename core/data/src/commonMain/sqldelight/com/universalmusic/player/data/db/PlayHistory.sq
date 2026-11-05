@@ -1,0 +1,44 @@
+-- Device-local listening history. Never synced; rows hold track metadata only, never stream URLs.
+CREATE TABLE play_event (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    canonical_id TEXT NOT NULL,
+    started_at_ms INTEGER NOT NULL,
+    listened_ms INTEGER NOT NULL CHECK (listened_ms >= 0),
+    completed INTEGER AS kotlin.Boolean NOT NULL
+);
+
+CREATE INDEX play_event_track ON play_event (canonical_id, started_at_ms);
+
+CREATE INDEX play_event_started ON play_event (started_at_ms);
+
+-- The newest metadata seen for each track that still has events, so shelves can show tracks
+-- that are no longer in any loaded catalog (a Spotify track that played from a queue, say).
+CREATE TABLE play_history_track (
+    canonical_id TEXT NOT NULL PRIMARY KEY,
+    track_json TEXT NOT NULL
+);
+
+insertEvent:
+INSERT INTO play_event (canonical_id, started_at_ms, listened_ms, completed) VALUES (?, ?, ?, ?);
+
+upsertTrack:
+INSERT OR REPLACE INTO play_history_track (canonical_id, track_json) VALUES (?, ?);
+
+deleteEventsBefore:
+DELETE FROM play_event WHERE started_at_ms < ?;
+
+deleteOrphanTracks:
+DELETE FROM play_history_track WHERE canonical_id NOT IN (SELECT DISTINCT canonical_id FROM play_event);
+
+-- A play counts when it finished or ran at least :minListenedMs.
+mostPlayedSince:
+SELECT e.canonical_id, t.track_json, count(*) AS plays, max(e.started_at_ms) AS last_played_at_ms
+FROM play_event e JOIN play_history_track t ON t.canonical_id = e.canonical_id
+WHERE e.started_at_ms >= :sinceMs AND (e.completed OR e.listened_ms >= :minListenedMs)
+GROUP BY e.canonical_id
+HAVING count(*) >= :minPlays
+ORDER BY plays DESC, last_played_at_ms DESC
+LIMIT :limit;
+
+lastPlayed:
+SELECT canonical_id, max(started_at_ms) AS last_played_at_ms FROM play_event GROUP BY canonical_id;

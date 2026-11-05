@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kainos Player — Direction 6: Caelestia</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+ /* Caelestia tokens, read live from the shell's Tokens singleton (caelestia-shell 2.5.0) */
+ --r-xs:4px;--r-s:8px;--r-m:12px;--r-l:16px;--r-li:20px;--r-xl:28px;--r-xli:32px;--r-xxl:48px;--r-full:9999px;
+ --sans:"Google Sans Flex","GoogleSansFlex","Google Sans",Rubik,"Noto Sans",sans-serif;
+ --mono:"CaskaydiaCove NF","CaskaydiaCove Nerd Font","Cascadia Code",monospace;
+ --std:cubic-bezier(.2,0,0,1);--spatial:cubic-bezier(.38,1.21,.22,1);--spatial-fast:cubic-bezier(.42,1.67,.21,.9);
+ --fx:cubic-bezier(.34,.8,.34,1);--fx-slow:cubic-bezier(.34,.88,.34,1);
+ --d-fx:200ms;--d-fx-slow:300ms;--d-spatial:500ms;
+ --tr:85%; /* appearance.transparency.base */
+ --al:#3E7F8E; /* album light sample for Saltwater Cathedral, clamped like AlbumLight.kt */
+ --wall:radial-gradient(120% 90% at 22% 18%,#7a5488 0%,#3a2a45 42%,#140f16 100%);
+}
+/* translucent roles, as Colours.tPalette */
+:root{--tSurface:color-mix(in srgb,var(--surface) var(--tr),transparent);--tSurfaceContainer:color-mix(in srgb,var(--surfaceContainer) var(--tr),transparent);--tSurfaceContainerLow:color-mix(in srgb,var(--surfaceContainerLow) var(--tr),transparent);--tSurfaceContainerHigh:color-mix(in srgb,var(--surfaceContainerHigh) var(--tr),transparent);--tSecondaryContainer:color-mix(in srgb,var(--secondaryContainer) 92%,transparent)}
+html{color-scheme:dark}html.light{color-scheme:light}
+body{background:var(--background);color:var(--onBackground);font:16px/1.5 var(--sans);padding:32px 40px 90px;transition:background-color var(--d-fx-slow) var(--fx-slow),color var(--d-fx-slow) var(--fx-slow)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+svg{display:block}
+.mi{width:24px;height:24px;fill:currentColor;flex:none}
+.mi.st{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.mi.s{width:20px;height:20px}.mi.l{width:32px;height:32px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+/* type roles: Tokens.font.* pixel sizes and weights */
+.bs{font-size:16px;font-weight:400}.bm{font-size:18px;font-weight:400}.bl{font-size:21px;font-weight:400}
+.ls{font-size:14px;font-weight:400}.lm{font-size:16px;font-weight:500}.ll{font-size:18px;font-weight:500}
+.tS{font-size:18px;font-weight:500}.tM{font-size:21px;font-weight:500}.tL{font-size:29px;font-weight:500;line-height:1.2}
+.hS{font-size:32px;font-weight:500;line-height:1.2}.hM{font-size:37px;font-weight:500;line-height:1.15}
+.mut{color:var(--onSurfaceVariant)}.sec{color:var(--secondary)}.num{font-variant-numeric:tabular-nums}
+
+/* ---------- page chrome ---------- */
+.intro{max-width:1240px}
+.intro .kick{color:var(--onSurfaceVariant);font-size:16px}
+.intro h1{font-size:64px;font-weight:500;line-height:1;letter-spacing:-.01em;margin-top:8px;color:var(--primary)}
+.intro>p{max-width:72ch;margin-top:18px;font-size:18px;line-height:1.55}
+.meta{display:grid;grid-template-columns:1fr 1fr 1.15fr;gap:12px;margin-top:28px}
+.meta>div{background:var(--surfaceContainerLow);border-radius:var(--r-xl);padding:20px 22px 22px}
+.meta h3{font-size:18px;font-weight:500;color:var(--primary);margin-bottom:10px}
+.meta .t1{font-size:29px;font-weight:500;line-height:1.2}
+.meta .t2{font-size:15px;line-height:1.5;color:var(--onSurfaceVariant);margin-top:8px}
+.meta code{font-family:var(--mono);font-size:13px;color:var(--onSurface)}
+.swl{display:flex;gap:6px;flex-wrap:wrap}
+.swl span{width:108px}.swl i{display:block;height:36px;border-radius:var(--r-m);border:1px solid var(--outlineVariant)}
+.swl b{display:block;font-size:10.5px;font-weight:400;color:var(--onSurfaceVariant);margin-top:3px;font-family:var(--mono);white-space:nowrap}
+.how{margin-top:12px;background:var(--surfaceContainer);border-radius:var(--r-xl);padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:12px 28px;max-width:1240px}
+.how h3{font-size:18px;font-weight:500;color:var(--primary);grid-column:1/-1}
+.how p{font-size:15px;line-height:1.55;color:var(--onSurfaceVariant)}
+.how p b{color:var(--onSurface);font-weight:500}
+h2.sect{font-size:29px;font-weight:500;line-height:1.2;margin:56px 0 14px}
+h2.sect span{font-size:15px;font-weight:400;color:var(--onSurfaceVariant);margin-left:12px}
+.note{color:var(--onSurfaceVariant);font-size:15px;max-width:80ch;margin-top:12px;line-height:1.55}
+.note b{color:var(--onSurface);font-weight:500}
+ul.pts{max-width:80ch;margin-top:10px;padding-left:20px;color:var(--onSurfaceVariant);font-size:15px;line-height:1.55}
+ul.pts li{margin-top:6px}ul.pts b{color:var(--onSurface);font-weight:500}
+.ctl{position:fixed;left:10px;top:10px;z-index:200;display:flex;flex-direction:column;gap:4px;padding:10px;border-radius:var(--r-l);background:var(--inverseSurface);color:var(--inverseOnSurface);font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.ctl b{font-weight:500;opacity:.7;font-size:12px}
+.ctl .row{display:flex;flex-direction:column;gap:3px}
+.ctl button{padding:5px 10px;border-radius:var(--r-s);min-height:28px;display:flex;align-items:center;gap:8px}
+.ctl button i{width:12px;height:12px;border-radius:50%;flex:none}
+.ctl button[aria-pressed=true]{background:var(--primary);color:var(--onPrimary)}
+body.noui .ctl{display:none}
+.scale{position:relative;overflow:hidden;border-radius:15px}
+.scale>.inner{transform-origin:0 0;position:absolute;left:0;top:0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+table.tok{border-collapse:collapse;font-size:14px;max-width:1240px;margin-top:6px}
+.tok td{padding:7px 14px 7px 0;border-bottom:1px solid var(--outlineVariant);vertical-align:top;color:var(--onSurfaceVariant)}
+.tok td:first-child{color:var(--onSurface);font-weight:500;white-space:nowrap}
+.tok code{font-family:var(--mono);font-size:12.5px;color:var(--onSurface)}
+
+/* ---------- the screen: wallpaper, Caelestia frame and bar ---------- */
+.screen{width:1920px;height:1080px;position:relative;overflow:hidden;background:var(--wall) center/cover #000;font-family:var(--sans);color:var(--onSurface)}
+.screen .frame{position:absolute;left:60px;top:10px;right:10px;bottom:10px;border-radius:25px;box-shadow:0 0 0 120px var(--tSurface);pointer-events:none}
+.bar{position:absolute;left:0;top:0;bottom:0;width:60px;display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:12px}
+.bar .os{width:24px;height:24px;color:var(--primary)}
+.bar .pill{width:40px;border-radius:var(--r-full);background:var(--tSurfaceContainer);display:flex;flex-direction:column;align-items:center;padding:4px 0}
+.bar .ws{gap:4px;padding:4px}
+.bar .ws i{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:14px;color:var(--onSurfaceVariant);font-style:normal}
+.bar .ws i.on{background:var(--primary);color:var(--onPrimary);border-radius:var(--r-full);height:40px}
+.bar .aw{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--primary);padding-top:6px}
+.bar .aw .t{writing-mode:vertical-rl;font-size:14px;letter-spacing:1.4px}
+.bar .clock{color:var(--tertiary);padding:12px 0;font-size:14.3px;font-weight:500;gap:2px}
+.bar .clock hr{width:22px;border:0;border-top:1px solid var(--outlineVariant);margin:3px 0}
+.bar .clock small{font-size:12.6px;font-weight:400}
+.bar .st{color:var(--secondary);gap:8px;padding:12px 0}
+.bar .st svg{width:20px;height:20px}
+.bar .pw{color:var(--error);margin-top:2px}
+.win{position:absolute;border-radius:15px;overflow:hidden;background:var(--tSurface);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);box-shadow:0 0 0 1px color-mix(in srgb,var(--primary) 35%,transparent),0 24px 60px -20px rgba(0,0,0,.55);display:flex;color:var(--onSurface);font-family:var(--sans);font-size:16px}
+.win.solid{background:var(--surface)}
+/* nav rail (M3 rail in Caelestia's clothes) */
+.rail{width:88px;display:flex;flex-direction:column;align-items:center;padding:20px 0;gap:4px;flex:none}
+.rail .logo{width:44px;height:44px;border-radius:var(--r-l);background:var(--primaryContainer);color:var(--onPrimaryContainer);display:grid;place-items:center;margin-bottom:16px}
+.rail .nv{display:flex;flex-direction:column;align-items:center;gap:4px;width:76px;padding:8px 0;color:var(--onSurfaceVariant);font-size:14px;font-weight:500;border-radius:var(--r-l)}
+.rail .nv i{width:56px;height:32px;border-radius:var(--r-full);display:grid;place-items:center;transition:border-radius var(--d-fx) var(--fx),background-color var(--d-fx-slow) var(--fx-slow)}
+.rail .nv.on{color:var(--onSurface)}.rail .nv.on i{background:var(--secondaryContainer);color:var(--onSecondaryContainer);border-radius:var(--r-m)}
+.rail .nv.on svg{fill:currentColor}
+.rail .nv:hover i{background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;padding:28px 28px 28px 8px;gap:20px}
+.main.lib{padding-left:12px}
+/* buttons, chips, switch, sliders */
+.ib{display:inline-grid;place-items:center;width:40px;height:40px;border-radius:var(--r-full);background:var(--tSecondaryContainer);color:var(--onSecondaryContainer);position:relative;flex:none;transition:border-radius var(--d-fx) var(--fx),background-color var(--d-fx-slow) var(--fx-slow),color var(--d-fx-slow) var(--fx-slow)}
+.ib.lg{width:48px;height:48px}.ib.wide{width:104px}
+.ib.on{background:var(--secondary);color:var(--onSecondary);border-radius:var(--r-m)}
+.ib.filled{background:var(--primary);color:var(--onPrimary)}.ib.filled.on{background:var(--primary);color:var(--onPrimary)}
+.ib.txt{background:transparent;color:var(--onSurfaceVariant)}
+.ib.dis{background:color-mix(in srgb,var(--onSurface) 10%,transparent);color:color-mix(in srgb,var(--onSurface) 38%,transparent)}
+.ib::after,.tb::after{content:"";position:absolute;inset:0;border-radius:inherit;background:currentColor;opacity:0;transition:opacity var(--d-fx) var(--fx)}
+.ib:hover::after,.tb:hover::after{opacity:.08}
+.ib.on .mi.st{stroke-width:2.3}
+.tb{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 20px;border-radius:var(--r-l);background:var(--tSecondaryContainer);color:var(--onSecondaryContainer);font-size:16px;font-weight:500;position:relative;white-space:nowrap;flex:none}
+.tb.filled{background:var(--primary);color:var(--onPrimary)}
+.tb.txt{background:transparent;color:var(--primary)}
+.tb.on{background:var(--secondary);color:var(--onSecondary);border-radius:var(--r-m)}
+.chip{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 16px 0 12px;border-radius:var(--r-s);border:1px solid var(--outline);color:var(--onSurfaceVariant);font-size:14px;font-weight:500;white-space:nowrap}
+.chip .mi{width:18px;height:18px}
+.chip.on{background:var(--secondaryContainer);border-color:transparent;color:var(--onSecondaryContainer)}
+.chip.assist{border-color:var(--outlineVariant);color:var(--onSurface);font-weight:400;height:34px;border-radius:var(--r-s)}
+.chip.assist .mi{color:var(--primary)}
+.sw{width:51px;height:30px;border-radius:var(--r-full);background:var(--surfaceContainerHighest);position:relative;flex:none;transition:background-color var(--d-fx-slow) var(--fx-slow)}
+.sw i{position:absolute;top:2px;left:2px;width:26px;height:26px;border-radius:50%;background:var(--outline);display:grid;place-items:center;transition:left 350ms var(--spatial-fast)}
+.sw i svg{width:16px;height:16px;fill:none;stroke:var(--surfaceContainerHighest);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.sw.on{background:var(--primary)}.sw.on i{left:23px;background:var(--onPrimary)}.sw.on i svg{stroke:var(--primary)}
+.sw.dis{opacity:.5}
+/* the Caelestia slider: wavy fill, pill handle, remaining track with a stop dot */
+.seek{display:flex;align-items:center;gap:4px;height:36px;width:100%}
+.seek .f{height:14px;flex:0 0 var(--p);background:var(--primary);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 14'%3E%3Cpath d='M0 7C8 7 8 2.5 15 2.5S22 7 30 7s7 4.5 15 4.5S52 7 60 7' fill='none' stroke='%23000' stroke-width='4.5' stroke-linecap='round'/%3E%3C/svg%3E") 0 50%/60px 14px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 14'%3E%3Cpath d='M0 7C8 7 8 2.5 15 2.5S22 7 30 7s7 4.5 15 4.5S52 7 60 7' fill='none' stroke='%23000' stroke-width='4.5' stroke-linecap='round'/%3E%3C/svg%3E") 0 50%/60px 14px repeat-x}
+.seek.playing .f{animation:wave 2s linear infinite}
+.seek.flat .f{height:12px;-webkit-mask:none;mask:none;border-radius:12px 2px 2px 12px}
+@keyframes wave{to{-webkit-mask-position:-60px 50%;mask-position:-60px 50%}}
+.seek .h{width:4px;height:36px;border-radius:2px;background:var(--primary);flex:none}
+.seek .r{flex:1;height:12px;border-radius:2px 12px 12px 2px;background:var(--tSecondaryContainer);position:relative;min-width:12px}
+.seek .r::after{content:"";position:absolute;right:4px;top:4px;width:4px;height:4px;border-radius:50%;background:var(--primary)}
+.seek.sm{height:24px}.seek.sm .h{height:24px}.seek.sm .f{height:10px;-webkit-mask-size:44px 10px;mask-size:44px 10px}.seek.sm .r{height:8px}.seek.sm .r::after{top:2px}
+.wprog{height:6px;border-radius:3px;background:var(--surfaceContainerHighest);position:relative;overflow:visible}
+.wprog i{position:absolute;left:0;top:0;height:6px;width:var(--p);background:var(--primary);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 3C3 3 3 1 6 1s3 2 6 2 3 2 6 2 3-2 6-2' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") 0 50%/24px 6px repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 6'%3E%3Cpath d='M0 3C3 3 3 1 6 1s3 2 6 2 3 2 6 2 3-2 6-2' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") 0 50%/24px 6px repeat-x;animation:wave2 1.2s linear infinite}
+@keyframes wave2{to{-webkit-mask-position:-24px 50%;mask-position:-24px 50%}}
+.times{display:flex;align-items:center;gap:8px}
+.times span{width:44px;text-align:center;font-size:16px;font-weight:500;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums}
+.ctr{display:flex;align-items:center;justify-content:center;gap:4px}
+/* covers */
+.cv{display:block;border-radius:var(--r-m);overflow:hidden;background:var(--surfaceContainerHighest);flex:none;width:48px;height:48px}
+.cv svg{width:100%;height:100%}
+.covwrap{position:relative;display:grid;place-items:center;isolation:isolate}
+.covwrap::before{content:"";position:absolute;inset:-10%;border-radius:50%;background:radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--al) 55%,var(--primaryContainer)) 0,transparent 66%);opacity:var(--glow,.6);filter:blur(22px);z-index:-1}
+.covwrap .cv{border-radius:var(--r-xl);box-shadow:0 0 0 1px color-mix(in srgb,var(--outline) 30%,transparent)}
+.src{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c);flex:none}
+/* Home */
+.cards{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
+.card{background:var(--tSurfaceContainer);border-radius:var(--r-xl);padding:24px;position:relative;overflow:hidden}
+.card.hi{background:var(--tSurfaceContainerHigh)}
+.card .shapes{position:absolute;inset:0;pointer-events:none}
+.card .shapes i{position:absolute;border-radius:50%;opacity:.16}
+.card .actions{display:flex;gap:8px;margin-top:20px;align-items:center}
+.pins{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
+.pin{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:var(--r-li);background:var(--tSurfaceContainerLow);position:relative}
+.pin .cv{width:100%;height:auto;aspect-ratio:1;border-radius:var(--r-l)}
+.pin b{font-weight:500;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pin small{display:flex;align-items:center;gap:6px;color:var(--onSurfaceVariant);font-size:14px}
+.pin:hover::after{content:"";position:absolute;inset:0;border-radius:inherit;background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.hrow{display:flex;align-items:baseline;justify-content:space-between}
+.recent{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
+.rrow{display:grid;grid-template-columns:48px 1fr auto;gap:12px;align-items:center;padding:6px 10px 6px 6px;border-radius:var(--r-l)}
+.rrow:hover{background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.rrow b{font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rrow small{display:block;color:var(--onSurfaceVariant);font-size:14px}
+.rrow em{font-style:normal;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums;font-size:14px}
+/* Now Playing pane */
+.pane{width:420px;flex:none;background:var(--tSurfaceContainerLow);border-radius:var(--r-xl);margin:20px 20px 20px 0;padding:22px 28px 18px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.pane .top{display:flex;align-items:center;gap:4px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500}
+.pane .top span{flex:1;padding-left:8px}
+.pane .covwrap{margin:6px 0 4px}.pane .covwrap .cv{width:280px;height:280px}
+.pane .ttl{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pane .ttl>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pane .chips{display:flex;gap:8px;flex-wrap:wrap}
+.aux{display:flex;align-items:center;gap:12px;min-height:40px;font-size:16px}
+.aux .v{margin-left:auto;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums}
+.aux .k{font-weight:500}
+.vol{flex:1;display:flex;align-items:center;gap:4px;height:28px}
+.vol .f{height:12px;flex:0 0 var(--p);border-radius:12px 2px 2px 12px;background:var(--primary)}
+.vol .h{width:4px;height:28px;border-radius:2px;background:var(--primary)}
+.vol .r{flex:1;height:12px;border-radius:2px 12px 12px 2px;background:var(--tSecondaryContainer);position:relative}
+.vol .r::after{content:"";position:absolute;right:4px;top:4px;width:4px;height:4px;border-radius:50%;background:var(--primary)}
+.upnext{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.upnext .hrow{margin-bottom:6px}
+.qr{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;min-height:48px;padding:0 8px 0 4px;border-radius:var(--r-m);font-size:15px}
+.qr .cv{width:40px;height:40px;border-radius:var(--r-s)}
+.qr b{font-weight:500;display:block}.qr small{display:block;color:var(--onSurfaceVariant);font-size:13px}
+.qr em{font-style:normal;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums;font-size:14px}
+/* Library */
+.libhead{display:flex;align-items:flex-end;gap:16px}
+.search{margin-left:auto;display:flex;align-items:center;gap:12px;height:52px;padding:0 20px;border-radius:var(--r-full);background:var(--tSurfaceContainer);width:420px;color:var(--onSurface);font-size:18px}
+.search .cur{width:2px;height:22px;background:var(--primary);margin-left:-8px}
+.search .hint{margin-left:auto;color:var(--onSurfaceVariant);font-size:14px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--outlineVariant);position:relative}
+.tabs button{padding:8px 16px 14px;font-size:18px;font-weight:500;color:var(--onSurfaceVariant);position:relative}
+.tabs button.on{color:var(--primary)}
+.tabs button.on::after{content:"";position:absolute;left:16px;right:16px;bottom:-1px;height:6px;border-radius:3px 3px 0 0;background:var(--primary)}
+.toolbar{display:flex;align-items:center;gap:8px}
+.toolbar .gap{flex:1}
+.ledger{display:grid;grid-template-columns:48px 2.2fr 1.5fr 1.6fr 1.5fr 64px;gap:16px;align-items:center;padding:0 12px;font-size:14px;font-weight:500;color:var(--onSurfaceVariant);height:40px;border-radius:var(--r-m);background:var(--tSurfaceContainer);position:sticky;top:0}
+.rows{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow:hidden}
+.row{display:grid;grid-template-columns:48px 2.2fr 1.5fr 1.6fr 1.5fr 64px;gap:16px;align-items:center;padding:6px 12px;border-radius:var(--r-l);min-height:60px;font-size:16px}
+.row:hover{background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.row.cur{background:var(--tSecondaryContainer);color:var(--onSecondaryContainer)}
+.row .t b{font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t small{display:flex;align-items:center;gap:6px;color:var(--onSurfaceVariant);font-size:13px}
+.row .cur-mark{display:inline-flex;align-items:center;gap:6px;color:var(--primary);font-weight:500;font-size:13px}
+.row .a{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--onSurfaceVariant)}
+.row .av{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--onSurfaceVariant)}
+.row .av .mi{width:20px;height:20px}
+.row .av.dl{color:var(--primary)}.row .av.fail{color:var(--error)}.row .av.un{color:var(--outline)}
+.row .av .bar2{width:64px;height:4px;border-radius:2px;background:var(--surfaceContainerHighest);position:relative;overflow:hidden}
+.row .av .bar2 i{position:absolute;left:0;top:0;bottom:0;width:62%;background:var(--primary)}
+.row .d{text-align:right;color:var(--onSurfaceVariant);font-variant-numeric:tabular-nums;font-size:15px}
+.row .hr{color:var(--primary)}.row .hr.off{color:var(--outlineVariant)}
+.minibar{display:flex;align-items:center;gap:16px;height:80px;padding:0 20px 0 12px;border-radius:var(--r-li);background:var(--tSurfaceContainer);position:relative;overflow:hidden}
+.minibar::before{content:"";position:absolute;left:-40px;top:-60px;width:260px;height:200px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--al) 45%,var(--primaryContainer)),transparent 66%);opacity:.35;filter:blur(18px)}
+.minibar>*{position:relative}
+.minibar .cv{width:56px;height:56px}
+.minibar .t{width:260px;min-width:0}.minibar .t b{font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.minibar .t small{display:block;color:var(--onSurfaceVariant);font-size:14px}
+.minibar .mid{flex:1;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.minibar .mid .times span{width:auto;font-size:14px}
+/* compact Now Playing window */
+.npc{flex:1;display:flex;gap:28px;padding:28px}
+.npc .covwrap .cv{width:300px;height:300px}
+.npc .right{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+/* Settings */
+.setnav{width:260px;flex:none;padding:28px 12px 28px 8px;display:flex;flex-direction:column;gap:2px}
+.setnav h1{font-size:32px;font-weight:500;padding:0 16px 16px}
+.setnav button{display:flex;align-items:center;gap:14px;height:48px;padding:0 16px;border-radius:var(--r-full);color:var(--onSurfaceVariant);font-size:16px;font-weight:500}
+.setnav button.on{background:var(--secondaryContainer);color:var(--onSecondaryContainer)}
+.setbody{flex:1;min-width:0;padding:28px 28px 28px 8px;display:flex;flex-direction:column;gap:14px}
+.srow{display:flex;align-items:center;gap:16px;padding:14px 20px;border-radius:var(--r-li);background:var(--tSurfaceContainer)}
+.srow .tx{flex:1;min-width:0}.srow .tx b{display:block;font-weight:500;font-size:18px}.srow .tx span{display:block;color:var(--onSurfaceVariant);font-size:14px;margin-top:2px}
+.srow.dim{opacity:.55}
+.srow .sws{display:flex;gap:4px}.srow .sws i{width:22px;height:22px;border-radius:7px;border:1px solid var(--outlineVariant)}
+.segs{display:flex;background:var(--surfaceContainerHighest);border-radius:var(--r-full);padding:3px;gap:2px}
+.segs button{height:32px;padding:0 16px;border-radius:var(--r-full);font-size:14px;font-weight:500;color:var(--onSurfaceVariant)}
+.segs button.on{background:var(--secondary);color:var(--onSecondary)}
+.schemes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.schemes .srow{padding:10px 16px}
+.schemes .srow .cv{width:40px;height:40px;border-radius:50%}
+/* Caelestia dashboard, media tab */
+.dashbox{position:relative;width:1240px;height:430px;font-family:var(--sans);color:var(--onSurface);overflow:hidden;border-radius:var(--r-l);background:var(--wall) center/cover}
+.dashbox .frame{position:absolute;left:60px;top:10px;right:10px;bottom:-40px;border-radius:25px;box-shadow:0 0 0 120px var(--tSurface);pointer-events:none}
+.dash{position:absolute;left:50%;top:10px;transform:translateX(-50%);width:1060px;background:var(--tSurface);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);border-radius:0 0 28px 28px;padding:0 20px 20px;display:flex;flex-direction:column;gap:12px}
+.dash::before,.dash::after{content:"";position:absolute;top:0;width:28px;height:28px;background:radial-gradient(circle at 0 100%,transparent 27px,var(--tSurface) 28px);right:-28px;transform:scaleX(1)}
+.dash::before{left:-28px;right:auto;background:radial-gradient(circle at 100% 100%,transparent 27px,var(--tSurface) 28px)}
+.dtabs{display:flex;justify-content:center;gap:4px;border-bottom:1px solid var(--outlineVariant);padding-top:6px}
+.dtabs button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 20px 12px;font-size:14px;font-weight:500;color:var(--onSurfaceVariant);position:relative}
+.dtabs button.on{color:var(--primary)}
+.dtabs button.on::after{content:"";position:absolute;left:20px;right:20px;bottom:-1px;height:6px;border-radius:3px 3px 0 0;background:var(--primary)}
+.media{display:flex;gap:28px;padding:16px;height:320px;position:relative}
+.media .shapes{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.media .shapes i{position:absolute;opacity:.16}
+.media .viz{width:300px;position:relative;display:grid;place-items:center;flex:none}
+.media .viz svg{position:absolute;inset:0;width:100%;height:100%}
+.media .viz .cookie{width:200px;height:200px;position:relative;overflow:hidden;background:var(--surfaceContainerHighest)}
+.media .viz .cookie .cv{width:100%;height:100%;border-radius:0}.media .viz .cookie svg{position:static;width:100%;height:100%}
+.media .det{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding-top:8px}
+.media .det>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.media .lyr{width:300px;flex:none;display:flex;flex-direction:column;gap:12px;padding-top:8px}
+.media .lyr .h{display:flex;align-items:center;gap:12px;font-size:21px;font-weight:500}
+.media .lyr .sel{display:flex;flex-direction:column;gap:6px;margin-top:auto}
+.media .lyr .sel .tb{justify-content:flex-start;height:44px;border-radius:var(--r-l)}
+
+/* ---------- Folio phone, copied from direction-5-folio.html, scoped ---------- */
+.folio{--paper:#E8EAE9;--ink:#15181B;--muted:#5F666C;--accent:#1E4BD8;--tile:#F9FAF9;--tileborder:#C6CBCA;--tilehi:#fff;--hair:#C9CECD;--rule:#B5BAB9;--grain:rgba(21,24,27,.055);--shadow:rgba(21,24,27,.22);--fal:#2F7584;--font:system-ui,Roboto,"Segoe UI","Noto Sans",sans-serif;--serif:"Iowan Old Style","Palatino Linotype","Book Antiqua","Noto Serif",Georgia,serif;
+ position:relative;overflow:hidden;color:var(--ink);background:var(--paper);font-family:var(--font);font-size:14px;width:390px;height:844px;border-radius:44px;border:8px solid #16171b;box-shadow:0 0 0 1px #2c2d33,0 30px 60px -30px rgba(0,0,0,.6);display:flex;flex-direction:column}
+.folio .wall{position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 1px 1px,var(--grain) 1px,transparent 1.5px) 0 0/14px 14px}
+.folio>*:not(.wall){position:relative}
+.folio .sb{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:14px;font-weight:600;flex:none}
+.folio .sb svg{width:16px;height:16px;fill:currentColor}
+.folio .body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 18px}
+.folio .pill{position:absolute;bottom:8px;left:50%;width:118px;height:4px;border-radius:2px;background:var(--ink);opacity:.5;transform:translateX(-50%)}
+.folio svg.g{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;width:18px;height:18px}
+.folio .np{display:flex;flex-direction:column;height:100%;padding:0 4px 26px}
+.folio .np .top{display:flex;align-items:center;gap:6px;min-height:56px;margin-top:4px}
+.folio .np .top .back{display:flex;align-items:center;gap:6px;min-height:48px;padding:0 10px 0 2px;font-family:var(--serif);font-style:italic;font-size:15.5px}
+.folio .np .top .r{margin-left:auto;display:flex;gap:4px}
+.folio .np .top .r button{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;color:var(--ink)}
+.folio .washbox{position:relative;display:grid;place-items:center}
+.folio .washbox::before{content:"";position:absolute;inset:-14% -18%;border-radius:50%;background:radial-gradient(ellipse at 50% 55%,color-mix(in srgb,var(--fal) 28%,transparent),transparent 62%);pointer-events:none}
+.folio .bigart{position:relative;width:318px;height:318px;border-radius:14px;overflow:hidden;border:1px solid var(--tileborder);box-shadow:inset 0 1px 0 var(--tilehi),0 10px 22px -14px var(--shadow)}
+.folio .bigart svg{width:100%;height:100%}
+.folio .almark{height:2px;border-radius:1px;background:var(--fal);margin:12px auto 0;width:44px}
+.folio .np .title{display:flex;align-items:flex-start;gap:12px;margin-top:18px}
+.folio .np .title h2{font-family:var(--serif);font-weight:400;font-size:27px;line-height:1.1;letter-spacing:-.01em;flex:1;min-width:0}
+.folio .np .title p{font-size:14.5px;color:var(--muted);margin-top:5px}
+.folio .np .heart{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--rule);flex:none;margin-top:-4px;color:var(--ink)}
+.folio .np .heart.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.folio .np .heart.on svg{fill:currentColor}
+.folio .ledger{width:100%;display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);margin-top:14px}
+.folio .lg{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:2px;padding:7px 10px;min-height:46px;font-size:13.5px;line-height:1.25}
+.folio .lg .k{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.folio .lg b{font-weight:600;font-variant-numeric:tabular-nums}
+.folio .lg .sub{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.folio .lg-w{border-right:1px solid var(--hair)}
+.folio .mark{display:inline-block;width:14px;height:2px;border-radius:1px;background:var(--c,var(--rule));vertical-align:middle;flex:none}
+.folio .scale{position:relative;height:44px;margin-top:14px;border-radius:0;overflow:visible}
+.folio .scale .base{position:absolute;left:0;right:0;top:14px;height:1px;background:var(--rule)}
+.folio .scale .done{position:absolute;left:0;top:13px;height:3px;background:var(--ink);border-radius:2px}
+.folio .scale .tk{position:absolute;top:10px;width:1px;height:9px;background:var(--rule);transform:translateX(-.5px)}
+.folio .scale .tk.big{top:7px;height:15px;background:var(--muted)}
+.folio .scale .tk b{position:absolute;left:0;top:19px;transform:translateX(-50%);font-family:var(--serif);font-weight:400;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.folio .scale .dot{position:absolute;top:14.5px;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--paper);transform:translate(-50%,-50%)}
+.folio .times{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--serif);font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:.01em;line-height:1;margin-top:14px}
+.folio .times span{color:var(--muted);font-size:16px;width:auto;font-weight:400;font-family:var(--serif)}
+.folio .times .left{font-size:13px;color:var(--muted);font-style:italic}
+.folio .tr{display:flex;align-items:center;justify-content:space-between;margin-top:18px}
+.folio .tr button{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;color:var(--ink);position:relative}
+.folio .tr button svg.g{width:22px;height:22px}
+.folio .tr .play{width:68px;height:68px;background:var(--ink);color:var(--paper)}
+.folio .tr .play svg{width:26px;height:26px;fill:currentColor;stroke:none;margin-left:3px}
+.folio .tr .on{background:var(--ink);color:var(--paper)}
+.folio .tr .on::after{content:"";position:absolute;left:50%;bottom:-7px;width:14px;height:2px;border-radius:1px;background:var(--accent);transform:translateX(-50%)}
+.folio .tr .rep sup{position:absolute;top:9px;right:7px;font-family:var(--serif);font-size:10px;line-height:1;width:12px;height:12px;border-radius:50%;background:var(--paper);color:var(--ink);display:grid;place-items:center}
+.folio .aux2{margin-top:auto;border-top:1px solid var(--hair)}
+.folio .ln{display:flex;align-items:center;gap:10px;min-height:48px;font-size:13.5px;border-bottom:1px solid var(--hair)}
+.folio .ln:last-child{border-bottom:0}
+.folio .ln em{font-family:var(--serif);font-style:italic;font-size:15px}
+.folio .ln .v{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+.folio .sp{color:var(--muted)}
+.cmp{display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap}
+.cmp .cap{color:var(--onSurfaceVariant);font-size:14px;margin-top:10px;max-width:40ch}
+</style></head><body>
+<div class="ctl" id="ctl"></div>
+
+<header class="intro">
+ <p class="kick">Direction 6, desktop only. The phone keeps Folio (direction 5).</p>
+ <h1>Caelestia</h1>
+ <p>On Linux the Kainos window stops bringing its own skin and wears the shell's: the same corner radii, the same Google Sans Flex scale, 85% surfaces over the wallpaper blur, the tonal buttons that square off when they are on, and the shell's wavy seek bar, so Kainos beside the Caelestia dashboard reads as one system. None of the colours are Kainos's own. Every surface and control is a Material 3 role read from <code>~/.local/state/caelestia/scheme.json</code>, so when the wallpaper changes, the player changes with it. Pick a scheme in the top-left corner: the page, the shell and the window re-theme together.</p>
+ <div class="meta">
+  <div><h3>Type, from the shell</h3><div class="t1">Google Sans Flex</div><div class="t2">The family Caelestia sets for every role (<code>Tokens.font.body.*.family</code>), with Rubik and Noto Sans as fallbacks. Its scale, unchanged: title 29 / 21 / 18 at 500, body 21 / 18 / 16 at 400, label 18 / 16 at 500 and 14 at 400. No serif, no mono in the player; CaskaydiaCove NF only where the shell itself uses it. Icons are Material Symbols Rounded, grade −25 in dark, filled when on.</div></div>
+  <div><h3>Colours, from scheme.json</h3><div class="swl" id="swl"></div><div class="t2" id="swnote"></div></div>
+  <div><h3>Album light: inside the cover card only</h3><div class="t2" style="margin-top:0">When Follow Caelestia is on, the shell scheme wins for every surface and control. Otherwise the window would carry two accents, one from the wallpaper and one from the track, and stop matching the dashboard next to it. The sampled cover colour survives in one place: the glow behind the cover (and a faint wash in the mini player), mixed 45% toward <code>primaryContainer</code> and clamped the way <code>AlbumLight.kt</code> already clamps it. That is also what Caelestia's own media tab does: the cover's light stays local and everything else is drawn in scheme roles. With Follow Caelestia off, album light behaves as it does today.</div></div>
+ </div>
+ <div class="how">
+  <h3>How it works, for later</h3>
+  <p><b>Read and watch.</b> On start the desktop app reads <code style="font-family:var(--mono);font-size:13px">~/.local/state/caelestia/scheme.json</code> and watches its directory with a <code style="font-family:var(--mono);font-size:13px">WatchService</code>; Caelestia rewrites the file on every wallpaper or scheme change (<code style="font-family:var(--mono);font-size:13px">caelestia scheme set</code>, <code style="font-family:var(--mono);font-size:13px">caelestia wallpaper</code>). Debounce ~150 ms and re-read, since the file is replaced, not appended. The transition is a 300 ms colour cross-fade, the same <code style="font-family:var(--mono);font-size:13px">CAnim</code> the shell uses.</p>
+  <p><b>Map 1:1.</b> The file's <code style="font-family:var(--mono);font-size:13px">colours</code> keys are the M3 role names; they map straight onto a Compose <code style="font-family:var(--mono);font-size:13px">ColorScheme</code>: background, surface, surfaceDim and surfaceBright, the five surfaceContainer tones, onSurface and onSurfaceVariant, outline and outlineVariant, inverseSurface, inverseOnSurface, inversePrimary, primary / secondary / tertiary with their on- and container pairs, the error set, scrim, and surfaceTint = primary. <code style="font-family:var(--mono);font-size:13px">mode</code> decides light or dark, so the Light / Dark / System control is disabled while following.</p>
+  <p><b>Fall back.</b> If the file is missing, malformed, or lacks a role, use the Kainos scheme chosen underneath. Today's Olive Grove and Caelestia Teal are frozen copies of this same file and can retire once the live mapping ships. Settings → Appearance shows the option only when the file exists; on Android and on desktops without Caelestia the page is unchanged.</p>
+  <p><b>Transparent window, separate item.</b> The window stays opaque by default and still matches, since Caelestia's roles are opaque colours too. The 85% translucent, undecorated window over Hyprland blur shown here is optional: Compose Desktop can make an undecorated window with per-pixel alpha, but on Wayland it means an <code style="font-family:var(--mono);font-size:13px">xdg-decoration</code> none request, a <code style="font-family:var(--mono);font-size:13px">windowrule blur</code> plus <code style="font-family:var(--mono);font-size:13px">ignore_alpha</code> for the Kainos class, and a drag region of our own. Worth a spike after the colour mapping, not before.</p>
+ </div>
+</header>
+
+<h2 class="sect">On the desktop<span>1920 × 1080, scaled · Caelestia bar and frame, Kainos Home with the Now Playing pane</span></h2>
+<div class="scale" id="desk1"></div>
+<p class="note">Caelestia's left bar, 10 px frame and 25 px screen corners are drawn as the shell draws them; the window sits in Hyprland's 20 px single-window gap with 15 px corners. Home hides its session card while the pane is open, so the landing is Discover Weekly, pins and recents. The pane follows the shell's media tab order: title, artist, album in <code>secondary</code>, the wavy seek, then shuffle / previous / play / next / repeat as tonal buttons with the wide filled play in the middle. Shuffle on is unmistakable: the button turns <code>secondary</code> and squares to 12 px, the same morph Caelestia uses for a checked button.</p>
+
+<h2 class="sect">Library, Songs<span>1500 × 900 window, scaled · fuzzy search, chips, Sort, Play all / Play favorites, sticky header, six availability states, mini player</span></h2>
+<div class="scale" id="desk2"></div>
+<p class="note">The search field is Caelestia's own pill search bar; typing anywhere opens it pre-filled. Chips are M3 filter chips with the check only on the selected one. The sticky header is a <code>surfaceContainer</code> pill rather than a hairline. The current song carries <code>secondaryContainer</code> and a small wavy progress under the mini player, Caelestia's <code>StyledProgressBar</code> with <code>wavy</code> on, which the shell also uses for indeterminate work.</p>
+
+<h2 class="sect">Now Playing, compact · Settings → Appearance<span>980 × 640 windows, scaled</span></h2>
+<div class="two"><div class="scale" id="desk3"></div><div class="scale" id="desk4"></div></div>
+<p class="note">Compact mode keeps the cover at 300 px and lays the details beside it. In Appearance, <b>Follow Caelestia theme</b> is on by default when scheme.json exists, shows what it is reading, and greys the Kainos schemes underneath without hiding them: they are the fallback and the choice for anyone running Kainos outside the shell. The light / dark control is disabled while following because the shell decides.</p>
+
+<h2 class="sect">In the shell's own media dashboard<span>Caelestia's Media tab with Kainos as the MPRIS player · 1000 × 320 panel</span></h2>
+<div class="dashbox" id="dash"></div>
+<p class="note">Nothing new is needed for this: Kainos already exposes MPRIS, and this machine's <code>shell.json</code> already sets <code>services.defaultPlayer</code> to Kainos Player. The dashboard draws the cover in its nine-sided cookie with the cava visualiser around it, the same wavy seek and the same five buttons as the pane above. The only gap is lyrics, which Kainos keeps deferred until a publisher-clear source exists, so the lyrics column stays empty on purpose.</p>
+
+<h2 class="sect">Phone and PC together<span>Folio on the phone, Caelestia on the PC, the same track</span></h2>
+<div class="cmp" id="cmp"></div>
+<ul class="pts">
+ <li><b>Shared: the information architecture.</b> Home, Search, Library and Settings in the same order, Now Playing over everything, the Queue beside it; the same names everywhere (Local files only, Favorites only, Play favorites, Sleep after this track, Discover Weekly, Follow Caelestia theme).</li>
+ <li><b>Shared: Now Playing's order and controls.</b> Cover, title, artist, source and quality, seek, shuffle / previous / play / next / repeat, heart, sleep timer, queue. Shuffle has a clear on state on both; repeat shows off / all / one on both; the six availability states and the hearts-and-sync model underneath are identical.</li>
+ <li><b>Platform-specific: the skin.</b> Folio's paper, serif, hairline ledgers and ruled seek scale on the phone; Caelestia's roles, Google Sans Flex, tonal buttons and wavy seek on the PC. Desktop keeps its mouse-and-keyboard extras (volume slider, Space to play / pause, type-to-search, compact player).</li>
+ <li><b>Platform-specific: where the colours come from.</b> The phone's tint picker and the PC's live scheme are separate choices; they only agree when you pick similar hues. Album light is an ink wash on the phone and a glow inside the cover card on the PC.</li>
+ <li><b>The honest cost.</b> Two Compose themes and two sets of component styles to keep in step. The shared presenters and screen composables do not change, but every shared composable must take colour, shape and type from the theme only, which is the same discipline the live Caelestia mapping needs anyway.</li>
+</ul>
+
+<h2 class="sect">Tokens taken from the shell<span>read from the running shell's <code>Tokens</code> singleton and its QML</span></h2>
+<table class="tok">
+ <tr><td>Rounding</td><td>extraSmall 4, small 8, medium 12, large 16, largeIncreased 20, extraLarge 28, extraLargeIncreased 32, extraExtraLarge 48, full. Used: window 15 (Hyprland <code>windowRounding</code>), cards and pane 28, pins 20, buttons full → 12 when checked → 8 when pressed, chips 8, tabs indicator 3 → 6 px.</td></tr>
+ <tr><td>Spacing, padding</td><td>Same ladder, 4 / 8 / 12 / 16 / 20 / 28 / 32 / 48. Panel padding large (16) and extraLarge (28); slider gaps extraSmall (4); media row spacing extraLarge (28).</td></tr>
+ <tr><td>Type</td><td><code>GoogleSansFlex</code> everywhere; mono <code>CaskaydiaCove NF</code>; icons <code>Material Symbols Rounded</code> at 20 / 24 / 32 px. Body 16 / 18 / 21 (400), label 14 (400) 16 / 18 (500), title 18 / 21 / 29 (500), headline 32 / 37 / 42 (500).</td></tr>
+ <tr><td>Motion</td><td>Standard <code>cubic-bezier(.2,0,0,1)</code>; expressive default spatial <code>(.38,1.21,.22,1)</code> 500 ms; fast spatial <code>(.42,1.67,.21,.9)</code> 350 ms; default effects <code>(.34,.8,.34,1)</code> 200 ms; slow effects <code>(.34,.88,.34,1)</code> 300 ms for every colour change (<code>CAnim</code>). Hover state layer: onSurface at 8%; ripple from the press point.</td></tr>
+ <tr><td>Surfaces</td><td><code>appearance.transparency</code> enabled, base 0.85, layers 0.4: top-level surfaces at 85% alpha over Hyprland blur; Elevation levels 0 / 1 / 3 / 6 / 8 / 12 dp with shadow at 70%.</td></tr>
+ <tr><td>Shell geometry</td><td>Border thickness 10, border rounding 25, bar inner width 40 (+10 padding each side); Hyprland gaps 10 (20 for a single window). Dashboard media tab 1000 × 320, cover 200 px nine-sided cookie, sections 300 px.</td></tr>
+ <tr><td>Source files</td><td><code>~/.config/quickshell/caelestia/components/controls/StyledSlider.qml</code>, <code>StyledProgressBar.qml</code>, <code>ButtonBase.qml</code>, <code>IconButton.qml</code>, <code>StyledSwitch.qml</code>, <code>SearchBar.qml</code>, <code>components/StateLayer.qml</code>, <code>components/effects/Elevation.qml</code>, <code>components/Anim.qml</code>, <code>components/CAnim.qml</code>, <code>modules/dashboard/Media.qml</code>, <code>modules/dashboard/media/Details.qml</code>, <code>CoverVisualiser.qml</code>, <code>BackgroundShapes.qml</code>, <code>modules/dashboard/Tabs.qml</code>, <code>modules/bar/Bar.qml</code>, <code>modules/bar/components/Clock.qml</code>, <code>modules/drawers/ContentWindow.qml</code>, <code>services/Colours.qml</code>; values from <code>/usr/lib/qt6/qml/Caelestia/Config</code> (<code>Tokens</code>), <code>~/.config/caelestia/shell.json</code>, <code>~/.config/hypr/variables.lua</code>.</td></tr>
+</table>
+
+<script>
+/* ---------- schemes ---------- */
+const ROLES=['background','onBackground','surface','surfaceDim','surfaceBright','surfaceContainerLowest','surfaceContainerLow','surfaceContainer','surfaceContainerHigh','surfaceContainerHighest','onSurface','surfaceVariant','onSurfaceVariant','outline','outlineVariant','inverseSurface','inverseOnSurface','shadow','scrim','surfaceTint','primary','onPrimary','primaryContainer','onPrimaryContainer','inversePrimary','secondary','onSecondary','secondaryContainer','onSecondaryContainer','tertiary','onTertiary','tertiaryContainer','onTertiaryContainer','error','onError','errorContainer','onErrorContainer'];
+/* the user's scheme.json, verbatim (name dynamic, flavour default, mode dark, variant tonalspot), only the M3 roles */
+const DYNAMIC={background:"110d11",onBackground:"efe2ec",surface:"110d11",surfaceDim:"110d11",surfaceBright:"312a32",surfaceContainerLowest:"000000",surfaceContainerLow:"171217",surfaceContainer:"1d181e",surfaceContainerHigh:"241e24",surfaceContainerHighest:"2b232b",onSurface:"efe2ec",surfaceVariant:"2b232b",onSurfaceVariant:"b3a8b2",outline:"7d727c",outlineVariant:"4e454e",inverseSurface:"fff7fb",inverseOnSurface:"595358",shadow:"000000",scrim:"000000",surfaceTint:"dfbbe2",primary:"dfbbe2",onPrimary:"513757",primaryContainer:"65496a",onPrimaryContainer:"fcd8ff",inversePrimary:"725577",secondary:"d6c0d6",onSecondary:"4b3b4d",secondaryContainer:"463648",onSecondaryContainer:"ceb8cf",tertiary:"ffcdd7",onTertiary:"6f3e4a",tertiaryContainer:"febac9",onTertiaryContainer:"653542",error:"f97386",onError:"490013",errorContainer:"871c34",onErrorContainer:"ff97a3"};
+/* tonal-spot generator: tone (CIE L*) → OKLab L, chroma per palette, hue in OKLCH degrees; chroma is reduced until the colour fits sRGB */
+function okToRgb(L,C,h){const a=C*Math.cos(h*Math.PI/180),b=C*Math.sin(h*Math.PI/180);const l_=L+.3963377774*a+.2158037573*b,m_=L-.1055613458*a-.0638541728*b,s_=L-.0894841775*a-1.291485548*b;const l=l_**3,m=m_**3,s=s_**3;return[4.0767416621*l-3.3077115913*m+.2309699292*s,-1.2684380046*l+2.6097574011*m-.3413193965*s,-.0041960863*l-.7034186147*m+1.707614701*s]}
+function tone(t,C,h){const Y=t>8?((t+16)/116)**3:t/903.3;const L=Math.cbrt(Y);for(let c=C;c>=0;c-=.004){const rgb=okToRgb(L,c,h);if(rgb.every(v=>v>-.003&&v<1.003)){const g=v=>{v=Math.min(1,Math.max(0,v));v=v<=.0031308?12.92*v:1.055*v**(1/2.4)-.055;return Math.round(v*255).toString(16).padStart(2,'0')};return rgb.map(g).join('')}}return t>50?'ffffff':'000000'}
+function tonalSpot(hue,dark){
+  const P=[.10,hue],S=[.035,hue],T=[.07,hue+60],N=[.012,hue],V=[.025,hue];
+  const c=(pal,t)=>tone(t,pal[0],pal[1]);
+  if(dark)return{background:c(N,6),onBackground:c(N,90),surface:c(N,6),surfaceDim:c(N,6),surfaceBright:c(N,24),surfaceContainerLowest:c(N,4),surfaceContainerLow:c(N,10),surfaceContainer:c(N,12),surfaceContainerHigh:c(N,17),surfaceContainerHighest:c(N,22),onSurface:c(N,90),surfaceVariant:c(V,30),onSurfaceVariant:c(V,80),outline:c(V,60),outlineVariant:c(V,30),inverseSurface:c(N,90),inverseOnSurface:c(N,20),shadow:'000000',scrim:'000000',surfaceTint:c(P,80),primary:c(P,80),onPrimary:c(P,20),primaryContainer:c(P,30),onPrimaryContainer:c(P,90),inversePrimary:c(P,40),secondary:c(S,80),onSecondary:c(S,20),secondaryContainer:c(S,30),onSecondaryContainer:c(S,90),tertiary:c(T,80),onTertiary:c(T,20),tertiaryContainer:c(T,30),onTertiaryContainer:c(T,90),error:'ffb4ab',onError:'690005',errorContainer:'93000a',onErrorContainer:'ffdad6'};
+  return{background:c(N,98),onBackground:c(N,10),surface:c(N,98),surfaceDim:c(N,87),surfaceBright:c(N,98),surfaceContainerLowest:'ffffff',surfaceContainerLow:c(N,96),surfaceContainer:c(N,94),surfaceContainerHigh:c(N,92),surfaceContainerHighest:c(N,90),onSurface:c(N,10),surfaceVariant:c(V,90),onSurfaceVariant:c(V,30),outline:c(V,50),outlineVariant:c(V,80),inverseSurface:c(N,20),inverseOnSurface:c(N,95),shadow:'000000',scrim:'000000',surfaceTint:c(P,40),primary:c(P,40),onPrimary:'ffffff',primaryContainer:c(P,90),onPrimaryContainer:c(P,10),inversePrimary:c(P,80),secondary:c(S,40),onSecondary:'ffffff',secondaryContainer:c(S,90),onSecondaryContainer:c(S,10),tertiary:c(T,40),onTertiary:'ffffff',tertiaryContainer:c(T,90),onTertiaryContainer:c(T,10),error:'ba1a1a',onError:'ffffff',errorContainer:'ffdad6',onErrorContainer:'410002'};
+}
+const SCHEMES={
+ dynamic:{name:'Dynamic (your scheme.json today)',short:'Dynamic, purple',mode:'dark',c:DYNAMIC,al:'#4F8E9C',desc:'dynamic · default · dark · tonalspot, generated from your purple wallpaper'},
+ lagoon:{name:'Lagoon (teal seed)',short:'Lagoon, teal',mode:'dark',c:tonalSpot(195,true),al:'#8E6A4F',desc:'sample tonal-spot set, teal seed, dark'},
+ ember:{name:'Ember (amber seed, light)',short:'Ember, light',mode:'light',c:tonalSpot(72,false),al:'#2F7584',desc:'sample tonal-spot set, amber seed, light'},
+ harbour:{name:'Harbour (blue seed)',short:'Harbour, blue',mode:'dark',c:tonalSpot(258,true),al:'#C27A4A',desc:'sample tonal-spot set, blue seed, dark'}
+};
+const q=new URLSearchParams(location.search);
+let cur=q.get('scheme')||location.hash.slice(1)||'dynamic';if(!SCHEMES[cur])cur='dynamic';
+if(q.get('noui'))document.body.classList.add('noui');
+function apply(id){
+  cur=id;const s=SCHEMES[id],r=document.documentElement.style;
+  ROLES.forEach(k=>r.setProperty('--'+k,'#'+s.c[k]));
+  r.setProperty('--al',s.al);r.setProperty('--glow',s.mode==='light'?'.45':'.6');
+  document.documentElement.classList.toggle('light',s.mode==='light');
+  document.querySelectorAll('#ctl button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id));
+  document.getElementById('swl').innerHTML=['primary','secondary','tertiary','surfaceContainer','onSurfaceVariant','error'].map(k=>`<span><i style="background:#${s.c[k]}"></i><b>${k}</b><b>#${s.c[k]}</b></span>`).join('');
+  document.getElementById('swnote').innerHTML=`<code>${s.desc}</code>. Dynamic is your file verbatim; the other three are plausible tonal-spot sets from a seed hue, built the way the shell's generator builds them, to show the window following any scheme, including a light one.`;
+  document.querySelectorAll('.followline').forEach(e=>e.textContent=s.desc.split(',')[0]);
+}
+document.getElementById('ctl').innerHTML=`<b>Scheme</b><div class="row">${Object.entries(SCHEMES).map(([id,s])=>`<button data-id="${id}" aria-pressed="false"><i style="background:#${s.c.primary}"></i>${s.short}</button>`).join('')}</div>`;
+document.querySelectorAll('#ctl button').forEach(b=>b.onclick=()=>{apply(b.dataset.id);history.replaceState(null,'','#'+b.dataset.id)});
+
+/* ---------- icons: Material Symbols Rounded shapes, drawn inline ---------- */
+const I={
+ play:'M8 6.8v10.4c0 .8.9 1.3 1.6.9l8.2-5.2c.6-.4.6-1.3 0-1.7L9.6 5.9c-.7-.4-1.6.1-1.6.9z',
+ pause:'M8 5.5h1.5A1.5 1.5 0 0 1 11 7v10a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 17V7A1.5 1.5 0 0 1 8 5.5zm6.5 0H16A1.5 1.5 0 0 1 17.5 7v10a1.5 1.5 0 0 1-1.5 1.5h-1.5A1.5 1.5 0 0 1 13 17V7a1.5 1.5 0 0 1 1.5-1.5z',
+ next:'M6 7.6v8.8c0 .8.9 1.3 1.6.9l6.6-4.4c.6-.4.6-1.3 0-1.7L7.6 6.7c-.7-.4-1.6.1-1.6.9zM17 6.5a1 1 0 0 1 1 1v9a1 1 0 1 1-2 0v-9a1 1 0 0 1 1-1z',
+ prev:'M18 7.6v8.8c0 .8-.9 1.3-1.6.9l-6.6-4.4c-.6-.4-.6-1.3 0-1.7l6.6-4.5c.7-.4 1.6.1 1.6.9zM7 6.5a1 1 0 0 0-1 1v9a1 1 0 1 0 2 0v-9a1 1 0 0 0-1-1z',
+ heart:'M12 20.3l-1.2-1.1C5.7 14.6 2.5 11.7 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.5-3.2 6.4-8.3 11.1L12 20.3z',
+ home:'M4.5 10.2V19a1 1 0 0 0 1 1H9.5v-5.5h5V20h4a1 1 0 0 0 1-1v-8.8a1 1 0 0 0-.4-.8l-6.5-5.1a1 1 0 0 0-1.2 0L4.9 9.4a1 1 0 0 0-.4.8z',
+ library:'M20 2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-2 5h-3v5.5a2.5 2.5 0 1 1-2.5-2.5c.5 0 1 .2 1.5.4V5h4v2zM4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6z',
+ queue:'M3 6h12a1 1 0 0 1 0 2H3a1 1 0 0 1 0-2zm0 4h12a1 1 0 0 1 0 2H3a1 1 0 0 1 0-2zm0 4h8a1 1 0 0 1 0 2H3a1 1 0 0 1 0-2zm14-8v8.3a3 3 0 1 0 2 2.8V8h2.5a1 1 0 0 0 0-2H17z',
+ moon:'M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.4a7 7 0 0 1-7.5-7.5C13 3 12.5 3 12 3z',
+ vol:'M3 10v4a1 1 0 0 0 1 1h3l3.3 3.3c.6.6 1.7.2 1.7-.7V6.4c0-.9-1.1-1.3-1.7-.7L7 9H4a1 1 0 0 0-1 1zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z',
+ more:'M12 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4z',
+ spark:'M12 2c.6 5.5 4.5 9.4 10 10-5.5.6-9.4 4.5-10 10-.6-5.5-4.5-9.4-10-10 5.5-.6 9.4-4.5 10-10z',
+ note:'M12 3v10.6a3.5 3.5 0 1 0 2 3.2V7h4V3z',
+ eq:'M7 7h2v10H7zm4-3h2v16h-2zm4 6h2v4h-2zM3 10h2v4H3zm16-2h2v8h-2z',
+ pin:'M14 4h-4v6l-2 2v2h5v6l1 1 1-1v-6h5v-2l-2-2V4h-4z',
+ folder:'M4 5h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z',
+ lock:'M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1zm2 0h6V8a3 3 0 0 0-6 0v2z',
+ wifi:'M12 20l-2.3-2.3a3.2 3.2 0 0 1 4.6 0zM6.4 14.7l-1.8-1.8a10.5 10.5 0 0 1 14.8 0l-1.8 1.8a8 8 0 0 0-11.2 0zM2.9 11.2L1 9.4a15.5 15.5 0 0 1 22 0l-1.9 1.8a13 13 0 0 0-18.2 0z',
+ bt:'M11 2.5v6.8L7.4 5.7 6 7.1 10.9 12 6 16.9l1.4 1.4L11 14.7v6.8h1l5-5-3.8-4.5L17 7.5l-5-5h-1zm2 3.8l1.7 1.7L13 9.7V6.3zm0 7.9l1.7 1.7L13 17.7v-3.5z',
+ palette:'M12 3a9 9 0 0 0 0 18c1 0 1.7-.8 1.7-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1 0-.9.7-1.6 1.6-1.6h1.9A4.6 4.6 0 0 0 21 11c0-4.4-4-8-9-8zM6.5 12a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z',
+ dlok:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1 15-4-4 1.4-1.4L11 14.2l5.6-5.6L18 10l-7 7z'
+};
+const S={
+ shuffle:'M3 7h3.3c2 0 3.6 1 4.6 2.6L14 14.5c1 1.5 2.6 2.5 4.6 2.5H21M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5M3 17h3.3c2 0 3.6-1 4.6-2.6M14 9.5c1-1.5 2.6-2.5 4.6-2.5H21',
+ repeat:'M17 2.5 20.5 6 17 9.5M3.5 11V10a4 4 0 0 1 4-4h13M7 21.5 3.5 18 7 14.5M20.5 13v1a4 4 0 0 1-4 4h-13',
+ one:'M11 9.5l1.5-1v6',
+ search:'M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM16.5 16.5 21 21',
+ gear:'M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4',
+ back:'M20 12H5M11 6l-6 6 6 6',check:'M5 12.5 9.5 17 19 7',
+ dl:'M12 4v11M7 10l5 5 5-5M5 20h14',clock:'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM12 7v5l3 2',
+ off:'M4 4l16 16M17 18H7a4 4 0 0 1-1-7.9A6 6 0 0 1 8.5 6M12 6a6 6 0 0 1 5.9 5 4 4 0 0 1 2.7 6',
+ err:'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM12 8v5M12 16.5v.5',
+ drive:'M4 6h16v5H4zM4 13h16v5H4zM7 8.5h.01M7 15.5h.01',sort:'M8 4v16M4.5 7.5 8 4l3.5 3.5M16 20V4M12.5 16.5 16 20l3.5-3.5',
+ close:'M6 6l12 12M18 6 6 18',power:'M12 3v8M6.3 7.3a8 8 0 1 0 11.4 0',chev:'M9 6l6 6-6 6',down:'M6 9l6 6 6-6',
+ lyrics:'M4 5h16v11H9l-4 3.5V16H4zM8 9h8M8 12h5',sync:'M4 12a8 8 0 0 1 13.7-5.7L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.7L4 15.5M4 20v-4.5h4.5',
+ dls:'M4 17v3h16v-3M12 3v12M8 11l4 4 4-4'
+};
+const ic=(n,cls='')=>I[n]?`<svg class="mi ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${I[n]}"/></svg>`:`<svg class="mi st ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${S[n]}"/></svg>`;
+const rep1=cls=>`<svg class="mi st ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${S.repeat}"/><path d="${S.one}"/></svg>`;
+
+/* ---------- covers (same drawings as Folio, so the phone and PC show the same records) ---------- */
+const COV={
+ salt:`<rect width="60" height="60" fill="#163E49"/><path d="M0 38c10-6 20-6 30 0s20 6 30 0v22H0z" fill="#2F7584"/><path d="M0 44c10-6 20-6 30 0s20 6 30 0" fill="none" stroke="#9FD3DD" stroke-width="1.2"/><path d="M30 8l9 26H21z" fill="none" stroke="#E8EAE9" stroke-width="1.4"/><circle cx="30" cy="22" r="2.2" fill="#E8EAE9"/>`,
+ brass:`<rect width="60" height="60" fill="#F0DDB4"/><circle cx="30" cy="30" r="17" fill="none" stroke="#8A5A1E" stroke-width="2"/><circle cx="30" cy="30" r="9" fill="none" stroke="#8A5A1E" stroke-width="2"/><path d="M13 47h34" stroke="#8A5A1E" stroke-width="2"/>`,
+ wires:`<rect width="60" height="60" fill="#2B2F3A"/><path d="M5 20h50 M5 30h50 M5 40h50" stroke="#C9CFDB" stroke-width="1"/><path d="M14 12v36 M46 12v36" stroke="#E5484D" stroke-width="2"/>`,
+ vinyl:`<rect width="60" height="60" fill="#1B1B1B"/><circle cx="30" cy="30" r="24" fill="none" stroke="#3A3A3A" stroke-width="10"/><circle cx="30" cy="30" r="9" fill="#C9492E"/><circle cx="30" cy="30" r="2" fill="#1B1B1B"/>`,
+ sunday:`<rect width="60" height="60" fill="#F3E7D3"/><circle cx="30" cy="36" r="14" fill="#E07B39"/><rect y="40" width="60" height="20" fill="#5B3B2A"/>`,
+ night:`<rect width="60" height="60" fill="#20264A"/><rect x="8" y="22" width="44" height="18" rx="3" fill="#F2A541"/><circle cx="16" cy="44" r="4" fill="#111"/><circle cx="44" cy="44" r="4" fill="#111"/>`,
+ ferric:`<rect width="60" height="60" fill="#5A2E22"/><path d="M8 50L30 10l22 40z" fill="#C25A3A"/><path d="M18 50L30 28l12 22z" fill="#F6E7C8"/>`,
+ orbit:`<rect width="60" height="60" fill="#0E1A2B"/><circle cx="30" cy="30" r="18" fill="none" stroke="#7FB3FF" stroke-width="1.2"/><circle cx="30" cy="30" r="6" fill="#DCE8FF"/><circle cx="46" cy="24" r="2.2" fill="#F5B800"/>`,
+ late:`<rect width="60" height="60" fill="#36305A"/><rect x="10" y="14" width="40" height="32" rx="2" fill="none" stroke="#D7CFFF" stroke-width="1.4"/><rect x="18" y="22" width="24" height="16" fill="#8A7BE0"/>`,
+ liked:`<rect width="60" height="60" fill="#3F2B5F"/><path d="M30 46s-15-9-15-21a8 8 0 0 1 15-5 8 8 0 0 1 15 5c0 12-15 21-15 21z" fill="#E8DFFF"/>`,
+ pale:`<rect width="60" height="60" fill="#E7EFE4"/><circle cx="20" cy="36" r="9" fill="#9FC39C"/><circle cx="38" cy="26" r="12" fill="#C9DEC4"/>`,
+ commute:`<rect width="60" height="60" fill="#2F4C3B"/><path d="M8 44l44-28" stroke="#CFE7D8" stroke-width="2"/><path d="M8 52l44-28" stroke="#CFE7D8" stroke-width="1"/>`};
+const cv=(c,cls='')=>`<span class="cv ${cls}"><svg viewBox="0 0 60 60" aria-hidden="true">${COV[c]}</svg></span>`;
+const SRC={sp:['Spotify','#1DB954'],yt:['YouTube','#E53935'],lo:['Local','var(--primary)'],kp:['Kainos','var(--tertiary)'],fo:['Folder','var(--outline)']};
+const src=s=>`<i class="src" style="--c:${SRC[s][1]}"></i>`;
+const fmt=s=>`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+const seek=(pos,dur,cls='')=>`<div class="seek playing ${cls}" role="slider" aria-label="Seek" aria-valuenow="${pos}" aria-valuemax="${dur}" tabindex="0" style="--p:${(pos/dur*100).toFixed(1)}%"><div class="f"></div><i class="h"></i><div class="r"></div></div>`;
+const timesSeek=(pos,dur)=>`<div class="times"><span>${fmt(pos)}</span>${seek(pos,dur)}<span>${fmt(dur)}</span></div>`;
+const buttons=()=>`<div class="ctr">
+ <button class="ib lg on" aria-label="Shuffle on" aria-pressed="true">${ic('shuffle')}</button>
+ <button class="ib lg" aria-label="Previous">${ic('prev','l')}</button>
+ <button class="ib lg wide filled on" aria-label="Pause">${ic('pause','l')}</button>
+ <button class="ib lg" aria-label="Next">${ic('next','l')}</button>
+ <button class="ib lg on" aria-label="Repeat one" aria-pressed="true">${rep1()}</button></div>`;
+const volume=()=>`<div class="aux">${ic('vol')}<div class="vol" role="slider" aria-label="Volume" aria-valuenow="72" tabindex="0" style="--p:72%"><div class="f"></div><i class="h"></i><div class="r"></div></div><span class="v">72</span></div>`;
+const qualityChips=()=>`<div class="chips"><span class="chip assist">${ic('eq')}FLAC, 24-bit / 96 kHz</span><span class="chip assist">${ic('note')}Local file, hearted</span></div>`;
+const TRACK={title:'Saltwater Cathedral',artist:'Mira Okonkwo',album:'Saltwater Cathedral',pos:134,dur:348};
+
+/* ---------- Caelestia screen chrome ---------- */
+const bar=()=>`<div class="bar">
+ <svg class="os" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c-1 3.6-2.7 6.4-4.7 9.2 1.2 1.3 2.7 2.4 4.7 3.5 2-1.1 3.5-2.2 4.7-3.5-2-2.8-3.7-5.6-4.7-9.2zM4 20.5c2.6-.8 5.3-1.8 8-3.7 2.7 1.9 5.4 2.9 8 3.7-2.2-2.3-3.9-4.3-5-6.3-1 .6-2 1.2-3 1.9-1-.7-2-1.3-3-1.9-1.1 2-2.8 4-5 6.3z" fill="currentColor"/></svg>
+ <div class="pill ws"><i class="on">1</i><i>2</i><i>3</i><i>4</i><i>5</i></div>
+ <div class="aw">${ic('note','s')}<span class="t">Kainos Player</span></div>
+ <div class="pill clock"><span>21</span><span>47</span><hr><small>18</small><small>Oct</small></div>
+ <div class="pill st">${ic('wifi')}${ic('bt')}${ic('vol')}${ic('lock')}</div>
+ <button class="pw" aria-label="Power">${ic('power')}</button></div>`;
+const rail=on=>`<nav class="rail"><div class="logo">${ic('note')}</div>${[['home','Home','home'],['search','Search','search'],['library','Library','library'],['gear','Settings','settings']].map(([g,n,id])=>`<button class="nv ${on===id?'on':''}"><i>${ic(g)}</i>${n}</button>`).join('')}</nav>`;
+const shapes=(n,seed,big)=>{let r=seed;const rnd=()=>(r=(r*9301+49297)%233280)/233280;const cols=['var(--primaryContainer)','var(--secondaryContainer)','var(--tertiaryContainer)','var(--outlineVariant)'];const op=[.16,.16,.05,.16];let h='';for(let i=0;i<n;i++){const s=(big?36:24)+rnd()*(big?90:50),k=Math.floor(rnd()*4);const sides=5+Math.floor(rnd()*8);h+=`<i style="left:${rnd()*100}%;top:${rnd()*100}%;width:${s}px;height:${s}px;background:${cols[k]};opacity:${op[k]};clip-path:${cookie(sides,.5,.5,.42,.07)};transform:rotate(${rnd()*360}deg)"></i>`}return h};
+function cookie(n,cx,cy,R,amp){const pts=[];for(let i=0;i<120;i++){const t=i/120*Math.PI*2,r=R*(1+amp*Math.cos(n*t));pts.push(`${(cx+r*Math.cos(t))*100}% ${(cy+r*Math.sin(t))*100}%`)}return`polygon(${pts.join(',')})`}
+
+/* ---------- Now Playing pane ---------- */
+const pane=()=>`<aside class="pane" aria-label="Now Playing">
+ <div class="top"><button class="ib txt" aria-label="Back">${ic('back')}</button><span>Playing from Vinyl rips</span><button class="ib txt" aria-label="Sleep timer">${ic('moon')}</button><button class="ib txt" aria-label="More">${ic('more')}</button></div>
+ <div class="covwrap">${cv('salt')}</div>
+ <div class="ttl"><div class="tL">${TRACK.title}</div><div class="tM mut">${TRACK.artist}</div><div class="tM sec">${TRACK.album} · 2021</div></div>
+ ${qualityChips()}
+ ${timesSeek(TRACK.pos,TRACK.dur)}
+ ${buttons()}
+ <div class="aux"><button class="ib on" aria-label="Hearted" aria-pressed="true">${ic('heart')}</button>${volume().replace('<div class="aux">','').replace(/<\/div>$/,'')}</div>
+ <div class="aux">${ic('moon')}<span class="k">Sleep</span><span class="mut">after this track</span><span class="v">3:34</span></div>
+ <div class="upnext"><div class="hrow"><span class="tS">Up next</span><span class="mut ls">312 songs, shuffled</span></div>
+  <div class="qr">${cv('salt')}<div><b>Driftwood Choir</b><small>Mira Okonkwo</small></div><em>4:02</em></div>
+  <div class="qr">${cv('brass')}<div><b>Comet Lines</b><small>Yusuf Adeyemi Quartet</small></div><em>6:31</em></div>
+  <div class="qr">${cv('night')}<div><b>Night Bus to Ostrava</b><small>Lenka Hořák</small></div><em>4:40</em></div></div>
+</aside>`;
+
+/* ---------- Home ---------- */
+const PINS=[['late','Late shift','kp','Kainos playlist'],['liked','Liked Songs','sp','Spotify'],['brass','Brass Mornings','lo','Local album'],['vinyl','Vinyl rips','fo','Folder'],['sunday','Sunday pressing','sp','Spotify playlist'],['wires','Hollow Season','sp','Spotify album']];
+const home=()=>`<section class="main">
+ <div class="cards">
+  <div class="card hi"><div class="shapes">${shapes(9,7,true)}</div><div style="position:relative"><div class="hM">Discover Weekly</div><div class="bm mut" style="margin-top:4px">30 new songs, updated Monday · Spotify</div>
+   <div class="actions"><button class="tb filled">${ic('play')}Play</button><button class="tb">${ic('shuffle')}Shuffle</button><button class="tb txt">Add to queue</button></div></div></div>
+  <div class="card"><div class="tS">Good evening</div><div class="bm mut" style="margin-top:4px">Resume is in the pane: Saltwater Cathedral, 2:14 of 5:48, from Vinyl rips. Hearts synced with the phone 12 minutes ago over home Wi-Fi.</div>
+   <div class="actions"><button class="tb">${ic('sync')}Sync now</button><span class="ls mut">Phone: 96 hearts, 2 waiting for Wi-Fi</span></div></div>
+ </div>
+ <div class="hrow"><span class="tM">Pinned</span><button class="tb txt" style="height:36px">Edit pins</button></div>
+ <div class="pins">${PINS.map(p=>`<button class="pin">${cv(p[0])}<b>${p[1]}</b><small>${src(p[2])}${p[3]}</small></button>`).join('')}</div>
+ <div class="hrow"><span class="tM">Recently played</span><span class="ls mut">Last 7 days</span></div>
+ <div class="recent">
+  ${[['orbit','Low Orbit','Tendril · Static Bloom','3:47'],['ferric','Ferric','Halden & Vos','5:10'],['pale','Pale Gardens','Iso Tanaka','7:12'],['commute','Commute','Kainos playlist · 48 songs','3h 12m'],['wires','Glass Harbour','The Northern Wires · Hollow Season','4:55'],['sunday','Sunday pressing','Spotify playlist · 62 songs','4h 05m']].map(r=>`<div class="rrow">${cv(r[0])}<div><b>${r[1]}</b><small>${r[2]}</small></div><em>${r[3]}</em></div>`).join('')}
+ </div>
+</section>`;
+
+/* ---------- Library ---------- */
+const ROWS=[['Carrier Wave','Tendril','Static Bloom','un','Unavailable','4:18',0],['Comet Lines','Yusuf Adeyemi Quartet','Brass Mornings','local','Local, FLAC','6:31',1],['Driftwood Choir','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','4:02',0],['Ferric','Halden &amp; Vos','Ferric','dl','Downloading, 62%','5:10',1],['Ghosts in the Hallway','Wren Castellan','Single','fail','Failed, retry','3:29',0],['Glass Harbour','The Northern Wires','Hollow Season','cached','Cached','4:55',0],['Low Orbit','Tendril','Static Bloom','local','Local, FLAC','3:47',1],['Night Bus to Ostrava','Lenka Hořák','Marginalia','cached','Cached','4:40',1],['Pale Gardens','Iso Tanaka','Pale Gardens','local','Local, FLAC','7:12',0],['Saltwater Cathedral','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','5:48',1,1],['Tideline','Cassiopeia Reyes','Tideline','wait','Waiting for Wi‑Fi','4:03',0],['Vespers','Mira Okonkwo','Saltwater Cathedral','local','Local, FLAC','3:58',0]];
+const AV={local:['drive',''],cached:['dlok',''],dl:['dls','dl'],wait:['clock',''],un:['off','un'],fail:['err','fail']};
+const covFor=['wires','brass','salt','ferric','night','wires','orbit','night','pale','salt','orbit','salt'];
+const library=()=>`<section class="main lib">
+ <div class="libhead"><div><div class="hS">Library</div><div class="bm mut">96 hearted of 1,844 songs · 312 local files</div></div>
+  <div class="search">${ic('search')}<span>driftw</span><i class="cur"></i><span class="hint">Enter plays Driftwood Choir · Esc clears</span></div></div>
+ <div class="tabs">${['Songs','Albums','Artists','Playlists','Folders'].map((t,i)=>`<button class="${i?'':'on'}">${t}</button>`).join('')}</div>
+ <div class="toolbar"><span class="chip">${ic('drive')}Local files only</span><span class="chip on">${ic('check')}Favorites only</span><div class="gap"></div><button class="tb" style="background:transparent;border:1px solid var(--outline);color:var(--onSurfaceVariant)">${ic('sort')}Title A–Z${ic('down')}</button><button class="tb">${ic('play')}Play all</button><button class="tb filled">${ic('heart')}Play favorites</button></div>
+ <div class="ledger"><span></span><span>Title</span><span>Artist</span><span>Album</span><span>Availability</span><span style="text-align:right">Time</span></div>
+ <div class="rows">${ROWS.map((r,i)=>`<div class="row ${r[7]?'cur':''}">${cv(covFor[i])}<div class="t"><b>${r[0]}</b>${r[7]?`<span class="cur-mark">${ic('eq','s')}Playing</span>`:`<small>${r[6]?ic('heart','s'):''}${r[6]?'Hearted':''}</small>`}</div><div class="a">${r[1]}</div><div class="a">${r[2]}</div><div class="av ${AV[r[3]][1]}">${ic(AV[r[3]][0])}${r[4]}${r[3]==='dl'?'<span class="bar2"><i></i></span>':''}</div><div class="d">${r[5]}</div></div>`).join('')}</div>
+ <div class="minibar">${cv('salt')}<div class="t"><b>Saltwater Cathedral</b><small>Mira Okonkwo · FLAC, 24-bit / 96 kHz</small></div>
+  <div class="ctr"><button class="ib on" aria-label="Shuffle on" aria-pressed="true">${ic('shuffle')}</button><button class="ib" aria-label="Previous">${ic('prev')}</button><button class="ib wide filled on" aria-label="Pause" style="width:72px">${ic('pause')}</button><button class="ib" aria-label="Next">${ic('next')}</button><button class="ib on" aria-label="Repeat one">${rep1()}</button></div>
+  <div class="mid"><div class="times"><span>2:14</span><div class="wprog" style="flex:1;--p:38.5%"><i></i></div><span>5:48</span></div></div>
+  <button class="ib on" aria-label="Hearted">${ic('heart')}</button><button class="ib txt" aria-label="Queue">${ic('queue')}</button><button class="ib txt" aria-label="Open Now Playing">${ic('chev')}</button></div>
+</section>`;
+
+/* ---------- compact Now Playing and Settings ---------- */
+const compact=()=>`<section class="npc">
+ <div><div class="covwrap">${cv('salt')}</div><div class="aux" style="margin-top:14px;justify-content:center"><button class="ib on" aria-label="Hearted">${ic('heart')}</button><button class="ib txt" aria-label="Sleep timer">${ic('moon')}</button><button class="ib txt" aria-label="Queue">${ic('queue')}</button><button class="ib txt" aria-label="Expand">${ic('chev')}</button></div></div>
+ <div class="right"><div class="top" style="display:flex;align-items:center;gap:8px;color:var(--onSurfaceVariant);font-size:14px;font-weight:500">${ic('back')}Playing from Vinyl rips</div>
+  <div class="ttl" style="display:flex;flex-direction:column;gap:2px"><div class="tL">${TRACK.title}</div><div class="tM mut">${TRACK.artist}</div><div class="tM sec">${TRACK.album} · 2021</div></div>
+  ${qualityChips()}
+  <div style="margin-top:auto"></div>
+  ${timesSeek(TRACK.pos,TRACK.dur)}
+  ${buttons()}
+  ${volume()}
+  <div class="aux" style="min-height:32px">${ic('moon','s')}<span class="k ls">Sleep</span><span class="mut ls">after this track</span><span class="v ls">3:34</span></div>
+ </div></section>`;
+const KS=[['Olive Grove','#8E9A6B','#1B1D18'],['Caelestia Teal','#9BD0CC','#0F1A1A'],['Catppuccin','#CBA6F7','#1E1E2E'],['Nord','#88C0D0','#2E3440'],['Gruvbox','#FE8019','#282828'],['Rosé Pine','#C4A7E7','#191724'],['Tokyo Night','#BB9AF7','#1A1B26'],['Dracula','#BD93F9','#282A36'],['Everforest','#A7C080','#2D353B'],['One Dark','#61AFEF','#282C34']];
+const settings=()=>`<nav class="setnav"><h1>Settings</h1>${['General','Appearance','Library','Spotify','YouTube','Home sync','Downloads','Advanced'].map(n=>`<button class="${n==='Appearance'?'on':''}">${n==='Appearance'?ic('palette'):'<span style="width:24px"></span>'}${n}</button>`).join('')}</nav>
+<section class="setbody"><div class="hS">Appearance</div>
+ <div class="srow">${ic('palette')}<div class="tx"><b>Follow Caelestia theme</b><span>Reading ~/.local/state/caelestia/scheme.json · <span class="followline">dynamic</span> · updates when the wallpaper or scheme changes</span></div><div class="sws" id="setsw"></div><span class="sw on" role="switch" aria-checked="true"><i><svg viewBox="0 0 24 24"><path d="${S.check}"/></svg></i></span></div>
+ <div class="srow dim"><span style="width:24px"></span><div class="tx"><b>Light or dark</b><span>Caelestia decides while following</span></div><div class="segs"><button>Light</button><button class="on">Dark</button><button>System</button></div></div>
+ <div class="srow"><span style="width:24px"></span><div class="tx"><b>Album light</b><span>Glow behind the cover from the sampled cover colour. While following Caelestia it stays inside the cover card.</span></div><span class="sw on" role="switch" aria-checked="true"><i><svg viewBox="0 0 24 24"><path d="${S.check}"/></svg></i></span></div>
+ <div class="hrow" style="margin-top:6px"><span class="tS">Kainos schemes</span><span class="ls mut">Used when Follow Caelestia is off, or scheme.json is missing</span></div>
+ <div class="schemes">${KS.map(([n,p,b],i)=>`<div class="srow dim"><span class="cv" style="background:linear-gradient(135deg,${p} 0 50%,${b} 50%)"></span><div class="tx"><b>${n}</b><span>${i===0?'Frozen copy, fallback':i===1?'Frozen shell teal':'Light and dark'}</span></div>${i===0?ic('check'):''}</div>`).join('')}</div>
+</section>`;
+
+/* ---------- Caelestia dashboard, media tab ---------- */
+const dash=()=>{let bars='';const n=48;for(let i=0;i<n;i++){const a=i/n*Math.PI*2,r0=112,v=.1+.9*Math.abs(Math.sin(i*1.7)*Math.cos(i*.6)),r1=r0+v*38;bars+=`<line x1="${150+r0*Math.cos(a)}" y1="${144+r0*Math.sin(a)}" x2="${150+r1*Math.cos(a)}" y2="${144+r1*Math.sin(a)}"/>`}
+ return`<div class="frame"></div>${bar()}<div class="dash">
+ <div class="dtabs">${[['home','Dashboard'],['note','Media'],['library','Workspaces'],['eq','Performance']].map(([g,n])=>`<button class="${n==='Media'?'on':''}">${ic(g)}${n}</button>`).join('')}</div>
+ <div class="media"><div class="shapes">${shapes(14,3,true)}</div>
+  <div class="viz"><svg viewBox="0 0 300 288" fill="none" stroke="var(--primary)" stroke-width="5.5" stroke-linecap="round">${bars}</svg><div class="cookie" style="clip-path:${cookie(9,.5,.5,.46,.075)}">${cv('salt')}</div></div>
+  <div class="det"><div class="tL">${TRACK.title}</div><div class="tM mut">${TRACK.artist}</div><div class="tM sec">${TRACK.album}</div><div style="height:16px"></div>${timesSeek(TRACK.pos,TRACK.dur)}<div style="height:8px"></div>${buttons()}</div>
+  <div class="lyr"><div class="h">${ic('lyrics')}Lyrics</div><div class="bm mut">No lyrics for this track. Kainos keeps lyrics off until a publisher-clear source exists.</div><div class="sel"><button class="tb on">${ic('check')}Kainos Player</button><button class="tb">Helium</button></div></div>
+ </div></div>`};
+
+/* ---------- Folio phone (copied from direction 5) ---------- */
+const FG={play:'M8 5l11 7-11 7z',pause:'M7 5h3.5v14H7z M13.5 5H17v14h-3.5z',prev:'M18 6v12L8 12z M6 6v12',next:'M6 6v12l10-6z M18 6v12',shuffle:'M3 7h3.5c2 0 3.5 1 4.5 2.5L14 14.5c1 1.5 2.5 2.5 4.5 2.5H21 M18 4.5l3 2.5-3 2.5 M18 14.5l3 2.5-3 2.5 M3 17h3.5c2 0 3.5-1 4.5-2.5 M14 9.5c1-1.5 2.5-2.5 4.5-2.5H21',repeat:'M4 11V9a3 3 0 0 1 3-3h12 M16 3l3 3-3 3 M20 13v2a3 3 0 0 1-3 3H5 M8 21l-3-3 3-3',heart:'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z',back:'M14 5l-7 7 7 7',more:'<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',moon:'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',queue:'M4 7h11 M4 12h11 M4 17h7 M19 6v9 M19 15a2 2 0 1 1-4 0 2 2 0 0 1 4 0z',music:'M9 17V5l10-2v12 M9 17a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z M19 15a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z'};
+const gl=g=>`<svg class="g" viewBox="0 0 24 24" aria-hidden="true">${FG[g].startsWith('<')?FG[g]:`<path d="${FG[g]}"/>`}</svg>`;
+const fill=g=>`<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:currentColor"><path d="${FG[g]}"/></svg>`;
+function folioSeek(pos,dur){const p=s=>(s/dur*100).toFixed(2)+'%';let t='';for(let s=0;s<=dur;s+=30){const big=s%60===0;t+=`<i class="tk ${big?'big':''}" style="left:${p(s)}">${big&&s>0?`<b>${s/60}</b>`:''}</i>`}return`<div class="scale" role="slider" aria-label="Seek" aria-valuenow="${pos}" aria-valuemax="${dur}" tabindex="0"><div class="base"></div>${t}<div class="done" style="width:${p(pos)}"></div><i class="dot" style="left:${p(pos)}"></i></div>`}
+const folioPhone=()=>`<div class="folio"><div class="wall"></div><div class="sb"><span>21:47</span><span style="display:flex;gap:6px;align-items:center"><svg viewBox="0 0 24 24"><path d="M3 20v-4h3v4zM8 20v-8h3v8zM13 20V8h3v12zM18 20V4h3v16z"/></svg><span style="font-size:13px">84</span></span></div><div class="body">
+ <section class="np" aria-label="Now Playing">
+  <div class="top"><button class="back">${gl('back')}<span>Playing from Vinyl rips</span></button><div class="r"><button aria-label="Sleep timer">${gl('moon')}</button><button aria-label="More">${gl('more')}</button></div></div>
+  <div class="washbox"><div class="bigart"><svg viewBox="0 0 60 60" aria-hidden="true">${COV.salt}</svg></div></div><div class="almark" aria-hidden="true"></div>
+  <div class="title"><div><h2>Saltwater Cathedral</h2><p>Mira Okonkwo</p></div><button class="heart on" aria-label="Hearted" aria-pressed="true">${gl('heart')}</button></div>
+  <div class="ledger"><div class="lg lg-w"><span class="k"><b>FLAC 24-bit / 96 kHz</b></span><span class="sub">Nyquist 48 kHz, PCM</span></div><div class="lg"><span class="k"><i class="mark" style="--c:var(--ink)"></i><b style="font-weight:500">Local file</b></span><span class="sub">This phone, hearted</span></div></div>
+  <div class="times"><b style="font-weight:400">2:14</b><span class="left">3:34 left</span><span>5:48</span></div>
+  ${folioSeek(134,348)}
+  <div class="tr"><button class="on" aria-label="Shuffle on" aria-pressed="true">${gl('shuffle')}</button><button aria-label="Previous">${gl('prev')}</button><button class="play" aria-label="Pause">${fill('pause')}</button><button aria-label="Next">${gl('next')}</button><button class="rep on" aria-label="Repeat one" aria-pressed="true">${gl('repeat')}<sup>1</sup></button></div>
+  <div class="aux2"><div class="ln">${gl('moon')}<em>Sleep</em><span class="sp">after this track</span><span class="v">3:34</span></div><div class="ln">${gl('queue')}<em>Queue</em><span class="sp">shuffled</span><span class="v">312</span></div></div>
+ </section></div><div class="pill"></div></div>`;
+
+/* ---------- assemble ---------- */
+function scaled(el,w,h,s,html,extra=''){el.style.width=w*s+'px';el.style.height=h*s+'px';el.innerHTML=`<div class="inner" style="width:${w}px;height:${h}px;transform:scale(${s});${extra}">${html}</div>`}
+scaled(document.getElementById('desk1'),1920,1080,1240/1920,`<div class="screen"><div class="frame"></div>${bar()}<div class="win" style="left:80px;top:30px;width:1810px;height:1020px">${rail('home')}${home()}${pane()}</div></div>`);
+scaled(document.getElementById('desk2'),1500,900,1240/1500,`<div class="screen" style="width:1500px;height:900px"><div class="win solid" style="left:0;top:0;width:1500px;height:900px;border-radius:15px;box-shadow:none">${rail('library')}${library()}</div></div>`);
+scaled(document.getElementById('desk3'),980,640,610/980,`<div class="screen" style="width:980px;height:640px"><div class="win" style="left:0;top:0;width:980px;height:640px;box-shadow:none;background:var(--tSurface)">${compact()}</div></div>`);
+scaled(document.getElementById('desk4'),980,640,610/980,`<div class="screen" style="width:980px;height:640px"><div class="win" style="left:0;top:0;width:980px;height:640px;box-shadow:none">${rail('settings')}${settings()}</div></div>`);
+document.getElementById('dash').innerHTML=dash();
+document.getElementById('cmp').innerHTML=`<div><div class="scale" id="cmpPhone"></div><div class="cap">Phone: Folio Now Playing, unchanged from direction 5, in its own light tint.</div></div><div><div class="scale" id="cmpPane"></div><div class="cap">PC: the same track in the Caelestia pane. Same order of information, same controls, different skin and colour source.</div></div>`;
+scaled(document.getElementById('cmpPhone'),390,844,.66,folioPhone());
+scaled(document.getElementById('cmpPane'),460,844,.66,`<div class="screen" style="width:460px;height:844px"><div class="win" style="left:0;top:0;width:460px;height:844px;box-shadow:none;display:block;padding:0"><div style="transform-origin:0 0;transform:scale(.93);width:494px">${pane().replace('class="pane"','class="pane" style="margin:20px;height:868px"')}</div></div></div>`);
+apply(cur);
+</script>
+</body></html>

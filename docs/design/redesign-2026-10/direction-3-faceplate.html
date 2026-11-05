@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Kainos Player — Direction 3: Faceplate</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--chassis:#2B2825;--chassis2:#221F1C;--alu:#D9D3C7;--alu2:#C6BFB1;--alu3:#EFEAE0;--ink:#1E1B18;--mute:#6E665C;--cream:#F1ECE3;--cream2:#B9B0A2;--amber:#F0A030;--walnut:#5A3A26;--line:rgba(30,27,24,.16);--dline:rgba(241,236,227,.1);
+--al:#4FA3C7; /* album light sample: Saltwater Cathedral */
+--cond:"DIN Next","Univers Next Condensed","Bahnschrift","Roboto Condensed","Arial Narrow","Helvetica Neue",Arial,sans-serif;
+--mono:"IBM Plex Mono","DejaVu Sans Mono","Menlo",monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1A1816;color:var(--cream);font:14px/1.45 var(--cond);padding:32px 40px 80px}
+h2.sec{font:400 22px/1.2 var(--cond);margin:48px 0 14px;color:var(--cream)}
+h2.sec span{font-size:13px;color:var(--cream2);margin-left:10px}
+.intro{background:linear-gradient(180deg,var(--alu3),var(--alu));color:var(--ink);padding:36px 40px;max-width:1224px;border-radius:6px;border:1px solid #9E9689;box-shadow:inset 0 1px 0 #fff,0 10px 30px -14px #000;position:relative}
+.intro::after{content:"";position:absolute;left:40px;right:40px;bottom:0;height:3px;background:var(--al);box-shadow:0 0 14px var(--al);border-radius:2px 2px 0 0}
+.intro h1{font:500 54px/1 var(--cond);letter-spacing:.01em}
+.intro h1 small{display:block;font:13px var(--cond);color:var(--mute);margin-bottom:12px}
+.intro p{max-width:66ch;margin-top:16px;font-size:15px;line-height:1.55}
+.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px;margin-top:28px;border-top:1px solid #9E9689;padding-top:18px}
+.meta h3{font:400 13px var(--cond);color:var(--mute);margin-bottom:8px}
+.meta .t1{font:500 24px/1.1 var(--cond)}.meta .t2{font-size:13px;color:#4A443D;margin-top:4px;line-height:1.5}
+.sw{display:flex;gap:6px;flex-wrap:wrap}.sw i{display:block;width:44px;height:44px;border-radius:4px;border:1px solid rgba(0,0,0,.2)}
+.sw b{display:block;font-size:11px;color:var(--mute);font-weight:400;margin-top:4px}
+code{font:12px var(--mono)}
+/* frames */
+.scalebox{width:1224px;height:765px;overflow:hidden;border-radius:8px}
+.desk{width:1440px;height:900px;transform:scale(.85);transform-origin:0 0;background:var(--chassis);display:grid;grid-template-columns:200px 1fr 420px;grid-template-rows:56px 1fr;overflow:hidden;position:relative}
+@media (max-width:1320px){.scalebox{width:936px;height:585px}.desk{transform:scale(.65)}}
+.face{grid-column:1/4;background:linear-gradient(180deg,var(--alu3),var(--alu) 70%,var(--alu2));color:var(--ink);display:flex;align-items:center;padding:0 24px;gap:28px;border-bottom:1px solid #8E8679;box-shadow:0 2px 0 rgba(0,0,0,.4)}
+.face .brand{font:500 18px var(--cond);letter-spacing:.14em}
+.face .brand small{display:block;font-size:9.5px;letter-spacing:.2em;color:var(--mute);font-weight:400}
+.face .led{display:flex;gap:18px;font-size:12px;color:#4A443D;margin-left:auto}
+.face .led span{display:inline-flex;gap:7px;align-items:center}
+.face .led i{width:8px;height:8px;border-radius:50%;background:#7A7368;box-shadow:inset 0 1px 1px rgba(0,0,0,.5)}
+.face .led i.on{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.face .led i.al{background:var(--al);box-shadow:0 0 8px var(--al)}
+.nav{background:var(--chassis2);padding:22px 16px;border-right:1px solid #000}
+.nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:6px;color:var(--cream2);text-decoration:none;font-size:15px;border-radius:4px;background:linear-gradient(180deg,#3A3633,#2C2926);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 2px 2px rgba(0,0,0,.5)}
+.nav a.on{color:var(--cream);box-shadow:inset 0 2px 4px rgba(0,0,0,.7)}
+.nav a i{width:7px;height:7px;border-radius:50%;background:#1a1816;margin-left:auto;box-shadow:inset 0 1px 1px #000}
+.nav a.on i{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.nav svg{width:16px;height:16px}
+.nav .sub{background:none;box-shadow:none;font-size:13px;padding:6px 12px 6px 40px}
+.nav .foot{position:absolute;bottom:22px;left:16px;font-size:12px;color:#7A7368;line-height:1.5}
+.main{padding:28px 36px 0;overflow:hidden;position:relative}
+.mast{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--dline)}
+.mast h1{font:500 40px/1 var(--cond)}
+.mast p{color:var(--cream2);font-size:14px;max-width:46ch}
+.hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:22px}
+.pin{display:block;text-decoration:none;color:inherit;background:var(--chassis2);border-radius:6px;padding:10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 0 #000}
+.art{aspect-ratio:1;width:100%;display:block;border-radius:3px;position:relative;overflow:hidden}
+.pin h4{font:500 16px/1.2 var(--cond);margin-top:10px}
+.pin p{color:var(--cream2);font-size:12.5px;margin-top:2px}
+.src{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--cream2);margin-top:6px}
+.src::before{content:"";width:6px;height:6px;border-radius:50%;background:#7A7368}
+.src.sp::before{background:#1ED760;box-shadow:0 0 6px #1ED760}.src.yt::before{background:#FF4E45;box-shadow:0 0 6px #FF4E45}.src.lo::before{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.feature{margin-top:22px;display:grid;grid-template-columns:96px 1fr auto;gap:20px;align-items:center;background:linear-gradient(180deg,var(--alu3),var(--alu));color:var(--ink);border-radius:6px;padding:14px 16px;box-shadow:inset 0 1px 0 #fff,0 2px 0 #000}
+.feature h3{font:500 24px/1.05 var(--cond)}.feature p{color:#4A443D;margin-top:4px;font-size:13px}
+.btn{font:500 13px var(--cond);letter-spacing:.04em;padding:10px 18px;border-radius:4px;border:1px solid #8E8679;background:linear-gradient(180deg,#F5F1E8,#D9D3C7);color:var(--ink);box-shadow:inset 0 1px 0 #fff,0 2px 0 #8E8679;cursor:pointer;white-space:nowrap}
+.btn.dark{background:linear-gradient(180deg,#3A3633,#2C2926);color:var(--cream);border-color:#000;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 2px 0 #000}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:22px}
+.lst h3{font:400 13px var(--cond);color:var(--cream2);border-bottom:1px solid var(--dline);padding-bottom:6px;margin-bottom:4px}
+.lst a{display:grid;grid-template-columns:36px 1fr auto;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--dline);text-decoration:none;color:inherit}
+.lst .art{width:36px}.lst b{font-weight:500;display:block}.lst small{color:var(--cream2);font-size:12px}
+.lst em{font-style:normal;color:#7A7368;font-size:12px}
+/* now playing faceplate */
+.pane{grid-row:2/3;grid-column:3/4;background:linear-gradient(180deg,var(--alu3),var(--alu) 60%,var(--alu2));color:var(--ink);border-left:1px solid #000;box-shadow:inset 1px 0 0 #fff;padding:22px 28px 20px;position:relative;display:flex;flex-direction:column}
+.pane .top{display:flex;justify-content:space-between;font-size:12px;color:#4A443D}
+.win{margin-top:16px;background:#141210;border-radius:6px;padding:16px;box-shadow:inset 0 2px 8px #000,0 1px 0 #fff;position:relative;overflow:hidden}
+.win .back{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 55%,var(--al) 0%,transparent 62%);opacity:.45;filter:blur(18px)}
+.win .big{width:100%;aspect-ratio:1;position:relative;border-radius:3px;box-shadow:0 10px 30px -10px #000}
+.win .strip{position:relative;margin-top:14px;height:4px;border-radius:2px;background:var(--al);box-shadow:0 0 12px var(--al),0 0 2px var(--al)}
+.meter{display:flex;gap:3px;margin-top:10px;position:relative;align-items:flex-end;height:14px}
+.meter i{flex:1;background:#2A2724;border-radius:1px;height:100%}
+.meter i.on{background:var(--al);box-shadow:0 0 6px var(--al)}.meter i.hot{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.pane h2{font:500 28px/1.05 var(--cond);margin-top:18px}
+.pane .by{display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:#4A443D;font-size:15px}
+.pane .by svg{width:22px;height:22px;color:var(--amber);filter:drop-shadow(0 0 4px rgba(240,160,48,.6))}
+.read{margin-top:12px;background:#141210;border-radius:4px;padding:8px 12px;font:13px var(--mono);color:var(--amber);display:flex;justify-content:space-between;box-shadow:inset 0 2px 6px #000;letter-spacing:.02em;text-shadow:0 0 6px rgba(240,160,48,.6)}
+.read span+span{color:#C98A2C}
+.seek{margin-top:14px}
+.seek .bar{height:6px;background:#9E9689;border-radius:3px;position:relative;box-shadow:inset 0 1px 2px rgba(0,0,0,.5)}
+.seek .bar i{position:absolute;left:0;top:0;height:6px;width:38%;background:var(--al);border-radius:3px;box-shadow:0 0 8px var(--al)}
+.seek .bar i::after{content:"";position:absolute;right:-7px;top:-5px;width:16px;height:16px;border-radius:50%;background:linear-gradient(180deg,#F5F1E8,#C6BFB1);border:1px solid #8E8679;box-shadow:0 2px 3px rgba(0,0,0,.4)}
+.seek .t{display:flex;justify-content:space-between;font:11.5px var(--mono);color:#4A443D;margin-top:7px}
+.ctl{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+.ctl button{width:44px;height:44px;border-radius:50%;border:1px solid #8E8679;background:linear-gradient(180deg,#F5F1E8,#C6BFB1);color:var(--ink);display:grid;place-items:center;box-shadow:inset 0 1px 0 #fff,0 3px 0 #8E8679,0 4px 6px rgba(0,0,0,.3);cursor:pointer;position:relative}
+.ctl button svg{width:20px;height:20px}
+.ctl .play{width:64px;height:64px}
+.ctl .on{box-shadow:inset 0 3px 5px rgba(0,0,0,.45);background:linear-gradient(180deg,#C6BFB1,#D9D3C7);transform:translateY(2px)}
+.ctl .on::after{content:"";position:absolute;bottom:-9px;left:50%;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.ctl .rep sup{position:absolute;top:8px;right:9px;font:600 9px var(--mono);color:var(--amber)}
+.aux{display:flex;align-items:center;gap:16px;margin-top:22px;font-size:12px;color:#4A443D}
+.knob{width:46px;height:46px;border-radius:50%;background:conic-gradient(from 200deg,#F5F1E8,#C6BFB1,#9E9689,#F5F1E8);border:1px solid #8E8679;box-shadow:0 3px 6px rgba(0,0,0,.4),inset 0 1px 0 #fff;position:relative}
+.knob::after{content:"";position:absolute;left:50%;top:4px;width:3px;height:14px;margin-left:-1.5px;background:var(--ink);border-radius:2px;transform-origin:50% 19px;transform:rotate(110deg)}
+.aux .lbl{display:grid;gap:2px}.aux .lbl b{font:500 13px var(--cond);color:var(--ink)}
+.aux .tog{margin-left:auto;display:inline-flex;gap:6px;align-items:center;background:#141210;color:var(--amber);font:12px var(--mono);padding:6px 10px;border-radius:4px;box-shadow:inset 0 2px 6px #000}
+.aux svg{width:14px;height:14px}
+.upn{margin-top:auto;border-top:1px solid #9E9689;padding-top:10px}
+.upn h3{font:400 12.5px var(--cond);color:#4A443D;display:flex;justify-content:space-between}
+.upn a{display:grid;grid-template-columns:30px 1fr auto;gap:10px;align-items:center;padding:6px 0;text-decoration:none;color:inherit;font-size:13px;border-bottom:1px solid var(--line)}
+.upn .art{width:30px}.upn small{display:block;color:var(--mute);font-size:11.5px}.upn em{font:11.5px var(--mono);color:var(--mute)}
+/* library */
+.lib{grid-column:2/4;padding:28px 36px 0;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.search{display:flex;align-items:center;gap:10px;background:#141210;border-radius:4px;padding:9px 12px;width:320px;color:var(--amber);font:14px var(--mono);box-shadow:inset 0 2px 6px #000}
+.search svg{width:15px;height:15px;color:#7A7368}.search small{margin-left:auto;color:#7A7368;font-size:11px}
+.tabs{display:flex;gap:6px;margin-top:18px}
+.tabs a{padding:8px 16px;border-radius:4px;color:var(--cream2);text-decoration:none;font-size:14px;background:linear-gradient(180deg,#3A3633,#2C2926);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 2px 2px rgba(0,0,0,.5)}
+.tabs a.on{color:var(--cream);box-shadow:inset 0 2px 4px rgba(0,0,0,.7);position:relative}
+.tabs a.on::after{content:"";position:absolute;left:50%;bottom:-8px;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.tools{display:flex;align-items:center;gap:10px;margin-top:22px}
+.chip{font-size:12.5px;padding:6px 12px;border-radius:999px;color:var(--cream2);border:1px solid #4A443D;display:inline-flex;gap:7px;align-items:center}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#1a1816;box-shadow:inset 0 1px 1px #000}
+.chip.on{color:var(--cream);border-color:#7A7368}.chip.on::before{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.tools .sp{flex:1}.tools .sort{font-size:13px;color:var(--cream2)}
+.thead{position:sticky;top:0;display:grid;grid-template-columns:36px 1fr 1fr 180px 60px;gap:14px;font-size:11.5px;color:#4A443D;padding:8px 12px;margin-top:16px;background:linear-gradient(180deg,var(--alu3),var(--alu));border-radius:4px 4px 0 0;box-shadow:inset 0 1px 0 #fff}
+.tr{display:grid;grid-template-columns:36px 1fr 1fr 180px 60px;gap:14px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--dline);font-size:14px}
+.tr:hover{background:rgba(255,255,255,.03)}
+.tr .n{font:12px var(--mono);color:#7A7368}.tr small{display:block;color:var(--cream2);font-size:12px}
+.tr .alb{color:var(--cream2)}.tr .d{text-align:right;font:12.5px var(--mono);color:var(--cream2)}
+.tr .h{color:var(--amber);margin-left:6px;font-size:12px}
+.av{font-size:12px;display:inline-flex;align-items:center;gap:7px;color:var(--cream2)}
+.av::before{content:"";width:7px;height:7px;border-radius:50%;background:#1a1816;box-shadow:inset 0 1px 1px #000}
+.av.local::before{background:var(--amber);box-shadow:0 0 8px var(--amber)}.av.cached::before{background:#4FD08A;box-shadow:0 0 8px #4FD08A}.av.dl::before{background:var(--al);box-shadow:0 0 8px var(--al);animation:blink 1.2s infinite alternate}.av.wait::before{background:#7A7368}.av.fail::before{background:#FF5A4E;box-shadow:0 0 8px #FF5A4E}
+@keyframes blink{to{opacity:.35}}@media (prefers-reduced-motion:reduce){.av.dl::before{animation:none}}
+.tr.now{background:rgba(240,160,48,.08)}.tr.now b{color:var(--amber)}
+/* phones */
+.phones{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.ph{width:390px;height:844px;background:var(--chassis);border-radius:44px;border:8px solid #111;position:relative;overflow:hidden;display:flex;flex-direction:column;font-size:14px}
+.ph .sb{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 26px;font-size:13px;font-weight:500;position:relative;z-index:2}
+.ph .body{flex:1;overflow:hidden;position:relative;padding:0 20px}
+.tabbar{height:78px;display:grid;grid-template-columns:repeat(4,1fr);align-items:center;background:linear-gradient(180deg,var(--alu3),var(--alu));color:#4A443D;font-size:10.5px;text-align:center;border-top:1px solid #8E8679;box-shadow:inset 0 1px 0 #fff}
+.tabbar a{text-decoration:none;display:grid;justify-items:center;gap:3px;color:#4A443D;position:relative}.tabbar svg{width:20px;height:20px}.tabbar .on{color:var(--ink)}
+.tabbar .on::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);position:absolute;top:-12px}
+.mini{display:grid;grid-template-columns:40px 1fr auto;gap:12px;align-items:center;padding:8px 14px;background:#141210;position:relative;box-shadow:inset 0 2px 6px #000}
+.mini::before{content:"";position:absolute;left:0;top:0;right:0;height:3px;background:var(--al);box-shadow:0 0 10px var(--al)}
+.mini .art{width:40px}.mini b{font-weight:500;display:block;font-size:13.5px;color:var(--cream)}.mini small{font:11px var(--mono);color:var(--amber)}
+.mini .pl{display:flex;gap:10px;color:var(--cream)}.mini .pl svg{width:22px;height:22px}
+/* phone NP */
+.np{background:linear-gradient(180deg,var(--alu3),var(--alu) 60%,var(--alu2));color:var(--ink)}
+.np .back{display:flex;justify-content:space-between;align-items:center;padding:10px 0 0;color:#4A443D;font-size:12.5px}
+.np .back a{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--ink);padding:10px 12px 10px 0;font-size:14px}
+.np .back svg{width:18px;height:18px}
+.np .win{margin-top:14px;padding:14px}
+.np .win .big{width:100%}
+.np h2{font:500 28px/1.05 var(--cond);margin-top:16px}
+.np .by{display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:#4A443D;font-size:15px}
+.np .by svg{width:24px;height:24px;color:var(--amber);filter:drop-shadow(0 0 4px rgba(240,160,48,.6))}
+.np .ctl{margin-top:14px}.np .ctl .play{width:68px;height:68px}
+.np .foot{display:flex;justify-content:space-between;margin-top:26px;font-size:12.5px;color:#4A443D}
+.np .foot span{display:inline-flex;align-items:center;gap:6px;background:#141210;color:var(--amber);font:12px var(--mono);padding:6px 10px;border-radius:4px;box-shadow:inset 0 2px 6px #000}
+.np .foot svg{width:14px;height:14px}
+/* phone home */
+.hm h1{font:500 36px/1 var(--cond);margin-top:18px}
+.hm p{color:var(--cream2);font-size:13px;margin-top:6px}
+.resume{margin-top:16px;background:linear-gradient(180deg,var(--alu3),var(--alu));color:var(--ink);border-radius:6px;padding:12px;display:grid;grid-template-columns:56px 1fr auto;gap:12px;align-items:center;box-shadow:inset 0 1px 0 #fff,0 2px 0 #000;position:relative;overflow:hidden}
+.resume::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--al);box-shadow:0 0 10px var(--al)}
+.resume .art{width:56px}.resume b{display:block;font-weight:500}.resume small{font:11.5px var(--mono);color:#4A443D}
+.hm h3{font:400 13px var(--cond);color:var(--cream2);border-bottom:1px solid var(--dline);padding-bottom:6px;margin-top:20px}
+.pg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px}
+.pg a{display:block;text-decoration:none;color:inherit;background:var(--chassis2);border-radius:6px;padding:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 0 #000}
+.pg h4{font:500 13px/1.2 var(--cond);margin-top:6px}.pg p{font-size:11px;color:var(--cream2)}
+/* phone search */
+.sr .fld{display:flex;align-items:center;gap:10px;background:#141210;border-radius:4px;padding:12px 14px;margin-top:12px;font:16px var(--mono);color:var(--amber);box-shadow:inset 0 2px 6px #000}
+.sr .fld svg{width:18px;height:18px;color:#7A7368}
+.sr .auto{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--cream2);margin-top:12px;padding:0 2px}
+.sw2{width:38px;height:20px;border-radius:4px;background:#141210;box-shadow:inset 0 2px 5px #000;position:relative}
+.sw2::after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:3px;background:linear-gradient(180deg,#F5F1E8,#C6BFB1);border:1px solid #8E8679}
+.sw2.on::after{left:19px}.sw2.on{box-shadow:inset 0 2px 5px #000,inset 0 0 0 1px var(--amber)}
+.sr h3{font:400 13px var(--cond);color:var(--cream2);border-bottom:1px solid var(--dline);padding-bottom:6px;margin-top:18px}
+.sr a{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--dline);text-decoration:none;color:inherit}
+.sr .art{width:44px}.sr b{display:block;font-weight:500;font-size:14px}.sr small{color:var(--cream2);font-size:12px}.sr .src{margin:0}
+/* phone settings */
+.st .crumb{font-size:12.5px;color:var(--cream2);margin-top:12px}
+.st h1{font:500 32px/1 var(--cond);margin-top:10px}
+.st h3{font:400 13px var(--cond);color:var(--cream2);border-bottom:1px solid var(--dline);padding-bottom:6px;margin-top:22px}
+.sch{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.sch a{text-decoration:none;color:inherit;border-radius:6px;padding:8px;display:block;position:relative;background:var(--chassis2);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 0 #000}
+.sch a.on{box-shadow:inset 0 0 0 1px var(--amber),0 2px 0 #000}
+.sch .pv{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;height:56px;border-radius:3px;overflow:hidden}
+.sch .pv i{display:block}
+.sch b{display:block;font-weight:500;font-size:13px;margin-top:8px}.sch small{color:var(--cream2);font-size:11.5px}
+.sch .on::after{content:"";position:absolute;top:14px;right:14px;width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.st .opt{display:flex;justify-content:space-between;align-items:center;padding:14px 2px;border-bottom:1px solid var(--dline);font-size:14px}
+.st .opt small{display:block;color:var(--cream2);font-size:12px}
+/* artwork */
+.a1{background:radial-gradient(circle at 35% 30%,#8FD0FF,#2D6FB8 45%,#0A1E3F 100%)}
+.a2{background:radial-gradient(circle at 30% 30%,#FFD9A8,#C76A2E 55%,#3E1F0E)}
+.a3{background:linear-gradient(0deg,#0E1512 0%,#0E1512 48%,#9FB8A6 48%,#9FB8A6 100%)}
+.a4{background:conic-gradient(from 210deg at 50% 50%,#E6E2D6,#8E8B7E,#2F2E2B,#E6E2D6)}
+.a5{background:linear-gradient(135deg,#2B2E45,#6D5F9A 50%,#E7B7C9)}
+.a6{background:repeating-linear-gradient(90deg,#1E2A3A 0 6px,#5A7A95 6px 12px)}
+.a7{background:radial-gradient(circle at 70% 70%,#FFF4D6,#D9B14A 40%,#4A3A10)}
+.a8{background:linear-gradient(180deg,#D5DCE3,#6C7B8B 60%,#2A3139)}
+.a9{background:linear-gradient(45deg,#1F4A3A,#7BD0A8)}
+.fold{background:#3A3633;display:grid;place-items:center;color:var(--cream2)}.fold svg{width:34%;height:34%}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="i-heartf" viewBox="0 0 24 24"><path d="M12 21s-7-4.6-9.3-9A5.2 5.2 0 0 1 12 6.1 5.2 5.2 0 0 1 21.3 12C19 16.4 12 21 12 21z" fill="currentColor"/></symbol>
+<symbol id="i-shuf" viewBox="0 0 24 24"><path d="M3 7h3.5l9 10H20M20 7h-4.5l-2 2.3M3 17h3.5l2-2.3M18 4l3 3-3 3M18 14l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="i-rep" viewBox="0 0 24 24"><path d="M4 10V8a3 3 0 0 1 3-3h12M20 14v2a3 3 0 0 1-3 3H5M16 2l3 3-3 3M8 16l-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24"><path d="M6 5v14M19 5 8 12l11 7z" fill="currentColor"/></symbol>
+<symbol id="i-next" viewBox="0 0 24 24"><path d="M18 5v14M5 5l11 7-11 7z" fill="currentColor"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.5 15.5 21 21" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-lib" viewBox="0 0 24 24"><path d="M4 4v16M9 4v16M14 5l5 15" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" stroke="currentColor" stroke-width="1.6"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 9v4l3 2M9 2h6" stroke="currentColor" stroke-width="1.6"/></symbol>
+<symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 6h12M4 12h12M4 18h8M19 12v6M16 15h6" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v10H3z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</defs></svg>
+
+<header class="intro">
+<h1><small>Direction 3 of 4</small>Faceplate</h1>
+<p>A 1970s integrated amplifier, not a streaming app. The player is a brushed-aluminium faceplate screwed onto a dark chassis: push-buttons with travel, a rotary volume knob, an amber readout window for the format and bit depth, and a signal meter that moves with the music. The library is the dark side of the chassis, where the lists live; the player is the bright side you reach for.</p>
+<div class="meta">
+<div><h3>Type pairing</h3><div class="t1">DIN Next, Regular and Medium</div><div class="t2">Faceplate lettering: condensed, even, slightly tracked on the brand line only. Readouts (time, format, counts) use IBM Plex Mono in amber inside dark windows, because the hardware has a display. Rendering here with Bahnschrift / Roboto Condensed / Arial Narrow fallbacks.</div></div>
+<div><h3>Palette</h3><div class="sw"><span><i style="background:#2B2825"></i><b>Chassis 2B2825</b></span><span><i style="background:#D9D3C7"></i><b>Aluminium D9D3C7</b></span><span><i style="background:#1E1B18"></i><b>Ink 1E1B18</b></span><span><i style="background:#F0A030"></i><b>Amber F0A030</b></span><span><i style="background:#141210"></i><b>Window 141210</b></span><span><i style="background:#4FA3C7"></i><b>Album light</b></span></div><div class="t2" style="margin-top:10px">Amber is the only fixed accent: power/on LEDs, hearts, current track. Schemes: Walnut (this), Silver (all-aluminium, light), Black face (dark faceplate, amber), Champagne (warm light).</div></div>
+<div><h3>Album light, reinterpreted</h3><div class="t2">The sampled colour is contained, not diffuse: it backlights the artwork inside the black window (radial, 45% alpha, clipped to the window), lights a 4&nbsp;px LED strip under the cover, fills the seek bar and the signal meter, and becomes the mini player’s top rule. Same sampling as <code>AlbumLight.kt</code>, saturation clamped 0.5–0.7, lightness 0.55 so it reads as a lit element against aluminium. In Compose the window is a <code>Box</code> with clip and the existing <code>albumLight</code> modifier.</div></div>
+</div>
+</header>
+
+<h2 class="sec">Desktop — Home with Now Playing side pane <span>1440 × 900, scaled</span></h2>
+<div class="scalebox"><div class="desk">
+<div class="face"><span class="brand">KAINOS<small>stereo integrated player</small></span><span class="led"><span><i class="on"></i>Power</span><span><i class="on"></i>Spotify</span><span><i class="al"></i>Local FLAC</span><span><i></i>Home sync idle</span><span>Downloads 2</span></span></div>
+<nav class="nav">
+<a class="on"><svg><use href="#i-home"/></svg>Home<i></i></a>
+<a><svg><use href="#i-search"/></svg>Search<i></i></a>
+<a><svg><use href="#i-lib"/></svg>Library<i></i></a>
+<a><svg><use href="#i-set"/></svg>Settings<i></i></a>
+<a class="sub">Downloads</a>
+<div class="foot">Space: play/pause<br>Wheel over knob: volume</div>
+</nav>
+<section class="main">
+<div class="mast"><h1>Thursday evening</h1><p>Three pinned playlists, two albums and a folder. Discover Weekly refreshed on Monday.</p></div>
+<div class="hgrid">
+<a class="pin"><span class="art a3"></span><h4>Late shift</h4><p>41 songs</p><span class="src lo">Kainos playlist</span></a>
+<a class="pin"><span class="art a5"></span><h4>Liked Songs</h4><p>1,208 songs</p><span class="src sp">Spotify</span></a>
+<a class="pin"><span class="art a2"></span><h4>Brass Mornings</h4><p>Yusuf Adeyemi Quartet</p><span class="src lo">Local, FLAC</span></a>
+<a class="pin"><span class="art fold"><svg><use href="#i-folder"/></svg></span><h4>Vinyl rips</h4><p>312 files</p><span class="src lo">Folder</span></a>
+<a class="pin"><span class="art a7"></span><h4>Sunday pressing</h4><p>63 songs</p><span class="src sp">Spotify playlist</span></a>
+<a class="pin"><span class="art a8"></span><h4>Hollow Season</h4><p>The Northern Wires</p><span class="src sp">Spotify album</span></a>
+<a class="pin"><span class="art a4"></span><h4>Commute</h4><p>18 songs</p><span class="src lo">Kainos playlist</span></a>
+<a class="pin"><span class="art a9"></span><h4>Static Bloom</h4><p>Tendril</p><span class="src lo">Local, FLAC</span></a>
+</div>
+<div class="feature"><span class="art a6" style="width:96px"></span><div><h3>Discover Weekly</h3><p>30 new songs picked for you. Updated Monday, 1 h 52 min.</p></div><button class="btn dark">Play</button></div>
+</section>
+<aside class="pane">
+<div class="top"><span>Playing from Vinyl rips</span><span>Compact</span></div>
+<div class="win"><div class="back"></div><div class="big art a1"></div><div class="strip"></div>
+<div class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="hot"></i><i class="hot"></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+<h2>Saltwater Cathedral</h2>
+<div class="by"><span>Mira Okonkwo</span><svg><use href="#i-heartf"/></svg></div>
+<div class="read"><span>FLAC 24/96</span><span>DR 14</span><span>LOCAL</span></div>
+<div class="seek"><div class="bar"><i></i></div><div class="t"><span>02:14</span><span>05:48</span></div></div>
+<div class="ctl">
+<button class="on" title="Shuffle on"><svg><use href="#i-shuf"/></svg></button>
+<button><svg><use href="#i-prev"/></svg></button>
+<button class="play"><svg><use href="#i-pause"/></svg></button>
+<button><svg><use href="#i-next"/></svg></button>
+<button class="rep" title="Repeat all"><svg><use href="#i-rep"/></svg></button>
+</div>
+<div class="aux"><span class="knob"></span><span class="lbl"><b>Volume</b><span>72</span></span><span class="tog"><svg><use href="#i-timer"/></svg>SLEEP 38:00</span><span class="tog"><svg><use href="#i-queue"/></svg>312</span></div>
+<div class="upn"><h3><span>Up next</span><span>Shuffled</span></h3>
+<a><span class="art a1"></span><span>Driftwood Choir<small>Mira Okonkwo</small></span><em>04:02</em></a>
+<a><span class="art a2"></span><span>Comet Lines<small>Yusuf Adeyemi Quartet</small></span><em>06:31</em></a>
+</div>
+</aside>
+</div></div>
+
+<h2 class="sec">Desktop — Library, Songs <span>chips with LEDs, sort, sticky aluminium header, availability</span></h2>
+<div class="scalebox"><div class="desk">
+<div class="face"><span class="brand">KAINOS<small>stereo integrated player</small></span><span class="led"><span><i class="on"></i>Power</span><span><i class="on"></i>Spotify</span><span><i class="al"></i>Local FLAC</span><span><i></i>Home sync idle</span><span>Downloads 2</span></span></div>
+<nav class="nav">
+<a><svg><use href="#i-home"/></svg>Home<i></i></a>
+<a><svg><use href="#i-search"/></svg>Search<i></i></a>
+<a class="on"><svg><use href="#i-lib"/></svg>Library<i></i></a>
+<a><svg><use href="#i-set"/></svg>Settings<i></i></a>
+<a class="sub">Downloads</a>
+<div class="foot">Type to search.<br>Enter plays the top match.</div>
+</nav>
+<section class="lib">
+<div class="mast"><h1>Library</h1><div class="search"><svg><use href="#i-search"/></svg>sltwtr cath<small>Esc clears</small></div></div>
+<div class="tabs"><a class="on">Songs</a><a>Albums</a><a>Artists</a><a>Playlists</a></div>
+<div class="tools"><span class="chip on">Local files only</span><span class="chip">Favorites only</span><span class="sp"></span><span class="sort">Sort: Title</span><button class="btn">Play favorites</button><button class="btn">Play all, 1,844</button></div>
+<div class="thead"><span>#</span><span>Title</span><span>Album</span><span>Availability</span><span style="text-align:right">Time</span></div>
+<div class="tr"><span class="n">01</span><span><b>Carrier Wave</b><small>Tendril</small></span><span class="alb">Static Bloom</span><span class="av un">Unavailable</span><span class="d">04:18</span></div>
+<div class="tr"><span class="n">02</span><span><b>Comet Lines</b><span class="h">♥</span><small>Yusuf Adeyemi Quartet</small></span><span class="alb">Brass Mornings</span><span class="av local">Local, FLAC</span><span class="d">06:31</span></div>
+<div class="tr"><span class="n">03</span><span><b>Driftwood Choir</b><small>Mira Okonkwo</small></span><span class="alb">Saltwater Cathedral</span><span class="av local">Local, FLAC</span><span class="d">04:02</span></div>
+<div class="tr"><span class="n">04</span><span><b>Ferric</b><span class="h">♥</span><small>Halden &amp; Vos</small></span><span class="alb">Ferric</span><span class="av dl">Downloading, 62%</span><span class="d">05:10</span></div>
+<div class="tr"><span class="n">05</span><span><b>Ghosts in the Hallway</b><small>Wren Castellan</small></span><span class="alb">Single</span><span class="av fail">Failed, retry</span><span class="d">03:29</span></div>
+<div class="tr"><span class="n">06</span><span><b>Glass Harbour</b><small>The Northern Wires</small></span><span class="alb">Hollow Season</span><span class="av cached">Cached</span><span class="d">04:55</span></div>
+<div class="tr"><span class="n">07</span><span><b>Low Orbit</b><span class="h">♥</span><small>Tendril</small></span><span class="alb">Static Bloom</span><span class="av local">Local, FLAC</span><span class="d">03:47</span></div>
+<div class="tr"><span class="n">08</span><span><b>Night Bus to Ostrava</b><span class="h">♥</span><small>Lenka Hořák</small></span><span class="alb">Marginalia</span><span class="av cached">Cached</span><span class="d">04:40</span></div>
+<div class="tr"><span class="n">09</span><span><b>Pale Gardens</b><small>Iso Tanaka</small></span><span class="alb">Pale Gardens</span><span class="av local">Local, FLAC</span><span class="d">07:12</span></div>
+<div class="tr now"><span class="n">10</span><span><b>Saltwater Cathedral</b><span class="h">♥</span><small>Mira Okonkwo</small></span><span class="alb">Saltwater Cathedral</span><span class="av local">Local, FLAC</span><span class="d">05:48</span></div>
+<div class="tr"><span class="n">11</span><span><b>Tideline</b><small>Cassiopeia Reyes</small></span><span class="alb">Tideline</span><span class="av wait">Waiting for Wi‑Fi</span><span class="d">04:03</span></div>
+<div class="tr"><span class="n">12</span><span><b>Vespers</b><small>Mira Okonkwo</small></span><span class="alb">Saltwater Cathedral</span><span class="av local">Local, FLAC</span><span class="d">03:58</span></div>
+</section>
+</div></div>
+
+<h2 class="sec">Phone — Now Playing, Home, Search, Settings → Appearance <span>390 × 844</span></h2>
+<div class="phones">
+
+<div class="ph np"><div class="sb"><span>21:47</span><span>●●● ⌁</span></div>
+<div class="body">
+<div class="back"><a><svg><use href="#i-down"/></svg>Vinyl rips</a><span>This phone</span></div>
+<div class="win"><div class="back"></div><div class="big art a1"></div><div class="strip"></div>
+<div class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="hot"></i><i class="hot"></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+<h2>Saltwater Cathedral</h2>
+<div class="by"><span>Mira Okonkwo</span><svg><use href="#i-heartf"/></svg></div>
+<div class="read"><span>FLAC 24/96</span><span>LOCAL</span></div>
+<div class="seek"><div class="bar"><i></i></div><div class="t"><span>02:14</span><span>05:48</span></div></div>
+<div class="ctl">
+<button class="on"><svg><use href="#i-shuf"/></svg></button>
+<button><svg><use href="#i-prev"/></svg></button>
+<button class="play"><svg><use href="#i-pause"/></svg></button>
+<button><svg><use href="#i-next"/></svg></button>
+<button class="rep"><svg><use href="#i-rep"/></svg><sup>1</sup></button>
+</div>
+<div class="foot"><span><svg><use href="#i-timer"/></svg>SLEEP END OF SONG</span><span><svg><use href="#i-queue"/></svg>QUEUE 312</span></div>
+</div></div>
+
+<div class="ph"><div class="sb"><span>21:47</span><span>●●● ⌁</span></div>
+<div class="body hm">
+<h1>Thursday evening</h1><p>Paused 2 hours ago in Vinyl rips.</p>
+<div class="resume"><span class="art a1"></span><span><b>Saltwater Cathedral</b><small>02:14 / 05:48</small></span><button class="btn dark">Resume</button></div>
+<h3>Pinned</h3>
+<div class="pg">
+<a><span class="art a3"></span><h4>Late shift</h4><p>Kainos</p></a>
+<a><span class="art a5"></span><h4>Liked Songs</h4><p>Spotify</p></a>
+<a><span class="art a2"></span><h4>Brass Mornings</h4><p>Local</p></a>
+<a><span class="art fold"><svg><use href="#i-folder"/></svg></span><h4>Vinyl rips</h4><p>Folder</p></a>
+<a><span class="art a7"></span><h4>Sunday pressing</h4><p>Spotify</p></a>
+<a><span class="art a4"></span><h4>Commute</h4><p>Kainos</p></a>
+</div>
+<h3>Discover Weekly</h3>
+<div class="feature" style="margin-top:10px;grid-template-columns:56px 1fr auto;padding:10px 12px"><span class="art a6" style="width:56px"></span><div><h3 style="font:500 17px/1.1 var(--cond);border:0;margin:0;padding:0;color:var(--ink)">30 new songs</h3><p style="font-size:12px">Updated Monday</p></div><button class="btn dark">Play</button></div>
+</div>
+<div class="mini"><span class="art a1"></span><span><b>Saltwater Cathedral</b><small>PAUSED 02:14</small></span><span class="pl"><svg><use href="#i-play"/></svg><svg><use href="#i-next"/></svg></span></div>
+<div class="tabbar"><a class="on"><svg><use href="#i-home"/></svg>Home</a><a><svg><use href="#i-search"/></svg>Search</a><a><svg><use href="#i-lib"/></svg>Library</a><a><svg><use href="#i-set"/></svg>Settings</a></div>
+</div>
+
+<div class="ph"><div class="sb"><span>21:47</span><span>●●● ⌁</span></div>
+<div class="body sr">
+<div class="fld"><svg><use href="#i-search"/></svg><span>northern wires</span></div>
+<div class="auto"><span>Autoplay after results end</span><span class="sw2"></span></div>
+<h3>Spotify and YouTube</h3>
+<a><span class="art a8"></span><span><b>Glass Harbour</b><small>The Northern Wires, Hollow Season</small></span><span class="src sp">Spotify</span></a>
+<a><span class="art a8"></span><span><b>Hollow Season</b><small>Album, 2019, 11 songs</small></span><span class="src sp">Spotify</span></a>
+<a><span class="art a6"></span><span><b>The Northern Wires, live at Rough Trade</b><small>Rough Trade, 48 min</small></span><span class="src yt">YouTube</span></a>
+<a><span class="art a3"></span><span><b>Ashfall</b><small>The Northern Wires</small></span><span class="src sp">Spotify</span></a>
+<a><span class="art a9"></span><span><b>Glass Harbour (acoustic session)</b><small>Lantern Sessions, 5:12</small></span><span class="src yt">YouTube</span></a>
+<a><span class="art a4"></span><span><b>The Northern Wires</b><small>Artist</small></span><span class="src sp">Spotify</span></a>
+<a><span class="art a8"></span><span><b>Hollow Season, full album</b><small>Topic channel, 44 min</small></span><span class="src yt">YouTube</span></a>
+</div>
+<div class="mini"><span class="art a1"></span><span><b>Saltwater Cathedral</b><small>PLAYING 02:14</small></span><span class="pl"><svg><use href="#i-pause"/></svg><svg><use href="#i-next"/></svg></span></div>
+<div class="tabbar"><a><svg><use href="#i-home"/></svg>Home</a><a class="on"><svg><use href="#i-search"/></svg>Search</a><a><svg><use href="#i-lib"/></svg>Library</a><a><svg><use href="#i-set"/></svg>Settings</a></div>
+</div>
+
+<div class="ph"><div class="sb"><span>21:47</span><span>●●● ⌁</span></div>
+<div class="body st">
+<div class="crumb">Settings › Appearance</div>
+<h1>Appearance</h1>
+<h3>Colour scheme</h3>
+<div class="sch">
+<a class="on"><span class="pv"><i style="background:#2B2825"></i><i style="background:#D9D3C7"></i><i style="background:#F0A030"></i></span><b>Walnut</b><small>Dark chassis, aluminium face</small></a>
+<a><span class="pv"><i style="background:#E8E3D9"></i><i style="background:#F5F1E8"></i><i style="background:#F0A030"></i></span><b>Silver</b><small>Light, all aluminium</small></a>
+<a><span class="pv"><i style="background:#141210"></i><i style="background:#2B2825"></i><i style="background:#F0A030"></i></span><b>Black face</b><small>Dark, amber readouts</small></a>
+<a><span class="pv"><i style="background:#F3EBDD"></i><i style="background:#E4D7C2"></i><i style="background:#B8722E"></i></span><b>Champagne</b><small>Light, warm</small></a>
+</div>
+<div class="opt"><span>Follow system light or dark<small>Walnut when dark, Silver when light</small></span><span class="sw2 on"></span></div>
+<div class="opt"><span>Signal meter<small>Show the level meter under the artwork</small></span><span class="sw2 on"></span></div>
+<div class="opt"><span>Compact player on desktop<small>Smaller side pane on wide windows</small></span><span class="sw2"></span></div>
+</div>
+<div class="mini"><span class="art a1"></span><span><b>Saltwater Cathedral</b><small>PLAYING 02:14</small></span><span class="pl"><svg><use href="#i-pause"/></svg><svg><use href="#i-next"/></svg></span></div>
+<div class="tabbar"><a><svg><use href="#i-home"/></svg>Home</a><a><svg><use href="#i-search"/></svg>Search</a><a><svg><use href="#i-lib"/></svg>Library</a><a class="on"><svg><use href="#i-set"/></svg>Settings</a></div>
+</div>
+
+</div>
+</body></html>

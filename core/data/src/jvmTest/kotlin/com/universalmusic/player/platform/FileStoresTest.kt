@@ -2,6 +2,10 @@ package com.universalmusic.player.platform
 
 import com.universalmusic.player.data.auth.AuthTokens
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.domain.failure.AppFailure
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.model.ProviderId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -21,6 +25,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.Assume.assumeTrue
 
 class FileStoresTest {
     private val dir: Path = Files.createTempDirectory("kainos-file-stores")
@@ -29,6 +34,48 @@ class FileStoresTest {
     @AfterTest
     fun cleanup() {
         dir.toFile().deleteRecursively()
+    }
+
+    @Test
+    fun legacyAppearanceMigratesAndWritesTheNewFields() = runBlocking {
+        val path = dir.resolve("settings.json")
+        path.writeText("""{"colorScheme":"CATPPUCCIN","dynamicColor":true,"compactMode":true}""")
+        val store = FileSettingsStore(path)
+        val migrated = store.read()
+        assertEquals(com.universalmusic.player.data.settings.FolioTint.CATPPUCCIN, migrated.tint)
+        assertTrue(migrated.compactMode)
+        store.write(migrated)
+        assertFalse(path.readText().contains("colorScheme"))
+        assertFalse(path.readText().contains("dynamicColor"))
+        assertEquals(migrated, store.read())
+    }
+
+    @Test
+    fun corruptSettingsShowTheStorageMessageUntilTheyAreSavedAgain() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        path.writeText("{ not json")
+        val store = FileSettingsStore(path)
+        val settings = store.read()
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        store.write(settings)
+        assertNull(AppFailures.open.value.shown)
+    }
+
+    @Test
+    fun unreadableSettingsShowTheStorageMessageInsteadOfSilentDefaults() = runBlocking {
+        AppFailures.dismiss()
+        val path = dir.resolve("settings.json")
+        Files.createDirectory(path)
+        assertEquals(AppSettings(), FileSettingsStore(path).read())
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        AppFailures.dismiss()
     }
 
     @Test
@@ -73,6 +120,20 @@ class FileStoresTest {
     }
 
     @Test
+    fun corruptTokensStayOnScreenUntilTokensAreSavedNotUntilSettingsAre() = runBlocking {
+        AppFailures.dismiss()
+        val tokens = FileTokenStore(dir.resolve("tokens.json").also { it.writeText("{ not json") })
+        val settings = FileSettingsStore(dir.resolve("settings.json"))
+
+        assertNull(tokens.read(ProviderId.SPOTIFY))
+        settings.write(AppSettings())
+        assertEquals(setOf<AppFailure>(AppFailure.Storage(StorageArea.TOKENS)), AppFailures.open.value)
+
+        tokens.write(ProviderId.SPOTIFY, AuthTokens("fresh"))
+        assertNull(AppFailures.open.value.shown)
+    }
+
+    @Test
     fun corruptTokensAreQuarantinedAndTreatedAsSignedOut() = runBlocking {
         val path = dir.resolve("tokens.json")
         path.writeText("""{"SPOTIFY":{"accessToken":""")
@@ -87,7 +148,7 @@ class FileStoresTest {
 
     @Test
     fun writtenTokenFileIsOwnerOnly() = runBlocking {
-        if (!posix) return@runBlocking
+        assumeTrue("Needs POSIX file permissions", posix)
         val path = dir.resolve("tokens.json")
         val store = FileTokenStore(path)
 
@@ -101,7 +162,7 @@ class FileStoresTest {
 
     @Test
     fun existingWorldReadableFilesAreTightenedOnCreation() {
-        if (!posix) return
+        assumeTrue("Needs POSIX file permissions", posix)
         val tokens = dir.resolve("tokens.json")
         val settings = dir.resolve("settings.json")
         tokens.writeText("{}")

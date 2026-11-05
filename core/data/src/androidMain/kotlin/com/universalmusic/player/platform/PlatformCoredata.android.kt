@@ -11,15 +11,20 @@ import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.DefaultMetadataArtworkCache
 import com.universalmusic.player.data.cache.HeartedAudioCache
 import com.universalmusic.player.data.cache.MetadataArtworkCache
+import com.universalmusic.player.data.cache.readBoundedArtwork
 import com.universalmusic.player.data.config.AppConfig
 import com.universalmusic.player.data.db.AndroidLegacyJsonSource
 import com.universalmusic.player.data.db.DbKainosPlaylistStore
 import com.universalmusic.player.data.db.DbListeningExchangeStore
 import com.universalmusic.player.data.db.DbListeningStore
+import com.universalmusic.player.data.db.DbPlayHistoryStore
+import com.universalmusic.player.data.history.PlayHistoryStore
 import com.universalmusic.player.data.db.DbLocalLibraryScanCache
 import com.universalmusic.player.data.db.DbUserLibraryStore
 import com.universalmusic.player.data.db.KainosDatabase
 import com.universalmusic.player.data.db.KainosStorage
+import com.universalmusic.player.data.db.storageRead
+import com.universalmusic.player.data.db.storageWrite
 import com.universalmusic.player.data.library.UserLibraryStore
 import com.universalmusic.player.data.playlist.KainosPlaylistStore
 import com.universalmusic.player.data.session.ListeningExchangeStore
@@ -27,7 +32,8 @@ import com.universalmusic.player.data.session.ListeningStore
 import com.universalmusic.player.data.local.LocalLibraryScanCache
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
-import com.universalmusic.player.data.settings.withoutLegacyHomeLanPairing
+import com.universalmusic.player.data.settings.decodeAppSettings
+import com.universalmusic.player.domain.failure.StorageArea
 import com.universalmusic.player.domain.model.ProviderId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -82,6 +88,8 @@ actual fun createListeningStore(): ListeningStore = DbListeningStore(kainosStora
 
 actual fun createListeningExchangeStore(): ListeningExchangeStore = DbListeningExchangeStore(kainosStorage)
 
+actual fun createPlayHistoryStore(): PlayHistoryStore = DbPlayHistoryStore(kainosStorage)
+
 actual fun createMetadataArtworkCache(): MetadataArtworkCache {
     val disk = AndroidMetadataCacheDisk(androidContext)
     return DefaultMetadataArtworkCache(
@@ -94,8 +102,11 @@ actual fun createHeartedAudioCache(): HeartedAudioCache =
     DefaultHeartedAudioCache(AndroidHeartedAudioCacheDisk(androidContext))
 
 private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
-    java.net.URI(url).toURL().openStream().use { it.readBytes() }
-}.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 2 * 1024 * 1024 }
+    java.net.URI(url).toURL().openConnection().apply {
+        connectTimeout = 10_000
+        readTimeout = 15_000
+    }.getInputStream().use { readBoundedArtwork(it::read) }
+}.getOrNull()
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? =
     DbLocalLibraryScanCache(kainosStorage)
@@ -132,13 +143,15 @@ private class PrefsSettingsStore(context: Context) : SettingsStore {
 
     override suspend fun read(): AppSettings {
         val raw = prefs.getString("settings", null) ?: return AppSettings()
-        return json.decodeFromString<AppSettings>(raw).withoutLegacyHomeLanPairing()
+        return storageRead(StorageArea.SETTINGS) { decodeAppSettings(raw) }
     }
 
     override suspend fun write(settings: AppSettings) {
-        withContext(Dispatchers.IO) {
-            check(prefs.edit().putString("settings", json.encodeToString(settings)).commit()) {
-                "Could not persist app settings"
+        storageWrite(StorageArea.SETTINGS) {
+            withContext(Dispatchers.IO) {
+                check(prefs.edit().putString("settings", json.encodeToString(settings)).commit()) {
+                    "Could not persist app settings"
+                }
             }
         }
     }

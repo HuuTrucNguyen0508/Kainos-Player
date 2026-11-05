@@ -1,0 +1,6 @@
+# Copy to signing.properties (gitignored). Keep the keystore outside this repository.
+# Read androidApp/README.md first: a key alone cannot update an installed debug-signed app.
+storeFile=/absolute/path/to/kainos-release.jks
+storePassword=
+keyAlias=kainos-release
+keyPassword=

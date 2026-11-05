@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import com.universalmusic.player.domain.failure.StorageFailure
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -30,6 +31,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -66,15 +68,15 @@ class AppSettingsCancellationTest {
             f.initialize()
             lateinit var caller: Job
             f.store.afterCommit = { caller.cancel() }
-            caller = launch { f.updater.update { it.copy(normalizeVolume = true) } }
+            caller = launch { f.updater.update { it.copy(volumeLevelling = false) } }
             runCurrent()
             caller.join()
-            assertTrue(f.saved().normalizeVolume)
-            val publishedAfterCommit = f.state.value.normalizeVolume
-            val playbackAfterCommit = f.playbackSettings.normalizeVolume
+            assertFalse(f.saved().volumeLevelling)
+            val publishedAfterCommit = f.state.value.volumeLevelling
+            val playbackAfterCommit = f.playbackSettings.volumeLevelling
             f.store.afterCommit = {}
             f.updater.update { it.copy(compactMode = true) }
-            assertEquals(listOf(true, true, true), listOf(publishedAfterCommit, playbackAfterCommit, f.saved().normalizeVolume),
+            assertEquals(listOf(false, false, false), listOf(publishedAfterCommit, playbackAfterCommit, f.saved().volumeLevelling),
                 "Committed preference must be published and survive an unrelated write")
             assertTrue(f.saved().compactMode)
         }
@@ -136,7 +138,8 @@ class AppSettingsCancellationTest {
             f.initialize()
             f.service.startHubIfNeeded()
             f.makeSettingsUnwritable()
-            assertFailsWith<IOException> { f.service.enable(false) }
+            val failure = assertFailsWith<StorageFailure> { f.service.enable(false) }
+            assertIs<IOException>(failure.cause)
             f.assertEnabled(true)
         }
     }
@@ -151,7 +154,7 @@ class AppSettingsCancellationTest {
             val accepted = async { f.updater.update { it.copy(compactMode = true) } }
             writing.await()
             var transformed = false
-            val cancelled = launch { f.updater.update { transformed = true; it.copy(normalizeVolume = true) } }
+            val cancelled = launch { f.updater.update { transformed = true; it.copy(volumeLevelling = false) } }
             runCurrent()
             cancelled.cancel()
             release.complete(Unit)
@@ -159,8 +162,8 @@ class AppSettingsCancellationTest {
             runCurrent()
             cancelled.join()
             assertFalse(transformed)
-            assertFalse(f.saved().normalizeVolume)
-            assertFalse(f.state.value.normalizeVolume)
+            assertTrue(f.saved().volumeLevelling)
+            assertTrue(f.state.value.volumeLevelling)
             assertTrue(f.saved().compactMode)
         }
     }
@@ -192,11 +195,11 @@ class AppSettingsCancellationTest {
             val providerStarted = CompletableDeferred<Unit>()
             val providerFinished = CompletableDeferred<Unit>()
             f.applyProvider = { providerStarted.complete(Unit); providerFinished.await() }
-            val update = launch { f.updater.update { it.copy(youtubeDataApiKey = "new-key", normalizeVolume = true) } }
+            val update = launch { f.updater.update { it.copy(youtubeDataApiKey = "new-key", volumeLevelling = false) } }
             providerStarted.await()
             assertEquals("new-key", f.saved().youtubeDataApiKey)
             assertEquals("new-key", f.state.value.youtubeDataApiKey)
-            assertTrue(f.playbackSettings.normalizeVolume)
+            assertFalse(f.playbackSettings.volumeLevelling)
             update.cancel()
             providerFinished.complete(Unit)
             runCurrent()

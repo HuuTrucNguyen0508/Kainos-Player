@@ -1,0 +1,12 @@
+scenario	n	applied	p50_ms	p90_ms	p99_ms	outcomes
+held	10	10	2.05	2.16	11.30	{'DELIVERED': 10}
+reply-flight	10	10	102.16	102.46	102.51	{'DELIVERED': 10}
+gap	10	10	101.78	102.09	102.15	{'DELIVERED': 10}
+repost	10	10	0.96	1.23	1.27	{'DELIVERED': 10}
+double	20	20	0.88	1.57	1.60	{'DELIVERED': 20}
+five	50	50	1.10	1.45	1.57	{'DELIVERED': 50}
+latency200	10	10	151.68	152.36	152.53	{'DELIVERED': 10}
+latency1000	10	10	952.47	952.57	952.84	{'DELIVERED': 10}
+artwork	10	10	1046.89	1048.61	1049.89	{'DELIVERED': 10}
+position	10	10	1.10	1.15	1.17	{'DELIVERED': 10}
+direct	10	10	44.24	44.91	45.14	{'Applied(reply=RemoteCommandReply(status=RemoteStatus(title=Phone, artist=null, album=null, artworkUrl=null, artworkKey=null, durationMs=null, positionMs=0, positionAgeMs=0, isPlaying=false, buffering=false, shuffle=false, repeat=OFF, volume=1.0, currentItemId=null, queue=[], canSkipPrevious=false, canSkipNext=false), transfer=null))': 10}

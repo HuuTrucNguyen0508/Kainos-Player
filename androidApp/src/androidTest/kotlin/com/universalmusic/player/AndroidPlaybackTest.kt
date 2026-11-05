@@ -189,15 +189,15 @@ class AndroidPlaybackTest {
     fun youtubeLiveResolveAndPlaySmoke() = runBlocking {
         // First YouTube video — short, public, stable id for extractor smoke.
         val videoId = "jNQXAC9IVRw"
-        withEngine { engine, context ->
-            initAndroidPlatform(context)
+        withEngine { engine, _ ->
+            // MainActivity in withEngine already initializes the platform.
             val resolver = createYouTubeStreamResolver()
             assertTrue(resolver.isAvailable())
             val resolved = withContext(Dispatchers.IO) { resolver.resolveAudioUrl(videoId) }
             assertNotNull("NewPipe returned no audio URL for $videoId", resolved)
             assertTrue("Resolved URL is not http(s): ${resolved!!.url}", resolved.url.startsWith("http"))
 
-            engine.play(PlaybackHandle.Url(resolved.url), resolved.quality)
+            engine.play(PlaybackHandle.Url(resolved.url, 0, null), resolved.quality, 0L)
             awaitStatus(engine, EngineStatus.PLAYING, attempts = 200)
             val before = engine.state.value.positionMs
             delay(1500)

@@ -6,43 +6,32 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
-import com.universalmusic.player.domain.playback.SpotifyObservationGate
-import com.universalmusic.player.domain.playback.reconcileSpotifyObservation
-import com.universalmusic.player.domain.playback.spotifyObservationStillValid
-import com.universalmusic.player.domain.playback.spotifyPauseGuardOpen
+import com.universalmusic.player.domain.playback.PreparedPlayback
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
-import java.net.StandardProtocolFamily
-import java.net.UnixDomainSocketAddress
-import java.nio.ByteBuffer
-import java.nio.channels.SocketChannel
-import java.nio.file.Files
-import java.nio.file.Path
-import java.util.concurrent.TimeUnit
-import java.nio.channels.SelectionKey
-import java.nio.channels.Selector
-import kotlin.coroutines.cancellation.CancellationException
+import com.universalmusic.player.domain.playback.VolumeLevelling
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.completeWith
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.channels.Channel
 
 /**
  * In-process desktop playback via headless mpv (no extra window).
- * Pause / resume / seek use mpv's JSON IPC socket.
+ * Pause / resume / seek use mpv's JSON IPC socket. This class owns the mpv process start and
+ * restart decisions and routes Spotify handles to [SpotifyConnectPath].
  */
 class DesktopPlaybackEngine internal constructor(
-    private val spotify: SpotifyPlaybackController,
+    spotify: SpotifyPlaybackController,
     private val runtime: DesktopPlaybackRuntime = SystemDesktopPlaybackRuntime,
+    spotifyObserveIntervalMs: Long = SPOTIFY_OBSERVE_INTERVAL_MS,
 ) : PlaybackEngine {
     internal constructor(
         spotifyStarter: suspend (String) -> Unit,
@@ -58,42 +47,37 @@ class DesktopPlaybackEngine internal constructor(
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
-    private val _state = MutableStateFlow(EngineState())
-    override val state: StateFlow<EngineState> = _state.asStateFlow()
-    private var activePlayGeneration: Long = 0L
-
-    private fun publishState(state: EngineState) {
-        _state.value = state.copy(playGeneration = activePlayGeneration)
+    private val transport = DesktopTransport()
+    private val slot = MpvSlot(runtime, transport.lock, scope)
+    private val ticker = PositionTicker(transport, slot, runtime, scope) { spotifyPath.receiverOwnsPlaybackLocked() }
+    private val spotifyPath: SpotifyConnectPath = SpotifyConnectPath(spotify, transport, ticker, scope, spotifyObserveIntervalMs)
+    private val gapless = GaplessBoundary(transport, slot, ticker, runtime, scope) {
+        val handle = transport.handle as? PlaybackHandle.Url ?: return@GaplessBoundary
+        ticker.hold(transport.current.positionMs)
+        seekRestartLocked(handle, transport.current)?.let(::launchRestart)
     }
-    private val lifecycleLock = Any()
-    private var requestToken = 0L
-    private var activeProcess: ActiveProcess? = null
-    private var userPaused = false
-    private var spotifyPauseAcknowledged = false
-    private var spotifyPauseCommandId = 0L
-    private var spotifyPauseCommandCompleted = false
-    private var spotifyObservationsSincePause = 0
-    private var transportGeneration = 0L
-    private var ticker: Job? = null
-    private var spotifyReconcile: Job? = null
-    private var spotifyMisses = 0
-    private var tickerToken = 0L
-    private var startedAt = 0L
-    private var elapsedOffset = 0L
-    private var lastHandle: PlaybackHandle? = null
-    private var lastQuality: AudioQuality? = null
-    /**
-     * Bumped (under [lifecycleLock]) by every local mpv transport decision: play / stop / pause /
-     * resume / seek. Async IPC results captured under an older epoch are stale and must not publish.
-     */
-    private var mpvEpoch = 0L
-    /**
-     * Single-consumer FIFO for all mpv socket I/O. Jobs are enqueued while holding [lifecycleLock]
-     * so queue order matches the order of lock-protected transport decisions; the jobs themselves
-     * run on Dispatchers.IO and never hold the lock across socket I/O.
-     */
-    private val ipcJobs = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    override val state: StateFlow<EngineState> = transport.state
+    override val supportsGapless: Boolean get() = runtime.supportsEvents
+    override fun configureGapless(enabled: Boolean) = gapless.configure(enabled)
+
+    override fun prepareNext(next: PreparedPlayback?) = gapless.prepareNext(next)
+
+    override fun configureLevelling(enabled: Boolean) {
+        synchronized(transport.lock) {
+            if (transport.levellingEnabled == enabled) return
+            transport.levellingEnabled = enabled
+            val active = slot.active
+            val url = (transport.handle as? PlaybackHandle.Url)?.url
+            if (active != null && url != null && isLocalMediaUrl(url)) {
+                slot.enqueueLocked { slot.sendIfActive(active, levellingCommand(enabled)) }
+            }
+            if (transport.current.levelling != null) {
+                transport.publish(transport.current.copy(levelling = transport.levellingLocked()))
+            }
+        }
+    }
+
+    private var seekSequence = 0L
     @Volatile
     private var volumePercent: Int = 100
     private val shutdownHook = if (runtime === SystemDesktopPlaybackRuntime) {
@@ -102,124 +86,86 @@ class DesktopPlaybackEngine internal constructor(
         null
     }
 
-    init {
-        scope.launch {
-            for (command in spotifyCommands) {
-                val result = runCatching { command.action() }
-                command.pauseCommandId?.let { pauseCommandId ->
-                    synchronized(lifecycleLock) {
-                        if (userPaused && spotifyPauseCommandId == pauseCommandId) {
-                            spotifyPauseCommandCompleted = true
-                        }
-                    }
-                }
-                command.completion?.complete(result)
-                if (command.completion == null) {
-                    result.onFailure { failure -> markSpotifyFailed(failure, command.name) }
-                }
+    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        try {
+            playInternal(handle, quality, playGeneration)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            if (transport.activeGeneration == playGeneration) {
+                transport.publish(transport.current.copy(status = EngineStatus.FAILED, error = failure.message))
             }
-        }
-        scope.launch(Dispatchers.IO) {
-            for (job in ipcJobs) {
-                try {
-                    job()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    // A failed IPC job must not stop the FIFO consumer.
-                }
-            }
+            throw failure
         }
     }
 
-    override suspend fun play(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
-        activePlayGeneration = playGeneration
-        val token = synchronized(lifecycleLock) {
-            invalidatePendingStartLocked()
-            cancelTickerLocked()
-            if (!stopProcessLocked()) {
-                publishState(EngineState(
+    private suspend fun playInternal(handle: PlaybackHandle, quality: AudioQuality?, playGeneration: Long) {
+        val token = synchronized(transport.lock) {
+            val retry = transport.current.status == EngineStatus.FAILED && transport.current.retryAtPositionMs != null &&
+                (transport.handle as? PlaybackHandle.Url)?.url == (handle as? PlaybackHandle.Url)?.url
+            gapless.adoptGenerationLocked(playGeneration, keepPrepared = retry)
+            transport.activeGeneration = playGeneration
+            transport.invalidatePendingStartLocked()
+            ticker.cancelLocked()
+            spotifyPath.cancelReceiverLocked()
+            if (!slot.stopLocked()) {
+                transport.publish(EngineState(
                     status = EngineStatus.FAILED,
                     error = "Previous player did not terminate",
                 ))
                 error("Previous player did not terminate")
             }
-            lastHandle = handle
-            lastQuality = quality
-            userPaused = false
-            spotifyPauseAcknowledged = false
-            clearPauseGuardLocked()
-            noteLocalTransportLocked()
-            mpvEpoch++
-            elapsedOffset = 0
-            publishState(EngineState(status = EngineStatus.BUFFERING))
-            requestToken
+            transport.handle = handle
+            transport.quality = quality
+            transport.replayGain = null
+            transport.userPaused = false
+            spotifyPath.resetPauseStateLocked()
+            slot.epoch++
+            ticker.hold((handle as? PlaybackHandle.Url)?.startPositionMs ?: 0)
+            transport.publish(EngineState(status = EngineStatus.BUFFERING))
+            transport.requestToken
         }
         when (handle) {
-            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = 0, token = token)
+            is PlaybackHandle.Url -> startUrl(handle.url, startSeconds = handle.startPositionMs / 1000.0, token = token)
             is PlaybackHandle.ProviderPlayback -> {
                 if (handle.provider != ProviderId.SPOTIFY) {
                     throw UnsupportedPlaybackException(
                         "${handle.provider.displayName} does not provide a supported Linux playback mechanism.",
                     )
                 }
-                runSpotifyCommand("Spotify Connect playback") { spotify.play(handle.trackId) }
-                synchronized(lifecycleLock) {
-                    if (token != requestToken) return
-                    startedAt = System.currentTimeMillis()
-                    publishState(EngineState(
-                        status = EngineStatus.PLAYING,
-                        positionMs = 0,
-                        durationMs = handle.durationMs,
-                    ))
-                    startTickerLocked()
-                    startSpotifyReconcileLocked(token)
-                }
+                spotifyPath.start(handle, token)
             }
         }
     }
 
     override fun pause() {
-        if (spotifyIsActive()) {
-            val pauseCommandId = synchronized(lifecycleLock) {
-                if (_state.value.status != EngineStatus.PLAYING &&
-                    _state.value.status != EngineStatus.BUFFERING
-                ) return
-                elapsedOffset = _state.value.positionMs
-                cancelTickerLocked()
-                userPaused = true
-                spotifyPauseAcknowledged = false
-                clearPauseGuardLocked()
-                noteLocalTransportLocked()
-                publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
-                ++spotifyPauseCommandId
-            }
-            enqueueSpotifyCommand("Spotify Connect pause", spotify.pause, pauseCommandId)
+        if (transport.spotifyIsActive()) {
+            spotifyPath.pause()
             return
         }
-        synchronized(lifecycleLock) {
-            if (_state.value.status != EngineStatus.PLAYING &&
-                _state.value.status != EngineStatus.BUFFERING
+        synchronized(transport.lock) {
+            if (transport.current.status != EngineStatus.PLAYING &&
+                transport.current.status != EngineStatus.BUFFERING
             ) {
                 return
             }
-            invalidatePendingStartLocked()
-            elapsedOffset = _state.value.positionMs
-            cancelTickerLocked()
-            userPaused = true
-            mpvEpoch++
-            val active = activeProcess
+            transport.invalidatePendingStartLocked()
+            ticker.hold(transport.current.positionMs)
+            ticker.cancelLocked()
+            transport.userPaused = true
+            slot.epoch++
+            val active = slot.active
             // Publish PAUSED now so the caller (UI / MPRIS) never waits on mpv; the IPC runs on the
             // FIFO worker and falls back to killing the process if mpv does not acknowledge.
-            publishState(_state.value.copy(status = EngineStatus.PAUSED, error = null))
+            transport.publish(transport.current.copy(status = EngineStatus.PAUSED, error = null))
             if (active != null) {
-                enqueueIpcLocked {
-                    if (sendIpcIfActive(active, """["set_property","pause",true]""")) return@enqueueIpcLocked
-                    synchronized(lifecycleLock) {
+                slot.enqueueLocked {
+                    if (slot.sendIfActive(active, """["set_property","pause",true]""")) return@enqueueLocked
+                    synchronized(transport.lock) {
                         // Only act if this process is still ours and the user still wants it paused.
-                        if (activeProcess !== active || !userPaused) return@synchronized
-                        if (!stopProcessLocked()) {
-                            publishState(_state.value.copy(
+                        if (slot.active !== active || !transport.userPaused) return@synchronized
+                        if (!slot.stopLocked()) {
+                            transport.publish(transport.current.copy(
                                 status = EngineStatus.FAILED,
                                 error = "Player could not be paused or stopped",
                             ))
@@ -231,39 +177,29 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun resume() {
-        if (spotifyIsActive()) {
-            synchronized(lifecycleLock) {
-                if (_state.value.status != EngineStatus.PAUSED) return
-                userPaused = false
-                spotifyPauseAcknowledged = false
-                clearPauseGuardLocked()
-                noteLocalTransportLocked()
-                startedAt = System.currentTimeMillis()
-                publishState(_state.value.copy(status = EngineStatus.PLAYING, error = null))
-                startTickerLocked()
-            }
-            enqueueSpotifyCommand("Spotify Connect resume", spotify.resume)
+        if (transport.spotifyIsActive()) {
+            spotifyPath.resume()
             return
         }
-        val restart = synchronized(lifecycleLock) {
-            val current = _state.value
+        val restart = synchronized(transport.lock) {
+            val current = transport.current
             if (current.status != EngineStatus.PAUSED) return
-            userPaused = false
-            val epoch = ++mpvEpoch
-            val active = activeProcess
+            transport.userPaused = false
+            val epoch = ++slot.epoch
+            val active = slot.active
             if (active?.process?.isAlive == true) {
                 // Optimistically resume so a quick pause() after resume() is honoured; if mpv does
                 // not acknowledge, the worker falls back to the restart path below.
-                startedAt = System.currentTimeMillis()
-                publishState(current.copy(status = EngineStatus.PLAYING, error = null))
-                startTickerLocked()
-                enqueueIpcLocked {
-                    if (sendIpcIfActive(active, """["set_property","pause",false]""")) return@enqueueIpcLocked
-                    val fallback = synchronized(lifecycleLock) {
-                        if (mpvEpoch != epoch || activeProcess !== active) return@enqueueIpcLocked
-                        cancelTickerLocked()
-                        resumeRestartLocked(_state.value)
-                    } ?: return@enqueueIpcLocked
+                ticker.markRunning()
+                transport.publish(current.copy(status = EngineStatus.PLAYING, error = null))
+                ticker.startLocked()
+                slot.enqueueLocked {
+                    if (slot.sendIfActive(active, """["set_property","pause",false]""")) return@enqueueLocked
+                    val fallback = synchronized(transport.lock) {
+                        if (slot.epoch != epoch || slot.active !== active) return@enqueueLocked
+                        ticker.cancelLocked()
+                        resumeRestartLocked(transport.current)
+                    } ?: return@enqueueLocked
                     launchRestart(fallback)
                 }
                 return
@@ -274,17 +210,17 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     private fun resumeRestartLocked(current: EngineState): Restart? {
-        if (!stopProcessLocked()) {
-            publishState(current.copy(
+        if (!slot.stopLocked()) {
+            transport.publish(current.copy(
                 status = EngineStatus.FAILED,
                 error = "Player did not terminate before resume",
             ))
             return null
         }
-        val handle = lastHandle ?: return null
-        invalidatePendingStartLocked()
-        publishState(current.copy(status = EngineStatus.BUFFERING, error = null))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, EngineStatus.PLAYING)
+        val handle = transport.handle ?: return null
+        transport.invalidatePendingStartLocked()
+        transport.publish(current.copy(status = EngineStatus.BUFFERING, error = null))
+        return Restart(handle, transport.quality, ticker.anchorMs / 1000.0, transport.requestToken, EngineStatus.PLAYING)
     }
 
     private fun launchRestart(restart: Restart) {
@@ -302,41 +238,37 @@ class DesktopPlaybackEngine internal constructor(
     }
 
     override fun seekTo(positionMs: Long) {
-        if (spotifyIsActive()) {
-            val target = positionMs.coerceAtLeast(0)
-            synchronized(lifecycleLock) {
-                elapsedOffset = target
-                startedAt = System.currentTimeMillis()
-                noteLocalTransportLocked()
-                publishState(_state.value.copy(positionMs = target, error = null))
-            }
-            enqueueSpotifyCommand("Spotify Connect seek", action = { spotify.seekTo(target) })
+        if (transport.spotifyIsActive()) {
+            spotifyPath.seekTo(positionMs)
             return
         }
-        val restart = synchronized(lifecycleLock) {
-            elapsedOffset = positionMs.coerceAtLeast(0)
-            startedAt = System.currentTimeMillis()
-            val current = _state.value
-            publishState(current.copy(positionMs = elapsedOffset))
-            val handle = lastHandle
+        val restart = synchronized(transport.lock) {
+            ticker.anchor(positionMs.coerceAtLeast(0))
+            val current = transport.current
+            transport.publish(current.copy(positionMs = ticker.anchorMs))
+            val handle = transport.handle
             if (handle !is PlaybackHandle.Url) return
-            val epoch = ++mpvEpoch
-            val active = activeProcess
+            slot.epoch++
+            val seekId = ++seekSequence
+            val active = slot.active
+            gapless.keepCrossingPreparedLocked(active)
             if (active?.process?.isAlive == true) {
-                val seconds = elapsedOffset / 1000.0
-                enqueueIpcLocked {
-                    val ok = sendIpcIfActive(active, """["set_property","time-pos",$seconds]""")
-                    val fallback = synchronized(lifecycleLock) {
+                val seconds = ticker.anchorMs / 1000.0
+                slot.enqueueLocked {
+                    if (synchronized(transport.lock) { seekSequence != seekId || transport.handle !== handle || slot.active !== active }) return@enqueueLocked
+                    val ok = if (active.gapless) gapless.seek(active, handle, seconds) else
+                        slot.sendIfActive(active, """["set_property","time-pos",$seconds]""")
+                    val fallback = synchronized(transport.lock) {
                         // A newer transport command (or track) owns the state now.
-                        if (mpvEpoch != epoch || lastHandle !== handle) return@enqueueIpcLocked
+                        if (seekSequence != seekId || transport.handle !== handle || slot.active !== active) return@enqueueLocked
                         if (ok) {
-                            if (_state.value.status == EngineStatus.PLAYING) {
-                                startedAt = System.currentTimeMillis()
+                            if (transport.current.status == EngineStatus.PLAYING) {
+                                ticker.markRunning()
                             }
-                            return@enqueueIpcLocked
+                            return@enqueueLocked
                         }
-                        seekRestartLocked(handle, _state.value)
-                    } ?: return@enqueueIpcLocked
+                        seekRestartLocked(handle, transport.current)
+                    } ?: return@enqueueLocked
                     launchRestart(fallback)
                 }
                 return
@@ -348,117 +280,213 @@ class DesktopPlaybackEngine internal constructor(
 
     private fun seekRestartLocked(handle: PlaybackHandle.Url, current: EngineState): Restart? {
         if (current.status != EngineStatus.PLAYING && current.status != EngineStatus.PAUSED) return null
-        if (!stopProcessLocked()) {
-            publishState(current.copy(
+        if (!slot.stopLocked()) {
+            transport.publish(current.copy(
                 status = EngineStatus.FAILED,
                 error = "Player did not terminate before seek",
             ))
             return null
         }
-        invalidatePendingStartLocked()
+        transport.invalidatePendingStartLocked()
         val targetStatus = current.status
-        userPaused = targetStatus == EngineStatus.PAUSED
-        publishState(_state.value.copy(status = EngineStatus.BUFFERING))
-        return Restart(handle, lastQuality, elapsedOffset / 1000, requestToken, targetStatus)
+        transport.userPaused = targetStatus == EngineStatus.PAUSED
+        transport.publish(transport.current.copy(status = EngineStatus.BUFFERING))
+        return Restart(handle, transport.quality, ticker.anchorMs / 1000.0, transport.requestToken, targetStatus)
+    }
+
+    override fun stopForTransition() {
+        synchronized(transport.lock) {
+            // The receiver has already stopped after its end-of-queue reset. A Web API pause
+            // here races the following play and can leave Connect reporting paused at zero.
+            if (spotifyPath.receiverEndedTrackLocked()) return
+        }
+        stop()
     }
 
     override fun stop() {
-        val pauseSpotify = spotifyIsActive()
-        synchronized(lifecycleLock) {
-            invalidatePendingStartLocked()
-            userPaused = false
-            spotifyPauseAcknowledged = false
-            clearPauseGuardLocked()
-            noteLocalTransportLocked()
-            mpvEpoch++
-            cancelTickerLocked()
-            cancelSpotifyReconcileLocked()
-            if (!stopProcessLocked()) {
-                publishState(_state.value.copy(
+        val pauseSpotify = synchronized(transport.lock) {
+            transport.spotifyIsActive() && !spotifyPath.receiverEndedTrackLocked()
+        }
+        synchronized(transport.lock) {
+            transport.invalidatePendingStartLocked()
+            transport.userPaused = false
+            spotifyPath.resetPauseStateLocked()
+            slot.epoch++
+            ticker.cancelLocked()
+            spotifyPath.cancelReconcileLocked()
+            spotifyPath.cancelReceiverLocked()
+            if (!slot.stopLocked()) {
+                transport.publish(transport.current.copy(
                     status = EngineStatus.FAILED,
                     error = "Player did not terminate",
                 ))
                 return
             }
-            elapsedOffset = 0
-            lastHandle = null
-            lastQuality = null
-            publishState(EngineState())
+            gapless.clearPreparedLocked()
+            ticker.hold(0)
+            transport.handle = null
+            transport.quality = null
+            transport.publish(EngineState())
         }
-        if (pauseSpotify) enqueueSpotifyCommand("Spotify Connect stop", spotify.pause)
+        if (pauseSpotify) spotifyPath.pauseAfterStop()
     }
 
     override fun setVolume(volume: Float) {
+        spotifyPath.setVolume(volume)
         val percent = (volume.coerceIn(0f, 1f) * 100).toInt()
         volumePercent = percent
-        synchronized(lifecycleLock) {
-            val active = activeProcess ?: return
-            enqueueIpcLocked { sendIpcIfActive(active, """["set_property","volume",$percent]""") }
+        synchronized(transport.lock) {
+            val active = slot.active ?: return
+            slot.enqueueLocked { slot.sendIfActive(active, """["set_property","volume",$percent]""") }
         }
     }
 
     private suspend fun startUrl(
         url: String,
-        startSeconds: Long,
+        startSeconds: Double,
         token: Long,
         targetStatus: EngineStatus = EngineStatus.PLAYING,
     ) {
+        if (runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.playbackRequested()
         val mpv = runtime.findOnPath("mpv")
             ?: throw UnsupportedPlaybackException("Install mpv for in-app local playback on Linux.")
-        val durationMs = withContext(Dispatchers.IO) { runtime.probeDurationMs(url) }
-        val active = synchronized(lifecycleLock) {
-            if (token != requestToken) return
-            val socket = runtime.createIpcPath()
+        val suppliedDuration = synchronized(transport.lock) {
+            if (token != transport.requestToken) return
+            (transport.handle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
+        }
+        val (durationMs, replayGain) = coroutineScope {
+            val replayGain = async(Dispatchers.IO) { runInterruptible { runtime.probeReplayGain(url) } }
+            val durationMs = runInterruptible(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+            durationMs to replayGain.await()
+        }
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        // Only local files get the filter, so levelling never claims gain on a stream.
+        val levelled = isLocalMediaUrl(url)
+        val levelledAtLaunch = synchronized(transport.lock) { transport.levellingEnabled }
+        val active = synchronized(transport.lock) {
+            if (token != transport.requestToken) return
+            transport.replayGain = replayGain
+            val seamless = gapless.canJoin(url)
+            val warm = if (seamless && runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.take() else null
+            val socket = warm?.second ?: runtime.createIpcPath()
             val command = buildList {
                 add(mpv)
                 add("--no-video")
                 add("--force-window=no")
                 add("--really-quiet")
                 add("--no-terminal")
-                add("--idle=no")
+                add(if (seamless) "--idle=yes" else "--idle=no")
+                if (seamless) {
+                    add("--gapless-audio=no")
+                    add("--prefetch-playlist=yes")
+                }
                 add("--keep-open=no")
                 add("--volume=$volumePercent")
+                // A gapless process may be the prewarmed one, so it gets the filter over IPC before loadfile.
+                if (levelled && !seamless) add("--af-append=${levellingFilter(levelledAtLaunch)}")
                 add("--input-ipc-server=$socket")
                 if (targetStatus == EngineStatus.PAUSED) add("--pause")
-                if (startSeconds > 0) add("--start=$startSeconds")
-                add(url)
+                if (startSeconds > 0 && !seamless) add("--start=$startSeconds")
+                if (!seamless) add(mpvMediaArgument(url))
             }
             val process = try {
-                runtime.startProcess(command)
+                warm?.first ?: runtime.startProcess(command)
             } catch (error: Throwable) {
                 runtime.deleteIpcPath(socket)
                 throw error
             }
-            ActiveProcess(process, socket).also { activeProcess = it }
+            ActiveProcess(process, socket, seamless).also { slot.active = it }
         }
         watchProcess(active, durationMs)
         // Once mpv is launched, finish publishing its state even if the caller is cancelled
         // (matches the previous blocking behaviour); socket I/O never runs under the lock.
         val pauseAcknowledged = withContext(NonCancellable + Dispatchers.IO) {
             runtime.waitForIpc(active.socket)
-            val needsIpc = synchronized(lifecycleLock) {
-                if (token != requestToken || activeProcess !== active) return@withContext false
-                if (targetStatus == EngineStatus.PAUSED) userPaused = true
+            val needsIpc = synchronized(transport.lock) {
+                if (token != transport.requestToken || slot.active !== active) return@withContext false
+                if (targetStatus == EngineStatus.PAUSED) transport.userPaused = true
                 startSeconds > 0 || targetStatus == EngineStatus.PAUSED
             }
-            if (!needsIpc) return@withContext true
-            awaitIpc {
-                if (startSeconds > 0) {
-                    sendIpcIfActive(active, """["set_property","time-pos",$startSeconds]""")
+            if (active.gapless) {
+                try {
+                    slot.sendIfActive(active, """["set_property","volume",$volumePercent]""")
+                    // In the IPC FIFO, so a toggle made meanwhile lands after this, not before.
+                    if (levelled) slot.awaitIpc {
+                        slot.sendIfActive(active, levellingCommand(synchronized(transport.lock) { transport.levellingEnabled }))
+                    }
+                    if (targetStatus == EngineStatus.PAUSED) {
+                        check(slot.sendIfActive(active, """["set_property","pause",true]"""))
+                    }
+                    val events = runtime.openEvents(active.socket) ?: error("mpv event connection unavailable")
+                    synchronized(transport.lock) {
+                        if (slot.active !== active) { events.close(); return@withContext false }
+                        active.events = events
+                    }
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            while (true) {
+                                val line = events.readLine() ?: break
+                                synchronized(transport.lock) { slot.enqueueLocked { gapless.onEvent(active, line) } }
+                            }
+                        } catch (_: Exception) {
+                            // Closing the channel during stop wakes this blocking reader.
+                        } finally {
+                            synchronized(transport.lock) {
+                                if (slot.active === active && active.process.isAlive) {
+                                    transport.publish(transport.current.copy(status = EngineStatus.FAILED,
+                                        retryAtPositionMs = transport.current.positionMs,
+                                        error = "Player event connection lost"))
+                                }
+                            }
+                        }
+                    }
+                    check(slot.awaitIpc {
+                        // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                        val id = runtime.loadEntry(
+                            """{"name":"loadfile","url":${Json.encodeToString(mpvMediaArgument(url))},"flags":"replace","options":{"start":"$startSeconds"}}""",
+                            active.socket,
+                        )
+                        synchronized(transport.lock) { active.playlist.entryId = id }
+                        id != null
+                    })
+                } catch (failure: IllegalStateException) {
+                    synchronized(transport.lock) {
+                        // A newer play or stop superseded this request, so its failure means nothing.
+                        if (token != transport.requestToken) return@withContext false
+                        if (slot.active === active && active.process.isAlive) throw failure
+                        // The watcher stays quiet while paused, so nothing else ends this request.
+                        // Clearing the process keeps startUrl's final publish from overwriting this.
+                        slot.active = null
+                        ticker.cancelLocked()
+                        transport.publish(transport.current.copy(
+                            status = EngineStatus.FAILED,
+                            retryAtPositionMs = transport.current.positionMs,
+                            error = "Player process failed",
+                        ))
+                    }
+                    return@withContext false
                 }
+            }
+            if (levelled && !active.gapless) slot.awaitIpc {
+                // A toggle that raced the launch could not reach mpv before its socket existed.
+                val enabled = synchronized(transport.lock) { transport.levellingEnabled }
+                if (enabled != levelledAtLaunch) slot.sendIfActive(active, levellingCommand(enabled))
+            }
+            if (!needsIpc) return@withContext true
+            slot.awaitIpc {
                 targetStatus != EngineStatus.PAUSED ||
-                    sendIpcIfActive(active, """["set_property","pause",true]""")
+                    slot.sendIfActive(active, """["set_property","pause",true]""")
             }
         }
-        synchronized(lifecycleLock) {
-            if (token != requestToken || activeProcess !== active) return
+        synchronized(transport.lock) {
+            if (token != transport.requestToken || slot.active !== active) return
             if (targetStatus == EngineStatus.PAUSED) {
-                userPaused = true
+                transport.userPaused = true
                 if (!pauseAcknowledged) {
-                    if (!stopProcessLocked()) {
-                        publishState(EngineState(
+                    if (!slot.stopLocked()) {
+                        transport.publish(EngineState(
                             status = EngineStatus.FAILED,
-                            positionMs = elapsedOffset,
+                            positionMs = ticker.anchorMs,
                             durationMs = durationMs,
                             error = "Player could not be paused or stopped",
                         ))
@@ -466,15 +494,17 @@ class DesktopPlaybackEngine internal constructor(
                     }
                 }
             } else {
-                userPaused = false
+                transport.userPaused = false
             }
-            startedAt = System.currentTimeMillis()
-            publishState(EngineState(
+            ticker.markRunning()
+            transport.publish(EngineState(
                 status = targetStatus,
-                positionMs = elapsedOffset,
+                positionMs = ticker.anchorMs,
                 durationMs = durationMs,
+                levelling = transport.levellingLocked(),
             ))
-            if (targetStatus == EngineStatus.PLAYING) startTickerLocked()
+            if (targetStatus == EngineStatus.PLAYING) ticker.startLocked()
+            gapless.reprepareLocked()
         }
     }
 
@@ -482,505 +512,63 @@ class DesktopPlaybackEngine internal constructor(
         scope.launch(Dispatchers.IO) {
             val code = runCatching { active.process.waitFor() }.getOrNull()
             runtime.deleteIpcPath(active.socket)
-            synchronized(lifecycleLock) {
-                if (activeProcess !== active) return@synchronized
-                activeProcess = null
-                if (userPaused) return@synchronized
-                publishState(if (code == 0) {
-                    _state.value.copy(
+            synchronized(transport.lock) {
+                if (slot.active !== active) return@synchronized
+                slot.active = null
+                gapless.keepCrossingPreparedAfterExitLocked(active)
+                if (transport.userPaused) return@synchronized
+                val position = transport.current.positionMs
+                val truncated = code == 0 && mpvEndedEarly(position, if (active.gapless) transport.current.durationMs else durationMs)
+                transport.publish(if (code == 0 && !truncated) {
+                    transport.current.copy(
                         status = EngineStatus.ENDED,
-                        positionMs = durationMs ?: _state.value.positionMs,
+                        positionMs = durationMs ?: transport.current.positionMs,
                     )
                 } else {
-                    _state.value.copy(
+                    transport.current.copy(
                         status = EngineStatus.FAILED,
-                        error = code?.let { "Player exited with $it" } ?: "Player process failed",
+                        positionMs = position,
+                        retryAtPositionMs = position.takeIf { truncated || active.gapless },
+                        error = if (truncated) "Stream ended before the track finished" else
+                            code?.let { "Player exited with $it" } ?: "Player process failed",
                     )
                 })
-                cancelTickerLocked()
+                ticker.cancelLocked()
             }
         }
-    }
-
-    private fun startTickerLocked() {
-        cancelTickerLocked()
-        val token = ++tickerToken
-        ticker = scope.launch {
-            while (true) {
-                val snapshot = synchronized(lifecycleLock) {
-                    if (token != tickerToken || _state.value.status != EngineStatus.PLAYING) {
-                        return@launch
-                    }
-                    TickerSnapshot(activeProcess, mpvEpoch)
-                }
-                // Socket reads happen on the IPC worker, outside the lock.
-                val sample = snapshot.active?.let { active -> awaitIpc { readTickerSample(active) } }
-                val ended = synchronized(lifecycleLock) {
-                    if (token != tickerToken || _state.value.status != EngineStatus.PLAYING) {
-                        return@launch
-                    }
-                    val active = snapshot.active
-                    if (active != null && (activeProcess !== active || mpvEpoch != snapshot.epoch)) {
-                        // Stale sample: the process was replaced or a seek/pause/resume happened
-                        // while the read was in flight. Do not publish it.
-                        return@synchronized false
-                    }
-                    if (sample != null) {
-                        if (sample.eof) {
-                            cancelTickerLocked()
-                            publishState(_state.value.copy(
-                                status = EngineStatus.ENDED,
-                                positionMs = _state.value.durationMs ?: _state.value.positionMs,
-                            ))
-                            return@synchronized true
-                        }
-                        val timePos = sample.timePosSeconds
-                        if (timePos != null) {
-                            val position = (timePos * 1000.0).toLong().coerceAtLeast(0)
-                            elapsedOffset = position
-                            startedAt = System.currentTimeMillis()
-                            publishState(_state.value.copy(positionMs = position))
-                            return@synchronized false
-                        }
-                    }
-                    val position = elapsedOffset + (System.currentTimeMillis() - startedAt)
-                    val duration = _state.value.durationMs
-                        ?: (lastHandle as? PlaybackHandle.ProviderPlayback)?.durationMs
-                    val capped = if (duration != null) position.coerceAtMost(duration) else position
-                    publishState(_state.value.copy(
-                        positionMs = capped,
-                        durationMs = duration ?: _state.value.durationMs,
-                    ))
-                    if (duration != null && position >= duration) {
-                        cancelTickerLocked()
-                        publishState(_state.value.copy(
-                            status = EngineStatus.ENDED,
-                            positionMs = duration,
-                        ))
-                        true
-                    } else {
-                        false
-                    }
-                }
-                if (ended) return@launch
-                delay(400)
-            }
-        }
-    }
-
-    private class TickerSnapshot(val active: ActiveProcess?, val epoch: Long)
-
-    private class TickerSample(val eof: Boolean, val timePosSeconds: Double?)
-
-    /** Runs on the IPC worker. Returns null when [active] is no longer the current process. */
-    private fun readTickerSample(active: ActiveProcess): TickerSample? {
-        if (!isActiveProcess(active)) return null
-        val eof = runtime.readProperty("eof-reached", active.socket)
-        if (eof == "yes" || eof == "true") return TickerSample(eof = true, timePosSeconds = null)
-        val timePos = runtime.readProperty("time-pos", active.socket)?.toDoubleOrNull()
-        return TickerSample(eof = false, timePosSeconds = timePos)
-    }
-
-    /** Must be called with [lifecycleLock] held so FIFO order matches transport decision order. */
-    private fun enqueueIpcLocked(job: suspend () -> Unit) {
-        ipcJobs.trySend(job)
-    }
-
-    /** Suspends (without holding the lock) until [block] has run in FIFO order on the IPC worker. */
-    private suspend fun <T> awaitIpc(block: () -> T): T {
-        val result = CompletableDeferred<T>()
-        synchronized(lifecycleLock) {
-            enqueueIpcLocked { result.completeWith(runCatching(block)) }
-        }
-        return result.await()
-    }
-
-    private fun isActiveProcess(active: ActiveProcess): Boolean =
-        synchronized(lifecycleLock) { activeProcess === active }
-
-    /** Socket I/O for [active]; skipped (false, like a failed IPC) once it is no longer current. */
-    private fun sendIpcIfActive(active: ActiveProcess, commandArrayJson: String): Boolean =
-        isActiveProcess(active) && runtime.sendIpc(commandArrayJson, active.socket)
-
-    private fun cancelTickerLocked() {
-        tickerToken++
-        ticker?.cancel()
-        ticker = null
-    }
-
-    private fun cancelSpotifyReconcileLocked() {
-        spotifyReconcile?.cancel()
-        spotifyReconcile = null
-        spotifyMisses = 0
-    }
-
-    private fun startSpotifyReconcileLocked(token: Long) {
-        cancelSpotifyReconcileLocked()
-        val observe = spotify.observe ?: return
-        spotifyReconcile = scope.launch {
-            while (true) {
-                delay(SPOTIFY_OBSERVE_INTERVAL_MS)
-                val snapshot = synchronized(lifecycleLock) {
-                    if (token != requestToken || !spotifyIsActive()) return@launch
-                    SpotifyReconcileSnapshot(
-                        status = _state.value.status,
-                        positionMs = _state.value.positionMs,
-                        durationMs = _state.value.durationMs,
-                        expectedTrackId = (lastHandle as? PlaybackHandle.ProviderPlayback)?.trackId,
-                        userPaused = userPaused,
-                        pauseAcknowledged = spotifyPauseAcknowledged,
-                        pauseGuardOpen = spotifyPauseGuardOpen(
-                            pauseCommandCompleted = spotifyPauseCommandCompleted,
-                            observationsSincePause = spotifyObservationsSincePause,
-                        ),
-                        transportGeneration = transportGeneration,
-                        misses = spotifyMisses,
-                    )
-                }
-                val observed = runCatching { observe() }.getOrNull()
-                val decision = reconcileSpotifyObservation(
-                    status = snapshot.status,
-                    positionMs = snapshot.positionMs,
-                    durationMs = snapshot.durationMs,
-                    expectedTrackId = snapshot.expectedTrackId,
-                    userPaused = snapshot.userPaused,
-                    misses = snapshot.misses,
-                    observed = observed,
-                    pauseAcknowledged = snapshot.pauseAcknowledged,
-                    pauseGuardOpen = snapshot.pauseGuardOpen,
-                )
-                synchronized(lifecycleLock) {
-                    val currentGate = SpotifyObservationGate(
-                        requestToken = requestToken,
-                        transportGeneration = transportGeneration,
-                        userPaused = userPaused,
-                    )
-                    val capturedGate = SpotifyObservationGate(
-                        requestToken = token,
-                        transportGeneration = snapshot.transportGeneration,
-                        userPaused = snapshot.userPaused,
-                    )
-                    if (!spotifyObservationStillValid(capturedGate, currentGate, spotifyIsActive())) {
-                        return@synchronized
-                    }
-                    spotifyPauseAcknowledged = decision.pauseAcknowledged
-                    if (decision.clearUserPause) {
-                        userPaused = false
-                        clearPauseGuardLocked()
-                    } else if (snapshot.userPaused && observed != null) {
-                        spotifyObservationsSincePause++
-                    }
-                    spotifyMisses = decision.misses
-                    if (decision.snapClock) {
-                        elapsedOffset = decision.positionMs
-                        startedAt = System.currentTimeMillis()
-                    }
-                    val previous = _state.value.status
-                    publishState(_state.value.copy(
-                        status = decision.status,
-                        positionMs = decision.positionMs,
-                        syncWarning = decision.syncWarning,
-                    ))
-                    when (decision.status) {
-                        EngineStatus.PLAYING -> if (previous != EngineStatus.PLAYING) startTickerLocked()
-                        EngineStatus.PAUSED, EngineStatus.ENDED, EngineStatus.FAILED -> cancelTickerLocked()
-                        else -> Unit
-                    }
-                }
-            }
-        }
-    }
-
-    private data class SpotifyReconcileSnapshot(
-        val status: EngineStatus,
-        val positionMs: Long,
-        val durationMs: Long?,
-        val expectedTrackId: String?,
-        val userPaused: Boolean,
-        val pauseAcknowledged: Boolean,
-        val pauseGuardOpen: Boolean,
-        val transportGeneration: Long,
-        val misses: Int,
-    )
-
-    private fun noteLocalTransportLocked() {
-        transportGeneration++
-    }
-
-    private fun clearPauseGuardLocked() {
-        spotifyPauseCommandCompleted = false
-        spotifyObservationsSincePause = 0
-    }
-
-    private fun spotifyIsActive(): Boolean = synchronized(lifecycleLock) {
-        (lastHandle as? PlaybackHandle.ProviderPlayback)?.provider == ProviderId.SPOTIFY
-    }
-
-    private suspend fun runSpotifyCommand(name: String, action: suspend () -> Unit) {
-        val completion = CompletableDeferred<Result<Unit>>()
-        spotifyCommands.send(SpotifyCommand(name, action, completion))
-        completion.await().getOrThrow()
-    }
-
-    private fun enqueueSpotifyCommand(
-        name: String,
-        action: suspend () -> Unit,
-        pauseCommandId: Long? = null,
-    ) {
-        spotifyCommands.trySend(SpotifyCommand(name, action, pauseCommandId = pauseCommandId))
-    }
-
-    private fun markSpotifyFailed(failure: Throwable, name: String) {
-        synchronized(lifecycleLock) {
-            if (spotifyIsActive()) {
-                cancelTickerLocked()
-                publishState(_state.value.copy(
-                    status = EngineStatus.FAILED,
-                    error = failure.message ?: "$name failed",
-                ))
-            }
-        }
-    }
-
-    private data class SpotifyCommand(
-        val name: String,
-        val action: suspend () -> Unit,
-        val completion: CompletableDeferred<Result<Unit>>? = null,
-        val pauseCommandId: Long? = null,
-    )
-
-    private fun invalidatePendingStartLocked() {
-        requestToken++
-    }
-
-    private fun stopProcessLocked(): Boolean {
-        val active = activeProcess ?: return true
-        val terminated = try {
-            active.process.destroyForcibly()
-            active.process.waitFor(1, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            false
-        } catch (_: Exception) {
-            false
-        }
-        if (!terminated) return false
-        if (activeProcess === active) activeProcess = null
-        runtime.deleteIpcPath(active.socket)
-        return true
     }
 
     private companion object {
         const val SPOTIFY_OBSERVE_INTERVAL_MS = 4_000L
+
+        /**
+         * ffmpeg's volume filter reads each decoded frame's ReplayGain, so the gain changes on the
+         * first sample of the next gapless file. mpv's own `--replaygain` sets the output gain when
+         * the next file starts decoding, while the last ~0.4 s of the previous one is still buffered.
+         * Off is the same filter at unity: both output float, so a toggle replaces the filter in
+         * place. Removing it changes the output format, and mpv reopens the output and drops its buffer.
+         */
+        fun levellingFilter(enabled: Boolean): String = "@kainos-level:lavfi=[" +
+            (if (enabled) "volume=replaygain=track:replaygain_preamp=${VolumeLevelling.PREAMP_DB}" else "volume=1") + "]"
+
+        fun levellingCommand(enabled: Boolean): String = """["af","add",${Json.encodeToString(levellingFilter(enabled))}]"""
     }
 
     private fun shutdown() {
-        synchronized(lifecycleLock) {
-            invalidatePendingStartLocked()
-            cancelTickerLocked()
-            cancelSpotifyReconcileLocked()
-            stopProcessLocked()
+        synchronized(transport.lock) {
+            transport.invalidatePendingStartLocked()
+            ticker.cancelLocked()
+            spotifyPath.cancelReconcileLocked()
+            spotifyPath.cancelReceiverLocked()
+            slot.stopLocked()
         }
     }
-
-    private class ActiveProcess(
-        val process: Process,
-        val socket: Path,
-    )
 
     private data class Restart(
         val handle: PlaybackHandle,
         val quality: AudioQuality?,
-        val startSeconds: Long,
+        val startSeconds: Double,
         val token: Long,
         val targetStatus: EngineStatus,
     )
-}
-
-internal interface DesktopPlaybackRuntime {
-    fun findOnPath(name: String): String?
-    fun probeDurationMs(url: String): Long?
-    fun createIpcPath(): Path
-    fun startProcess(command: List<String>): Process
-    fun waitForIpc(socket: Path)
-    fun sendIpc(commandArrayJson: String, socket: Path): Boolean
-    fun readProperty(name: String, socket: Path): String? = null
-    fun deleteIpcPath(path: Path)
-}
-
-private object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
-    override fun findOnPath(name: String): String? {
-        val path = System.getenv("PATH") ?: return null
-        return path.split(':').firstOrNull { dir ->
-            java.io.File(dir, name).canExecute()
-        }?.let { java.io.File(it, name).absolutePath }
-    }
-
-    override fun probeDurationMs(url: String): Long? {
-        val ffprobe = findOnPath("ffprobe") ?: return null
-        val media = mediaPathForProbe(url) ?: url
-        return runCatching {
-            val process = ProcessBuilder(
-                ffprobe,
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                media,
-            ).redirectErrorStream(true).start()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                process.waitFor(1, TimeUnit.SECONDS)
-                return null
-            }
-            if (process.exitValue() != 0) return null
-            val output = process.inputStream.bufferedReader().readText().trim()
-            val seconds = output.lineSequence().firstOrNull()?.toDoubleOrNull() ?: return null
-            (seconds * 1000.0).toLong().takeIf { it > 0L }
-        }.getOrNull()
-    }
-
-    private fun mediaPathForProbe(url: String): String? = runCatching {
-        when {
-            url.startsWith("file:") -> java.nio.file.Paths.get(java.net.URI(url)).toString()
-            else -> url
-        }
-    }.getOrNull()
-
-    override fun createIpcPath(): Path =
-        Files.createTempFile("kainos-mpv-", ".sock").also { Files.deleteIfExists(it) }
-
-    override fun startProcess(command: List<String>): Process =
-        ProcessBuilder(command).redirectErrorStream(true).start()
-
-    override fun waitForIpc(socket: Path) {
-        val deadline = System.currentTimeMillis() + 2_500
-        while (System.currentTimeMillis() < deadline) {
-            if (Files.exists(socket) && sendIpc("""["get_property","pause"]""", socket)) return
-            Thread.sleep(40)
-        }
-    }
-
-    override fun sendIpc(commandArrayJson: String, socket: Path): Boolean =
-        // Drain one response line so the socket stays healthy; a timeout counts as a failed IPC.
-        exchange(socket, """{"command":$commandArrayJson}""") !is IpcReply.Failed
-
-    override fun readProperty(name: String, socket: Path): String? =
-        when (val reply = exchange(socket, """{"command":["get_property","$name"]}""")) {
-            is IpcReply.Line -> parseMpvData(reply.text)
-            else -> null
-        }
-
-    private sealed interface IpcReply {
-        class Line(val text: String) : IpcReply
-        /** mpv closed the connection without a reply line (treated as sent, as before). */
-        object Closed : IpcReply
-        /** Missing socket, connect/write/read failure, or deadline exceeded. */
-        object Failed : IpcReply
-    }
-
-    /**
-     * One request/response over a fresh non-blocking unix socket, bounded by
-     * [IPC_CONNECT_TIMEOUT_MS] for connect and [IPC_IO_TIMEOUT_MS] for write + read.
-     * SocketChannel has no SO_TIMEOUT, so readiness is awaited with a [Selector].
-     */
-    private fun exchange(socket: Path, requestJson: String): IpcReply {
-        if (!Files.exists(socket)) return IpcReply.Failed
-        return runCatching {
-            SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
-                Selector.open().use { selector ->
-                    channel.configureBlocking(false)
-                    val key = channel.register(selector, 0)
-                    if (!channel.connect(UnixDomainSocketAddress.of(socket))) {
-                        val connectDeadline = System.currentTimeMillis() + IPC_CONNECT_TIMEOUT_MS
-                        key.interestOps(SelectionKey.OP_CONNECT)
-                        while (!channel.finishConnect()) {
-                            if (!awaitReady(selector, connectDeadline)) return IpcReply.Failed
-                        }
-                    }
-                    val ioDeadline = System.currentTimeMillis() + IPC_IO_TIMEOUT_MS
-                    val payload = ByteBuffer.wrap((requestJson + "\n").toByteArray(Charsets.UTF_8))
-                    key.interestOps(SelectionKey.OP_WRITE)
-                    while (payload.hasRemaining()) {
-                        if (channel.write(payload) == 0 && !awaitReady(selector, ioDeadline)) {
-                            return IpcReply.Failed
-                        }
-                    }
-                    key.interestOps(SelectionKey.OP_READ)
-                    readIpcReply(channel, selector, ioDeadline)
-                }
-            }
-        }.getOrDefault(IpcReply.Failed)
-    }
-
-    /** Waits for the registered interest op until [deadline]; false once the deadline passed. */
-    private fun awaitReady(selector: Selector, deadline: Long): Boolean {
-        val remaining = deadline - System.currentTimeMillis()
-        if (remaining <= 0) return false
-        selector.select(remaining)
-        selector.selectedKeys().clear()
-        return true
-    }
-
-    private fun readIpcReply(channel: SocketChannel, selector: Selector, deadline: Long): IpcReply {
-        val buffer = ByteBuffer.allocate(4096)
-        val line = java.io.ByteArrayOutputStream()
-        while (true) {
-            val read = channel.read(buffer)
-            if (read < 0) {
-                val partial = line.toString(Charsets.UTF_8)
-                return if (partial.isNotBlank()) IpcReply.Line(partial) else IpcReply.Closed
-            }
-            if (read == 0) {
-                if (!awaitReady(selector, deadline)) return IpcReply.Failed
-                continue
-            }
-            buffer.flip()
-            while (buffer.hasRemaining()) {
-                val byte = buffer.get()
-                if (byte == '\n'.code.toByte()) {
-                    val text = line.toString(Charsets.UTF_8)
-                    line.reset()
-                    // mpv broadcasts events (pause, seek, ...) to every client; skip to our reply.
-                    if (!isMpvEventLine(text)) return IpcReply.Line(text)
-                } else {
-                    line.write(byte.toInt())
-                }
-            }
-            buffer.clear()
-        }
-    }
-
-    private fun isMpvEventLine(line: String): Boolean =
-        line.contains("\"event\"") && !line.contains("\"error\"")
-
-    private const val IPC_CONNECT_TIMEOUT_MS = 1_000L
-    private const val IPC_IO_TIMEOUT_MS = 1_500L
-
-    private fun parseMpvData(line: String): String? {
-        // Minimal parse: "data": <json-value>
-        val key = "\"data\":"
-        val start = line.indexOf(key)
-        if (start < 0) return null
-        var i = start + key.length
-        while (i < line.length && line[i].isWhitespace()) i++
-        if (i >= line.length) return null
-        return when (line[i]) {
-            '"' -> {
-                val end = line.indexOf('"', i + 1)
-                if (end < 0) null else line.substring(i + 1, end)
-            }
-            't', 'f', 'n' -> {
-                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
-                line.substring(i, end).trim()
-            }
-            else -> {
-                val end = line.indexOfAny(charArrayOf(',', '}'), i).let { if (it < 0) line.length else it }
-                line.substring(i, end).trim()
-            }
-        }
-    }
-
-    override fun deleteIpcPath(path: Path) {
-        runCatching { Files.deleteIfExists(path) }
-    }
 }

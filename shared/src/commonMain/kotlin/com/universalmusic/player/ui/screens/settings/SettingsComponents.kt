@@ -1,66 +1,123 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import com.universalmusic.player.ui.components.LedgerRow
+import com.universalmusic.player.ui.theme.AccentSlot
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SourceSelectionMode
 import com.universalmusic.player.platform.SpotifyWebPlaybackFailure
 import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 
 @Composable
 internal fun SettingToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, modifier = Modifier.weight(1f).padding(end = 12.dp))
-        Switch(checked = checked, onCheckedChange = onChange)
+    LedgerRow(modifier = Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** The spot Settings was opened at, if any. */
+internal val LocalSettingsArrival = staticCompositionLocalOf<SettingsTarget?> { null }
+
+/** A named place in Settings: scrolled to and marked when a setup action lands here, with [focus] taken. */
+@Composable
+internal fun SettingsSpot(
+    target: SettingsTarget,
+    modifier: Modifier = Modifier,
+    focus: FocusRequester? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val arrival = LocalSettingsArrival.current
+    val arrived = arrival == target
+    val requester = remember { BringIntoViewRequester() }
+    val mark = MaterialTheme.colorScheme.primary
+    LaunchedEffect(arrival) {
+        if (!arrived) return@LaunchedEffect
+        withFrameNanos { }
+        requester.bringIntoView()
+        focus?.let { runCatching { it.requestFocus() } }
+    }
+    Column(
+        modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(requester)
+            .testTag("settings-spot-${target.name}")
+            .then(
+                if (arrived) {
+                    Modifier
+                        .drawBehind { drawLine(mark, Offset(1.dp.toPx(), 0f), Offset(1.dp.toPx(), size.height), 2.dp.toPx()) }
+                        .padding(start = 12.dp)
+                } else {
+                    Modifier
+                },
+            ),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+/** One numbered step of a provider setup. These do run in order; [done] swaps the number for a check. */
+@Composable
+internal fun SetupStep(
+    number: Int,
+    title: String,
+    done: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    val palette = LocalKainosPalette.current
+    val fill = if (done) palette.accentContainer(Accents.availableLocal) else MaterialTheme.colorScheme.surfaceContainerHighest
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.size(26.dp).clip(CircleShape).background(fill), contentAlignment = Alignment.Center) {
+            if (done) {
+                Icon(Icons.Default.Check, "Done", Modifier.size(16.dp), tint = palette.accent(Accents.availableLocal, AccentUse.Mark, fill))
+            } else {
+                Text("$number", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            content()
+        }
     }
 }
 
 @Composable
-internal fun ProviderAccountRow(
-    name: String,
-    state: ProviderState,
-    configured: Boolean,
-    connected: Boolean,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-    detail: String,
-    showButtons: Boolean = true,
-    busy: Boolean = false,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (connected) "●" else "○", color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
-            Text("  $name", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "  ${state.name.lowercase().replace('_', ' ')}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (showButtons) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onConnect, enabled = configured && !connected && !busy) { Text("Connect") }
-                OutlinedButton(onClick = onDisconnect, enabled = connected && !busy) { Text("Disconnect") }
-            }
-        }
-    }
+internal fun SetupNote(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 internal fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): String = when (failure) {
@@ -82,13 +139,14 @@ internal fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): 
     else -> "Spotify receiver setup failed. Try setup again."
 }
 
-internal enum class SettingsSection(val label: String) {
-    Playback("Playback"),
-    Appearance("Appearance"),
-    Sources("Music sources"),
-    Devices("Devices and sync"),
-    Downloads("Downloads"),
-    Advanced("Advanced"),
+internal enum class SettingsSection(val label: String, val accent: AccentSlot) {
+    Playback("Playback", AccentSlot.Orange),
+    Appearance("Appearance", AccentSlot.Pink),
+    Sources("Music sources", AccentSlot.Green),
+    Devices("Devices and sync", AccentSlot.Blue),
+    Downloads("Downloads", AccentSlot.Teal),
+    Backup("Backup", AccentSlot.Yellow),
+    Advanced("Advanced", AccentSlot.Gray),
 }
 
 internal fun SourceSelectionMode.label(): String = when (this) {

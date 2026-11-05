@@ -32,7 +32,7 @@ def make_settings(**overrides) -> Settings:
         aac_sample_rate=44100,
         aac_channels=2,
         public_stream_token=STREAM_TOKEN,
-        public_base_url="https://example.test",
+        public_base_url="http://127.0.0.1:8787",
         allow_open_test_stream=True,
         alexa_skill_id=SKILL_ID,
         skip_alexa_signature_verify=True,

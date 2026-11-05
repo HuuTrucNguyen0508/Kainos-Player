@@ -1,5 +1,12 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.ui.components.AccentToggle
+import com.universalmusic.player.ui.components.PlayButton
+import com.universalmusic.player.ui.components.SeekKind
+import com.universalmusic.player.ui.components.SkinSlider
+import com.universalmusic.player.ui.theme.AccentUse
+import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.LocalKainosPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -93,21 +100,11 @@ internal fun NowPlayingTransport(
                 modifier = Modifier.size(36.dp),
             )
         }
-        FilledIconButton(
+        PlayButton(
+            playing = isPlaying || buffering,
             onClick = onTogglePlayPause,
             enabled = track != null,
-            modifier = Modifier.size(72.dp),
-            colors = IconButtonDefaults.filledIconButtonColors(
-                containerColor = scheme.primary,
-                contentColor = scheme.onPrimary,
-            ),
-        ) {
-            Icon(
-                if (isPlaying || buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
-                contentDescription = if (isPlaying || buffering) "Pause" else "Play",
-                modifier = Modifier.size(36.dp),
-            )
-        }
+        )
         IconButton(
             onClick = onNext,
             enabled = run {
@@ -134,41 +131,32 @@ internal fun NowPlayingTransport(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ActionTooltip(if (favorite) "Remove from favorites" else "Add to favorites") {
-            IconButton(
-                enabled = track != null,
+            AccentToggle(
+                checked = favorite,
                 onClick = onToggleFavorite,
-            ) {
-                Icon(
-                    if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = if (favorite) "Remove from favorites" else "Add to favorites",
-                    tint = if (favorite) scheme.primary else scheme.onSurfaceVariant,
-                )
-            }
+                slot = Accents.heart,
+                icon = if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = if (favorite) "Remove from favorites" else "Add to favorites",
+                enabled = track != null,
+            )
         }
         ActionTooltip(repeat.tooltip) {
-            IconButton(onClick = onCycleRepeat) {
-                Icon(
-                    if (repeat.one) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                    contentDescription = repeat.contentDescription,
-                    tint = if (repeat.active) scheme.primary else scheme.onSurfaceVariant,
-                )
-            }
+            AccentToggle(
+                checked = repeat.active,
+                onClick = onCycleRepeat,
+                slot = Accents.repeat,
+                icon = if (repeat.one) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                contentDescription = repeat.contentDescription,
+            )
         }
         ActionTooltip(shuffle.tooltip) {
-            IconToggleButton(
+            AccentToggle(
                 checked = shuffle.on,
-                onCheckedChange = { onToggleShuffle() },
-                colors = IconButtonDefaults.iconToggleButtonColors(
-                    checkedContainerColor = scheme.secondaryContainer,
-                    checkedContentColor = scheme.onSecondaryContainer,
-                    contentColor = scheme.onSurfaceVariant,
-                ),
-            ) {
-                Icon(
-                    Icons.Default.Shuffle,
-                    contentDescription = shuffle.contentDescription,
-                )
-            }
+                onClick = onToggleShuffle,
+                slot = Accents.shuffle,
+                icon = Icons.Default.Shuffle,
+                contentDescription = shuffle.contentDescription,
+            )
         }
         ActionTooltip("Queue") {
             IconButton(onClick = onOpenQueue) {
@@ -179,20 +167,18 @@ internal fun NowPlayingTransport(
             }
         }
         ActionTooltip(if (sleepActive) "Sleep timer (on)" else "Sleep timer") {
-            IconButton(
+            AccentToggle(
+                checked = sleepActive,
                 onClick = onOpenSleepTimer,
+                slot = Accents.sleep,
+                icon = Icons.Default.Bedtime,
+                contentDescription = if (sleepActive) {
+                    "Sleep timer active. Adjust or cancel"
+                } else {
+                    "Set sleep timer"
+                },
                 enabled = track != null || sleepActive,
-            ) {
-                Icon(
-                    Icons.Default.Bedtime,
-                    contentDescription = if (sleepActive) {
-                        "Sleep timer active. Adjust or cancel"
-                    } else {
-                        "Set sleep timer"
-                    },
-                    tint = if (sleepActive) scheme.primary else scheme.onSurfaceVariant,
-                )
-            }
+            )
         }
     }
 
@@ -200,7 +186,7 @@ internal fun NowPlayingTransport(
         Text(
             sleepRemainingLabel,
             style = MaterialTheme.typography.labelMedium,
-            color = scheme.primary,
+            color = LocalKainosPalette.current.accent(Accents.sleep, AccentUse.Text),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 4.dp),
@@ -251,7 +237,8 @@ internal fun NowPlayingVolume(
                 contentDescription = if (icon == VolumeIconKind.MUTE) "Unmute" else "Mute",
             )
         }
-        Slider(
+        SkinSlider(
+            kind = SeekKind.Level,
             value = shownVolume,
             onValueChange = {
                 volumeDrag = it

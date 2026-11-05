@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
-import com.universalmusic.player.ui.components.TrackRow
 
 @Composable
 internal fun ColumnScope.LibraryArtistsTab(
@@ -42,6 +41,7 @@ internal fun ColumnScope.LibraryArtistsTab(
     selectedArtist: LibraryArtistEntry?,
     onSelectedArtistId: (String?) -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    trackActions: TrackActionsPresenter,
     trackAvailability: (Track) -> TrackAvailabilityInfo,
 ) {
     val artistDetail = selectedArtist
@@ -105,8 +105,9 @@ internal fun ColumnScope.LibraryArtistsTab(
                     }
                 }
                 items(artistTracks, key = { it.canonicalId }) { track ->
-                    TrackRow(
+                    ActionTrackRow(
                         track = track,
+                        actions = trackActions,
                         compact = true,
                         availability = remember(track, state.downloads) {
                             trackAvailability(track)

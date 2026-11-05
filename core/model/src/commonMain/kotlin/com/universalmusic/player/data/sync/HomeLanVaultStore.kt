@@ -23,6 +23,9 @@ interface HomeLanVaultStore {
      */
     suspend fun readRange(relPath: String, start: Long, endInclusive: Long): ByteArray
 
+    /** SHA-256 hex of the whole file, or null when it is missing or this store cannot hash it. */
+    suspend fun contentSha256(relPath: String): String? = null
+
     /**
      * Staged write: [data] lands in a partial file next to [relPath] whose name is outside
      * [VAULT_AUDIO_EXTENSIONS] (see [vaultStagingName]), never in the final file. Chunks must be

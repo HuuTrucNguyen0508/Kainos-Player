@@ -10,10 +10,17 @@ import com.universalmusic.player.data.session.PublicationOrigin
 import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.SessionRevision
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.data.session.ListeningStore
+import com.universalmusic.player.domain.continuation.QueueContinuation
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.StorageArea
+import com.universalmusic.player.domain.failure.StorageFailure
+import com.universalmusic.player.domain.failure.shown
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Artwork
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
+import com.universalmusic.player.domain.model.PlaybackQueue
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
@@ -42,6 +49,40 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NowPlayingRecorderTest {
+    @Test
+    fun failedRestoreShowsTheStorageMessageInsteadOfASilentlyEmptyQueue() = runTest {
+        AppFailures.dismiss()
+        val recorder = NowPlayingRecorder(
+            store = object : ListeningStore by FakeListeningStore() {
+                override suspend fun readRestore(): ListeningRestore =
+                    throw StorageFailure(StorageArea.LISTENING, IllegalStateException("database is locked"))
+            },
+            scope = backgroundScope,
+        )
+        assertEquals(null, recorder.readRestore())
+        assertEquals(
+            "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept.",
+            AppFailures.open.value.shown?.message,
+        )
+        AppFailures.dismiss()
+    }
+
+    @Test
+    fun cancellingRestoredStartupPreservesTheDeferredPositionForNextPlay() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("a"), positionMs = 12_000), PublicationOrigin.LOCAL)))
+        rig.session.initializePersistence()
+        rig.engine.bufferingGate = CompletableDeferred()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.pauseTransport()
+        runCurrent()
+        rig.engine.bufferingGate = null
+        rig.session.playTransport()
+        settle(rig)
+        assertEquals(12_000, rig.session.nowPlaying.value.positionMs)
+        assertEquals(12_000, rig.engine.seeks.last())
+    }
+
     @Test
     fun shuffleTogglesPublishNewRevisionsWithoutChangingTheQueueHash() = runTest {
         val rig = rig()
@@ -147,7 +188,8 @@ class NowPlayingRecorderTest {
         monotonic = 5_000
         advanceTimeBy(1_000)
         settle(timed)
-        assertEquals(Row(timedId, "yt:a", 4_000, T0 + 4_000, false, T0 + 4_000), timed.store.latest.row())
+        // A 5 s timer is all fade, so it ticks every 250 ms and pauses on the first tick past its deadline.
+        assertEquals(Row(timedId, "yt:a", 4_000, T0 + 3_250, false, T0 + 3_250), timed.store.latest.row())
 
         val stopped = timed.session.localRevision
         timed.session.pauseForSleepTimer()
@@ -496,9 +538,9 @@ class NowPlayingRecorderTest {
         settle(repeat)
         assertEquals("yt:a" to 0L, repeat.store.latest.currentAndPosition(), "Repeat All wraps")
 
-        val continuation = rig(onQueueExhausted = { listOf(yt("d")) })
+        val continuation = rig()
         continuation.session.initializePersistence()
-        continuation.session.play(listOf(yt("a")), startIndex = 0)
+        continuation.session.play(listOf(yt("a")), startIndex = 0, continuation = OneBatch(listOf(yt("d"))))
         runCurrent()
         continuation.engine.report(EngineStatus.ENDED)
         settle(continuation)
@@ -888,6 +930,13 @@ class NowPlayingRecorderTest {
     }
 
     @Test
+    fun flushDuringStartupIsMarkedNotReadyInsteadOfAnError() = runTest {
+        val rig = rig(FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL)))
+        val result = assertIs<FlushResult.Failed>(rig.session.flushPersistence())
+        assertIs<ListeningNotReady>(result.cause)
+    }
+
+    @Test
     fun flushBeforeAndDuringInitializationReportsFailureUntilTheWorkerCanPersist() = runTest {
         val store = FakeListeningStore(ListeningRestore(snapshot(yt("saved")), PublicationOrigin.LOCAL))
         val rig = rig(store)
@@ -1054,7 +1103,6 @@ class NowPlayingRecorderTest {
         store: FakeListeningStore = FakeListeningStore(),
         workerContext: CoroutineContext = EmptyCoroutineContext,
         recorderScope: CoroutineScope = backgroundScope,
-        onQueueExhausted: (suspend (Set<String>) -> List<Track>)? = null,
         enrichSource: suspend (Track, PlaybackSource) -> PlaybackSource = { _, source -> source },
     ): Rig {
         val engine = ScriptedEngine()
@@ -1063,7 +1111,6 @@ class NowPlayingRecorderTest {
             engine = engine,
             resolver = DefaultSourceResolver(),
             scope = backgroundScope,
-            onQueueExhausted = onQueueExhausted,
             enrichSource = enrichSource,
             persistence = NowPlayingRecorder(store, recorderScope, workerContext, clock),
             clock = clock,
@@ -1078,6 +1125,11 @@ class NowPlayingRecorderTest {
 }
 
 private const val T0 = 1_000_000L
+
+private class OneBatch(private var batch: List<Track>) : QueueContinuation {
+    override val lowWater = 0
+    override suspend fun nextBatch(queue: PlaybackQueue): List<Track> = batch.also { batch = emptyList() }
+}
 
 private var remoteRevision = 0L
 

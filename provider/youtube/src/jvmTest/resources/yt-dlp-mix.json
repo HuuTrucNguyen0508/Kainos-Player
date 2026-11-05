@@ -1,0 +1,44 @@
+{
+ "_type": "playlist",
+ "id": "RD4NRXx6U8ABQ",
+ "title": "Mix - The Weeknd - Blinding Lights (Official Video)",
+ "entries": [
+  {
+   "_type": "url",
+   "id": "4NRXx6U8ABQ",
+   "title": "The Weeknd - Blinding Lights (Official Video)",
+   "channel": "The Weeknd",
+   "uploader": "The Weeknd",
+   "duration": 263,
+   "url": "https://www.youtube.com/watch?v=4NRXx6U8ABQ"
+  },
+  {
+   "_type": "url",
+   "id": "34Na4j8AVgA",
+   "title": "The Weeknd - Starboy ft. Daft Punk (Official Video) ft. Daft Punk",
+   "channel": "The Weeknd",
+   "uploader": "The Weeknd",
+   "duration": 274,
+   "url": "https://www.youtube.com/watch?v=34Na4j8AVgA"
+  },
+  {
+   "_type": "url",
+   "id": "XXYlFuWEuKI",
+   "title": "The Weeknd - Save Your Tears (Official Music Video)",
+   "channel": "The Weeknd",
+   "uploader": "The Weeknd",
+   "duration": 249,
+   "url": "https://www.youtube.com/watch?v=XXYlFuWEuKI"
+  },
+  {
+   "_type": "url",
+   "id": "rhTl_OyehF8",
+   "title": "The Weeknd - Take My Breath (Official Music Video)",
+   "channel": "The Weeknd",
+   "uploader": "The Weeknd",
+   "duration": 225,
+   "url": "https://www.youtube.com/watch?v=rhTl_OyehF8"
+  },
+  null
+ ]
+}

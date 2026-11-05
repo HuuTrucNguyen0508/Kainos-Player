@@ -10,8 +10,11 @@ const val HOME_LAN_SYNC_PATH_VAULT_INDEX = "/kainos-sync/v1/vault/index"
 const val HOME_LAN_SYNC_PATH_V2_HEARTS = "/kainos-sync/v2/hearts"
 const val HOME_LAN_SYNC_PATH_V2_PLAYLISTS = "/kainos-sync/v2/playlists"
 const val HOME_LAN_SYNC_PATH_V2_VAULT_INDEX = "/kainos-sync/v2/vault/index"
+/** Portable Home pins; hubs from before pin sync answer 404 and the client skips pins. */
+const val HOME_LAN_SYNC_PATH_V3_PINS = "/kainos-sync/v3/pins"
 
 const val HOME_LAN_SYNC_PATH_VAULT_BLOB = "/kainos-sync/v1/vault/blob"
+const val HOME_LAN_SYNC_PATH_V2_VAULT_BLOB_HASH = "/kainos-sync/v2/vault/blob-hash"
 
 const val HOME_LAN_MDNS_SERVICE_TYPE = "_kainos-sync._tcp"
 const val HOME_LAN_MDNS_TXT_FP = "fp"
@@ -32,6 +35,8 @@ data class HomeLanSyncStatus(
     val pendingConflicts: List<VaultConflict> = emptyList(),
     /** Missing hearted (or vault) files waiting for user confirm before blob copy. */
     val pendingTransfers: List<PendingVaultTransfer> = emptyList(),
+    /** Hearted YouTube audio cached on one side and missing on the other, waiting for Transfer or Skip. */
+    val pendingCachedAudio: List<PendingCachedAudioTransfer> = emptyList(),
     val bytesTransferred: Long = 0,
     val bytesTotal: Long = 0,
 )
@@ -69,8 +74,33 @@ interface HomeLanSyncClient : AutoCloseable {
     override fun close() = Unit
     suspend fun syncHearts(): Result<HeartsSyncDocument>
     suspend fun syncPlaylists(): Result<com.universalmusic.player.data.playlist.PlaylistsSyncDocument>
+
+    /** The hub's pins after it merged ours; null when the hub predates pin sync. */
+    suspend fun syncHomePins(): Result<com.universalmusic.player.data.library.HomePinsSyncDocument?> = Result.success(null)
     suspend fun probeHub(): Result<HomeLanHealthResponse>
     suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument>
     suspend fun downloadBlob(relPath: String, offset: Long, length: Int): Result<ByteArray>
+
+    /** SHA-256 of the whole file as the hub reads it now; null when the hub predates this route. */
+    suspend fun fetchBlobHash(relPath: String): Result<String?> = Result.success(null)
+
     suspend fun uploadBlob(relPath: String, offset: Long, totalSize: Long, chunk: ByteArray): Result<Unit>
+
+    /** The hub's cached-audio offers after it saw ours; null when the hub predates cached-audio sync. */
+    suspend fun syncCachedAudio(local: CachedAudioSyncDocument): Result<CachedAudioSyncDocument?> = Result.success(null)
+
+    suspend fun downloadCachedAudio(owner: String, token: String, offset: Long, length: Int): Result<ByteArray> =
+        Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
+
+    /** SHA-256 of the hub's cached file [token] for [owner]. */
+    suspend fun fetchCachedAudioHash(owner: String, token: String): Result<String> =
+        Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
+
+    /**
+     * Sends one chunk; the hub verifies [sha256] and publishes once the chunk ending at [totalSize] arrives.
+     * Returns the hub's word: `ok`, `published`, or `already cached` (stop sending).
+     */
+    suspend fun uploadCachedAudio(
+        owner: String, token: String, offset: Long, totalSize: Long, sha256: String, chunk: ByteArray,
+    ): Result<String> = Result.failure(UnsupportedOperationException("Cached audio sync unsupported"))
 }

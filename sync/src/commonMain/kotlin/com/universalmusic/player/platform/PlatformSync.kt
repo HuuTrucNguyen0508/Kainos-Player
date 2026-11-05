@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.data.library.HomePinsSyncDocument
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
 import com.universalmusic.player.data.session.ListeningExchangeStore
 import com.universalmusic.player.data.sync.HeartsSyncDocument
@@ -16,11 +17,23 @@ class HomeLanHubConfig(
     val pairing: PairingHost,
     val onHearts: suspend (HeartsSyncDocument) -> HeartsSyncDocument,
     val onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
+    /** Null leaves the pin route unanswered (404), as on hubs from before pin sync. */
+    val onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
+    /** Null leaves the cached-audio routes unanswered (404), as on hubs from before cached-audio sync. */
+    val cachedAudio: com.universalmusic.player.data.sync.CachedAudioHost? = null,
     val vault: HomeLanVaultStore?,
     /** When non-null, the hub vault index only advertises these basenames (hearted-only mode). */
     val heartedVaultFileNames: () -> Set<String>?,
     /** Null leaves the listening routes unanswered (404). */
     val listening: ListeningExchangeStore? = null,
+    /** Null leaves the remote control routes unanswered (404). */
+    val remote: com.universalmusic.player.data.sync.RemoteLinkHost? = null,
+    /**
+     * The GUI player remote devices may control. Only a GUI process returns one; a `--hub-only`
+     * process returns null even though it builds a session, so it shows no status and answers
+     * commands with 409.
+     */
+    val guiPlayer: () -> com.universalmusic.player.data.sync.RemotePlayer? = { null },
 )
 
 expect fun createHomeLanSyncHub(config: HomeLanHubConfig): HomeLanSyncHub
@@ -35,6 +48,9 @@ expect fun homeLanHubPort(): Int
 
 /** Name this device shows the other side while pairing. */
 expect fun homeLanDeviceName(): String
+
+/** This PC's home-network IPv4 address for its pairing QR code; null on a phone, which never runs a hub. */
+expect fun homeLanPairingAddress(): String?
 
 /**
  * Runs [block] under an Android `dataSync` foreground service when needed.
@@ -59,3 +75,9 @@ expect suspend fun scheduleBackgroundListeningDelivery()
 /** Rematch local-file hearts whose paths went missing after vault sync. Returns count. */
 
 expect suspend fun rematchLocalHeartsAfterVaultSync(): Int
+
+/** Reads a local cover (file: or content: URI, or a path); null when unreadable or over [maxBytes]. */
+expect suspend fun readLocalArtworkBytes(location: String, maxBytes: Int): ByteArray?
+
+/** Writes another device's cover under this app's cache and returns a URI Coil can load, or null. */
+expect suspend fun cacheRemoteArtwork(key: String, bytes: ByteArray): String?

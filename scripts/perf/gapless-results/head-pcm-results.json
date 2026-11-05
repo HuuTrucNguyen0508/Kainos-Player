@@ -1,0 +1,72 @@
+[
+  {
+    "pair": "same",
+    "run": 0,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 1,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 2,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 3,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 4,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 5,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 6,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 7,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 8,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  },
+  {
+    "pair": "same",
+    "run": 9,
+    "boundary": 88200,
+    "pcm_samples": 176400,
+    "join_max_error_lsb": 0.0
+  }
+]
