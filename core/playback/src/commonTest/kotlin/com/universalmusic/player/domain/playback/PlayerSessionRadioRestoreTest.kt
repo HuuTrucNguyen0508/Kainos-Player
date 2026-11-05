@@ -10,10 +10,12 @@ import com.universalmusic.player.domain.continuation.SourceRadio
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -67,6 +69,24 @@ class PlayerSessionRadioRestoreTest {
     }
 
     @Test
+    fun aRadioThatRunsOutWhilePausedIsSavedAsFinished() = runTest {
+        val store = FakeListeningStore(ListeningRestore(saved(radio = ProviderId.YOUTUBE_MUSIC), PublicationOrigin.LOCAL))
+        val radioAnswer = CompletableDeferred<List<Track>>()
+        val rig = rig(store) { provider -> SourceRadio(provider, fetch = { _, _ -> radioAnswer.await() }) }
+        rig.session.initializePersistence()
+        rig.session.playTransport()
+        runCurrent()
+        rig.session.pauseTransport()
+        runCurrent()
+        assertEquals(ProviderId.YOUTUBE_MUSIC, store.restore.snapshot.radio)
+
+        radioAnswer.complete(emptyList())
+        runCurrent()
+        assertEquals(listOf("yt:saved"), store.restore.snapshot.items.map { it.track.canonicalId })
+        assertEquals(null, store.restore.snapshot.radio)
+    }
+
+    @Test
     fun aFailedRemoteInstallPutsTheRadioBack() = runTest {
         val store = FakeListeningStore(ListeningRestore(saved(radio = ProviderId.YOUTUBE_MUSIC), PublicationOrigin.LOCAL))
         val session = PlayerSession(
@@ -96,7 +116,7 @@ class PlayerSessionRadioRestoreTest {
             engine = ScriptedEngine(),
             resolver = DefaultSourceResolver(),
             scope = backgroundScope,
-            persistence = NowPlayingRecorder(store, backgroundScope, clock = { 0 }),
+            persistence = NowPlayingRecorder(store, backgroundScope, EmptyCoroutineContext, clock = { 0 }),
             clock = { 0 },
             radioFor = radioFor,
         ),
