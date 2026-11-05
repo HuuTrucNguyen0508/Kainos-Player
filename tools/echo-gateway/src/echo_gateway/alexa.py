@@ -137,8 +137,9 @@ def _pause(session: Session, context: dict[str, Any]) -> Reply:
 
 
 def _now_playing(session: Session, context: dict[str, Any], player: Player) -> Reply:
-    """Name the stream the device reports, which may be the one queued a moment ago."""
-    session.record_context(context)
+    """Name the stream in play. The device state was observed before dispatch."""
+    if session.activity == "stopped":
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
     track_id = session.current_id
     track = player.library.get(track_id) if track_id is not None else None
     if track is None:

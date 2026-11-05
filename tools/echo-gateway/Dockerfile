@@ -30,6 +30,6 @@ ENV PYTHONPATH=/app/src \
 # Music is mounted read-only at runtime. No secrets baked into the image.
 # No access log: request lines contain the stream token.
 USER echo
-EXPOSE 8787 8788
+EXPOSE 8787
 
 CMD ["uvicorn", "echo_gateway.main:app", "--host", "0.0.0.0", "--port", "8787", "--log-level", "info", "--no-access-log"]

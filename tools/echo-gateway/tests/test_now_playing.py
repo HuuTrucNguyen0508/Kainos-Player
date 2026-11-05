@@ -45,7 +45,7 @@ class Gateway:
         self.clock = Clock()
         self.app.state.player.sessions.now = self.clock
         self.alexa_client = TestClient(self.app)
-        self.local = TestClient(self.app.state.local_app)
+        self.local = TestClient(self.app.state.local_app, base_url="http://127.0.0.1:8788")
 
     @property
     def library(self) -> Library:
@@ -126,6 +126,13 @@ def test_loopback_app_serves_only_its_three_routes(gateway: Gateway):
     assert gateway.local.get(f"/stream/t/{STREAM_TOKEN}/{track_id}").status_code == 404
     assert gateway.local.get(f"/art/t/{STREAM_TOKEN}/{track_id}.jpg").status_code == 404
     assert gateway.local.post("/now-playing").status_code == 405
+
+
+def test_loopback_app_answers_only_loopback_host_names(gateway: Gateway):
+    rebound = gateway.local.get("/now-playing", headers={"host": "attacker.example:8788"})
+    assert rebound.status_code == 400
+    assert gateway.local.get("/now-playing", headers={"host": "localhost:8788"}).status_code == 200
+    assert gateway.local.get("/now-playing").status_code == 200
 
 
 def test_loopback_art_matches_token_art_and_unknown_ids_are_404(tmp_path: Path):
@@ -228,6 +235,35 @@ def test_natural_advance_moves_to_the_queued_track_at_zero(gateway: Gateway):
 
     gateway.at(180_200).alexa(audio_event("PlaybackStarted", queued, 0))
     assert gateway.state() == ("playing", track_of(queued), 0, 180_200)
+
+
+def test_natural_advance_with_the_context_a_real_echo_sends_stays_playing(gateway: Gateway):
+    token = gateway.at(0).launch()
+    playing = {"token": token, "offsetInMilliseconds": 0, "playerActivity": "PLAYING"}
+    gateway.alexa(audio_event("PlaybackStarted", token, 0, audio=playing))
+    nearly = {**playing, "offsetInMilliseconds": 1_000}
+    queued = play_token(gateway.at(1_000).alexa(audio_event("PlaybackNearlyFinished", token, 1_000, audio=nearly)))
+
+    finished = {"token": token, "offsetInMilliseconds": 179_000, "playerActivity": "FINISHED"}
+    gateway.at(180_000).alexa(audio_event("PlaybackFinished", token, 179_000, audio=finished))
+    assert gateway.state() == ("playing", track_of(token), 1_000, 1_000)
+
+    started = {"token": queued, "offsetInMilliseconds": 0, "playerActivity": "PLAYING"}
+    gateway.at(180_200).alexa(audio_event("PlaybackStarted", queued, 0, audio=started))
+    assert gateway.state() == ("playing", track_of(queued), 0, 180_200)
+
+
+def test_whats_playing_after_the_list_has_finished_names_nothing(gateway: Gateway):
+    gateway.at(0).launch()
+    gateway.alexa(intent("AMAZON.LoopOffIntent"))
+    with gateway.app.state.player.sessions.open(KEY) as session:
+        session.move_to(session.order[-1])
+        token = str(session.play_current())
+    gateway.alexa(audio_event("PlaybackStarted", token, 0))
+    gateway.alexa(audio_event("PlaybackNearlyFinished", token, 1_000))
+    gateway.alexa(audio_event("PlaybackFinished", token, 2_000))
+    speech = gateway.alexa(intent("NowPlayingIntent"))["outputSpeech"]["text"]
+    assert speech == "Rien en cours. Dis lance personnel."
 
 
 def test_finishing_the_last_track_with_loop_off_stops(gateway: Gateway):
@@ -334,6 +370,20 @@ async def test_playing_goes_stale_a_minute_after_the_track_should_have_ended(tmp
     late = {"token": token, "offsetInMilliseconds": 9_000, "playerActivity": "PAUSED"}
     gateway.alexa(intent("AMAZON.HelpIntent", audio=late))
     assert gateway.echo()["position_ms"] == 2_000
+
+
+async def test_a_track_anchored_late_goes_stale_a_minute_after_its_end(tmp_path: Path):
+    music = tmp_path / "music"
+    music.mkdir()
+    make_tone(music / "Tone - One.flac", seconds=2)
+    gateway = Gateway(music)
+    await gateway.app.state.player.scan.run_pass()
+    token = gateway.at(0).launch()
+    late = {"token": token, "offsetInMilliseconds": 1_500, "playerActivity": "PLAYING"}
+    gateway.at(1_000).alexa(intent("AMAZON.HelpIntent", audio=late))
+    # 500 ms of the track were left at the anchor.
+    assert gateway.at(1_000 + 500 + 60_000).echo()["state"] == "playing"
+    assert gateway.at(1_001 + 500 + 60_000).echo()["state"] == "stopped"
 
 
 def test_up_next_follows_the_shuffled_order_without_changing_it(gateway: Gateway):
@@ -487,6 +537,11 @@ async def test_unprobeable_old_entry_is_probed_once(tmp_path: Path):
     assert calls.read_text().splitlines() == ["probe"]
     assert scan.metadata_for(library.tracks[0]).duration_ms is None
     assert scan.progress() == (1, 1)
+
+    # A restart tries again; the saved null marks the duration as still unknown.
+    restarted = LibraryScan(make_settings(music_root=music, state_dir=state, ffprobe_bin=str(ffprobe)), library)
+    await restarted.run_pass()
+    assert calls.read_text().splitlines() == ["probe", "probe"]
 
 
 def test_lifespan_runs_the_loopback_listener_and_stops_it(music: Path):

@@ -318,7 +318,7 @@ class LibraryScan:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             entries = {path: ScanEntry(**fields) for path, fields in raw["entries"].items()}
             without_duration = {
-                path for path, fields in raw["entries"].items() if "duration_ms" not in fields
+                path for path, fields in raw["entries"].items() if fields.get("duration_ms") is None
             }
         except FileNotFoundError:
             return

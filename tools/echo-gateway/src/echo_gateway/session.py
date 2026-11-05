@@ -207,6 +207,9 @@ class Session:
         token = audio.get("token") or ""
         if activity is None:
             return
+        if audio.get("playerActivity") == "FINISHED" and self.queued_token:
+            # The queued stream starts next; PlaybackStarted moves the session to it.
+            return
         # A queued stream the device has finished or never started is not in play.
         owned = self.owns(token) if activity != "stopped" else bool(token) and token == self.current_token
         if owned:

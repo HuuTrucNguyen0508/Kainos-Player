@@ -93,8 +93,12 @@ route, so it never shows the stream token or a stream URL.
 - `duration_ms` comes from the scan (ffprobe `format.duration`) and is null
   until the scan reaches the track.
 - `LOCAL_PORT` (default `8788`) and `LOCAL_API_BASE_URL` (default
-  `http://127.0.0.1:8788`, used in `art_url`) configure it. If the port is busy,
-  the gateway logs `local_api_failed category=bind` and keeps serving Alexa.
+  `http://127.0.0.1:8788`, used in `art_url`) configure it. It answers only
+  requests addressed to `127.0.0.1`, `localhost` or the `LOCAL_API_BASE_URL`
+  host. Under Compose, a busy host port 8788 stops the whole container from
+  starting: free the port, or change the host side of `127.0.0.1:8788:8788` and
+  `LOCAL_API_BASE_URL` together. Run outside Docker, a busy `LOCAL_PORT` only
+  disables this API (`local_api_failed category=bind`) and Alexa keeps working.
 
 ## Security for public exposure
 

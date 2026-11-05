@@ -62,7 +62,8 @@ def _state(session: Session, duration_ms: int | None, now_ms: int) -> str:
     if session.activity != "playing":
         return session.activity
     if duration_ms is not None:
-        stale = now_ms - session.position_at_ms > duration_ms + STALE_AFTER_TRACK_MS
+        playhead = min(session.position_ms, duration_ms) + now_ms - session.position_at_ms
+        stale = playhead > duration_ms + STALE_AFTER_TRACK_MS
     else:
         stale = now_ms - session.last_event_at_ms > STALE_WITHOUT_DURATION_MS
     return "stopped" if stale else "playing"

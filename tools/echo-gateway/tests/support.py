@@ -102,6 +102,7 @@ def intent(name: str, **kwargs) -> dict:
 
 def audio_event(kind: str, token: str, offset_ms: int = 0, **fields) -> dict:
     device = fields.pop("device", DEVICE)
+    audio = fields.pop("audio", None)
     return envelope(
         {
             "type": f"AudioPlayer.{kind}",
@@ -110,6 +111,7 @@ def audio_event(kind: str, token: str, offset_ms: int = 0, **fields) -> dict:
             **fields,
         },
         device=device,
+        audio=audio,
     )
 
 

@@ -17,6 +17,8 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
@@ -440,7 +442,14 @@ def create_app(settings: Settings | None = None) -> Starlette:
             Route("/health", health, methods=["GET"]),
             Route("/now-playing", now_playing_route, methods=["GET"]),
             Route("/art/{track_id}.jpg", art_local, methods=["GET"]),
-        ]
+        ],
+        # A web page that rebinds its own name to 127.0.0.1 must not read this.
+        middleware=[
+            Middleware(
+                TrustedHostMiddleware,
+                allowed_hosts=sorted({"127.0.0.1", "localhost", urlsplit(cfg.local_api_base_url).hostname or "127.0.0.1"}),
+            )
+        ],
     )
 
     app = Starlette(routes=routes, lifespan=lifespan)
