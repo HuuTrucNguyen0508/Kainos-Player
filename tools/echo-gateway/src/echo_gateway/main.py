@@ -51,7 +51,7 @@ MAX_ALEXA_BODY_BYTES = 256 * 1024
 class StreamTokenFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # Uvicorn keeps the request target in args; also handle preformatted records.
-        redact = lambda value: re.sub(r"(/stream/t/)[^/?\s]+", r"\1[redacted]", value)
+        redact = lambda value: re.sub(r"(/(?:stream|art)/t/)[^/?\s]+", r"\1[redacted]", value)
         if isinstance(record.args, tuple):
             record.args = tuple(redact(arg) if isinstance(arg, str) else arg for arg in record.args)
         if isinstance(record.msg, str):

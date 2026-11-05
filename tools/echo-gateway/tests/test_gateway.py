@@ -303,3 +303,10 @@ def test_stream_access_log_redacts_token():
     assert "secret-bearer" not in record.getMessage()
     assert "/stream/t/[redacted]/track" in record.getMessage()
     assert "200" in record.getMessage()
+    art = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/art/t/secret-bearer/abc.jpg", "1.1", 200), None)
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(art)
+    assert "secret-bearer" not in art.getMessage()
+    assert "/art/t/[redacted]/abc.jpg" in art.getMessage()
