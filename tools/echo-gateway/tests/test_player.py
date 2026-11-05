@@ -245,6 +245,45 @@ def test_help_mentions_the_controls(echo: Echo):
         assert word in text
 
 
+def spoken(response: dict) -> str:
+    assert "directives" not in response
+    assert response["shouldEndSession"] is True
+    return response["outputSpeech"]["text"]
+
+
+def test_now_playing_names_the_current_track_without_touching_playback(echo: Echo):
+    token = echo.start()
+    index = echo.library.get(track_of(token)).relative_path.split()[1]
+    before = echo.session()
+    snapshot = (list(before.order), before.position, before.current_token)
+    audio = {"playerActivity": "PLAYING", "token": token, "offsetInMilliseconds": 4000}
+    assert spoken(echo.send(intent("NowPlayingIntent", audio=audio))) == f"C'est Song {index}, de Artist {index}."
+    after = echo.session()
+    assert (list(after.order), after.position, after.current_token) == snapshot
+
+
+def test_now_playing_follows_the_queued_track_the_device_reports(echo: Echo):
+    token = echo.start()
+    queued = stream(echo.play(audio_event("PlaybackNearlyFinished", token)))["token"]
+    index = echo.library.get(track_of(queued)).relative_path.split()[1]
+    audio = {"playerActivity": "PLAYING", "token": queued, "offsetInMilliseconds": 0}
+    assert spoken(echo.send(intent("NowPlayingIntent", audio=audio))) == f"C'est Song {index}, de Artist {index}."
+    assert echo.session().current_token == queued
+
+
+def test_now_playing_without_an_artist_says_only_the_title(tmp_path: Path):
+    music = tmp_path / "music"
+    music.mkdir()
+    (music / "Lonely Title.mp3").write_bytes(b"")
+    echo = Echo(music)
+    echo.start()
+    assert spoken(echo.send(intent("NowPlayingIntent"))) == "C'est Lonely Title."
+
+
+def test_now_playing_before_anything_played(echo: Echo):
+    assert spoken(echo.send(intent("NowPlayingIntent"))) == "Rien en cours. Dis lance personnel."
+
+
 def test_next_and_previous_walk_the_same_order(echo: Echo):
     echo.start()
     order = echo.order()
@@ -780,6 +819,7 @@ def test_interaction_model_declares_every_handled_builtin_intent():
         "AMAZON.ShuffleOnIntent",
         "AMAZON.StartOverIntent",
         "AMAZON.StopIntent",
+        "NowPlayingIntent",
         "PlayTestIntent",
     }
 

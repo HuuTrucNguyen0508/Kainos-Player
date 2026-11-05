@@ -6,7 +6,7 @@ from typing import Any
 
 from echo_gateway.config import Settings
 from echo_gateway.library import Library
-from echo_gateway.scan import LibraryScan
+from echo_gateway.scan import UNKNOWN_ARTIST, LibraryScan
 from echo_gateway.session import (
     Session,
     SessionStore,
@@ -30,7 +30,8 @@ SPEECH_NOTHING_PLAYING = "Rien en cours. Dis lance personnel."
 SPEECH_EMPTY_LIBRARY = "Je ne trouve aucun fichier audio dans le dossier musique."
 SPEECH_HELP = (
     "Dis lance personnel pour jouer le dossier Playlist dans un ordre aléatoire. "
-    "Pendant la lecture, tu peux dire pause, reprends, suivant, précédent, aléatoire ou répète."
+    "Pendant la lecture, tu peux dire pause, reprends, suivant, précédent, aléatoire ou répète. "
+    "Pour savoir ce qui joue, dis demande à personnel ce qui joue."
 )
 SPEECH_NOT_UNDERSTOOD = "Je n'ai pas compris."
 
@@ -135,6 +136,19 @@ def _pause(session: Session, context: dict[str, Any]) -> Reply:
     return Reply(control=STOP)
 
 
+def _now_playing(session: Session, context: dict[str, Any], player: Player) -> Reply:
+    """Name the stream the device reports, which may be the one queued a moment ago."""
+    session.record_context(context)
+    track_id = session.current_id
+    track = player.library.get(track_id) if track_id is not None else None
+    if track is None:
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
+    metadata = player.scan.metadata_for(track)
+    if metadata.artist == UNKNOWN_ARTIST:
+        return Reply(speak=f"C'est {metadata.title}.")
+    return Reply(speak=f"C'est {metadata.title}, de {metadata.artist}.")
+
+
 def _next(session: Session) -> Reply:
     if session.current_id is None:
         return Reply(speak=SPEECH_NOTHING_PLAYING)
@@ -203,6 +217,8 @@ def _handle_intent(
         return _previous(session)
     if intent == "AMAZON.HelpIntent":
         return Reply(speak=SPEECH_HELP)
+    if intent == "NowPlayingIntent":
+        return _now_playing(session, context, player)
 
     transport_intents = {
         "AMAZON.StartOverIntent",
