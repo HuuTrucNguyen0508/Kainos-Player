@@ -1,5 +1,7 @@
 # Echo dual-hub plan
 
+2026-10-31 update: certificate-chain validation is complete. Resume now uses `start_ms` with a stream-token base offset. The pending work below predates these changes.
+
 Codex draft, 2026-09-21. Saved from plan review session.
 
 **Build one stable public Alexa endpoint that selects the PC first and the phone second.** Keep playback files and transcoding on the selected device. Use a small, always-on Linux relay to host `/alexa` and expose both devices’ streams through one Funnel URL.

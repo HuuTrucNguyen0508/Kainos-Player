@@ -1,18 +1,44 @@
 services:
+  # Docker creates a missing bind source as root. Hand it to the gateway user once.
+  state-init:
+    build: .
+    image: kainos-echo-gateway:local
+    user: "0:0"
+    command: ["chown", "10001:10001", "/state"]
+    volumes:
+      - "${ECHO_STATE_DIR:-./state}:/state"
+    read_only: true
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    restart: "no"
+
   echo-gateway:
     build: .
     image: kainos-echo-gateway:local
-    # Loopback only. Tailscale Funnel on the host proxies to this port.
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+    # Loopback only. Tailscale Funnel on the host proxies to 8787.
+    # 8788 is the now-playing API for apps on this machine: never Funnel it.
     ports:
       - "127.0.0.1:8787:8787"
+      - "127.0.0.1:8788:8788"
     env_file:
       - .env
     environment:
       HOST: "0.0.0.0"
       PORT: "8787"
+      LOCAL_PORT: "8788"
       MUSIC_ROOT: "/music"
+      STATE_DIR: "/state"
     volumes:
       - "${ECHO_MUSIC_DIR:-./fixtures}:/music:ro"
+      - "${ECHO_STATE_DIR:-./state}:/state"
     read_only: true
     tmpfs:
       - /tmp
@@ -23,4 +49,4 @@ services:
     mem_limit: 512m
     cpus: 1.0
     pids_limit: 128
-    restart: "no"
+    restart: unless-stopped

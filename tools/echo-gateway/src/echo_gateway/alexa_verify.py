@@ -6,6 +6,7 @@ import logging
 import ssl
 from datetime import datetime, timezone
 from functools import lru_cache
+from time import monotonic
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -21,6 +22,10 @@ logger = logging.getLogger("echo_gateway.alexa_verify")
 
 MAX_TIMESTAMP_SKEW_SECONDS = 150
 ECHO_API_SAN = "echo-api.amazon.com"
+CERT_CACHE_SECONDS = 60 * 60
+CERT_CACHE_MAX_URLS = 32
+
+_cert_cache: dict[str, tuple[float, bytes]] = {}
 
 
 class AlexaVerificationError(Exception):
@@ -32,6 +37,10 @@ class AlexaVerificationError(Exception):
 
 def normalize_cert_url(url: str) -> str:
     parsed = urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise AlexaVerificationError("cert_url", "Certificate URL port is invalid") from exc
     parts: list[str] = []
     for segment in parsed.path.split("/"):
         if segment in ("", "."):
@@ -43,8 +52,8 @@ def normalize_cert_url(url: str) -> str:
         parts.append(segment)
     path = "/" + "/".join(parts)
     netloc = parsed.hostname or ""
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
+    if port:
+        netloc = f"{netloc}:{port}"
     return f"{parsed.scheme}://{netloc}{path}"
 
 
@@ -62,11 +71,19 @@ def validate_cert_chain_url(url: str) -> str:
     return normalized
 
 
-@lru_cache(maxsize=32)
 def _download_cert_chain(url: str) -> bytes:
+    """Fetch with a short cache: Amazon can change the content behind a URL."""
+    now = monotonic()
+    cached = _cert_cache.get(url)
+    if cached is not None and now - cached[0] < CERT_CACHE_SECONDS:
+        return cached[1]
     context = ssl.create_default_context()
     with urlopen(url, context=context, timeout=5) as response:  # noqa: S310 - URL validated first
-        return response.read()
+        pem_data = response.read()
+    if len(_cert_cache) >= CERT_CACHE_MAX_URLS:
+        _cert_cache.clear()
+    _cert_cache[url] = (now, pem_data)
+    return pem_data
 
 
 @lru_cache(maxsize=1)

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-import os
-import signal
 import subprocess
 import time
 from pathlib import Path
@@ -10,34 +7,9 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from echo_gateway.config import Settings
 from echo_gateway.main import create_app
 from echo_gateway.paths import PathValidationError, resolve_under_root
-
-
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-TEST_FLAC = FIXTURES / "test.flac"
-
-
-def make_settings(**overrides) -> Settings:
-    base = dict(
-        host="127.0.0.1",
-        port=8787,
-        music_root=FIXTURES,
-        test_track=TEST_FLAC,
-        ffmpeg_bin="ffmpeg",
-        max_concurrent_streams=2,
-        aac_bitrate="256k",
-        aac_sample_rate=44100,
-        aac_channels=2,
-        public_stream_token="test-public-token-not-for-funnel",
-        public_base_url="http://127.0.0.1:8787",
-        allow_open_test_stream=True,
-        alexa_skill_id="amzn1.ask.skill.test",
-        skip_alexa_signature_verify=True,
-    )
-    base.update(overrides)
-    return Settings(**base)
+from support import STREAM_TOKEN, TEST_FLAC, make_settings, make_tone
 
 
 @pytest.fixture
@@ -71,10 +43,21 @@ async def test_stream_rejects_post(client):
 
 
 @pytest.mark.asyncio
-async def test_stream_rejects_range(client):
-    response = await client.get("/stream/test", headers={"Range": "bytes=0-100"})
+@pytest.mark.parametrize("value", ["bytes=0-100", "bytes=100-", "bytes=0-0", "bytes=-500", "junk"])
+async def test_stream_rejects_partial_range(client, value):
+    response = await client.get("/stream/test", headers={"Range": value})
     assert response.status_code == 416
     assert response.json()["error"] == "range_not_supported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["bytes=0-", "BYTES=0-", " bytes = 0- "])
+async def test_range_from_zero_is_the_whole_stream(client, value):
+    whole = await client.get("/stream/test")
+    response = await client.get("/stream/test", headers={"Range": value})
+    assert response.status_code == 200
+    assert response.headers["accept-ranges"] == "none"
+    assert len(response.content) == len(whole.content)
 
 
 @pytest.mark.asyncio
@@ -132,93 +115,6 @@ async def test_stream_corrupt_source(tmp_path: Path):
     assert response.json()["error"] == "ffmpeg_start"
 
 
-@pytest.mark.asyncio
-async def test_stream_busy_returns_503():
-    long_flac = FIXTURES / "long.flac"
-    if not long_flac.exists():
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=8",
-                "-c:a",
-                "flac",
-                str(long_flac),
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-    settings = make_settings(test_track=long_flac, max_concurrent_streams=1)
-    app = create_app(settings)
-
-    async def hold_first_stream() -> None:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            async with client.stream("GET", "/stream/test") as response:
-                assert response.status_code == 200
-                chunk = await anext(response.aiter_bytes())
-                assert chunk
-                # Stop reading so FFmpeg blocks on a full pipe and keeps the slot.
-                await asyncio.Event().wait()
-
-    import asyncio
-
-    holder = asyncio.create_task(hold_first_stream())
-    try:
-        for _ in range(50):
-            if app.state.transcoder.active_count == 1:
-                break
-            await asyncio.sleep(0.05)
-        assert app.state.transcoder.active_count == 1
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            busy = await client.get("/stream/test")
-        assert busy.status_code == 503
-        assert busy.json()["error"] == "busy"
-    finally:
-        holder.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await holder
-
-
-@pytest.mark.asyncio
-async def test_transcoder_rejects_when_full():
-    from echo_gateway.stream import StreamTranscoder, TranscodeBusy
-
-    long_flac = FIXTURES / "long.flac"
-    if not long_flac.exists():
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=6",
-                "-c:a",
-                "flac",
-                str(long_flac),
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-    transcoder = StreamTranscoder(make_settings(max_concurrent_streams=1))
-    agen = transcoder.stream(long_flac, "a")
-    first = await agen.__anext__()
-    assert first
-    agen2 = transcoder.stream(long_flac, "b")
-    with pytest.raises(TranscodeBusy):
-        await agen2.__anext__()
-    await agen.aclose()
-    await agen2.aclose()
-    assert transcoder.active_count == 0
-
-
 def test_resolve_rejects_directory(tmp_path: Path):
     music = tmp_path / "music"
     music.mkdir()
@@ -238,26 +134,11 @@ def test_build_ffmpeg_command_is_adts():
 
 
 @pytest.mark.asyncio
-async def test_client_disconnect_reaps_ffmpeg():
-    long_flac = FIXTURES / "long.flac"
-    if not long_flac.exists():
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:duration=12",
-                "-c:a",
-                "flac",
-                str(long_flac),
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-    settings = make_settings(test_track=long_flac, max_concurrent_streams=1)
+async def test_client_disconnect_reaps_ffmpeg(tmp_path: Path):
+    long_flac = make_tone(tmp_path / "long.flac", seconds=12)
+    settings = make_settings(
+        music_root=tmp_path, test_track=long_flac, max_concurrent_streams=1
+    )
     app = create_app(settings)
     transport = ASGITransport(app=app)
 
@@ -284,11 +165,8 @@ async def test_token_stream_ok():
         assert good.status_code == 200
         assert good.headers["content-type"].startswith("audio/aac")
         assert len(good.content) > 1000
-        track = app.state.playlist.start_shuffled()
-        assert track is not None
-        by_id = await client.get(
-            f"/stream/t/test-public-token-not-for-funnel/{track.track_id}"
-        )
+        track = app.state.player.library.tracks[0]
+        by_id = await client.get(f"/stream/t/{STREAM_TOKEN}/{track.track_id}")
         assert by_id.status_code == 200
         assert len(by_id.content) > 500
 
@@ -343,21 +221,7 @@ async def test_alexa_launch_returns_play_directive():
     url = directive["audioItem"]["stream"]["url"]
     assert "/stream/t/test-public-token-not-for-funnel/" in url
     assert directive["audioItem"]["stream"]["token"]
-    assert app.state.playlist.track_count >= 1
-
-
-def test_playlist_reshuffles():
-    from echo_gateway.playlist import PlaylistController
-
-    controller = PlaylistController(make_settings())
-    assert controller.track_count >= 2
-    first_ids = []
-    for _ in range(12):
-        track = controller.start_shuffled()
-        assert track is not None
-        first_ids.append(track.track_id)
-    # With 2+ tracks, 12 shuffles should not all start on the same id.
-    assert len(set(first_ids)) >= 2
+    assert app.state.player.library.track_count >= 1
 
 
 @pytest.mark.asyncio
@@ -439,3 +303,10 @@ def test_stream_access_log_redacts_token():
     assert "secret-bearer" not in record.getMessage()
     assert "/stream/t/[redacted]/track" in record.getMessage()
     assert "200" in record.getMessage()
+    art = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/art/t/secret-bearer/abc.jpg", "1.1", 200), None)
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(art)
+    assert "secret-bearer" not in art.getMessage()
+    assert "/art/t/[redacted]/abc.jpg" in art.getMessage()

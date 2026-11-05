@@ -1,192 +1,455 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from echo_gateway.config import Settings
-from echo_gateway.library import LibraryTrack
-from echo_gateway.playlist import PlaylistController
+from echo_gateway.library import Library
+from echo_gateway.scan import UNKNOWN_ARTIST, LibraryScan
+from echo_gateway.session import (
+    Session,
+    SessionStore,
+    StreamToken,
+    device_key,
+    reported_offset,
+)
 
 logger = logging.getLogger("echo_gateway.alexa")
 
+MAX_CONSECUTIVE_FAILURES = 5
+MAX_LOGGED_ERROR_CHARS = 240
+FALLBACK_DEVICE = "no-device-id"
 
-def build_play_response(
-    track: LibraryTrack,
-    stream_url: str,
-    *,
-    play_behavior: str = "REPLACE_ALL",
-    expected_previous_token: str | None = None,
-    speak: str | None = None,
-) -> dict[str, Any]:
+STOP = {"type": "AudioPlayer.Stop"}
+CLEAR_ENQUEUED = {"type": "AudioPlayer.ClearQueue", "clearBehavior": "CLEAR_ENQUEUED"}
+
+SPEECH_FRESH_START = "Lecture aléatoire du dossier Playlist."
+SPEECH_NEW_SHUFFLE = "Nouvelle lecture aléatoire."
+SPEECH_NOTHING_PLAYING = "Rien en cours. Dis lance personnel."
+SPEECH_EMPTY_LIBRARY = "Je ne trouve aucun fichier audio dans le dossier musique."
+SPEECH_HELP = (
+    "Dis lance personnel pour jouer le dossier Playlist dans un ordre aléatoire. "
+    "Pendant la lecture, tu peux dire pause, reprends, suivant, précédent, aléatoire ou répète. "
+    "Pour savoir ce qui joue, dis demande à personnel ce qui joue."
+)
+SPEECH_NOT_UNDERSTOOD = "Je n'ai pas compris."
+
+
+@dataclass(frozen=True)
+class Player:
+    library: Library
+    sessions: SessionStore
+    scan: LibraryScan
+
+
+@dataclass(frozen=True)
+class Play:
+    token: StreamToken
+    behavior: str = "REPLACE_ALL"
+    expected_previous: str | None = None
+
+
+@dataclass(frozen=True)
+class Reply:
+    play: Play | None = None
+    control: dict[str, str] | None = None
+    speak: str | None = None
+
+
+def stream_url(settings: Settings, token: StreamToken) -> str:
+    url = f"{settings.public_stream_url}/{token.track_id}"
+    return f"{url}?start_ms={token.base_ms}" if token.base_ms else url
+
+
+def art_url(settings: Settings, track_id: str) -> str:
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/art/t/{settings.public_stream_token}/{track_id}.jpg"
+
+
+def _play_directive(play: Play, settings: Settings, player: Player) -> dict[str, Any]:
     stream: dict[str, Any] = {
-        "url": stream_url,
-        "token": track.track_id,
+        "url": stream_url(settings, play.token),
+        "token": str(play.token),
         "offsetInMilliseconds": 0,
     }
-    if play_behavior == "ENQUEUE":
-        if not expected_previous_token:
-            raise ValueError("expected_previous_token required for ENQUEUE")
-        stream["expectedPreviousToken"] = expected_previous_token
+    if play.expected_previous is not None:
+        stream["expectedPreviousToken"] = play.expected_previous
+    audio_item: dict[str, Any] = {"stream": stream}
 
-    response: dict[str, Any] = {
-        "shouldEndSession": True,
-        "directives": [
-            {
-                "type": "AudioPlayer.Play",
-                "playBehavior": play_behavior,
-                "audioItem": {"stream": stream},
-            }
-        ],
-    }
-    if speak:
-        response["outputSpeech"] = {"type": "PlainText", "text": speak}
+    track = player.library.get(play.token.track_id)
+    if track is not None:
+        metadata = player.scan.metadata_for(track)
+        image = {"sources": [{"url": art_url(settings, track.track_id)}]}
+        audio_item["metadata"] = {
+            "title": metadata.title,
+            "subtitle": metadata.artist,
+            "art": image,
+            "backgroundImage": image,
+        }
+    return {"type": "AudioPlayer.Play", "playBehavior": play.behavior, "audioItem": audio_item}
+
+
+def render(
+    reply: Reply,
+    settings: Settings,
+    player: Player,
+    *,
+    conversational: bool,
+) -> dict[str, Any]:
+    """Only LaunchRequest and IntentRequest responses may carry standard properties."""
+    response: dict[str, Any] = {}
+    directives = []
+    if reply.play is not None:
+        directives.append(_play_directive(reply.play, settings, player))
+    if reply.control is not None:
+        directives.append(reply.control)
+    if directives:
+        response["directives"] = directives
+    if conversational:
+        if reply.speak:
+            response["outputSpeech"] = {"type": "PlainText", "text": reply.speak}
+        response["shouldEndSession"] = True
     return {"version": "1.0", "response": response}
 
 
-def build_stop_response() -> dict[str, Any]:
-    return {
-        "version": "1.0",
-        "response": {
-            "shouldEndSession": True,
-            "directives": [{"type": "AudioPlayer.Stop"}],
-        },
-    }
+def _start_fresh(session: Session, library: Library, speak: str | None) -> Reply:
+    if not library.track_count:
+        library.refresh()
+    if not library.track_count:
+        logger.warning("playlist_empty category=no_tracks")
+        return Reply(speak=SPEECH_EMPTY_LIBRARY)
+    session.start_shuffled(library.ids())
+    logger.info("playlist_shuffle category=ok track_count=%s", len(session.order))
+    return Reply(play=Play(session.play_current()), speak=speak)
 
 
-def build_empty_response() -> dict[str, Any]:
-    return {"version": "1.0", "response": {"shouldEndSession": True}}
+def _resume(session: Session, context: dict[str, Any], library: Library, speak: str | None) -> Reply:
+    if session.current_id is None:
+        return _start_fresh(session, library, speak)
+    session.record_context(context)
+    return Reply(play=Play(session.play_current(session.offset_ms)))
 
 
-def build_speak_response(text: str) -> dict[str, Any]:
-    return {
-        "version": "1.0",
-        "response": {
-            "outputSpeech": {"type": "PlainText", "text": text},
-            "shouldEndSession": True,
-        },
-    }
+def _pause(session: Session, context: dict[str, Any]) -> Reply:
+    session.record_context(context)
+    return Reply(control=STOP)
 
 
-def _start_playlist(playlist: PlaylistController, *, speak: str | None) -> dict[str, Any]:
-    track = playlist.start_shuffled()
+def _now_playing(session: Session, context: dict[str, Any], player: Player) -> Reply:
+    """Name the stream in play. The device state was observed before dispatch."""
+    if session.activity == "stopped":
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
+    track_id = session.current_id
+    track = player.library.get(track_id) if track_id is not None else None
     if track is None:
-        return build_speak_response("Je ne trouve aucun fichier audio dans le dossier musique.")
-    return build_play_response(
-        track,
-        playlist.stream_url_for(track),
-        speak=speak,
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
+    metadata = player.scan.metadata_for(track)
+    if metadata.artist == UNKNOWN_ARTIST:
+        return Reply(speak=f"C'est {metadata.title}.")
+    return Reply(speak=f"C'est {metadata.title}, de {metadata.artist}.")
+
+
+def _next(session: Session) -> Reply:
+    if session.current_id is None:
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
+    session.repeat_one = False
+    track_id = session.successor()
+    if track_id is None:
+        return Reply(speak="Fin de la liste.")
+    session.move_to(track_id)
+    return Reply(play=Play(session.play_current()))
+
+
+def _previous(session: Session) -> Reply:
+    if session.current_id is None:
+        return Reply(speak="Aucun morceau précédent.")
+    session.repeat_one = False
+    session.position = max(0, session.position - 1)
+    return Reply(play=Play(session.play_current()))
+
+
+def _enqueue_successor(session: Session) -> Reply:
+    """Queue what follows the current track.
+
+    A queued stream already exists after a retry or a mode change. REPLACE_ENQUEUED
+    leaves exactly one stream queued in both cases, and takes no expectedPreviousToken.
+    """
+    track_id = session.successor()
+    queued = StreamToken.parse(session.queued_token)
+    if track_id is None:
+        session.queued_token = ""
+        return Reply(control=CLEAR_ENQUEUED if queued else None)
+    if queued is not None and queued.track_id == track_id:
+        return Reply(play=Play(queued, behavior="REPLACE_ENQUEUED"))
+    token = StreamToken.new(track_id)
+    session.queued_token = str(token)
+    if queued is not None:
+        return Reply(play=Play(token, behavior="REPLACE_ENQUEUED"))
+    return Reply(play=Play(token, behavior="ENQUEUE", expected_previous=session.current_token))
+
+
+def _after_mode_change(session: Session, speak: str) -> Reply:
+    """Before PlaybackNearlyFinished nothing is queued, and the next one sees the new order."""
+    if not session.near_end:
+        return Reply(speak=speak)
+    queued_before = session.queued_token
+    reply = _enqueue_successor(session)
+    if session.queued_token == queued_before:
+        return Reply(speak=speak)
+    return Reply(play=reply.play, control=reply.control, speak=speak)
+
+
+def _handle_intent(
+    intent: str,
+    session: Session,
+    context: dict[str, Any],
+    player: Player,
+) -> Reply:
+    if intent == "PlayTestIntent":
+        return _start_fresh(session, player.library, SPEECH_NEW_SHUFFLE)
+    if intent == "AMAZON.ResumeIntent":
+        return _resume(session, context, player.library, SPEECH_NEW_SHUFFLE)
+    if intent in {"AMAZON.PauseIntent", "AMAZON.StopIntent", "AMAZON.CancelIntent"}:
+        return _pause(session, context)
+    if intent == "AMAZON.NextIntent":
+        return _next(session)
+    if intent == "AMAZON.PreviousIntent":
+        return _previous(session)
+    if intent == "AMAZON.HelpIntent":
+        return Reply(speak=SPEECH_HELP)
+    if intent == "NowPlayingIntent":
+        return _now_playing(session, context, player)
+
+    transport_intents = {
+        "AMAZON.StartOverIntent",
+        "AMAZON.RepeatIntent",
+        "AMAZON.ShuffleOnIntent",
+        "AMAZON.ShuffleOffIntent",
+        "AMAZON.LoopOnIntent",
+        "AMAZON.LoopOffIntent",
+    }
+    if intent not in transport_intents:
+        logger.info("alexa_intent_unknown category=ignored")
+        return Reply(speak=SPEECH_NOT_UNDERSTOOD)
+    if session.current_id is None:
+        return Reply(speak=SPEECH_NOTHING_PLAYING)
+
+    if intent == "AMAZON.StartOverIntent":
+        return Reply(play=Play(session.play_current()))
+    if intent == "AMAZON.RepeatIntent":
+        session.repeat_one = True
+        return Reply(play=Play(session.play_current()), speak="Je répète ce morceau.")
+    if intent == "AMAZON.ShuffleOnIntent":
+        session.set_shuffle(True, player.library.ids())
+        return _after_mode_change(session, "Aléatoire activé.")
+    if intent == "AMAZON.ShuffleOffIntent":
+        session.set_shuffle(False, player.library.ids())
+        return _after_mode_change(session, "Aléatoire désactivé.")
+    session.repeat_one = False
+    if intent == "AMAZON.LoopOnIntent":
+        session.loop = True
+        return _after_mode_change(session, "Répétition activée.")
+    session.loop = False
+    return _after_mode_change(session, "Répétition désactivée.")
+
+
+def _handle_playback_failed(
+    request: dict[str, Any],
+    session: Session,
+    settings: Settings,
+) -> Reply:
+    token = request.get("token") or ""
+    error = request.get("error") or {}
+    state = request.get("currentPlaybackState") or {}
+    message = str(error.get("message") or "").replace(settings.public_stream_token, "<token>")
+    logger.error(
+        "alexa_playback_failed request_id=%s error_type=%s message=%s %s offset_ms=%s "
+        "state_activity=%s state_%s state_offset_ms=%s failures=%s",
+        request.get("requestId") or "",
+        error.get("type") or "unknown",
+        message[:MAX_LOGGED_ERROR_CHARS],
+        _describe_token(token),
+        request.get("offsetInMilliseconds"),
+        state.get("playerActivity"),
+        _describe_token(state.get("token")),
+        state.get("offsetInMilliseconds"),
+        session.failures,
     )
+    if not token or token not in (session.current_token, session.queued_token):
+        return Reply()
+
+    session.failures += 1
+    session.repeat_one = False
+    if session.failures >= MAX_CONSECUTIVE_FAILURES:
+        logger.error("alexa_playback_giveup category=too_many_failures failures=%s", session.failures)
+        session.queued_token = ""
+        return Reply()
+
+    still_playing = (
+        state.get("playerActivity") == "PLAYING" and state.get("token") == session.current_token
+    )
+    if token == session.queued_token and still_playing:
+        failed = StreamToken.parse(token)
+        session.queued_token = ""
+        if failed is not None and failed.track_id != session.current_id:
+            session.failed_tracks.append(failed.track_id)
+        return _enqueue_successor(session)
+
+    session.owns(token)
+    if session.current_id is not None:
+        session.failed_tracks.append(session.current_id)
+    track_id = session.successor()
+    if track_id is None:
+        return Reply()
+    session.move_to(track_id)
+    return Reply(play=Play(session.play_current()))
+
+
+def _handle_audio_event(
+    request_type: str,
+    request: dict[str, Any],
+    session: Session,
+    settings: Settings,
+    now_ms: int,
+) -> Reply:
+    token = request.get("token") or ""
+    position = session.stream_position(token, request.get("offsetInMilliseconds"))
+    logger.info(
+        "alexa_playback request_id=%s type=%s %s offset_ms=%s",
+        request.get("requestId") or "",
+        request_type,
+        _describe_token(token),
+        reported_offset(request.get("offsetInMilliseconds")),
+    )
+    if request_type == "AudioPlayer.PlaybackFailed":
+        state = request.get("currentPlaybackState") or {}
+        prefetch_only = (
+            token == session.queued_token
+            and state.get("playerActivity") == "PLAYING"
+            and state.get("token") == session.current_token
+        )
+        if token and token in (session.current_token, session.queued_token) and not prefetch_only:
+            session.mark("stopped", now_ms, position)
+        return _handle_playback_failed(request, session, settings)
+    if request_type == "AudioPlayer.PlaybackStarted":
+        if session.owns(token):
+            session.mark("playing", now_ms, position)
+    elif request_type == "AudioPlayer.PlaybackNearlyFinished":
+        if session.owns(token):
+            session.failures = 0
+            session.failed_tracks.clear()
+            session.near_end = True
+            return _enqueue_successor(session)
+    elif request_type == "AudioPlayer.PlaybackStopped":
+        if session.owns(token):
+            session.record_position(request.get("offsetInMilliseconds"))
+            session.mark("paused", now_ms, position)
+    elif request_type == "AudioPlayer.PlaybackFinished":
+        if session.owns(token):
+            session.failures = 0
+            session.failed_tracks.clear()
+            if session.queued_token:
+                # The queued stream starts next and PlaybackStarted moves the session to it.
+                session.last_event_at_ms = now_ms
+            else:
+                session.offset_ms = 0
+                session.near_end = False
+                session.mark("stopped", now_ms, position)
+    return Reply()
+
+
+def _dispatch(
+    request: dict[str, Any],
+    context: dict[str, Any],
+    session: Session,
+    settings: Settings,
+    player: Player,
+    now_ms: int,
+) -> Reply:
+    request_type = request.get("type") or ""
+    request_id = request.get("requestId") or ""
+
+    if request_type.startswith("AudioPlayer."):
+        return _handle_audio_event(request_type, request, session, settings, now_ms)
+
+    if request_type in {"LaunchRequest", "IntentRequest"} or request_type.startswith(
+        "PlaybackController."
+    ):
+        session.failures = 0
+        session.failed_tracks.clear()
+
+    if request_type == "LaunchRequest":
+        return _start_fresh(session, player.library, SPEECH_FRESH_START)
+    if request_type == "IntentRequest":
+        intent = (request.get("intent") or {}).get("name") or ""
+        logger.info("alexa_intent request_id=%s intent=%s", request_id, intent)
+        return _handle_intent(intent, session, context, player)
+    if request_type == "PlaybackController.PlayCommandIssued":
+        return _resume(session, context, player.library, None)
+    if request_type == "PlaybackController.PauseCommandIssued":
+        return _pause(session, context)
+    if request_type == "PlaybackController.NextCommandIssued":
+        return _next(session)
+    if request_type == "PlaybackController.PreviousCommandIssued":
+        return _previous(session)
+    if request_type == "SessionEndedRequest":
+        logger.info("alexa_session_ended request_id=%s reason=%s", request_id, request.get("reason"))
+        return Reply()
+    if request_type == "System.ExceptionEncountered":
+        error = request.get("error") or {}
+        logger.error(
+            "alexa_exception request_id=%s error_type=%s message=%s",
+            request_id,
+            error.get("type") or "unknown",
+            str(error.get("message") or "").replace(settings.public_stream_token, "<token>")[:MAX_LOGGED_ERROR_CHARS],
+        )
+        return Reply()
+
+    logger.warning("alexa_unhandled request_id=%s type=%s", request_id, request_type)
+    return Reply()
+
+
+def _session_key(context: dict[str, Any]) -> str:
+    device = (context.get("System") or {}).get("device") or {}
+    device_id = device.get("deviceId")
+    if not device_id:
+        logger.warning("alexa_device_missing category=fallback_session")
+    return device_key(device_id or FALLBACK_DEVICE)
+
+
+def _describe_token(token: Any) -> str:
+    parsed = StreamToken.parse(token)
+    if parsed is None:
+        return "track=unknown"
+    return f"track={parsed.track_id[:8]} base_ms={parsed.base_ms}"
 
 
 def handle_alexa_envelope(
     envelope: dict[str, Any],
     settings: Settings,
-    playlist: PlaylistController,
+    player: Player,
 ) -> dict[str, Any]:
     request = envelope.get("request") or {}
+    context = envelope.get("context") or {}
     request_type = request.get("type") or ""
+    logger.info("alexa_request request_id=%s type=%s", request.get("requestId") or "", request_type)
+
+    key = _session_key(context)
     request_id = request.get("requestId") or ""
-
-    logger.info(
-        "alexa_request request_id=%s type=%s",
-        request_id,
-        request_type,
-    )
-
-    if request_type == "LaunchRequest":
-        return _start_playlist(playlist, speak="Lecture aléatoire du dossier Playlist.")
-
-    if request_type == "IntentRequest":
-        intent = (request.get("intent") or {}).get("name") or ""
-        logger.info("alexa_intent request_id=%s intent=%s", request_id, intent)
-        if intent in {"PlayTestIntent", "AMAZON.StartOverIntent", "AMAZON.ResumeIntent"}:
-            # Fresh shuffle on explicit play/start; resume also reshuffles for this spike
-            # because live ADTS streams are not seekable.
-            return _start_playlist(playlist, speak="Nouvelle lecture aléatoire.")
-        if intent in {"AMAZON.PauseIntent", "AMAZON.StopIntent", "AMAZON.CancelIntent"}:
-            return build_stop_response()
-        if intent == "AMAZON.NextIntent":
-            track = playlist.next_track(advance=True)
-            if track is None:
-                return build_speak_response("Fin de la liste aléatoire.")
-            return build_play_response(track, playlist.stream_url_for(track), speak=None)
-        if intent == "AMAZON.PreviousIntent":
-            track = playlist.previous_track()
-            if track is None:
-                return build_speak_response("Aucun morceau précédent.")
-            return build_play_response(track, playlist.stream_url_for(track), speak=None)
-        if intent == "AMAZON.HelpIntent":
-            return build_speak_response(
-                "Dis lance test pour jouer le dossier Playlist dans un ordre aléatoire."
-            )
-        return _start_playlist(playlist, speak="Lecture aléatoire du dossier Playlist.")
-
-    if request_type.startswith("AudioPlayer."):
-        token = request.get("token") or ""
-        offset = request.get("offsetInMilliseconds")
-        error = request.get("error") or {}
-        logger.info(
-            "alexa_playback request_id=%s type=%s token=%s offset_ms=%s error=%s",
-            request_id,
-            request_type,
-            token[:24],
-            offset,
-            error.get("type") or error.get("message") or "",
+    with player.sessions.open(key) as session:
+        cached = player.sessions.cached_response(key, request_id)
+        if cached is not None:
+            return cached
+        now_ms = player.sessions.now()
+        session.observe_device(context, now_ms)
+        reply = _dispatch(request, context, session, settings, player, now_ms)
+        if reply.play is not None and reply.play.behavior == "REPLACE_ALL":
+            # The device starts this stream now. PlaybackStarted confirms the position.
+            session.mark("playing", now_ms, reply.play.token.base_ms)
+        response = render(
+            reply, settings, player,
+            conversational=request_type in {"LaunchRequest", "IntentRequest"},
         )
-        if request_type == "AudioPlayer.PlaybackFailed":
-            logger.error(
-                "alexa_playback_failed request_id=%s category=playback_failed detail=%s",
-                request_id,
-                error.get("message") or error.get("type") or "unknown",
-            )
-            track = playlist.next_track(advance=True)
-            if track is not None:
-                return build_play_response(track, playlist.stream_url_for(track), speak=None)
-            return build_empty_response()
-
-        if request_type == "AudioPlayer.PlaybackStarted":
-            playlist.sync_to_token(token)
-            return build_empty_response()
-
-        if request_type == "AudioPlayer.PlaybackNearlyFinished":
-            nxt = playlist.next_track(advance=False)
-            if nxt is None:
-                return build_empty_response()
-            return build_play_response(
-                nxt,
-                playlist.stream_url_for(nxt),
-                play_behavior="ENQUEUE",
-                expected_previous_token=token,
-                speak=None,
-            )
-
-        return build_empty_response()
-
-    if request_type == "PlaybackController.PlayCommandIssued":
-        current = playlist.current()
-        if current is None:
-            return _start_playlist(playlist, speak=None)
-        return build_play_response(current, playlist.stream_url_for(current), speak=None)
-
-    if request_type == "PlaybackController.NextCommandIssued":
-        track = playlist.next_track(advance=True)
-        if track is None:
-            return build_empty_response()
-        return build_play_response(track, playlist.stream_url_for(track), speak=None)
-
-    if request_type == "PlaybackController.PreviousCommandIssued":
-        track = playlist.previous_track()
-        if track is None:
-            return build_empty_response()
-        return build_play_response(track, playlist.stream_url_for(track), speak=None)
-
-    if request_type == "PlaybackController.PauseCommandIssued":
-        return build_stop_response()
-
-    if request_type == "SessionEndedRequest":
-        reason = request.get("reason")
-        logger.info("alexa_session_ended request_id=%s reason=%s", request_id, reason)
-        return build_empty_response()
-
-    logger.warning("alexa_unhandled request_id=%s type=%s", request_id, request_type)
-    return build_empty_response()
+        player.sessions.remember_response(key, request_id, response)
+        return response

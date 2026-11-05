@@ -20,6 +20,9 @@ class Settings:
     music_root: Path
     test_track: Path
     ffmpeg_bin: str
+    ffprobe_bin: str
+    state_dir: Path
+    target_lufs: float
     max_concurrent_streams: int
     aac_bitrate: str
     aac_sample_rate: int
@@ -29,6 +32,9 @@ class Settings:
     allow_open_test_stream: bool
     alexa_skill_id: str
     skip_alexa_signature_verify: bool
+    # Second listener for apps on this machine. Publish it on loopback only, never Funnel it.
+    local_port: int
+    local_api_base_url: str
 
     @property
     def public_stream_url(self) -> str:
@@ -58,7 +64,10 @@ class Settings:
             music_root=music_root,
             test_track=test_track,
             ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
-            max_concurrent_streams=max(1, int(os.environ.get("MAX_CONCURRENT_STREAMS", "2"))),
+            ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
+            state_dir=Path(os.environ.get("STATE_DIR", "/state")).expanduser(),
+            target_lufs=float(os.environ.get("TARGET_LUFS", "-11")),
+            max_concurrent_streams=max(1, int(os.environ.get("MAX_CONCURRENT_STREAMS", "4"))),
             aac_bitrate=os.environ.get("AAC_BITRATE", "256k"),
             aac_sample_rate=int(os.environ.get("AAC_SAMPLE_RATE", "44100")),
             aac_channels=int(os.environ.get("AAC_CHANNELS", "2")),
@@ -70,4 +79,8 @@ class Settings:
             allow_open_test_stream=_env_bool("ALLOW_OPEN_TEST_STREAM", True),
             alexa_skill_id=os.environ.get("ALEXA_SKILL_ID", "").strip(),
             skip_alexa_signature_verify=_env_bool("SKIP_ALEXA_SIGNATURE_VERIFY", False),
+            local_port=int(os.environ.get("LOCAL_PORT", "8788")),
+            local_api_base_url=os.environ.get(
+                "LOCAL_API_BASE_URL", "http://127.0.0.1:8788"
+            ).rstrip("/"),
         )

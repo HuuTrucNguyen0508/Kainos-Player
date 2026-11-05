@@ -1,0 +1,17 @@
+[Unit]
+Description=Kainos Echo gateway (Docker Compose)
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=__GATEWAY_DIR__
+# The system Docker socket may not be ready when the user manager starts.
+# A failed connection is retried after RestartSec.
+ExecStart=/usr/bin/docker compose up -d
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

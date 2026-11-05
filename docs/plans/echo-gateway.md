@@ -55,3 +55,23 @@ Hubs (both on Tailscale):
 Not in scope: casting Spotify/YouTube to Echo; treating Funnel hostname as auth.
 
 Full dual-hub implementation plan (Codex draft): `docs/plans/echo-dual-hub.md`.
+
+## Player parity (2026-10-31)
+
+Goal: Echo should behave as close as possible to Spotify on Echo, for local files only.
+
+Done in `tools/echo-gateway/`:
+
+- Per-Echo sessions in `STATE_DIR`, surviving restarts. This settles item 6 above: the gateway is the queue authority.
+- Exact resume by URL seek (`?start_ms=N`). The stream token is `<track_id>.<base_ms>.<nonce>`, which settles item 5. `offsetInMilliseconds` stays 0 and Range stays unsupported apart from `bytes=0-`.
+- Shuffle on/off during playback, repeat-all by default, repeat-one, loop off. Unknown intents no longer touch playback.
+- Responses carry only what each request type allows.
+- ffprobe metadata with filename fallback, a token-gated art route, and per-track gain from an `ebur128` scan targeting -11 LUFS.
+- Autostart through a systemd user unit, because `docker.service` is disabled and only `docker.socket` is enabled.
+
+Two findings changed the design:
+
+- Before this work a disconnected stream could hold its slot until a garbage-collection pass, or lose it permanently, because Starlette abandons the body iterator and cancels cleanup awaits. The response now closes the encoder itself and releases the slot synchronously. At the cap, new streams receive retryable `503`; live encoders are protected because a paused connection cannot be distinguished from active backpressured playback.
+- `expectedPreviousToken` is an error on `REPLACE_ENQUEUED`. The gateway sends `REPLACE_ENQUEUED` only when a stream is already queued, so a mode change before `PlaybackNearlyFinished` sends no directive and the new order applies when Alexa asks for the next track.
+
+Open: behaviour on a physical Echo. See `tools/echo-gateway/README.md`.

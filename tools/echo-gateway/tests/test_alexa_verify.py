@@ -118,3 +118,36 @@ def test_untrusted_self_signed_with_correct_san_rejected(monkeypatch, pki):
     with pytest.raises(AlexaVerificationError) as exc:
         _call(_sig(k))
     assert exc.value.category == "cert_chain"
+
+
+def test_malformed_cert_url_port_is_a_verification_error():
+    with pytest.raises(AlexaVerificationError) as exc:
+        alexa_verify.validate_cert_chain_url("https://s3.amazonaws.com:notaport/echo.api/cert.pem")
+    assert exc.value.category == "cert_url"
+
+
+def test_cert_cache_refetches_after_it_ages(monkeypatch):
+    fetched = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            fetched.append(1)
+            return b"pem"
+
+    clock = [1000.0]
+    alexa_verify._cert_cache.clear()
+    monkeypatch.setattr(alexa_verify, "urlopen", lambda *a, **k: FakeResponse())
+    monkeypatch.setattr(alexa_verify, "monotonic", lambda: clock[0])
+    assert alexa_verify._download_cert_chain(URL) == b"pem"
+    assert alexa_verify._download_cert_chain(URL) == b"pem"
+    assert len(fetched) == 1
+    clock[0] += alexa_verify.CERT_CACHE_SECONDS + 1
+    assert alexa_verify._download_cert_chain(URL) == b"pem"
+    assert len(fetched) == 2
+    alexa_verify._cert_cache.clear()

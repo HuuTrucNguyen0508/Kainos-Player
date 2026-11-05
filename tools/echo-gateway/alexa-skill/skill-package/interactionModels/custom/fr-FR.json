@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "test",
+      "invocationName": "personnel",
       "intents": [
         {
           "name": "AMAZON.CancelIntent",
@@ -36,6 +36,26 @@
           "samples": []
         },
         {
+          "name": "AMAZON.RepeatIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.LoopOnIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.LoopOffIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.ShuffleOnIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.ShuffleOffIntent",
+          "samples": []
+        },
+        {
           "name": "PlayTestIntent",
           "slots": [],
           "samples": [
@@ -43,6 +63,28 @@
             "joue le morceau",
             "lance",
             "play"
+          ]
+        },
+        {
+          "name": "NowPlayingIntent",
+          "slots": [],
+          "samples": [
+            "ce qui joue",
+            "ce qui passe",
+            "ce qu'on écoute",
+            "qu'est-ce qui joue",
+            "qu'est-ce qui passe",
+            "quel est ce morceau",
+            "quelle est cette chanson",
+            "quel morceau joue",
+            "quelle chanson passe",
+            "c'est quoi ce morceau",
+            "c'est quoi cette chanson",
+            "c'est quoi cette musique",
+            "qui chante",
+            "le titre du morceau",
+            "le nom du morceau",
+            "le nom de la chanson"
           ]
         }
       ],
