@@ -1,14 +1,17 @@
 package com.universalmusic.player.app
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EchoStatusPollerTest {
@@ -32,7 +35,31 @@ class EchoStatusPollerTest {
         watching.cancel()
         advanceTimeBy(ECHO_BACKOFF_MS * 4)
         runCurrent()
-        assertEquals(3, calls, "leaving Home stops polling")
+        val afterGrace = calls
+        assertTrue(afterGrace in 3..4, "at most one more poll during the grace period")
+        advanceTimeBy(ECHO_BACKOFF_MS * 4)
+        runCurrent()
+        assertEquals(afterGrace, calls, "leaving Home stops polling")
+        assertNull(poller.status.value, "an old status is not replayed on return")
+    }
+
+    @Test
+    fun aTimedOutRequestCountsAsAMissAndPollingGoesOn() = runTest {
+        var calls = 0
+        val poller = EchoStatusPoller(
+            backgroundScope,
+            fetch = {
+                calls++
+                if (calls == 1) withTimeout(3_000) { awaitCancellation() }
+                body(calls.toLong())
+            },
+            clock = { testScheduler.currentTime },
+        )
+        poller.status.launchIn(backgroundScope)
+        advanceTimeBy(3_000 + ECHO_POLL_MS)
+        runCurrent()
+        assertEquals(2, calls)
+        assertEquals(2, poller.status.value?.generatedAtMs)
     }
 
     @Test

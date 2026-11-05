@@ -175,21 +175,34 @@ class EchoStatusTest {
     }
 
     @Test
-    fun pausedOrStoppedIsShownForThirtyMinutes() {
-        listOf(EchoPlayState.PAUSED, EchoPlayState.STOPPED).forEach { state ->
-            val device = echo(state, lastEventAtMs = generatedAt)
-            // Local clock runs an hour behind; the window is measured on the gateway clock.
-            val status = EchoStatus(generatedAt, generatedAt - 3_600_000, listOf(device))
-            assertSame(device, status.shownEcho(generatedAt - 3_600_000 + ECHO_RECENT_WINDOW_MS))
-            assertNull(status.shownEcho(generatedAt - 3_600_000 + ECHO_RECENT_WINDOW_MS + 1))
-        }
+    fun pausedIsShownForThirtyMinutes() {
+        val device = echo(EchoPlayState.PAUSED, lastEventAtMs = generatedAt)
+        // Local clock runs an hour behind; the window is measured on the gateway clock.
+        val status = EchoStatus(generatedAt, generatedAt - 3_600_000, listOf(device))
+        assertSame(device, status.shownEcho(generatedAt - 3_600_000 + ECHO_RECENT_WINDOW_MS))
+        assertNull(status.shownEcho(generatedAt - 3_600_000 + ECHO_RECENT_WINDOW_MS + 1))
     }
 
     @Test
-    fun onlyTheNewestEchoCounts() {
-        val stale = echo(EchoPlayState.PAUSED, lastEventAtMs = generatedAt - 2 * ECHO_RECENT_WINDOW_MS)
-        val status = EchoStatus(generatedAt, generatedAt, listOf(stale, echo()))
+    fun stoppedIsNotShown() {
+        val status = EchoStatus(generatedAt, generatedAt, listOf(echo(EchoPlayState.STOPPED)))
         assertNull(status.shownEcho(generatedAt))
+    }
+
+    @Test
+    fun aNewerPauseDoesNotHideAnEchoThatPlays() {
+        // The gateway's order: the kitchen paused after the bedroom's last track change.
+        val kitchen = echo(EchoPlayState.PAUSED, lastEventAtMs = generatedAt - 1_000)
+        val bedroom = echo(lastEventAtMs = generatedAt - 60_000)
+        val status = EchoStatus(generatedAt, generatedAt, listOf(kitchen, bedroom))
+        assertSame(bedroom, status.shownEcho(generatedAt))
+    }
+
+    @Test
+    fun withNothingPlayingOnlyTheNewestCounts() {
+        val stale = echo(EchoPlayState.PAUSED, lastEventAtMs = generatedAt - 2 * ECHO_RECENT_WINDOW_MS)
+        val older = echo(EchoPlayState.PAUSED, lastEventAtMs = generatedAt - 3 * ECHO_RECENT_WINDOW_MS)
+        assertNull(EchoStatus(generatedAt, generatedAt, listOf(stale, older)).shownEcho(generatedAt))
     }
 
     @Test

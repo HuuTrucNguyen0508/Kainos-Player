@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -37,7 +38,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,6 +62,7 @@ import com.universalmusic.player.ui.components.rememberAlbumLight
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 
 /** Up-next rows the card lists; the gateway may send more. */
 internal const val ECHO_UP_NEXT_ROWS = 3
@@ -71,7 +77,10 @@ private data class ShownEcho(val status: EchoStatus, val device: EchoDevice)
  * controls and takes no focus. It grows in when an Echo starts and folds away when it goes quiet.
  */
 @Composable
-internal fun EchoOnHome(status: EchoStatus?, modifier: Modifier = Modifier) {
+internal fun EchoOnHome(echo: StateFlow<EchoStatus?>, modifier: Modifier = Modifier) {
+    // Collected here, not by Home: replies recompose only this card, and collecting is what keeps
+    // the gateway polled, so polling runs only while the card's place on Home is composed.
+    val status = echo.collectAsState().value
     val device = remember(status) { status?.shownEcho(currentTimeMillis()) }
     // Keep the last card while it folds away, so the exit animation has something to show.
     var shown by remember { mutableStateOf<ShownEcho?>(null) }
@@ -92,10 +101,10 @@ private fun EchoCard(status: EchoStatus, device: EchoDevice, modifier: Modifier 
     val palette = LocalKainosPalette.current
     val light by rememberAlbumLight(track.artUrl)
     val playing = device.state == EchoPlayState.PLAYING
-    // Ticks only while playing; a paused position does not move.
+    // Ticks only while playing a track of known length; nothing else on the card moves.
     val localNow by produceState(currentTimeMillis(), status, playing) {
         value = currentTimeMillis()
-        while (playing) {
+        while (playing && track.durationMs != null) {
             delay(1_000 - value % 1_000)
             value = currentTimeMillis()
         }
@@ -105,7 +114,7 @@ private fun EchoCard(status: EchoStatus, device: EchoDevice, modifier: Modifier 
 
     Slip(modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
         BoxWithConstraints(Modifier.fillMaxWidth().albumLightStrip(light, palette.isDark)) {
-            val sideBySide = maxWidth >= EchoSideBySide && upNext.isNotEmpty()
+            val sideBySide = maxWidth >= EchoSideBySide
             val song: @Composable (Modifier) -> Unit = { m ->
                 EchoSong(track, device, playing, positionMs, artSize = if (sideBySide) 96.dp else 72.dp, m)
             }
@@ -120,12 +129,10 @@ private fun EchoCard(status: EchoStatus, device: EchoDevice, modifier: Modifier 
             } else {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                     song(Modifier.fillMaxWidth())
-                    if (upNext.isNotEmpty()) {
-                        Spacer(Modifier.height(12.dp))
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(palette.hair))
-                        Spacer(Modifier.height(10.dp))
-                        EchoUpNext(upNext, Modifier.fillMaxWidth())
-                    }
+                    Spacer(Modifier.height(12.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(palette.hair))
+                    Spacer(Modifier.height(10.dp))
+                    EchoUpNext(upNext, Modifier.fillMaxWidth())
                 }
             }
         }
@@ -144,7 +151,8 @@ private fun EchoSong(
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        ArtworkImage(track.artUrl?.let(::Artwork), track.title, Modifier.size(artSize), track.title)
+        // Decorative: the title is read out below.
+        ArtworkImage(track.artUrl?.let(::Artwork), track.title, Modifier.size(artSize).clearAndSetSemantics {}, track.title)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -224,28 +232,26 @@ private fun EchoProgress(positionMs: Long, durationMs: Long?, playing: Boolean) 
 private fun EchoUpNext(upNext: List<EchoTrack>, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Up next", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+        if (upNext.isNotEmpty()) {
+            Text("Up next", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+        }
+        val artistStyle = MaterialTheme.typography.labelSmall
         upNext.forEach { next ->
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    next.title,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                next.artist?.let {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-            }
+            // One line, so a long title uses the room a short artist leaves.
+            Text(
+                buildAnnotatedString {
+                    append(next.title)
+                    next.artist?.let {
+                        withStyle(SpanStyle(fontSize = artistStyle.fontSize, color = scheme.onSurfaceVariant)) {
+                            append("  ")
+                            append(it)
+                        }
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         // Shown in both states so pausing never changes the card's height.
         Text(

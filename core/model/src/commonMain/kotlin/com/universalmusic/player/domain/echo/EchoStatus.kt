@@ -54,22 +54,20 @@ data class EchoDevice(
     }
 }
 
-/** A paused or stopped Echo stays on Home this long after its last event. */
+/** A paused Echo stays on Home this long after its last event. */
 const val ECHO_RECENT_WINDOW_MS = 30L * 60 * 1000
 
 /**
- * The Echo to show on Home, or null to show none: the newest Echo while it plays, or while it is
- * paused or stopped within [ECHO_RECENT_WINDOW_MS] of its last event.
+ * The Echo to show on Home, or null to show none: an Echo that plays, else the newest one while it
+ * is paused within [ECHO_RECENT_WINDOW_MS] of its last event. A stopped Echo will not carry on.
  */
 fun EchoStatus.shownEcho(localNowMs: Long): EchoDevice? {
+    // The gateway lists the newest event first, so a pause on one Echo can come before another
+    // Echo that is still playing.
+    echoes.firstOrNull { it.state == EchoPlayState.PLAYING && it.track != null }?.let { return it }
     val newest = echoes.firstOrNull() ?: return null
-    if (newest.track == null) return null
-    return when (newest.state) {
-        EchoPlayState.PLAYING -> newest
-        EchoPlayState.PAUSED, EchoPlayState.STOPPED ->
-            newest.takeIf { gatewayNow(localNowMs) - it.lastEventAtMs <= ECHO_RECENT_WINDOW_MS }
-        EchoPlayState.IDLE -> null
-    }
+    if (newest.track == null || newest.state != EchoPlayState.PAUSED) return null
+    return newest.takeIf { gatewayNow(localNowMs) - it.lastEventAtMs <= ECHO_RECENT_WINDOW_MS }
 }
 
 /** Something that knows what the Echo is playing. Null status means unknown or unreachable. */

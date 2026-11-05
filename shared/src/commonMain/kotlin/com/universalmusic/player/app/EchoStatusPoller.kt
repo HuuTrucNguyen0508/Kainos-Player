@@ -10,7 +10,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
@@ -40,7 +42,9 @@ internal class EchoStatusPoller(
             val reply = try {
                 parseEchoStatus(fetch(), clock())
             } catch (cancelled: CancellationException) {
-                throw cancelled
+                // A request timeout is a cancellation too; only Home leaving stops the loop.
+                currentCoroutineContext().ensureActive()
+                null
             } catch (_: Exception) {
                 null
             }
@@ -49,7 +53,13 @@ internal class EchoStatusPoller(
             emit(last)
             delay(if (misses > 1) ECHO_BACKOFF_MS else ECHO_POLL_MS)
         }
-    }.stateIn(scope, SharingStarted.WhileSubscribed(), null)
+    }.stateIn(
+        scope,
+        // A short grace covers quick tab switches; after it, an old status is dropped so a return
+        // to Home never shows the card from stale data.
+        SharingStarted.WhileSubscribed(stopTimeoutMillis = ECHO_POLL_MS, replayExpirationMillis = 0),
+        null,
+    )
 
     companion object {
         fun http(scope: CoroutineScope, http: HttpClient, baseUrl: String): EchoStatusPoller =
