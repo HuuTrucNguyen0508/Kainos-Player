@@ -107,7 +107,7 @@ fun skinTokens(skin: Skin): SkinTokens {
 }
 
 /**
- * Frost follows the shell's Frost tokens: Fira Sans at the shell's sizes, ExtraLight figures, slab
+ * Frost follows the shell's Frost tokens: Fira Sans at Caelestia's sizes, ExtraLight figures, slab
  * radius 22 down to row 14, quick standard motion, a thin seek line and the wallpaper as ground.
  */
 private fun frostTokens(): SkinTokens {
@@ -116,16 +116,17 @@ private fun frostTokens(): SkinTokens {
     fun style(size: Float, family: FontFamily = body, weight: FontWeight = FontWeight.Normal, line: Float = 1.3f) = TextStyle(
         fontFamily = family, fontSize = size.sp, lineHeight = (size * line).sp, fontWeight = weight,
     )
+    // Sizes match the Caelestia skin; only the faces and weights differ.
     val typography = Typography(
-        displayLarge = style(64f, thin, FontWeight.ExtraLight, 1.1f), displayMedium = style(52f, thin, FontWeight.ExtraLight, 1.1f),
-        displaySmall = style(40f, thin, FontWeight.ExtraLight, 1.15f),
-        headlineLarge = style(34f, thin, FontWeight.ExtraLight, 1.15f), headlineMedium = style(28f, weight = FontWeight.Medium),
-        headlineSmall = style(24f, weight = FontWeight.Medium),
-        titleLarge = style(20f, weight = FontWeight.Medium), titleMedium = style(16f, weight = FontWeight.Medium),
-        titleSmall = style(14f, weight = FontWeight.Medium),
-        bodyLarge = style(15f), bodyMedium = style(13.5f), bodySmall = style(12.5f),
-        labelLarge = style(13.5f, weight = FontWeight.Medium), labelMedium = style(12.5f, weight = FontWeight.Medium),
-        labelSmall = style(11.5f),
+        displayLarge = style(57f, thin, FontWeight.ExtraLight, 1.1f), displayMedium = style(45f, thin, FontWeight.ExtraLight, 1.1f),
+        displaySmall = style(42f, thin, FontWeight.ExtraLight, 1.15f),
+        headlineLarge = style(42f, thin, FontWeight.ExtraLight, 1.15f), headlineMedium = style(37f, weight = FontWeight.Medium),
+        headlineSmall = style(32f, weight = FontWeight.Medium),
+        titleLarge = style(29f, weight = FontWeight.Medium), titleMedium = style(21f, weight = FontWeight.Medium),
+        titleSmall = style(18f, weight = FontWeight.Medium),
+        bodyLarge = style(21f), bodyMedium = style(18f), bodySmall = style(16f),
+        labelLarge = style(18f, weight = FontWeight.Medium), labelMedium = style(16f, weight = FontWeight.Medium),
+        labelSmall = style(14f),
     )
     val rounding = Rounding(6.dp, 9.dp, 14.dp, 16.dp, 18.dp, 22.dp, 26.dp, 28.dp)
     val standard = CubicBezierEasing(.2f, 0f, 0f, 1f)
