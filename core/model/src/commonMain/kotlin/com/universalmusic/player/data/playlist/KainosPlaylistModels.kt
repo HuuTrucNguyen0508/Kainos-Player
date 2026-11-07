@@ -1,5 +1,6 @@
 package com.universalmusic.player.data.playlist
 
+import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.toDomain
 import com.universalmusic.player.data.library.toPersisted
@@ -152,19 +153,32 @@ fun PersistedTrack.forPlaylistSync(useContentKeys: Boolean = true): PersistedTra
             canonicalId = portableId,
             localContentKey = if (useContentKeys) identity.contentKey else null,
             artworkUrl = artworkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") },
-            sources = listOf(com.universalmusic.player.data.library.PersistedSource(
+            sources = listOf(PersistedSource(
                 provider = ProviderId.LOCAL.name, providerTrackId = basename, localLocation = null,
             )),
             cachedAtMs = 0,
         )
     }
-    if (canonicalId.startsWith("spotify:") || canonicalId.startsWith("yt:")) {
-        val portableSources = sources.mapNotNull { source ->
+    val canonicalProvider = when {
+        canonicalId.startsWith("spotify:") -> ProviderId.SPOTIFY
+        canonicalId.startsWith("yt:") -> ProviderId.YOUTUBE_MUSIC
+        else -> null
+    }
+    if (canonicalProvider != null) {
+        val providerSources = sources.mapNotNull { source ->
             val provider = runCatching { ProviderId.valueOf(source.provider) }.getOrNull() ?: return@mapNotNull null
             when (provider) {
                 ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC -> source.copy(localLocation = null)
                 ProviderId.LOCAL, ProviderId.SAMPLE -> null
             }
+        }
+        // A track playing from the hearted-audio cache can carry only its cached file; its id still
+        // names the provider track, so the other device gets that instead of nothing.
+        val canonicalTrackId = canonicalId.substringAfter(':')
+        val portableSources = if (providerSources.any { it.provider == canonicalProvider.name } || canonicalTrackId.isEmpty()) {
+            providerSources
+        } else {
+            listOf(PersistedSource(canonicalProvider.name, canonicalTrackId)) + providerSources
         }
         if (portableSources.isEmpty()) return null
         return copy(
