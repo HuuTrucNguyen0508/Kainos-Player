@@ -47,4 +47,16 @@ class CachedTrackProjectionTest {
 
         assertEquals(listOf(PersistedSource("SPOTIFY", "4qW3BbQAwZsrnu8a3ZRdyT")), moved.sources)
     }
+
+    @Test
+    fun aLocalHeartWithNoFileOnThisDeviceMovesByItsFilename() {
+        // As the phone stored it: a heart synced from the PC, its name decoded as Latin-1, no source.
+        val heart = PersistedTrack(canonicalId = "localfile:s\u00c4\u0081n-z - as the sugar cube floats.flac", title = "As the sugar cube floats")
+
+        val moved = assertIs<QueueProjection.Complete>(PortableListeningQueue.project(listOf(PersistedQueueItem("a", heart))))
+            .queue.entries.single().track.track
+
+        assertEquals("localfile:s\u0101n-z - as the sugar cube floats.flac", moved.canonicalId)
+        assertEquals(listOf(PersistedSource("LOCAL", "s\u0101n-z - as the sugar cube floats.flac")), moved.sources)
+    }
 }

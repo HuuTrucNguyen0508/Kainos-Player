@@ -5,6 +5,8 @@ import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.toDomain
 import com.universalmusic.player.data.library.toPersisted
 import com.universalmusic.player.data.library.withPersistedSourcesOnly
+import com.universalmusic.player.data.sync.LocalSyncIdentity
+import com.universalmusic.player.data.sync.isLocalFileHeartCanonicalId
 import com.universalmusic.player.data.sync.localSyncIdentity
 import com.universalmusic.player.data.sync.localKeyHeartId
 import com.universalmusic.player.data.sync.LOCALFILE_HEART_PREFIX
@@ -144,7 +146,10 @@ fun Track.toPlaylistPersisted(nowMs: Long): PersistedTrack =
  * [localfile:]basename (no path/URI). Spotify DRM paths stay identity-only.
  */
 fun PersistedTrack.forPlaylistSync(useContentKeys: Boolean = true): PersistedTrack? {
-    val identity = localSyncIdentity()
+    // A local heart received from another device names its file but has no source here yet.
+    val identity = localSyncIdentity() ?: if (sources.isEmpty() && isLocalFileHeartCanonicalId(canonicalId)) {
+        LocalSyncIdentity(basename = normalizedLocalFileHeartBasename(canonicalId))
+    } else null
     if (identity != null) {
         val basename = identity.basename ?: return null
         val portableId = if (useContentKeys && identity.contentKey != null) localKeyHeartId(identity.contentKey)
