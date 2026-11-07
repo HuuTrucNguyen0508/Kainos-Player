@@ -283,6 +283,7 @@ fun NowPlayingScreen(
                                     NowPlayingDeviceChip(
                                         remote = remote,
                                         onSelect = container.remoteControl::select,
+                                        onContinue = { container.remoteControl.playHere(it) },
                                         modifier = Modifier.padding(bottom = 12.dp),
                                     )
                                 }
@@ -328,6 +329,7 @@ fun NowPlayingScreen(
                         NowPlayingDeviceChip(
                             remote = remote,
                             onSelect = container.remoteControl::select,
+                            onContinue = { container.remoteControl.playHere(it) },
                             modifier = Modifier.padding(bottom = 12.dp),
                         )
                     }
@@ -347,7 +349,7 @@ fun NowPlayingScreen(
                                 light = albumLight,
                                 onArtPositioned = { artBounds = it },
                                 onSend = container.remoteControl::send,
-                                onPlayHere = container.remoteControl::playHere,
+                                onPlayHere = { container.remoteControl.playHere() },
                             )
                         }
                     } else {

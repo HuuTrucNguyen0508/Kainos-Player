@@ -72,6 +72,13 @@ data class RemoteControlState(
     val message: RemoteMessage? = null,
 ) {
     val selected: RemoteDeviceView? get() = devices.firstOrNull { it.deviceId == selectedId }
+
+    /** While Now Playing shows this device: another reachable player with a track, playing ones first. */
+    val continueFrom: RemoteDeviceView?
+        get() = if (selectedId != null) null else devices
+            .filter { it.connected && it.hasPlayer && it.status != null }
+            .sortedByDescending { it.status?.isPlaying == true }
+            .firstOrNull()
 }
 
 /**
@@ -211,9 +218,9 @@ class RemoteControl internal constructor(
         }
     }
 
-    /** Pauses the selected device and plays its queue here. */
-    fun playHere() {
-        val target = state.value.selected ?: return
+    /** Pauses [deviceId], or the selected device, and plays its queue here. */
+    fun playHere(deviceId: String? = null) {
+        val target = deviceId?.let { id -> state.value.devices.firstOrNull { it.deviceId == id } } ?: state.value.selected ?: return
         if (!transferring.compareAndSet(expect = false, update = true)) return
         scope.launch {
             try {
