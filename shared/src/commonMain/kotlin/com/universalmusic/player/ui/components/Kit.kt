@@ -66,10 +66,11 @@ import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.Skin
 import com.universalmusic.player.ui.theme.contrastingColor
 
-/** Folio's dotted almanac paper, or Caelestia's plain background. */
+/** Folio's dotted almanac paper, or Caelestia's plain background. Frost's wallpaper is drawn once by [FrostGround]. */
 @Composable
 fun Modifier.skinGround(): Modifier {
     val palette = LocalKainosPalette.current
+    if (LocalSkinTokens.current.ground == GroundStyle.WALLPAPER) return this
     if (LocalSkinTokens.current.ground == GroundStyle.PLAIN) return background(palette.ground)
     val dot = lerp(palette.ground, palette.rule, if (palette.isDark) .8f else 1f)
     return drawWithCache {
@@ -255,6 +256,15 @@ fun Slip(
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(if (folio) tokens.rounding.large else tokens.rounding.extraLarge)
     val color = if (folio) palette.sheet else MaterialTheme.colorScheme.surfaceContainer
     val border = if (folio) BorderStroke(1.dp, palette.hair) else null
+    if (tokens.skin == Skin.FROST) {
+        // Frost's slip is a dense glass bar: it sits low, over the wallpaper's dark rock.
+        FrostSheet(
+            modifier.then(if (onClick != null) Modifier.clip(shape).clickable(onClick = onClick) else Modifier),
+            GlassDensity.Dense,
+            shape,
+        ) { content() }
+        return
+    }
     if (onClick != null) {
         Surface(onClick = onClick, modifier = modifier, shape = shape, color = color, border = border, shadowElevation = if (folio) 1.dp else 0.dp, content = content)
     } else {

@@ -1,5 +1,16 @@
 package com.universalmusic.player.ui
 
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
+import com.universalmusic.player.ui.components.FrostGround
+import com.universalmusic.player.ui.components.FrostSheet
+import com.universalmusic.player.ui.components.GlassDensity
+import com.universalmusic.player.ui.components.SkinPane
+import com.universalmusic.player.ui.components.isFrost
 import kotlin.random.Random
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
@@ -115,6 +126,8 @@ fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
                     container = container,
                     layoutBand = desktopLayoutBand(maxWidth),
                     compactPlayer = settings.compactMode,
+                    portrait = desktopPortrait(maxWidth, maxHeight),
+                    windowHeight = maxHeight,
                 )
             }
         }
@@ -126,9 +139,12 @@ private fun AppScaffold(
     container: AppContainer,
     layoutBand: DesktopLayoutBand,
     compactPlayer: Boolean,
+    portrait: Boolean = false,
+    windowHeight: Dp = Dp.Unspecified,
 ) {
     val desktop = layoutBand != DesktopLayoutBand.Narrow
     val wide = layoutBand == DesktopLayoutBand.Wide
+    val frost = isFrost()
 
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -140,6 +156,13 @@ private fun AppScaffold(
     var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer)
     var nowPlayingPaneWidthDp by rememberSaveable {
         mutableFloatStateOf(DesktopNowPlayingPaneDefaultWidth.value)
+    }
+    // Follows the window's height until the seam is dragged; NaN means "not dragged yet".
+    var nowPlayingBandDraggedDp by rememberSaveable { mutableFloatStateOf(Float.NaN) }
+    val nowPlayingBandHeight = when {
+        !windowHeight.isSpecified -> 360.dp
+        nowPlayingBandDraggedDp.isNaN() -> defaultNowPlayingBandHeight(windowHeight)
+        else -> clampNowPlayingBandHeight(nowPlayingBandDraggedDp.dp, windowHeight)
     }
     val destination = remember(destinationName) {
         runCatching { AppDestination.valueOf(destinationName) }.getOrDefault(AppDestination.Home)
@@ -204,13 +227,17 @@ private fun AppScaffold(
         previousBand = layoutBand
     }
 
-    // On wide windows Queue sits beside content; on standard width it replaces the NP pane.
+    // On wide windows Queue sits beside content; on standard width it replaces the NP pane. A portrait
+    // window keeps Now Playing as a band across the bottom, so a narrow one shows Queue in the content.
     val showWideQueueColumn = desktop && showQueue && wide
-    val queueReplacesSidePane = desktop && showQueue && !wide
-    val showSideNowPlaying = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
+    val queueReplacesSidePane = desktop && showQueue && !wide && !portrait
+    val queueInContent = desktop && showQueue && !wide && portrait
+    val playerPaneShown = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
+    val showSideNowPlaying = playerPaneShown && !portrait
+    val showBottomNowPlaying = playerPaneShown && portrait
     val showDesktopMiniBar = desktop &&
         currentTrack != null &&
-        !showSideNowPlaying &&
+        !playerPaneShown &&
         !queueReplacesSidePane
 
     fun dismissOverlayStack(): Boolean = when {
@@ -340,6 +367,7 @@ private fun AppScaffold(
         container.uiRequests.collect { request -> handleUiRequest(request) }
     }
 
+    FrostOrPlainGround(frost) {
     Scaffold(
         modifier = Modifier.skinGround(),
         containerColor = Color.Transparent,
@@ -366,28 +394,27 @@ private fun AppScaffold(
             }
         },
     ) { padding ->
-        Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+        // Frost floats each part as its own glass sheet over the wallpaper, like the shell's islands.
+        val sheetGap = if (frost) 10.dp else 0.dp
+        Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(sheetGap)) {
             if (desktop) {
+                SheetOrPlain(frost, Modifier.fillMaxHeight()) {
                 KainosRail(
                     selected = destination,
                     onSelect = ::navigateToTab,
                     footer = {
-                        if (!showSideNowPlaying && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
+                        if (!playerPaneShown && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
                             IconButton(onClick = { openNowPlaying() }) {
                                 Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                    if (portrait) Icons.Default.KeyboardArrowUp else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                                     contentDescription = "Show now playing",
                                 )
                             }
                         }
                     },
                 )
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(1.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant),
-                )
+                }
+                PaneSeam(frost)
             }
 
             // Main content column: tabs stay composed across resize so Library scroll survives.
@@ -395,9 +422,9 @@ private fun AppScaffold(
                 FailureBar(container.failures)
                 HandoffNoticeBar(container)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
-                    Box(Modifier.weight(1f).fillMaxSize()) {
+                    SheetOrPlain(frost, Modifier.weight(1f).fillMaxSize()) {
                         when {
-                            showQueue && !desktop -> QueueScreen(container) { showQueue = false }
+                            showQueue && (!desktop || queueInContent) -> QueueScreen(container) { showQueue = false }
                             showNowPlaying && !desktop -> NowPlayingScreen(
                                 container,
                                 onOpenQueue = { showQueue = true },
@@ -414,7 +441,7 @@ private fun AppScaffold(
                                         onOpenLibrary = { navigateToTab(AppDestination.Library) },
                                         trackActions = trackActions,
                                         // The side pane already shows the session, so Home skips its session card.
-                                        playerPaneVisible = showSideNowPlaying,
+                                        playerPaneVisible = playerPaneShown,
                                     )
                                     AppDestination.Search -> SearchScreen(
                                         presenter = searchPresenter,
@@ -443,26 +470,45 @@ private fun AppScaffold(
                     }
 
                     if (showWideQueueColumn) {
-                        Box(
-                            Modifier
-                                .fillMaxHeight()
-                                .width(1.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant),
-                        )
-                        Surface(
+                        PaneSeam(frost)
+                        SkinPane(
                             Modifier
                                 .width(DesktopQueueBesideWidth)
                                 .fillMaxHeight(),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
-                            tonalElevation = 0.dp,
-                            shadowElevation = 0.dp,
                         ) {
                             QueueScreen(container) { showQueue = false }
                         }
                     }
                 }
 
+                if (showBottomNowPlaying) {
+                    // Portrait: the player spans the foot of the window, the cover beside its controls.
+                    DesktopResizeHandle(
+                        vertical = true,
+                        onDragWidthDelta = { delta ->
+                            // Dragging the seam up grows the band.
+                            nowPlayingBandDraggedDp = clampNowPlayingBandHeight(nowPlayingBandHeight - delta, windowHeight).value
+                        },
+                    )
+                    SkinPane(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(nowPlayingBandHeight),
+                    ) {
+                        NowPlayingScreen(
+                            container,
+                            onOpenQueue = { showQueue = true },
+                            onClose = {
+                                nowPlayingPaneExpanded = false
+                                showNowPlaying = false
+                            },
+                            compact = true,
+                            band = true,
+                        )
+                    }
+                }
                 if (showDesktopMiniBar) {
+                    if (frost) Spacer(Modifier.height(sheetGap))
                     currentTrack?.let { track ->
                         DesktopMiniPlayer(
                             container = container,
@@ -475,13 +521,8 @@ private fun AppScaffold(
             }
 
             if (queueReplacesSidePane) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(1.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant),
-                )
-                Surface(
+                PaneSeam(frost)
+                SkinPane(
                     Modifier
                         .width(
                             nowPlayingPaneWidthDp.dp.coerceIn(
@@ -490,9 +531,6 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
                 ) {
                     QueueScreen(container) { showQueue = false }
                 }
@@ -506,7 +544,7 @@ private fun AppScaffold(
                             )
                     },
                 )
-                Surface(
+                SkinPane(
                     Modifier
                         .width(
                             nowPlayingPaneWidthDp.dp.coerceIn(
@@ -515,9 +553,6 @@ private fun AppScaffold(
                             ),
                         )
                         .fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
                 ) {
                     Column(Modifier.fillMaxSize()) {
                         Row(
@@ -553,6 +588,34 @@ private fun AppScaffold(
                 }
             }
         }
+    }
+    }
+}
+
+/** Frost draws the desktop wallpaper under the whole window; other skins keep their own ground. */
+@Composable
+private fun FrostOrPlainGround(frost: Boolean, content: @Composable () -> Unit) {
+    if (frost) FrostGround(Modifier.fillMaxSize(), content) else content()
+}
+
+/** A Frost glass sheet around [content]; other skins lay it straight on the ground. */
+@Composable
+private fun SheetOrPlain(frost: Boolean, modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
+    if (frost) FrostSheet(modifier, GlassDensity.Tall, content = content) else Box(modifier, content = content)
+}
+
+/** The gap between two Frost sheets, or the hairline between two plain panes. */
+@Composable
+private fun PaneSeam(frost: Boolean) {
+    if (frost) {
+        Spacer(Modifier.width(10.dp))
+    } else {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant),
+        )
     }
 }
 

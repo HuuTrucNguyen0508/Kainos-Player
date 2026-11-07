@@ -22,6 +22,23 @@ class DesktopEnvTest {
         for (text in listOf("caelestia", "garbage", "FOLIO", "", null)) assertEquals(Skin.CAELESTIA, parseDesktopEnv(text))
     }
 
+    @Test fun frostWinsWhenItsManifestClaimsTheWallpaper() {
+        val dir = Files.createTempDirectory("kainos-frost-style")
+        try {
+            val manifest = dir.resolve("style.json")
+            manifest.writeText("""{"id":"frost","wallpapers":["/walls/mist.jpg","/walls/mist-clean.jpg"]}""")
+            assertEquals(DesktopLook(Skin.FROST, "/walls/mist-clean.jpg"), desktopLook(Skin.FOLIO, "/walls/mist-clean.jpg", manifest))
+            assertEquals(DesktopLook(Skin.FOLIO, "/walls/other.jpg"), desktopLook(Skin.FOLIO, "/walls/other.jpg", manifest))
+            assertEquals(DesktopLook(Skin.CAELESTIA, null), desktopLook(Skin.CAELESTIA, null, manifest))
+            // No Frost style installed, or a half-written manifest: the shell is not showing Frost.
+            assertEquals(Skin.FOLIO, desktopLook(Skin.FOLIO, "/walls/mist.jpg", dir.resolve("missing.json")).skin)
+            manifest.writeText("""{"wallpapers":[""")
+            assertEquals(Skin.FOLIO, desktopLook(Skin.FOLIO, "/walls/mist.jpg", manifest).skin)
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
     @Test fun statePathsRespectOverridesAndXdg() {
         for ((variable, filename) in listOf("KAINOS_DESKTOP_ENV_FILE" to "desktop-env", "KAINOS_CAELESTIA_SCHEME" to "scheme.json")) {
             fun resolve(env: Map<String, String>) = caelestiaStatePath(variable, filename, env::get, "/test-home")

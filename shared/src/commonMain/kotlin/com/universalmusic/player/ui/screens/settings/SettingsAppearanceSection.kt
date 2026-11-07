@@ -53,17 +53,19 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                     SkinChoice.PLATFORM_DEFAULT -> if (desktop) "Match desktop" else "Platform default"
                     SkinChoice.FOLIO -> "Folio"
                     SkinChoice.CAELESTIA -> "Caelestia"
+                    SkinChoice.FROST -> "Frost"
                 },
                 accent = when (skin) {
                     SkinChoice.PLATFORM_DEFAULT -> AccentSlot.Gray
                     SkinChoice.FOLIO -> AccentSlot.Orange
                     SkinChoice.CAELESTIA -> AccentSlot.Purple
+                    SkinChoice.FROST -> AccentSlot.Gray
                 },
             )
         }
     }
     Text(
-        if (desktop) "Match desktop follows your Folio or Caelestia choice as it changes."
+        if (desktop) "Match desktop follows your Folio, Caelestia or Frost desktop as it changes. Frost is grey glass over your wallpaper."
         else "Platform default uses Folio. Choose a skin to change the style.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

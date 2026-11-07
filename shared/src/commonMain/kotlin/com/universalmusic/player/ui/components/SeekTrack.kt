@@ -86,7 +86,11 @@ fun SeekTrack(
     val height = when (kind) {
         SeekKind.Compact -> 12.dp
         SeekKind.Level -> 24.dp
-        SeekKind.Progress -> if (tokens.seek == SeekStyle.RULED) 36.dp else 40.dp
+        SeekKind.Progress -> when (tokens.seek) {
+            SeekStyle.RULED -> 36.dp
+            SeekStyle.WAVY -> 40.dp
+            SeekStyle.LINE -> 24.dp
+        }
     }
     Canvas(modifier.fillMaxWidth().height(height)) {
         when (tokens.seek) {
@@ -106,6 +110,18 @@ fun SeekTrack(
                 val dot = if (kind == SeekKind.Level) ink else scheme.primary.copy(alpha = alpha)
                 val radius = (if (scrubbing) 6f else if (kind == SeekKind.Compact) 3f else 4.5f).dp.toPx()
                 drawCircle(dot, radius, Offset(x, baseY))
+            }
+            SeekStyle.LINE -> {
+                // Frost: a hairline track with an ink run, as on the shell's Media page.
+                val y = size.height / 2
+                val stroke = (if (kind == SeekKind.Compact) 2f else 3f).dp.toPx()
+                drawLine(palette.rule, Offset(stroke / 2, y), Offset(size.width - stroke / 2, y), stroke, StrokeCap.Round)
+                if (!known) return@Canvas
+                val ink = scheme.onBackground.copy(alpha = alpha)
+                val x = (f * size.width).coerceIn(stroke / 2, size.width - stroke / 2)
+                drawLine(ink, Offset(stroke / 2, y), Offset(x, y), stroke, StrokeCap.Round)
+                val radius = (if (scrubbing) 6.5f else if (kind == SeekKind.Compact) 3f else 4.5f).dp.toPx()
+                drawCircle(ink, radius, Offset(x, y))
             }
             SeekStyle.WAVY -> {
                 val stroke = (if (kind == SeekKind.Compact) 3 else 4).dp.toPx()
@@ -203,6 +219,11 @@ fun SkinSlider(
     } else Modifier
     val wavy = LocalSkinTokens.current.seek == SeekStyle.WAVY
     val thumb: Dp = if (wavy) 4.dp else 12.dp
+    val trackHeight = when {
+        kind == SeekKind.Level -> 24.dp
+        LocalSkinTokens.current.seek == SeekStyle.LINE -> 24.dp
+        else -> 36.dp
+    }
     Slider(
         value = value,
         onValueChange = onValueChange,
@@ -210,7 +231,7 @@ fun SkinSlider(
         enabled = enabled,
         interactionSource = interaction,
         modifier = modifier.then(focusOutline),
-        thumb = { Spacer(Modifier.size(thumb, if (kind == SeekKind.Level) 24.dp else 36.dp)) },
+        thumb = { Spacer(Modifier.size(thumb, trackHeight)) },
         track = { state ->
             val range = state.valueRange
             val span = range.endInclusive - range.start

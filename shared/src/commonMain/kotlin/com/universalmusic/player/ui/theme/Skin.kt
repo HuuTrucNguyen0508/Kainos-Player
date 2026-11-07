@@ -14,9 +14,9 @@ import androidx.compose.ui.unit.sp
 import com.universalmusic.player.data.settings.SkinChoice
 import com.universalmusic.player.platform.platformLabel
 
-enum class Skin { FOLIO, CAELESTIA }
-enum class SeekStyle { RULED, WAVY }
-enum class GroundStyle { DOTTED_PAPER, PLAIN }
+enum class Skin { FOLIO, CAELESTIA, FROST }
+enum class SeekStyle { RULED, WAVY, LINE }
+enum class GroundStyle { DOTTED_PAPER, PLAIN, WALLPAPER }
 
 data class Rounding(
     val extraSmall: Dp, val small: Dp, val normal: Dp, val large: Dp,
@@ -53,14 +53,19 @@ fun resolveSkin(
 ): Skin = when (choice) {
     SkinChoice.FOLIO -> Skin.FOLIO
     SkinChoice.CAELESTIA -> Skin.CAELESTIA
+    SkinChoice.FROST -> Skin.FROST
     SkinChoice.PLATFORM_DEFAULT -> if (platform == "Android") Skin.FOLIO else desktopEnv ?: Skin.CAELESTIA
 }
 
 internal expect fun caelestiaFontFamily(): FontFamily
 internal expect fun folioDisplayFontFamily(): FontFamily
 internal expect fun folioBodyFontFamily(): FontFamily
+/** Frost's Fira Sans, and its ExtraLight cut for large figures (the shell's clock and track title). */
+internal expect fun frostFontFamily(): FontFamily
+internal expect fun frostThinFontFamily(): FontFamily
 
 fun skinTokens(skin: Skin): SkinTokens {
+    if (skin == Skin.FROST) return frostTokens()
     val folio = skin == Skin.FOLIO
     val display = if (folio) folioDisplayFontFamily() else caelestiaFontFamily()
     val body = if (folio) folioBodyFontFamily() else display
@@ -99,4 +104,38 @@ fun skinTokens(skin: Skin): SkinTokens {
         extraLarge = RoundedCornerShape(rounding.extraLarge),
     ), rounding, motion, if (folio) SeekStyle.RULED else SeekStyle.WAVY,
         if (folio) GroundStyle.DOTTED_PAPER else GroundStyle.PLAIN)
+}
+
+/**
+ * Frost follows the shell's Frost tokens: Fira Sans at the shell's sizes, ExtraLight figures, slab
+ * radius 22 down to row 14, quick standard motion, a thin seek line and the wallpaper as ground.
+ */
+private fun frostTokens(): SkinTokens {
+    val body = frostFontFamily()
+    val thin = frostThinFontFamily()
+    fun style(size: Float, family: FontFamily = body, weight: FontWeight = FontWeight.Normal, line: Float = 1.3f) = TextStyle(
+        fontFamily = family, fontSize = size.sp, lineHeight = (size * line).sp, fontWeight = weight,
+    )
+    val typography = Typography(
+        displayLarge = style(64f, thin, FontWeight.ExtraLight, 1.1f), displayMedium = style(52f, thin, FontWeight.ExtraLight, 1.1f),
+        displaySmall = style(40f, thin, FontWeight.ExtraLight, 1.15f),
+        headlineLarge = style(34f, thin, FontWeight.ExtraLight, 1.15f), headlineMedium = style(28f, weight = FontWeight.Medium),
+        headlineSmall = style(24f, weight = FontWeight.Medium),
+        titleLarge = style(20f, weight = FontWeight.Medium), titleMedium = style(16f, weight = FontWeight.Medium),
+        titleSmall = style(14f, weight = FontWeight.Medium),
+        bodyLarge = style(15f), bodyMedium = style(13.5f), bodySmall = style(12.5f),
+        labelLarge = style(13.5f, weight = FontWeight.Medium), labelMedium = style(12.5f, weight = FontWeight.Medium),
+        labelSmall = style(11.5f),
+    )
+    val rounding = Rounding(6.dp, 9.dp, 14.dp, 16.dp, 18.dp, 22.dp, 26.dp, 28.dp)
+    val standard = CubicBezierEasing(.2f, 0f, 0f, 1f)
+    val motion = Motion(
+        MotionSpec(200, standard), MotionSpec(260, standard), MotionSpec(160, standard),
+        MotionSpec(140, standard), MotionSpec(220, standard),
+    )
+    return SkinTokens(Skin.FROST, typography, thin, Shapes(
+        extraSmall = RoundedCornerShape(rounding.extraSmall), small = RoundedCornerShape(rounding.small),
+        medium = RoundedCornerShape(rounding.normal), large = RoundedCornerShape(rounding.large),
+        extraLarge = RoundedCornerShape(rounding.extraLarge),
+    ), rounding, motion, SeekStyle.LINE, GroundStyle.WALLPAPER)
 }
