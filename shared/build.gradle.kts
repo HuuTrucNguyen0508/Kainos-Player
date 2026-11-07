@@ -83,6 +83,8 @@ dependencies {
 
 val jvmTests = tasks.named<Test>("jvmTest") {
     exclude("**/SkinGalleryTest*")
+    // Tests must not pick up the host shell's Frost wallpaper as the skin.
+    environment("KAINOS_WALLPAPER_PATH_FILE", layout.buildDirectory.file("no-wallpaper/path.txt").get().asFile.absolutePath)
 }
 
 tasks.register<Test>("skinGallery") {

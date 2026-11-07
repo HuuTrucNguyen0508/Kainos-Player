@@ -17,7 +17,7 @@ enum class ThemeMode {
 }
 
 @Serializable
-enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA }
+enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA, FROST }
 
 @Serializable
 enum class FolioTint { FOLIO, EVERFOREST, CATPPUCCIN, GRUVBOX, NORD, ROSE_PINE, TOKYO_NIGHT }

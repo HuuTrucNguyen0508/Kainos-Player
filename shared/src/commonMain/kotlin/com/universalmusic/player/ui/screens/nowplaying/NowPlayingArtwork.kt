@@ -75,7 +75,7 @@ internal fun ColumnScope.NowPlayingArtwork(
 }
 
 @Composable
-private fun NowPlayingArtworkFrame(
+internal fun NowPlayingArtworkFrame(
     title: String?,
     artwork: Artwork?,
     light: Color,

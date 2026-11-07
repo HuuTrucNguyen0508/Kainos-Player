@@ -100,7 +100,12 @@ fun KainosRail(
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val folio = tokens.skin == Skin.FOLIO
-    val container = if (folio) palette.ground else MaterialTheme.colorScheme.surfaceContainer
+    // Frost's rail sits inside its own glass sheet.
+    val container = when (tokens.skin) {
+        Skin.FOLIO -> palette.ground
+        Skin.FROST -> Color.Transparent
+        Skin.CAELESTIA -> MaterialTheme.colorScheme.surfaceContainer
+    }
     Column(
         modifier.fillMaxHeight().width(88.dp).background(container).padding(vertical = 16.dp).selectableGroup(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -130,10 +135,13 @@ private fun TabItem(item: AppDestination, active: Boolean, onClick: () -> Unit) 
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
     val folio = tokens.skin == Skin.FOLIO
-    val hue = palette.accent(item.accent, AccentUse.Mark, if (folio) palette.tile else scheme.secondaryContainer)
+    // Frost has no hue: the active tab inverts to an ink pill, as the shell marks its workspace.
+    val frost = tokens.skin == Skin.FROST
+    val hue = if (frost) scheme.onPrimary else palette.accent(item.accent, AccentUse.Mark, if (folio) palette.tile else scheme.secondaryContainer)
     val pillColor by animateColorAsState(
         when {
             folio -> palette.tile
+            active && frost -> scheme.primary
             active -> scheme.secondaryContainer
             else -> Color.Transparent
         },

@@ -2,6 +2,9 @@ package com.universalmusic.player.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -14,10 +17,15 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.Skin
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -43,6 +51,23 @@ enum class DesktopLayoutBand {
     Wide,
 }
 
+/**
+ * A desktop window much taller than wide (a rotated monitor, such as a 1440x2560 portrait panel):
+ * Now Playing docks as a band across the bottom instead of a side column.
+ */
+fun desktopPortrait(maxWidth: Dp, maxHeight: Dp): Boolean =
+    maxWidth >= DesktopNarrowMaxWidth && maxHeight >= maxWidth * 1.3f
+
+val DesktopNowPlayingBandMinHeight: Dp = 240.dp
+
+/** The band never takes more than this share of the window, so the library keeps most of the height. */
+const val DesktopNowPlayingBandMaxShare: Float = .45f
+
+fun defaultNowPlayingBandHeight(windowHeight: Dp): Dp = (windowHeight * .18f).coerceIn(260.dp, 400.dp)
+
+fun clampNowPlayingBandHeight(height: Dp, windowHeight: Dp): Dp =
+    height.coerceIn(DesktopNowPlayingBandMinHeight, maxOf(DesktopNowPlayingBandMinHeight, windowHeight * DesktopNowPlayingBandMaxShare))
+
 fun desktopLayoutBand(maxWidth: Dp): DesktopLayoutBand = when {
     maxWidth < DesktopNarrowMaxWidth -> DesktopLayoutBand.Narrow
     maxWidth >= DesktopWideMinWidth -> DesktopLayoutBand.Wide
@@ -63,29 +88,35 @@ internal fun nowPlayingPaneShown(
     explicitlyOpened: Boolean = false,
 ): Boolean = expanded && (!nothingEverPlayed || remoteAvailable || explicitlyOpened)
 
+/**
+ * Drag to resize the pane beside it. [vertical] drags a horizontal seam up and down (the portrait
+ * band). Frost's seam is the gap between two glass sheets, so it only shows while hovered.
+ */
 @Composable
 fun DesktopResizeHandle(
     onDragWidthDelta: (Dp) -> Unit,
     modifier: Modifier = Modifier,
+    vertical: Boolean = false,
 ) {
     val density = LocalDensity.current
+    // The gesture outlives recompositions; always report to the latest callback.
+    val onDrag by rememberUpdatedState(onDragWidthDelta)
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val frost = LocalSkinTokens.current.skin == Skin.FROST
+    val thickness = if (frost) 10.dp else 6.dp
+    val idle = if (frost) Color.Transparent else MaterialTheme.colorScheme.outlineVariant
+    val active = if (frost) LocalKainosPalette.current.rule else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     Box(
         modifier
-            .width(6.dp)
-            .fillMaxHeight()
+            .then(if (vertical) Modifier.height(thickness).fillMaxWidth() else Modifier.width(thickness).fillMaxHeight())
             .hoverable(interaction)
-            .background(
-                if (hovered) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            .background(if (hovered) active else idle)
+            .pointerInput(vertical) {
+                if (vertical) {
+                    detectVerticalDragGestures { _, dragAmount -> onDrag(with(density) { dragAmount.toDp() }) }
                 } else {
-                    MaterialTheme.colorScheme.outlineVariant
-                },
-            )
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { _, dragAmount ->
-                    onDragWidthDelta(with(density) { dragAmount.toDp() })
+                    detectHorizontalDragGestures { _, dragAmount -> onDrag(with(density) { dragAmount.toDp() }) }
                 }
             },
     )
