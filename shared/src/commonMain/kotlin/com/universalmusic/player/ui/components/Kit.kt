@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -128,7 +130,8 @@ fun SourceMark(
     val palette = LocalKainosPalette.current
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (showIcon) {
-            Icon(kind.icon, null, Modifier.size(14.dp), tint = palette.accent(kind.slot, AccentUse.Mark, on))
+            val frost = LocalSkinTokens.current.skin == Skin.FROST
+            Icon(kind.icon, null, Modifier.size(14.dp), tint = if (frost) MaterialTheme.colorScheme.onSurfaceVariant else palette.accent(kind.slot, AccentUse.Mark, on))
         } else {
             AccentTick(palette.accent(kind.slot, AccentUse.Mark, on))
         }
@@ -443,18 +446,32 @@ fun PlaceholderArt(seed: String, modifier: Modifier = Modifier) {
     val deep = if (frost) plate.coverPlateBottom else lerp(hue, palette.scheme.onBackground.takeIf { !palette.isDark } ?: Color.Black, .35f)
     val ink = if (frost) contrastingColor(Color.White, lerp(hue, deep, .5f), Color.White, 3.0)
         else contrastingColor(palette.ground, deep, palette.ground, 3.0)
-    Box(
+    val initial = seed.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
+    BoxWithConstraints(
         modifier.background(if (frost) Brush.verticalGradient(listOf(hue, deep)) else Brush.linearGradient(listOf(hue, deep))),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            seed.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?",
-            style = MaterialTheme.typography.headlineSmall.copy(
-                fontFamily = tokens.display,
-                fontWeight = if (frost) FontWeight.Normal else MaterialTheme.typography.headlineSmall.fontWeight,
-            ),
-            color = ink,
-        )
+        if (frost) {
+            // The initial's capital stands about 30% of the plate (Fira's cap height is ~0.69 em), so a
+            // Now Playing plate and a list thumbnail keep one proportion. Large figures take the
+            // shell's ExtraLight cut; a thumbnail-sized letter keeps the regular cut so it stays legible.
+            val size = with(LocalDensity.current) { (minOf(maxWidth, maxHeight) * .44f).toSp() }
+            Text(
+                initial,
+                style = MaterialTheme.typography.displayLarge.copy(
+                    fontSize = size,
+                    lineHeight = size,
+                    fontWeight = if (size.value >= 32f) FontWeight.ExtraLight else FontWeight.Normal,
+                ),
+                color = ink,
+            )
+        } else {
+            Text(
+                initial,
+                style = MaterialTheme.typography.headlineSmall.copy(fontFamily = tokens.display),
+                color = ink,
+            )
+        }
     }
 }
 
@@ -472,7 +489,9 @@ fun AccentBadge(text: String, slot: AccentSlot, modifier: Modifier = Modifier, i
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        val ink = palette.accent(slot, AccentUse.Text, container)
+        // Frost has no hue for the slot to echo, so the label takes the muted ink rather than a third grey.
+        val ink = if (tokens.skin == Skin.FROST) MaterialTheme.colorScheme.onSurfaceVariant
+            else palette.accent(slot, AccentUse.Text, container)
         icon?.let { Icon(it, null, Modifier.size(14.dp), tint = ink) }
         Text(text, style = MaterialTheme.typography.labelSmall, color = ink, maxLines = 1)
     }
