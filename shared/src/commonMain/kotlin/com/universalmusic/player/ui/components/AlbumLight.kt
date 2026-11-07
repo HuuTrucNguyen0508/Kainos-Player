@@ -101,6 +101,8 @@ fun rememberArtworkTint(artworkUrl: String?): Color? {
  */
 @Composable
 fun rememberAlbumLight(artworkUrl: String?): State<Color> {
+    // Frost has no colour of its own: the cover stays in colour, but nothing around it is tinted.
+    if (LocalSkinTokens.current.skin == Skin.FROST) return remember { mutableStateOf(Color.Transparent) }
     val scheme = MaterialTheme.colorScheme
     val tint = rememberArtworkTint(artworkUrl)
     val dark = LocalKainosPalette.current.isDark
@@ -144,7 +146,10 @@ fun Modifier.skinAlbumLight(light: Color, centerX: Float, centerY: Float): Modif
 fun AlbumLightCover(light: Color, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
-    if (tokens.skin == Skin.FOLIO) {
+    if (tokens.skin == Skin.FROST) {
+        // Frost sets the cover straight on the glass, as the shell's Media page does.
+        Box(modifier) { content() }
+    } else if (tokens.skin == Skin.FOLIO) {
         Box(
             modifier.drawWithContent {
                 drawContent()

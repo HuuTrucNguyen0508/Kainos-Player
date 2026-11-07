@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -65,6 +66,7 @@ import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.Skin
 import com.universalmusic.player.ui.theme.contrastingColor
+import com.universalmusic.player.ui.theme.frostGlass
 
 /** Folio's dotted almanac paper, or Caelestia's plain background. Frost's wallpaper is drawn once by [FrostGround]. */
 @Composable
@@ -136,6 +138,8 @@ fun SourceMark(
 
 @Composable
 private fun AccentTick(color: Color) {
+    // Frost has no hue to echo, so the mark would only be decoration.
+    if (LocalSkinTokens.current.skin == Skin.FROST) return
     if (LocalSkinTokens.current.skin == Skin.FOLIO) {
         Box(Modifier.size(10.dp, 2.dp).background(color))
     } else {
@@ -206,10 +210,12 @@ fun IconTile(
     val tokens = LocalSkinTokens.current
     val folio = tokens.skin == Skin.FOLIO
     val tileColor = if (folio) palette.tile else MaterialTheme.colorScheme.surfaceContainer
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(if (folio) tokens.rounding.large else tokens.rounding.extraLarge)
+    val frost = tokens.skin == Skin.FROST
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(if (folio || frost) tokens.rounding.large else tokens.rounding.extraLarge)
     Column(
         modifier.width(width).clip(shape).clickable(onClick = onClick).then(
-            if (folio) Modifier else Modifier.background(tileColor),
+            // Frost's tiles sit straight on the glass, as the shell's launcher tiles do.
+            if (folio || frost) Modifier else Modifier.background(tileColor),
         ),
         horizontalAlignment = if (folio) Alignment.CenterHorizontally else Alignment.Start,
     ) {
@@ -234,7 +240,7 @@ fun IconTile(
                 Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 subtitle?.let {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Box(Modifier.size(6.dp).clip(tokens.rounding.full).background(palette.accent(accent, AccentUse.Mark, tileColor)))
+                        if (!frost) Box(Modifier.size(6.dp).clip(tokens.rounding.full).background(palette.accent(accent, AccentUse.Mark, tileColor)))
                         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -257,12 +263,15 @@ fun Slip(
     val color = if (folio) palette.sheet else MaterialTheme.colorScheme.surfaceContainer
     val border = if (folio) BorderStroke(1.dp, palette.hair) else null
     if (tokens.skin == Skin.FROST) {
-        // Frost's slip is a dense glass bar: it sits low, over the wallpaper's dark rock.
-        FrostSheet(
-            modifier.then(if (onClick != null) Modifier.clip(shape).clickable(onClick = onClick) else Modifier),
-            GlassDensity.Dense,
-            shape,
-        ) { content() }
+        // Inside a sheet a Frost card is a lift, lighter than the glass under it; on its own (the
+        // mini bar) it is a dense glass bar over the wallpaper's dark rock.
+        val card = androidx.compose.foundation.shape.RoundedCornerShape(tokens.rounding.large)
+        val clickable = if (onClick != null) Modifier.clip(card).clickable(onClick = onClick) else Modifier
+        if (insideFrostSheet()) {
+            FrostLift(modifier.then(clickable), card) { content() }
+        } else {
+            FrostSheet(modifier.then(clickable), GlassDensity.Dense, card) { content() }
+        }
         return
     }
     if (onClick != null) {
@@ -385,8 +394,10 @@ fun KainosChip(
     val tokens = LocalSkinTokens.current
     val folio = tokens.skin == Skin.FOLIO
     val scheme = MaterialTheme.colorScheme
-    val selectedFill = if (folio) scheme.onBackground else scheme.secondaryContainer
-    val selectedInk = if (folio) scheme.background else scheme.onSecondaryContainer
+    val frost = tokens.skin == Skin.FROST
+    // Folio and Frost mark "on" by inverting ink and ground.
+    val selectedFill = if (folio) scheme.onBackground else if (frost) scheme.primary else scheme.secondaryContainer
+    val selectedInk = if (folio) scheme.background else if (frost) scheme.onPrimary else scheme.onSecondaryContainer
     FilterChip(
         selected = selected,
         onClick = onClick,
@@ -398,7 +409,7 @@ fun KainosChip(
             when {
                 selected -> Icon(Icons.Default.Check, null, Modifier.size(16.dp))
                 leadingIcon != null -> Icon(leadingIcon, null, Modifier.size(16.dp), tint = accent?.let { palette.accent(it, AccentUse.Mark) } ?: scheme.onSurfaceVariant)
-                accent != null -> Box(Modifier.size(8.dp).clip(tokens.rounding.full).background(palette.accent(accent, AccentUse.Mark)))
+                accent != null && !frost -> Box(Modifier.size(8.dp).clip(tokens.rounding.full).background(palette.accent(accent, AccentUse.Mark)))
             }
         },
         colors = FilterChipDefaults.filterChipColors(
@@ -411,7 +422,7 @@ fun KainosChip(
         border = FilterChipDefaults.filterChipBorder(
             enabled = enabled,
             selected = selected,
-            borderColor = if (folio) palette.rule else scheme.outline,
+            borderColor = if (folio) palette.rule else if (frost) palette.hair else scheme.outline,
             selectedBorderColor = Color.Transparent,
         ),
     )
@@ -425,16 +436,23 @@ fun KainosChip(
 fun PlaceholderArt(seed: String, modifier: Modifier = Modifier) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
-    val hue = palette.accents.forKey(seed)
-    val deep = lerp(hue, palette.scheme.onBackground.takeIf { !palette.isDark } ?: Color.Black, .35f)
-    val ink = contrastingColor(palette.ground, deep, palette.ground, 3.0)
+    val frost = tokens.skin == Skin.FROST
+    // Frost draws the shell's neutral cover plate for missing art, never a hue.
+    val plate = frostGlass(palette.isDark)
+    val hue = if (frost) plate.coverPlateTop else palette.accents.forKey(seed)
+    val deep = if (frost) plate.coverPlateBottom else lerp(hue, palette.scheme.onBackground.takeIf { !palette.isDark } ?: Color.Black, .35f)
+    val ink = if (frost) contrastingColor(Color.White, lerp(hue, deep, .5f), Color.White, 3.0)
+        else contrastingColor(palette.ground, deep, palette.ground, 3.0)
     Box(
-        modifier.background(Brush.linearGradient(listOf(hue, deep))),
+        modifier.background(if (frost) Brush.verticalGradient(listOf(hue, deep)) else Brush.linearGradient(listOf(hue, deep))),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             seed.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?",
-            style = MaterialTheme.typography.headlineSmall.copy(fontFamily = tokens.display),
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontFamily = tokens.display,
+                fontWeight = if (frost) FontWeight.Normal else MaterialTheme.typography.headlineSmall.fontWeight,
+            ),
             color = ink,
         )
     }
@@ -507,7 +525,9 @@ fun AccentToggle(
 ) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
-    val container = palette.accentContainer(slot)
+    val frost = tokens.skin == Skin.FROST
+    // Frost has no hue: "on" inverts ink and ground, as the shell marks its active workspace.
+    val container = if (frost) MaterialTheme.colorScheme.primary else palette.accentContainer(slot)
     val shape = if (checked && tokens.skin == Skin.CAELESTIA) {
         androidx.compose.foundation.shape.RoundedCornerShape(tokens.rounding.normal)
     } else {
@@ -521,7 +541,7 @@ fun AccentToggle(
         modifier = modifier,
         colors = androidx.compose.material3.IconButtonDefaults.iconToggleButtonColors(
             checkedContainerColor = container,
-            checkedContentColor = palette.accent(slot, AccentUse.Mark, container),
+            checkedContentColor = if (frost) MaterialTheme.colorScheme.onPrimary else palette.accent(slot, AccentUse.Mark, container),
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
     ) {
@@ -544,16 +564,19 @@ fun DisplayHero(
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val typography = MaterialTheme.typography
+    val frost = tokens.skin == Skin.FROST
     Column(modifier.fillMaxWidth()) {
         eyebrow?.let {
             Text(
                 it,
-                style = typography.titleSmall.copy(fontFamily = tokens.display, fontStyle = FontStyle.Italic),
+                // Frost sets the line in the plain sans, like the shell's captions.
+                style = if (frost) typography.labelLarge else typography.titleSmall.copy(fontFamily = tokens.display, fontStyle = FontStyle.Italic),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Box(contentAlignment = Alignment.CenterStart) {
-            ghost?.let {
+            // Frost keeps the headline alone: the ghost numeral would only compete with it.
+            ghost?.takeUnless { frost }?.let {
                 Text(
                     it,
                     style = typography.displayLarge.copy(
@@ -572,7 +595,7 @@ fun DisplayHero(
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = if (ghost != null) 12.dp else 0.dp),
+                modifier = Modifier.padding(start = if (ghost != null && !frost) 12.dp else 0.dp),
             )
         }
     }

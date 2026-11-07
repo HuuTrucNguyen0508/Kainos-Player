@@ -20,17 +20,24 @@ data class FrostGlass(
     /** The mist drawn when there is no wallpaper to show (Android, or the file is missing). */
     val mistTop: Color, val mistBottom: Color,
     val coverPlateTop: Color, val coverPlateBottom: Color,
+    /** A card's wash on a sheet (the shell's lift), top to bottom. */
+    val liftTop: Color, val liftBottom: Color,
 )
 
 fun frostGlass(dark: Boolean): FrostGlass = if (dark) FrostGlass(
-    fogTop = Color(26, 27, 30, (.58f * 255).toInt()), fogBottom = Color(14, 15, 17, (.74f * 255).toInt()),
-    denseTop = Color(16, 17, 19, (.86f * 255).toInt()), denseBottom = Color(10, 11, 12, (.90f * 255).toInt()),
-    tallTop = Color(26, 27, 30, (.64f * 255).toInt()), tallBottom = Color(10, 11, 12, (.90f * 255).toInt()),
+    // Smoke runs toward the shell's ground (#141518), never to black, so the window reads as the
+    // same surface as the bar and the other apps even where the wallpaper turns to dark rock.
+    fogTop = Color(26, 27, 30, (.62f * 255).toInt()), fogBottom = Color(20, 21, 24, (.74f * 255).toInt()),
+    denseTop = Color(26, 27, 30, (.86f * 255).toInt()), denseBottom = Color(20, 21, 24, (.92f * 255).toInt()),
+    tallTop = Color(26, 27, 30, (.82f * 255).toInt()), tallBottom = Color(20, 21, 24, (.90f * 255).toInt()),
     rim = Color.White.copy(alpha = .34f), edge = Color.White.copy(alpha = .10f),
     specularAlpha = .10f,
-    veil = Color.Black.copy(alpha = .40f),
+    veil = Color(20, 21, 24, (.50f * 255).toInt()),
     mistTop = Color(0xFF5E6064), mistBottom = Color(0xFF1E1F22),
-    coverPlateTop = Color(0xFFA9ABAD), coverPlateBottom = Color(0xFF4B4D50),
+    // The shell's plate, a step darker: in a dark list of many missing covers its light top
+    // outshines the real art around it.
+    coverPlateTop = Color(0xFF5A5C60), coverPlateBottom = Color(0xFF2E2F33),
+    liftTop = Color.White.copy(alpha = .06f), liftBottom = Color.White.copy(alpha = .04f),
 ) else FrostGlass(
     fogTop = Color.White.copy(alpha = .40f), fogBottom = Color.White.copy(alpha = .26f),
     denseTop = Color.White.copy(alpha = .76f), denseBottom = Color.White.copy(alpha = .68f),
@@ -40,6 +47,7 @@ fun frostGlass(dark: Boolean): FrostGlass = if (dark) FrostGlass(
     veil = Color.White.copy(alpha = .18f),
     mistTop = Color(0xFFDADBDD), mistBottom = Color(0xFF8E9094),
     coverPlateTop = Color(0xFFA9ABAD), coverPlateBottom = Color(0xFF4B4D50),
+    liftTop = Color.White.copy(alpha = .52f), liftBottom = Color.White.copy(alpha = .40f),
 )
 
 /**
@@ -57,15 +65,14 @@ fun frostPalette(dark: Boolean): KainosPalette {
     val ground = if (dark) Color(0xFF26272A) else Color(0xFFD3D4D6)
     val muted = contrastingColor(if (dark) Color(0xFFBDBDBC) else Color(0xFF40444A), highest, ink, 4.5)
     val neutral = if (dark) Color(0xFF8E9196) else Color(0xFF6B6F75)
-    // Hues only echo a label, so they keep a trace of colour; red keeps more because it means failure.
-    fun hue(color: Color, keep: Float = .28f) = lerp(neutral, color, keep)
+    // No hue at all: every slot is the same grey, so marks, tiles and placeholders stay neutral.
+    // Only failure keeps a desaturated red, through the error slot.
     val accents = AccentRamp(
-        red = hue(Color(0xFFE5484D), .62f), orange = hue(Color(0xFFFF8A3D)), yellow = hue(Color(0xFFF5B800)),
-        green = hue(Color(0xFF30A46C)), teal = hue(Color(0xFF12A594)), blue = hue(Color(0xFF2D8CFF)),
-        purple = hue(Color(0xFF6E56CF)), pink = hue(Color(0xFFF06292)), gray = neutral,
+        red = neutral, orange = neutral, yellow = neutral, green = neutral, teal = neutral,
+        blue = neutral, purple = neutral, pink = neutral, gray = neutral,
     )
-    val error = contrastingColor(accents.red, highest, ink, 4.5)
-    val errorContainer = lerp(high, accents.red, if (dark) .22f else .14f)
+    val error = contrastingColor(lerp(neutral, Color(0xFFE5484D), .62f), highest, ink, 4.5)
+    val errorContainer = lerp(high, error, if (dark) .22f else .14f)
     val hair = ink.copy(alpha = if (dark) .14f else .12f)
     val rule = ink.copy(alpha = if (dark) .20f else .18f)
     val base = if (dark) darkColorScheme() else lightColorScheme()
@@ -84,7 +91,8 @@ fun frostPalette(dark: Boolean): KainosPalette {
         surfaceVariant = high, onSurfaceVariant = muted,
         surfaceTint = Color.Transparent,
         inverseSurface = ink, inverseOnSurface = inverse,
-        outline = if (dark) Color(0xFF6F7175) else Color(0xFF8A8D91),
+        // Strong enough for an off switch's ring and thumb: 3:1 on the highest grey.
+        outline = neutral,
         outlineVariant = if (dark) Color(0xFF45464A) else Color(0xFFC4C6C9),
         scrim = Color.Black,
         surfaceBright = mid, surfaceDim = low,
