@@ -22,5 +22,6 @@ fun decodeAppSettings(text: String): AppSettings {
     }
     defaultUnknown("skin", SkinChoice.entries.map { it.name }, SkinChoice.PLATFORM_DEFAULT.name)
     defaultUnknown("tint", FolioTint.entries.map { it.name }, FolioTint.FOLIO.name)
+    defaultUnknown("nowPlayingDock", NowPlayingDock.entries.map { it.name }, NowPlayingDock.AUTO.name)
     return settingsJson.decodeFromJsonElement<AppSettings>(JsonObject(fields)).withoutLegacyHomeLanPairing()
 }

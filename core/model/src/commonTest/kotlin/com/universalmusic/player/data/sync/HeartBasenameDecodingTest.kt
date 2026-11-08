@@ -43,6 +43,13 @@ class HeartBasenameDecodingTest {
     }
 
     @Test
+    fun lowercasedMojibakeOfAnAccentedLatinNameRepairs() {
+        // The phone's heart for "Sān-Z": `ā` (C4 81) read as `Ä` + U+0081, then lowercased to `ä`.
+        val heartId = localFileHeartId("s\u00e4\u0081n-z - as the sugar cube floats, fleeting in time.flac")
+        assertEquals("s\u0101n-z - as the sugar cube floats, fleeting in time.flac", normalizedLocalFileHeartBasename(heartId))
+    }
+
+    @Test
     fun ordinaryNamesAreUntouchedByRepair() {
         assertEquals("café.flac", repairLatin1Mojibake("café.flac"))
         assertEquals("plain.flac", repairLatin1Mojibake("plain.flac"))

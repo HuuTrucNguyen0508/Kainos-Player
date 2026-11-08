@@ -108,9 +108,24 @@ internal fun percentDecodeLight(value: String): String = percentDecodeUtf8(value
  */
 internal fun repairLatin1Mojibake(value: String): String {
     if (value.none { it.code in 0x80..0xFF } || value.any { it.code > 0xFF }) return value
-    val bytes = ByteArray(value.length) { value[it].code.toByte() }
-    val decoded = runCatching { bytes.decodeToString(throwOnInvalidSequence = true) }.getOrNull()
+    fun decode(chars: CharArray) = runCatching {
+        ByteArray(chars.size) { chars[it].code.toByte() }.decodeToString(throwOnInvalidSequence = true)
+    }.getOrNull()
+    val decoded = decode(value.toCharArray()) ?: decode(unlowercaseTwoByteLeads(value))
     return decoded?.takeIf { it != value } ?: value
+}
+
+/**
+ * Lowercasing the mojibake also lowered two-byte UTF-8 lead bytes read as Latin-1 capitals
+ * (`ā` is C4 81; `Ä` became `ä`, E4). A lowered lead followed by exactly one continuation byte
+ * gets its capital back; three-byte sequences (CJK) are left alone.
+ */
+private fun unlowercaseTwoByteLeads(value: String): CharArray {
+    fun continuation(index: Int) = index < value.length && value[index].code in 0x80..0xBF
+    return CharArray(value.length) { i ->
+        val code = value[i].code
+        if (code in 0xE0..0xFE && code != 0xF7 && continuation(i + 1) && !continuation(i + 2)) (code - 0x20).toChar() else value[i]
+    }
 }
 
 /**

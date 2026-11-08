@@ -19,6 +19,8 @@ import com.universalmusic.player.platform.platformLabel
 val LocalKainosPalette = staticCompositionLocalOf { folioPalette(FolioTint.FOLIO, false) }
 val LocalSkinTokens = staticCompositionLocalOf { skinTokens(Skin.FOLIO) }
 val LocalFollowingCaelestia = staticCompositionLocalOf { false }
+/** The desktop wallpaper file, drawn under Frost's glass; null where there is none. */
+val LocalDesktopWallpaper = staticCompositionLocalOf<String?> { null }
 
 data class ResolvedTheme(val skin: Skin, val palette: KainosPalette, val followsCaelestia: Boolean)
 
@@ -36,6 +38,10 @@ fun resolveTheme(
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
     }
+    if (skin == Skin.FROST) {
+        // Frost is grey glass whatever the scheme's colours; the desktop only decides light or dark.
+        return ResolvedTheme(skin, frostPalette(if (following) scheme.isDark else dark), following)
+    }
     return ResolvedTheme(skin, if (following) scheme.palette else folioPalette(settings.tint, dark), following)
 }
 
@@ -44,11 +50,13 @@ fun KainosTheme(settings: AppSettings, content: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     val source = remember(scope) { watchCaelestiaScheme(scope) }
     val scheme by source.collectAsState()
-    val desktopSource = remember(scope) { watchDesktopEnv(scope) }
-    val desktopEnv by desktopSource.collectAsState()
-    val resolved = resolveTheme(settings, isSystemInDarkTheme(), scheme, desktopEnv = desktopEnv)
+    val desktopSource = remember(scope) { watchDesktopLook(scope) }
+    val desktop by desktopSource.collectAsState()
+    val resolved = resolveTheme(settings, isSystemInDarkTheme(), scheme, desktopEnv = desktop.skin)
     val tokens = remember(resolved.skin) { skinTokens(resolved.skin) }
-    KainosTheme(resolved.palette, tokens, resolved.followsCaelestia, content)
+    CompositionLocalProvider(LocalDesktopWallpaper provides desktop.wallpaper) {
+        KainosTheme(resolved.palette, tokens, resolved.followsCaelestia, content)
+    }
 }
 
 @Composable

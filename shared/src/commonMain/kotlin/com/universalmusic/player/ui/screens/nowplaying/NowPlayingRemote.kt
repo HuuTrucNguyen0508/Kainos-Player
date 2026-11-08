@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,19 +79,64 @@ import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import kotlinx.coroutines.delay
 
-/** "Playing on This PC ▾": which player Now Playing shows and controls, with a picker. */
+/**
+ * "Playing on This PC ▾": which player Now Playing shows and controls, with a picker. Beside it,
+ * "Continue from …" moves another device's queue here in one tap.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun NowPlayingDeviceChip(
     remote: RemoteControlState,
     onSelect: (String?) -> Unit,
+    onContinue: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    FlowRow(
+        modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        DevicePicker(remote, onSelect)
+        remote.continueFrom?.let { device ->
+            ContinueFromButton(device, remote.thisIsDesktop, remote.transferring, onClick = { onContinue(device.deviceId) })
+        }
+    }
+}
+
+@Composable
+private fun ContinueFromButton(device: RemoteDeviceView, thisIsDesktop: Boolean, transferring: Boolean, onClick: () -> Unit) {
+    val title = device.status?.title
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = !transferring,
+        shape = LocalSkinTokens.current.rounding.full,
+        contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .semantics {
+                contentDescription = "Continue ${title ?: "listening"} from ${device.name} on this device"
+            },
+    ) {
+        Icon(deviceIcon(thisDevice = false, thisIsDesktop), null, Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            if (transferring) "Moving playback here…" else "Continue from ${device.name}",
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 240.dp),
+        )
+    }
+}
+
+@Composable
+private fun DevicePicker(remote: RemoteControlState, onSelect: (String?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
     val selected = remote.selected
     val name = selected?.name ?: remote.thisDeviceName
-    Box(modifier) {
+    Box {
         Surface(
             onClick = { open = true },
             shape = tokens.rounding.full,

@@ -22,3 +22,12 @@ private val folioDisplayFamily by lazy {
 
 internal actual fun folioDisplayFontFamily(): FontFamily = folioDisplayFamily
 internal actual fun folioBodyFontFamily(): FontFamily = desktopFamily
+
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+private val frostFamily by lazy {
+    if ("Fira Sans" in installedFonts) FontFamily("Fira Sans") else desktopFamily
+}
+
+internal actual fun frostFontFamily(): FontFamily = frostFamily
+// Fontconfig files Fira Sans ExtraLight under the Fira Sans family, so the weight picks the cut.
+internal actual fun frostThinFontFamily(): FontFamily = frostFamily

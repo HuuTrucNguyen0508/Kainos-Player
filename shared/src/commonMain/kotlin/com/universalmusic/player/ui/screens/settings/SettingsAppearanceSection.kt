@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.data.settings.FolioTint
+import com.universalmusic.player.data.settings.NowPlayingDock
 import com.universalmusic.player.data.settings.SkinChoice
 import com.universalmusic.player.data.settings.ThemeMode
 import com.universalmusic.player.platform.platformLabel
@@ -53,17 +54,19 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                     SkinChoice.PLATFORM_DEFAULT -> if (desktop) "Match desktop" else "Platform default"
                     SkinChoice.FOLIO -> "Folio"
                     SkinChoice.CAELESTIA -> "Caelestia"
+                    SkinChoice.FROST -> "Frost"
                 },
                 accent = when (skin) {
                     SkinChoice.PLATFORM_DEFAULT -> AccentSlot.Gray
                     SkinChoice.FOLIO -> AccentSlot.Orange
                     SkinChoice.CAELESTIA -> AccentSlot.Purple
+                    SkinChoice.FROST -> AccentSlot.Gray
                 },
             )
         }
     }
     Text(
-        if (desktop) "Match desktop follows your Folio or Caelestia choice as it changes."
+        if (desktop) "Match desktop follows your Folio, Caelestia or Frost desktop as it changes. Frost is grey glass over your wallpaper."
         else "Platform default uses Folio. Choose a skin to change the style.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -147,6 +150,30 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (desktop) {
+        Text("Desktop player position", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NowPlayingDock.entries.forEach { dock ->
+                KainosChip(
+                    selected = settings.nowPlayingDock == dock,
+                    onClick = { presenter.change { it.copy(nowPlayingDock = dock) } },
+                    label = when (dock) {
+                        NowPlayingDock.AUTO -> "Automatic"
+                        NowPlayingDock.LEFT -> "Left"
+                        NowPlayingDock.RIGHT -> "Right"
+                        NowPlayingDock.TOP -> "Top"
+                        NowPlayingDock.BOTTOM -> "Bottom"
+                    },
+                )
+            }
+        }
+        Text(
+            "Automatic keeps the player on the right, or along the bottom of a tall window. " +
+                "You can also drag the player by its grip to any edge.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 private val FolioTint.title: String

@@ -5,6 +5,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-private val noDesktopEnv = MutableStateFlow<Skin?>(null).asStateFlow()
+private val noDesktopLook = MutableStateFlow(DesktopLook()).asStateFlow()
 
-actual fun watchDesktopEnv(scope: CoroutineScope): StateFlow<Skin?> = noDesktopEnv
+actual fun watchDesktopLook(scope: CoroutineScope): StateFlow<DesktopLook> = noDesktopLook

@@ -27,6 +27,27 @@ class SkinResolutionTest {
         }
     }
 
+    @Test fun frostIsGreyGlassThatOnlyTakesLightOrDarkFromTheDesktop() {
+        val settings = AppSettings()
+        val dark = CaelestiaScheme(isDark = true, palette = folioPalette(FolioTint.CATPPUCCIN, true))
+        val desktop = resolveTheme(settings, false, dark, "Linux", Skin.FROST)
+        assertEquals(Skin.FROST, desktop.skin)
+        assertPaletteEquals(frostPalette(true), desktop.palette)
+        assertTrue(desktop.followsCaelestia)
+        val chosen = resolveTheme(settings.copy(skin = SkinChoice.FROST, followCaelestiaScheme = false, themeMode = ThemeMode.LIGHT), true, dark, "Linux")
+        assertPaletteEquals(frostPalette(false), chosen.palette)
+        assertEquals(Skin.FROST, resolveSkin(SkinChoice.FROST, "Android"))
+        // Every Frost ink reads at 4.5:1 on the greys it sits on.
+        for (isDark in listOf(false, true)) {
+            val scheme = frostPalette(isDark).scheme
+            for (ground in listOf(scheme.surface, scheme.surfaceContainer, scheme.surfaceContainerHigh, scheme.surfaceContainerHighest)) {
+                assertTrue(contrastRatio(scheme.onSurface, ground) >= 4.5)
+                assertTrue(contrastRatio(scheme.onSurfaceVariant, ground) >= 4.5, "variant on $ground dark=$isDark")
+            }
+            assertTrue(contrastRatio(scheme.onPrimary, scheme.primary) >= 4.5)
+        }
+    }
+
     @Test fun matchDesktopFolioUsesShellColoursOnlyWhileFollowing() {
         val settings = AppSettings(tint = FolioTint.CATPPUCCIN, themeMode = ThemeMode.LIGHT)
         val shell = assertNotNull(parseCaelestiaScheme(schemeFixture()))

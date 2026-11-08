@@ -143,6 +143,41 @@ class RemoteControlTest {
     }
 
     @Test
+    fun continueFromMovesThePhoneQueueWithoutSelectingThePhone() = runTest {
+        val rig = hubRig()
+        val first = rig.phonePolls(RemoteStatus(title = "Phone song", isPlaying = true))
+        runCurrent()
+        assertEquals("phone", rig.control.state.value.continueFrom?.deviceId)
+
+        rig.control.playHere("phone")
+        runCurrent()
+        val envelope = rig.phonePolls(RemoteStatus(title = "Phone song"), generation = 2, epoch = first.epoch).commands.single()
+        assertEquals(RemoteCommand.PauseForTransfer, envelope.command)
+        val snapshot = RemoteTransferSnapshot(listOf(item("x"), item("y")), currentItemId = "q-y", positionMs = 5_000)
+        rig.host.receiveTransfer(phone, first.epoch, envelope.seq, RemoteTransferReply(snapshot))
+        runCurrent()
+
+        assertEquals("q-y", rig.session.queueState.value.current?.id)
+        assertTrue(rig.session.nowPlaying.value.isPlaying)
+        assertNull(rig.control.state.value.selectedId)
+    }
+
+    @Test
+    fun continueFromHidesWhileThePhoneIsSelectedOrPlaysNothing() = runTest {
+        val rig = hubRig()
+        val first = rig.phonePolls(null)
+        runCurrent()
+        assertNull(rig.control.state.value.continueFrom)
+
+        rig.phonePolls(RemoteStatus(title = "Phone song"), generation = 2, epoch = first.epoch)
+        runCurrent()
+        assertEquals("phone", rig.control.state.value.continueFrom?.deviceId)
+        rig.control.select("phone")
+        runCurrent()
+        assertNull(rig.control.state.value.continueFrom)
+    }
+
+    @Test
     fun playHereReportsAQueueThatCannotMove() = runTest {
         val rig = hubRig()
         val first = rig.phonePolls(RemoteStatus(title = "Phone song"))
@@ -224,7 +259,7 @@ class RemoteControlTest {
         val session: PlayerSession,
         val gui: MutableStateFlow<Boolean>,
     ) {
-        suspend fun phonePolls(status: RemoteStatus, generation: Long = 1, epoch: String? = null): RemotePollReply {
+        suspend fun phonePolls(status: RemoteStatus?, generation: Long = 1, epoch: String? = null): RemotePollReply {
             val reply = scope.async {
                 host.poll(PairedPeer("phone", "Poco", CertFingerprint.parse("ab".repeat(32))!!, pairedAtMs = 1),
                     RemotePollRequest("phone", "link", generation, epoch, 0, -7, status))
