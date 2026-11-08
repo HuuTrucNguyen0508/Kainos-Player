@@ -19,6 +19,10 @@ enum class ThemeMode {
 @Serializable
 enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA, FROST }
 
+/** Where the desktop Now Playing pane docks. AUTO is the right edge, or the bottom of a tall window. */
+@Serializable
+enum class NowPlayingDock { AUTO, LEFT, RIGHT, TOP, BOTTOM }
+
 @Serializable
 enum class FolioTint { FOLIO, EVERFOREST, CATPPUCCIN, GRUVBOX, NORD, ROSE_PINE, TOKYO_NIGHT }
 
@@ -38,6 +42,7 @@ data class AppSettings(
     val tint: FolioTint = FolioTint.FOLIO,
     val followCaelestiaScheme: Boolean = true,
     val compactMode: Boolean = false,
+    val nowPlayingDock: NowPlayingDock = NowPlayingDock.AUTO,
     val sourceSelection: SourceSelectionMode = SourceSelectionMode.AUTOMATIC,
     val gapless: Boolean = true,
     /**

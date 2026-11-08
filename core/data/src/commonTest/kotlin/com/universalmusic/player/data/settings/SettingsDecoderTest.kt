@@ -20,11 +20,17 @@ class SettingsDecoderTest {
     }
 
     @Test fun unknownNewEnumsDefaultWithoutResettingOtherFields() {
-        val decoded = decodeAppSettings("""{"skin":"future","tint":"future","spotifyClientId":"keep","libraryFavoritesOnly":true}""")
+        val decoded = decodeAppSettings("""{"skin":"future","tint":"future","nowPlayingDock":"CENTRE","spotifyClientId":"keep","libraryFavoritesOnly":true}""")
         assertEquals(SkinChoice.PLATFORM_DEFAULT, decoded.skin)
+        assertEquals(NowPlayingDock.AUTO, decoded.nowPlayingDock)
         assertEquals(FolioTint.FOLIO, decoded.tint)
         assertEquals("keep", decoded.spotifyClientId)
         assertTrue(decoded.libraryFavoritesOnly)
+    }
+
+    @Test fun aMissingDockIsAutomatic() {
+        assertEquals(NowPlayingDock.AUTO, decodeAppSettings("""{"compactMode":true}""").nowPlayingDock)
+        assertEquals(NowPlayingDock.TOP, decodeAppSettings("""{"nowPlayingDock":"TOP"}""").nowPlayingDock)
     }
 
     @Test fun explicitTintTakesPrecedenceOverLegacy() {
@@ -34,7 +40,8 @@ class SettingsDecoderTest {
 
     @Test fun newFieldsSurviveWriteRead() {
         val original = AppSettings(skin = SkinChoice.CAELESTIA, tint = FolioTint.ROSE_PINE,
-            themeMode = ThemeMode.DARK, followCaelestiaScheme = false, localMusicFolders = listOf("/music"))
+            themeMode = ThemeMode.DARK, followCaelestiaScheme = false, localMusicFolders = listOf("/music"),
+            nowPlayingDock = NowPlayingDock.LEFT)
         assertEquals(original, decodeAppSettings(Json { encodeDefaults = true }.encodeToString(original)))
     }
 }

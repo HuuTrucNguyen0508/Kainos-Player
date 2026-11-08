@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
@@ -59,8 +60,10 @@ fun NowPlayingScreen(
     onOpenQueue: () -> Unit,
     compact: Boolean = false,
     onClose: (() -> Unit)? = null,
-    /** A wide, short pane (the portrait window's bottom band): cover on the left, controls beside it. */
+    /** A wide, short pane (a band docked to the top or bottom): cover on the left, controls beside it. */
     band: Boolean = false,
+    /** The band's hide arrow, pointing at the edge it is docked to. */
+    closeIcon: ImageVector = Icons.Default.KeyboardArrowDown,
 ) {
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { NowPlayingPresenter.from(container, scope) }
@@ -298,7 +301,7 @@ fun NowPlayingScreen(
                     }
                     if (onClose != null) {
                         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Hide now playing")
+                            Icon(closeIcon, contentDescription = "Hide now playing")
                         }
                     }
                 }

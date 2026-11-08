@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import com.universalmusic.player.data.settings.NowPlayingDock
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.Skin
@@ -53,10 +54,50 @@ enum class DesktopLayoutBand {
 
 /**
  * A desktop window much taller than wide (a rotated monitor, such as a 1440x2560 portrait panel):
- * Now Playing docks as a band across the bottom instead of a side column.
+ * the automatic dock puts Now Playing in a band across the bottom instead of a side column.
  */
 fun desktopPortrait(maxWidth: Dp, maxHeight: Dp): Boolean =
     maxWidth >= DesktopNarrowMaxWidth && maxHeight >= maxWidth * 1.3f
+
+/** The window edge the Now Playing pane sits against. Left and right are tall panes; top and bottom are bands. */
+enum class DockEdge(val setting: NowPlayingDock) {
+    LEFT(NowPlayingDock.LEFT),
+    RIGHT(NowPlayingDock.RIGHT),
+    TOP(NowPlayingDock.TOP),
+    BOTTOM(NowPlayingDock.BOTTOM);
+
+    val isSide: Boolean get() = this == LEFT || this == RIGHT
+}
+
+fun resolveDockEdge(setting: NowPlayingDock, portrait: Boolean): DockEdge = when (setting) {
+    NowPlayingDock.AUTO -> if (portrait) DockEdge.BOTTOM else DockEdge.RIGHT
+    NowPlayingDock.LEFT -> DockEdge.LEFT
+    NowPlayingDock.RIGHT -> DockEdge.RIGHT
+    NowPlayingDock.TOP -> DockEdge.TOP
+    NowPlayingDock.BOTTOM -> DockEdge.BOTTOM
+}
+
+/**
+ * The share of the window's width or height, measured in from each edge, that counts as that edge's
+ * drop zone. Anything further in is the middle, where letting go leaves the player where it was.
+ */
+const val DockDropReach: Float = .3f
+
+/**
+ * The edge a drag released at ([x], [y]) in a [width] x [height] window drops the player on: the
+ * nearest edge, measured as a share of the window so wide windows do not favour top and bottom.
+ */
+fun dockEdgeAt(x: Float, y: Float, width: Float, height: Float): DockEdge? {
+    if (width <= 0f || height <= 0f) return null
+    val distances = listOf(
+        DockEdge.LEFT to x / width,
+        DockEdge.RIGHT to (width - x) / width,
+        DockEdge.TOP to y / height,
+        DockEdge.BOTTOM to (height - y) / height,
+    )
+    val (edge, distance) = distances.minBy { it.second }
+    return edge.takeIf { distance <= DockDropReach }
+}
 
 val DesktopNowPlayingBandMinHeight: Dp = 240.dp
 

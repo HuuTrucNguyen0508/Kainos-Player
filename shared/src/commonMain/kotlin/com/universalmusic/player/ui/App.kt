@@ -1,14 +1,15 @@
 package com.universalmusic.player.ui
 
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.universalmusic.player.data.settings.NowPlayingDock
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.isSpecified
 import com.universalmusic.player.ui.components.FrostGround
-import com.universalmusic.player.ui.components.FrostSheet
-import com.universalmusic.player.ui.components.GlassDensity
 import com.universalmusic.player.ui.components.SkinPane
 import com.universalmusic.player.ui.components.isFrost
 import kotlin.random.Random
@@ -126,6 +127,7 @@ fun UniversalMusicApp(container: AppContainer = ensureAppContainer()) {
                     container = container,
                     layoutBand = desktopLayoutBand(maxWidth),
                     compactPlayer = settings.compactMode,
+                    dockSetting = settings.nowPlayingDock,
                     portrait = desktopPortrait(maxWidth, maxHeight),
                     windowHeight = maxHeight,
                 )
@@ -139,12 +141,15 @@ private fun AppScaffold(
     container: AppContainer,
     layoutBand: DesktopLayoutBand,
     compactPlayer: Boolean,
+    dockSetting: NowPlayingDock,
     portrait: Boolean = false,
     windowHeight: Dp = Dp.Unspecified,
 ) {
     val desktop = layoutBand != DesktopLayoutBand.Narrow
     val wide = layoutBand == DesktopLayoutBand.Wide
     val frost = isFrost()
+    val dock = resolveDockEdge(dockSetting, portrait)
+    val dockDrag = remember { DockDragState() }
 
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.Home.name) }
     var tabBackStackNames by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -227,14 +232,14 @@ private fun AppScaffold(
         previousBand = layoutBand
     }
 
-    // On wide windows Queue sits beside content; on standard width it replaces the NP pane. A portrait
-    // window keeps Now Playing as a band across the bottom, so a narrow one shows Queue in the content.
+    // On wide windows Queue sits beside content; on standard width it takes the side pane's place. A
+    // player docked as a band keeps its band, so there Queue shows in the content instead.
     val showWideQueueColumn = desktop && showQueue && wide
-    val queueReplacesSidePane = desktop && showQueue && !wide && !portrait
-    val queueInContent = desktop && showQueue && !wide && portrait
+    val queueReplacesSidePane = desktop && showQueue && !wide && dock.isSide
+    val queueInContent = desktop && showQueue && !wide && !dock.isSide
     val playerPaneShown = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
-    val showSideNowPlaying = playerPaneShown && !portrait
-    val showBottomNowPlaying = playerPaneShown && portrait
+    val showSideNowPlaying = playerPaneShown && dock.isSide
+    val showBandNowPlaying = playerPaneShown && !dock.isSide
     val showDesktopMiniBar = desktop &&
         currentTrack != null &&
         !playerPaneShown &&
@@ -274,6 +279,7 @@ private fun AppScaffold(
     }
 
     fun handleSystemBack(): Boolean {
+        if (dockDrag.cancel()) return true
         if (dismissOverlayStack()) return true
         if (destination == AppDestination.Search && searchPresenter.closePlaylist()) return true
         screenBack?.let { back ->
@@ -286,6 +292,10 @@ private fun AppScaffold(
             return true
         }
         return false
+    }
+
+    fun dockPlayer(edge: DockEdge) {
+        searchScope.launch { container.updateSettings { it.copy(nowPlayingDock = edge.setting) } }
     }
 
     fun openSettings(target: SettingsTarget) {
@@ -367,6 +377,12 @@ private fun AppScaffold(
         container.uiRequests.collect { request -> handleUiRequest(request) }
     }
 
+    DockDropHost(
+        drag = dockDrag,
+        current = dock,
+        sidePaneWidth = nowPlayingPaneWidthDp.dp.coerceIn(DesktopNowPlayingPaneMinWidth, DesktopNowPlayingPaneMaxWidth),
+        bandHeight = nowPlayingBandHeight,
+    ) {
     FrostOrPlainGround(frost) {
     Scaffold(
         modifier = Modifier.skinGround(),
@@ -396,117 +412,94 @@ private fun AppScaffold(
     ) { padding ->
         // Frost floats each part as its own glass sheet over the wallpaper, like the shell's islands.
         val sheetGap = if (frost) 10.dp else 0.dp
-        Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(sheetGap)) {
-            if (desktop) {
-                SheetOrPlain(frost, Modifier.fillMaxHeight()) {
-                KainosRail(
-                    selected = destination,
-                    onSelect = ::navigateToTab,
-                    footer = {
-                        if (!playerPaneShown && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
-                            IconButton(onClick = { openNowPlaying() }) {
-                                Icon(
-                                    if (portrait) Icons.Default.KeyboardArrowUp else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                    contentDescription = "Show now playing",
+        val hidePlayer = {
+            nowPlayingPaneExpanded = false
+            showNowPlaying = false
+        }
+        DockedFrame(
+            dock = dock,
+            frost = frost,
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(sheetGap),
+            rail = if (!desktop) null else {
+                {
+                    KainosRail(
+                        selected = destination,
+                        onSelect = ::navigateToTab,
+                        footer = {
+                            if (!playerPaneShown && nowPlayingPaneShown(true, nothingEverPlayed, remote.available, showNowPlaying)) {
+                                IconButton(onClick = { openNowPlaying() }) {
+                                    Icon(dock.opensToward(), contentDescription = "Show now playing")
+                                }
+                            }
+                        },
+                    )
+                }
+            },
+            sidePane = when {
+                queueReplacesSidePane -> { { QueueScreen(container) { showQueue = false } } }
+                showSideNowPlaying -> {
+                    {
+                        Column(Modifier.fillMaxSize()) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 4.dp, end = 4.dp, top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                IconButton(onClick = hidePlayer) {
+                                    Icon(dock.closesToward(), contentDescription = "Hide now playing")
+                                }
+                                DockGrip(dockDrag, dock, ::dockPlayer, Modifier.weight(1f)) {
+                                    Text(
+                                        "Now playing",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                            Box(Modifier.weight(1f).fillMaxWidth()) {
+                                NowPlayingScreen(
+                                    container,
+                                    onOpenQueue = { showQueue = true },
+                                    compact = true,
                                 )
                             }
                         }
-                    },
-                )
-                }
-                PaneSeam(frost)
-            }
-
-            // Main content column: tabs stay composed across resize so Library scroll survives.
-            Column(Modifier.weight(1f).fillMaxSize()) {
-                FailureBar(container.failures)
-                HandoffNoticeBar(container)
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    SheetOrPlain(frost, Modifier.weight(1f).fillMaxSize()) {
-                        when {
-                            showQueue && (!desktop || queueInContent) -> QueueScreen(container) { showQueue = false }
-                            showNowPlaying && !desktop -> NowPlayingScreen(
-                                container,
-                                onOpenQueue = { showQueue = true },
-                                onClose = { showNowPlaying = false },
-                            )
-                            else -> tabStateHolder.SaveableStateProvider(destination.name) {
-                                when (destination) {
-                                    AppDestination.Home -> HomeScreen(
-                                        container,
-                                        onPlayTracks = ::playTracks,
-                                        onOpenNowPlaying = { openNowPlaying() },
-                                        onOpenSettings = ::openSettings,
-                                        onOpenSearch = { navigateToTab(AppDestination.Search) },
-                                        onOpenLibrary = { navigateToTab(AppDestination.Library) },
-                                        trackActions = trackActions,
-                                        // The side pane already shows the session, so Home skips its session card.
-                                        playerPaneVisible = playerPaneShown,
-                                    )
-                                    AppDestination.Search -> SearchScreen(
-                                        presenter = searchPresenter,
-                                        onPlayTrackInList = ::playSearchTracks,
-                                        onPlayPlaylist = ::playPlaylist,
-                                        trackActions = trackActions,
-                                        requestFocus = true,
-                                        onOpenSettings = ::openSettings,
-                                    )
-                                    AppDestination.Library -> LibraryScreen(
-                                        container.libraryTypeAhead,
-                                        container::consumeLibraryTypeAhead,
-                                        libraryPresenter,
-                                        ::playTracks,
-                                        trackActions,
-                                        onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
-                                        onShuffleTracks = ::shuffleTracks,
-                                        onInnerBack = { screenBack = it },
-                                    )
-                                    AppDestination.Settings -> SettingsScreen(container, settingsTarget)
-                                }
-                            }
-                        }
-                        // Overlays the list instead of pushing it, so rapid row actions never shift rows.
-                        TrackActionNoticeBar(trackActions, Modifier.align(Alignment.BottomCenter))
-                    }
-
-                    if (showWideQueueColumn) {
-                        PaneSeam(frost)
-                        SkinPane(
-                            Modifier
-                                .width(DesktopQueueBesideWidth)
-                                .fillMaxHeight(),
-                        ) {
-                            QueueScreen(container) { showQueue = false }
-                        }
                     }
                 }
-
-                if (showBottomNowPlaying) {
-                    // Portrait: the player spans the foot of the window, the cover beside its controls.
-                    DesktopResizeHandle(
-                        vertical = true,
-                        onDragWidthDelta = { delta ->
-                            // Dragging the seam up grows the band.
-                            nowPlayingBandDraggedDp = clampNowPlayingBandHeight(nowPlayingBandHeight - delta, windowHeight).value
-                        },
-                    )
-                    SkinPane(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(nowPlayingBandHeight),
-                    ) {
+                else -> null
+            },
+            sidePaneWidth = nowPlayingPaneWidthDp.dp.coerceIn(DesktopNowPlayingPaneMinWidth, DesktopNowPlayingPaneMaxWidth),
+            onGrowSidePane = if (queueReplacesSidePane) null else { delta ->
+                nowPlayingPaneWidthDp = (nowPlayingPaneWidthDp + delta.value)
+                    .coerceIn(DesktopNowPlayingPaneMinWidth.value, DesktopNowPlayingPaneMaxWidth.value)
+            },
+            band = if (!showBandNowPlaying) null else {
+                {
+                    // The player spans the window, the cover beside its controls.
+                    Box(Modifier.fillMaxSize()) {
                         NowPlayingScreen(
                             container,
                             onOpenQueue = { showQueue = true },
-                            onClose = {
-                                nowPlayingPaneExpanded = false
-                                showNowPlaying = false
-                            },
+                            onClose = hidePlayer,
                             compact = true,
                             band = true,
+                            closeIcon = dock.closesToward(),
                         )
+                        DockGrip(dockDrag, dock, ::dockPlayer, Modifier.align(Alignment.TopCenter))
                     }
                 }
+            },
+            bandHeight = nowPlayingBandHeight,
+            onGrowBand = { delta ->
+                nowPlayingBandDraggedDp = clampNowPlayingBandHeight(nowPlayingBandHeight + delta, windowHeight).value
+            },
+            notices = {
+                FailureBar(container.failures)
+                HandoffNoticeBar(container)
+            },
+            footer = {
                 if (showDesktopMiniBar) {
                     if (frost) Spacer(Modifier.height(sheetGap))
                     currentTrack?.let { track ->
@@ -518,105 +511,92 @@ private fun AppScaffold(
                         )
                     }
                 }
+            },
+        ) {
+            // Main content: tabs stay composed across resize and dock moves so Library scroll survives.
+            SheetOrPlain(frost, Modifier.weight(1f).fillMaxSize()) {
+                when {
+                    showQueue && (!desktop || queueInContent) -> QueueScreen(container) { showQueue = false }
+                    showNowPlaying && !desktop -> NowPlayingScreen(
+                        container,
+                        onOpenQueue = { showQueue = true },
+                        onClose = { showNowPlaying = false },
+                    )
+                    else -> tabStateHolder.SaveableStateProvider(destination.name) {
+                        when (destination) {
+                            AppDestination.Home -> HomeScreen(
+                                container,
+                                onPlayTracks = ::playTracks,
+                                onOpenNowPlaying = { openNowPlaying() },
+                                onOpenSettings = ::openSettings,
+                                onOpenSearch = { navigateToTab(AppDestination.Search) },
+                                onOpenLibrary = { navigateToTab(AppDestination.Library) },
+                                trackActions = trackActions,
+                                // The docked pane already shows the session, so Home skips its session card.
+                                playerPaneVisible = playerPaneShown,
+                            )
+                            AppDestination.Search -> SearchScreen(
+                                presenter = searchPresenter,
+                                onPlayTrackInList = ::playSearchTracks,
+                                onPlayPlaylist = ::playPlaylist,
+                                trackActions = trackActions,
+                                requestFocus = true,
+                                onOpenSettings = ::openSettings,
+                            )
+                            AppDestination.Library -> LibraryScreen(
+                                container.libraryTypeAhead,
+                                container::consumeLibraryTypeAhead,
+                                libraryPresenter,
+                                ::playTracks,
+                                trackActions,
+                                onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
+                                onShuffleTracks = ::shuffleTracks,
+                                onInnerBack = { screenBack = it },
+                            )
+                            AppDestination.Settings -> SettingsScreen(container, settingsTarget)
+                        }
+                    }
+                }
+                // Overlays the list instead of pushing it, so rapid row actions never shift rows.
+                TrackActionNoticeBar(trackActions, Modifier.align(Alignment.BottomCenter))
             }
 
-            if (queueReplacesSidePane) {
+            if (showWideQueueColumn) {
                 PaneSeam(frost)
                 SkinPane(
                     Modifier
-                        .width(
-                            nowPlayingPaneWidthDp.dp.coerceIn(
-                                DesktopNowPlayingPaneMinWidth,
-                                DesktopNowPlayingPaneMaxWidth,
-                            ),
-                        )
-                        .fillMaxSize(),
+                        .width(DesktopQueueBesideWidth)
+                        .fillMaxHeight(),
                 ) {
                     QueueScreen(container) { showQueue = false }
-                }
-            } else if (showSideNowPlaying) {
-                DesktopResizeHandle(
-                    onDragWidthDelta = { delta ->
-                        nowPlayingPaneWidthDp = (nowPlayingPaneWidthDp + delta.value)
-                            .coerceIn(
-                                DesktopNowPlayingPaneMinWidth.value,
-                                DesktopNowPlayingPaneMaxWidth.value,
-                            )
-                    },
-                )
-                SkinPane(
-                    Modifier
-                        .width(
-                            nowPlayingPaneWidthDp.dp.coerceIn(
-                                DesktopNowPlayingPaneMinWidth,
-                                DesktopNowPlayingPaneMaxWidth,
-                            ),
-                        )
-                        .fillMaxSize(),
-                ) {
-                    Column(Modifier.fillMaxSize()) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 4.dp, end = 4.dp, top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = {
-                                nowPlayingPaneExpanded = false
-                                showNowPlaying = false
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = "Hide now playing",
-                                )
-                            }
-                            Text(
-                                "Now playing",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
-                            NowPlayingScreen(
-                                container,
-                                onOpenQueue = { showQueue = true },
-                                compact = true,
-                            )
-                        }
-                    }
                 }
             }
         }
     }
     }
+    }
+}
+
+/** The arrow on the rail that opens the player points the way the pane slides in from its edge. */
+private fun DockEdge.opensToward(): ImageVector = when (this) {
+    DockEdge.LEFT -> Icons.AutoMirrored.Filled.KeyboardArrowRight
+    DockEdge.RIGHT -> Icons.AutoMirrored.Filled.KeyboardArrowLeft
+    DockEdge.TOP -> Icons.Default.KeyboardArrowDown
+    DockEdge.BOTTOM -> Icons.Default.KeyboardArrowUp
+}
+
+/** The pane's own hide arrow points back at its edge. */
+private fun DockEdge.closesToward(): ImageVector = when (this) {
+    DockEdge.LEFT -> Icons.AutoMirrored.Filled.KeyboardArrowLeft
+    DockEdge.RIGHT -> Icons.AutoMirrored.Filled.KeyboardArrowRight
+    DockEdge.TOP -> Icons.Default.KeyboardArrowUp
+    DockEdge.BOTTOM -> Icons.Default.KeyboardArrowDown
 }
 
 /** Frost draws the desktop wallpaper under the whole window; other skins keep their own ground. */
 @Composable
 private fun FrostOrPlainGround(frost: Boolean, content: @Composable () -> Unit) {
     if (frost) FrostGround(Modifier.fillMaxSize(), content) else content()
-}
-
-/** A Frost glass sheet around [content]; other skins lay it straight on the ground. */
-@Composable
-private fun SheetOrPlain(frost: Boolean, modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
-    if (frost) FrostSheet(modifier, GlassDensity.Tall, content = content) else Box(modifier, content = content)
-}
-
-/** The gap between two Frost sheets, or the hairline between two plain panes. */
-@Composable
-private fun PaneSeam(frost: Boolean) {
-    if (frost) {
-        Spacer(Modifier.width(10.dp))
-    } else {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .width(1.dp)
-                .background(MaterialTheme.colorScheme.outlineVariant),
-        )
-    }
 }
 
 @Composable
