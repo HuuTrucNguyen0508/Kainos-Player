@@ -11,6 +11,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.test.requestFocus
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ComposeUiTest
@@ -35,7 +46,9 @@ class DockedFrameUiTest {
     private val docked = mutableListOf<DockEdge>()
 
     /** The app's frame with a saved, scrollable screen in the content slot, as Library sits in AppScaffold. */
-    private fun ComposeUiTest.showFrame() {
+    private var searchEscapes = 0
+
+    private fun ComposeUiTest.showFrame(searchField: Boolean = false) {
         setContent {
             TestTheme {
                 val tabs = rememberSaveableStateHolder()
@@ -58,6 +71,19 @@ class DockedFrameUiTest {
                         notices = {},
                         footer = {},
                     ) {
+                        if (searchField) {
+                            // Like LibraryHeader's search: it eats Escape to clear itself.
+                            var query by remember { mutableStateOf("abc") }
+                            BasicTextField(
+                                query,
+                                { query = it },
+                                Modifier.testTag("search").onPreviewKeyEvent {
+                                    if (it.key != Key.Escape) return@onPreviewKeyEvent false
+                                    if (it.type == KeyEventType.KeyDown) searchEscapes++
+                                    true
+                                },
+                            )
+                        }
                         Box(Modifier.weight(1f).fillMaxSize()) {
                             tabs.SaveableStateProvider("Library") {
                                 val list = rememberLazyListState()
@@ -143,23 +169,29 @@ class DockedFrameUiTest {
         assertEquals(emptyList(), docked)
     }
 
-    @Test fun escapeCancelsADragInProgress() = runDesktopComposeUiTest(width = 1280, height = 900) {
-        showFrame()
+    @Test fun escapeCancelsADragEvenWhileLibrarySearchHasFocus() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame(searchField = true)
+        onNodeWithTag("search").requestFocus()
+        waitForIdle()
         val grip = grip().getBoundsInRoot()
         grip().performTouchInput {
             down(center)
             moveTo(Offset(-grip.left.toPx() + 30f, center.y), delayMillis = 50)
         }
         waitForIdle()
-        // AppScaffold's back handling (Escape) calls this before anything else.
-        assertTrue(drag.cancel())
+        onNodeWithText("Player is here").assertIsDisplayed()
+        onNodeWithTag("search").performKeyInput { pressKey(Key.Escape) }
         waitForIdle()
         onNodeWithText("Player is here").assertDoesNotExist()
+        assertEquals(0, searchEscapes, "The drag takes Escape before the focused search field")
         grip().performTouchInput {
             moveBy(Offset(5f, 0f))
             up()
         }
         waitForIdle()
         assertEquals(emptyList(), docked)
+
+        onNodeWithTag("search").performKeyInput { pressKey(Key.Escape) }
+        assertEquals(1, searchEscapes, "With no drag, Escape still reaches the search field")
     }
 }

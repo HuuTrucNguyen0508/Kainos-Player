@@ -38,6 +38,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -199,6 +204,12 @@ internal fun DockDropHost(
             .onGloballyPositioned {
                 drag.hostOrigin = it.positionInRoot()
                 drag.hostSize = it.size
+            }
+            // Ahead of the focused field (Library search clears itself on Escape), so Escape always cancels a drag.
+            .onPreviewKeyEvent { event ->
+                if (event.key != Key.Escape || !drag.dragging) return@onPreviewKeyEvent false
+                if (event.type == KeyEventType.KeyDown) drag.cancel()
+                true
             },
     ) {
         content()

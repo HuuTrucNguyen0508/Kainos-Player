@@ -38,7 +38,7 @@ class DesktopLayoutBandTest {
     @Test
     fun portraitBandKeepsMostOfTheHeightForTheLibrary() {
         assertEquals(400.dp, defaultNowPlayingBandHeight(2490.dp))
-        assertEquals(300.dp, defaultNowPlayingBandHeight(800.dp))
+        assertEquals(340.dp, defaultNowPlayingBandHeight(800.dp))
         assertEquals(1120.5.dp, clampNowPlayingBandHeight(2000.dp, 2490.dp))
         assertEquals(DesktopNowPlayingBandMinHeight, clampNowPlayingBandHeight(10.dp, 2490.dp))
     }

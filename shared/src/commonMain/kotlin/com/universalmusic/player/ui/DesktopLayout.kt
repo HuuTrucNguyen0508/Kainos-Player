@@ -104,8 +104,8 @@ val DesktopNowPlayingBandMinHeight: Dp = 240.dp
 /** The band never takes more than this share of the window, so the library keeps most of the height. */
 const val DesktopNowPlayingBandMaxShare: Float = .45f
 
-/** 300dp is the shortest band that still shows the heart / repeat / shuffle row below the transport. */
-fun defaultNowPlayingBandHeight(windowHeight: Dp): Dp = (windowHeight * .18f).coerceIn(300.dp, 400.dp)
+/** 340dp is the shortest band that still shows the heart / repeat / shuffle row and the volume slider. */
+fun defaultNowPlayingBandHeight(windowHeight: Dp): Dp = (windowHeight * .18f).coerceIn(340.dp, 400.dp)
 
 fun clampNowPlayingBandHeight(height: Dp, windowHeight: Dp): Dp =
     height.coerceIn(DesktopNowPlayingBandMinHeight, maxOf(DesktopNowPlayingBandMinHeight, windowHeight * DesktopNowPlayingBandMaxShare))
