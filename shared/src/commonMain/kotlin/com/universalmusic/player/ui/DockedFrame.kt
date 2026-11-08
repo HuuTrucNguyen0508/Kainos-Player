@@ -41,7 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -244,14 +243,19 @@ internal fun DockGrip(
             .semantics { contentDescription = "Drag to move the player to another edge" },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GripDots(rows = if (current.isSide) 3 else 2, columns = if (current.isSide) 2 else 3, lit = lit)
+        if (current.isSide) {
+            GripDots(rows = 3, columns = 2, lit = lit, horizontalPad = 10.dp, verticalPad = 8.dp)
+        } else {
+            // Fits inside the band's top margin, so the band's controls never scroll under it.
+            GripDots(rows = 2, columns = 3, lit = lit, horizontalPad = 20.dp, verticalPad = 4.dp)
+        }
         content()
     }
 }
 
 /** A small field of studs: the one mark in the app that says "this part moves". */
 @Composable
-private fun GripDots(rows: Int, columns: Int, lit: Boolean) {
+private fun GripDots(rows: Int, columns: Int, lit: Boolean, horizontalPad: Dp, verticalPad: Dp) {
     val scheme = MaterialTheme.colorScheme
     val color by animateColorAsState(
         if (lit) scheme.primary else scheme.onSurfaceVariant.copy(alpha = .5f),
@@ -261,7 +265,7 @@ private fun GripDots(rows: Int, columns: Int, lit: Boolean) {
     val gap = 3.dp
     Canvas(
         Modifier
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = horizontalPad, vertical = verticalPad)
             .size(width = dot * columns + gap * (columns - 1), height = dot * rows + gap * (rows - 1)),
     ) {
         val d = dot.toPx()
@@ -284,7 +288,8 @@ private fun DockDropZones(drag: DockDragState, current: DockEdge, sidePaneWidth:
     val sideWidth = minOf(sidePaneWidth, width * .28f)
     val bandDepth = minOf(bandHeight, height * .28f)
     val bandWidth = (width - sideWidth * 2 - inset * 4).coerceAtLeast(0.dp)
-    Box(Modifier.fillMaxSize().background(scheme.background.copy(alpha = .62f))) {
+    // Dim the app enough that the zones, not the screen under them, are what the eye reads.
+    Box(Modifier.fillMaxSize().background(scheme.background.copy(alpha = .84f))) {
         for (edge in DockEdge.entries) {
             val zone = when (edge) {
                 DockEdge.LEFT -> Modifier.offset(inset, inset).size(sideWidth, height - inset * 2)
@@ -314,7 +319,10 @@ private fun DockDropZones(drag: DockDragState, current: DockEdge, sidePaneWidth:
 private fun DropZone(edge: DockEdge, chosen: Boolean, here: Boolean, modifier: Modifier) {
     val scheme = MaterialTheme.colorScheme
     val radius = 14.dp
-    val fill by animateColorAsState(if (chosen) scheme.primary.copy(alpha = .2f) else Color.Transparent, tween(120))
+    val fill by animateColorAsState(
+        if (chosen) scheme.primary.copy(alpha = .2f) else scheme.surfaceContainerHigh.copy(alpha = .4f),
+        tween(120),
+    )
     val ink by animateColorAsState(if (chosen) scheme.primary else scheme.onSurfaceVariant, tween(120))
     Box(
         modifier
