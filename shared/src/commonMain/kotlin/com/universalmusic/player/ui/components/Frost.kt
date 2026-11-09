@@ -173,12 +173,31 @@ private fun DrawScope.drawCover(painter: Painter, area: Size) {
 
 private fun Size.isUnspecified() = this == Size.Unspecified
 
-/** radial-gradient(70% 55% at 18% 0%, white α, transparent 70%) from the shell's Tokens.qml. */
+/** Height over width beyond which a sheet is a column (the rail, a side pane, the queue). */
+private const val ColumnSheetRatio = 3f
+
+/** How far down a column's top wash reaches before it has faded out. */
+private val ColumnWashDepth = 300.dp
+
+/**
+ * radial-gradient(70% 55% at 18% 0%, white α, transparent 70%) from the shell's Tokens.qml. On a
+ * column that ellipse turns into a tall streak lit down its left two-thirds, so a column gets the
+ * same light as an even wash across its top instead.
+ */
 private fun DrawScope.drawSpecular(alpha: Float) {
-    if (alpha <= 0f) return
+    if (alpha <= 0f || size.width <= 0f || size.height <= 0f) return
+    if (size.height > size.width * ColumnSheetRatio) {
+        drawRect(
+            Brush.verticalGradient(
+                0f to Color.White.copy(alpha = alpha),
+                1f to Color.Transparent,
+                endY = minOf(ColumnWashDepth.toPx(), size.height),
+            ),
+        )
+        return
+    }
     val rx = size.width * .70f
     val ry = size.height * .55f
-    if (rx <= 0f || ry <= 0f) return
     val center = Offset(size.width * .18f, 0f)
     scale(1f, ry / rx, pivot = center) {
         drawCircle(
