@@ -89,7 +89,10 @@ fun KainosTabBar(
     }
 }
 
-/** The desktop rail with a [footer] slot. */
+/**
+ * The desktop rail: the places you browse at the top, Settings anchored at the foot below the
+ * [footer] slot, so the destinations you move between stay together.
+ */
 @Composable
 fun KainosRail(
     selected: AppDestination,
@@ -99,7 +102,6 @@ fun KainosRail(
 ) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
-    val folio = tokens.skin == Skin.FOLIO
     // Frost's rail sits inside its own glass sheet.
     val container = when (tokens.skin) {
         Skin.FOLIO -> palette.ground
@@ -111,21 +113,42 @@ fun KainosRail(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            Modifier.size(44.dp).clip(RoundedCornerShape(tokens.rounding.large)).background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "K",
-                style = MaterialTheme.typography.titleLarge.copy(fontFamily = tokens.display, fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
+        RailMark()
         Spacer(Modifier.height(8.dp))
-        AppDestination.entries.forEach { item ->
+        AppDestination.entries.filter { it != AppDestination.Settings }.forEach { item ->
             TabItem(item, item == selected) { onSelect(item) }
         }
+        Spacer(Modifier.weight(1f))
         footer()
+        TabItem(AppDestination.Settings, selected == AppDestination.Settings) { onSelect(AppDestination.Settings) }
+    }
+}
+
+/** The "K" mark. On Frost it is etched into the glass: an opaque tile would show one edge and lose the other. */
+@Composable
+private fun RailMark() {
+    val tokens = LocalSkinTokens.current
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(tokens.rounding.large)
+    val frost = tokens.skin == Skin.FROST
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(shape)
+            .then(
+                if (frost) {
+                    Modifier.background(scheme.onSurface.copy(alpha = .08f)).border(1.dp, LocalKainosPalette.current.hair, shape)
+                } else {
+                    Modifier.background(scheme.primaryContainer)
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "K",
+            style = MaterialTheme.typography.titleLarge.copy(fontFamily = tokens.display, fontWeight = FontWeight.Medium),
+            color = if (frost) scheme.onSurface else scheme.onPrimaryContainer,
+        )
     }
 }
 
