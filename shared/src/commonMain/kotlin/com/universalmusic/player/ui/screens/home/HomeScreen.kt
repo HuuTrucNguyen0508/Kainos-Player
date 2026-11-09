@@ -3,6 +3,7 @@ package com.universalmusic.player.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -87,39 +88,21 @@ internal fun HomeContent(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 900.dp
         val firstRunTop = (maxHeight * .1f).coerceIn(28.dp, 96.dp)
-        val sidePad = if (wide) 28.dp else 20.dp
-        val columns = continueListeningColumns((maxWidth - sidePad * 2).value.toInt())
+        val hasHistory = ui.shelves.isNotEmpty() ||
+            continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible).isNotEmpty()
+        val layout = homeColumns(maxWidth, hasHistory)
+        // Each grid is sized against the column it sits in, not the page.
+        val columns = continueListeningColumns((layout.end ?: layout.start).value.toInt())
         val continueListening = remember(ui.recent, ui.sessionFocus, playerPaneVisible, columns) {
             continueListeningTracks(ui.recent, ui.sessionFocus, playerPaneVisible, limit = continueListeningLimit(columns))
         }
         // The hero shares its row with the library card (and Discover when present).
-        val heroShare = if (wide) 1.25f / (if (ui.loadedDiscover != null) 3.25f else 2.25f) else 1f
-        val heroStacked = (maxWidth - sidePad * 2) * heroShare < 440.dp
+        val heroShare = if (layout.cardsInRow) 1.25f / (if (ui.loadedDiscover != null) 3.25f else 2.25f) else 1f
+        val heroStacked = layout.start * heroShare < 440.dp
 
-        Column(
-            Modifier
-                .widthIn(max = 1480.dp)
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .verticalScroll(rememberScrollState())
-                .padding(start = sidePad, end = sidePad, bottom = 24.dp),
-        ) {
-            // Until saved data loads, an empty Home could still be a returning listener's.
-            if (ui.empty) {
-                if (ui.ready) FirstRun(ui.sources, act, Modifier.padding(top = firstRunTop))
-                return@Column
-            }
-
-            DisplayHero(
-                title = "Home",
-                eyebrow = homeEyebrow(ui.favorites.count, ui.localTrackCount),
-                ghost = ui.favorites.count.takeIf { it > 0 }?.toString(),
-                accent = Accents.home,
-                modifier = Modifier.padding(top = 20.dp),
-            )
-
+        // "Start something": the cards that begin listening, and the pins.
+        val startSection: @Composable ColumnScope.() -> Unit = {
             // The Echo plays apart from this app, so its card shows even beside the Now Playing pane.
             EchoOnHome(presenter.echo)
 
@@ -165,7 +148,7 @@ internal fun HomeContent(
                 )
             }
             val library: @Composable (Modifier) -> Unit = { m -> LibraryCard(ui.libraryLines, openDoor, m) }
-            if (wide) {
+            if (layout.cardsInRow) {
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (ui.loadedDiscover != null) discover(Modifier.weight(1f).fillMaxHeight())
                     favorites(Modifier.weight(1.25f).fillMaxHeight())
@@ -214,8 +197,9 @@ internal fun HomeContent(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             }
-
-            Spacer(Modifier.height(20.dp))
+        }
+        // "Pick up where you left off": what you played, and the history shelves.
+        val historySection: @Composable ColumnScope.() -> Unit = {
             ContinueListeningSection(
                 tracks = continueListening,
                 columns = columns,
@@ -225,6 +209,41 @@ internal fun HomeContent(
             ui.shelves.forEachIndexed { index, shelf ->
                 if (index > 0 || continueListening.isNotEmpty()) Spacer(Modifier.height(20.dp))
                 HistoryShelf(shelf, columns, onPlayTracks, trackActions = trackActions)
+            }
+        }
+
+        Column(
+            Modifier
+                .widthIn(max = layout.maxWidth)
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .verticalScroll(rememberScrollState())
+                .padding(start = layout.sidePad, end = layout.sidePad, bottom = 24.dp),
+        ) {
+            // Until saved data loads, an empty Home could still be a returning listener's.
+            if (ui.empty) {
+                if (ui.ready) FirstRun(ui.sources, act, Modifier.padding(top = firstRunTop))
+                return@Column
+            }
+
+            DisplayHero(
+                title = "Home",
+                eyebrow = homeEyebrow(ui.favorites.count, ui.localTrackCount),
+                ghost = ui.favorites.count.takeIf { it > 0 }?.toString(),
+                accent = Accents.home,
+                modifier = Modifier.padding(top = 20.dp),
+            )
+
+            if (layout.end == null) {
+                startSection()
+                Spacer(Modifier.height(20.dp))
+                historySection()
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(HomeSpreadGutter)) {
+                    Column(Modifier.weight(HomeStartWeight)) { startSection() }
+                    // Its first heading lines up with the top of the first card on the left.
+                    Column(Modifier.weight(1f).padding(top = 16.dp)) { historySection() }
+                }
             }
         }
     }
