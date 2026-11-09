@@ -32,6 +32,9 @@ internal fun spotifyReceiverStatus(kind: SpotifyReceiverEvent.Kind, current: Eng
     else -> current
 }
 
+/** Only the receiver actually playing the requested track ends the start watchdog, as on desktop. */
+internal fun spotifyReceiverConfirmsStart(kind: SpotifyReceiverEvent.Kind): Boolean = kind == SpotifyReceiverEvent.Kind.PLAYING
+
 /** How long a Spotify start may wait for the receiver to confirm before it counts as failed. */
 internal const val SPOTIFY_START_DEADLINE_MS = 30_000L
 

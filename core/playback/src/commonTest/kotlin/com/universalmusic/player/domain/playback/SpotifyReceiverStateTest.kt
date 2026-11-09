@@ -50,4 +50,15 @@ class SpotifyReceiverStateTest {
         assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(seen("previous"), requested, waitedMs = SPOTIFY_START_DEADLINE_MS))
         assertEquals(SpotifyStartCheck.PLAYING, spotifyStartCheck(seen("wanted"), "wanted", waitedMs = 10_000))
     }
+
+    @Test fun aReceiverThatOnlyBuffersStillFailsAtTheDeadline() {
+        // A matching BUFFERING or SEEKED event must not stop the start watchdog; only PLAYING does.
+        assertFalse(spotifyReceiverConfirmsStart(Kind.BUFFERING))
+        assertFalse(spotifyReceiverConfirmsStart(Kind.SEEKED))
+        assertFalse(spotifyReceiverConfirmsStart(Kind.POSITION_CORRECTION))
+        assertTrue(spotifyReceiverConfirmsStart(Kind.PLAYING))
+        // With no confirmation and no usable observation, the watchdog fails the start at the deadline.
+        assertEquals(EngineStatus.BUFFERING, spotifyReceiverStatus(Kind.BUFFERING, EngineStatus.BUFFERING))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(null, "spotify:track:wanted", waitedMs = SPOTIFY_START_DEADLINE_MS))
+    }
 }

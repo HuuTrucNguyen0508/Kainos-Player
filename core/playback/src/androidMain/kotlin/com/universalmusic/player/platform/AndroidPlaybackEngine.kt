@@ -408,7 +408,8 @@ class AndroidPlaybackEngine(
                                 return@collect
                             }
                             if (!sameTrack || event.kind == SpotifyReceiverEvent.Kind.END_OF_TRACK) return@collect
-                            receiverConfirmed = true
+                            // Buffering or a seek before the first PLAYING must leave the start deadline running.
+                            if (com.universalmusic.player.domain.playback.spotifyReceiverConfirmsStart(event.kind)) receiverConfirmed = true
                             spotifyOffset = event.positionMs ?: _state.value.positionMs
                             spotifyStartedAt = System.currentTimeMillis()
                             _state.update { current -> current.copy(
