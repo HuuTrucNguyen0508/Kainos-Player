@@ -24,6 +24,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -86,6 +87,8 @@ import com.universalmusic.player.domain.playback.HandoffNotice
 import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.ui.components.KainosRail
 import com.universalmusic.player.ui.components.KainosTabBar
+import com.universalmusic.player.ui.components.ArtworkImage
+import com.universalmusic.player.ui.components.rememberAlbumLight
 import com.universalmusic.player.ui.components.MiniPlayerBar
 import com.universalmusic.player.ui.components.skinGround
 import com.universalmusic.player.ui.theme.AccentSlot
@@ -377,11 +380,15 @@ private fun AppScaffold(
         container.uiRequests.collect { request -> handleUiRequest(request) }
     }
 
+    // The cover's light goes with the player while it is carried; the scheme accent when nothing plays.
+    val carriedLight = if (desktop) rememberAlbumLight(currentTrack?.artwork?.url).value else MaterialTheme.colorScheme.primary
     DockDropHost(
         drag = dockDrag,
         current = dock,
         sidePaneWidth = nowPlayingPaneWidthDp.dp.coerceIn(DesktopNowPlayingPaneMinWidth, DesktopNowPlayingPaneMaxWidth),
         bandHeight = nowPlayingBandHeight,
+        light = carriedLight,
+        carry = if (!desktop) null else { { DockCarryBody(currentTrack) } },
     ) {
     FrostOrPlainGround(frost) {
     Scaffold(
@@ -500,15 +507,22 @@ private fun AppScaffold(
                 HandoffNoticeBar(container)
             },
             footer = {
-                if (showDesktopMiniBar) {
-                    if (frost) Spacer(Modifier.height(sheetGap))
-                    currentTrack?.let { track ->
-                        DesktopMiniPlayer(
-                            container = container,
-                            track = track,
-                            canSkipNext = canSkipNext,
-                            onOpen = { openNowPlaying() },
-                        )
+                // Rises from the bottom edge as the pane folds away, and sinks back when it returns.
+                AnimatedVisibility(
+                    visible = showDesktopMiniBar,
+                    enter = expandVertically(dockSlotSpec(), expandFrom = Alignment.Bottom) + fadeIn(dockFadeSpec()),
+                    exit = shrinkVertically(dockSlotSpec(), shrinkTowards = Alignment.Bottom) + fadeOut(dockFadeSpec()),
+                ) {
+                    Column {
+                        if (frost) Spacer(Modifier.height(sheetGap))
+                        currentTrack?.let { track ->
+                            DesktopMiniPlayer(
+                                container = container,
+                                track = track,
+                                canSkipNext = canSkipNext,
+                                onOpen = { openNowPlaying() },
+                            )
+                        }
                     }
                 }
             },
@@ -793,6 +807,35 @@ private fun DesktopMiniPlayer(
         onToggle = { container.player.togglePlayPause() },
         onNext = { container.player.skipToNext() },
     )
+}
+
+/** What the hand holds while the player is carried: the cover and the song, or the pane's name when nothing plays. */
+@Composable
+private fun DockCarryBody(track: Track?) {
+    Row(
+        Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (track != null) {
+            ArtworkImage(track.artwork, contentDescription = track.title, modifier = Modifier.size(44.dp))
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                track?.title ?: "Now playing",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                track?.artistLine ?: "Nothing playing",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 /** The app chrome only depends on track identity/metadata, never transport position. */

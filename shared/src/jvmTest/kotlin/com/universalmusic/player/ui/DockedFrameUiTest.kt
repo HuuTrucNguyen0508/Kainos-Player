@@ -26,7 +26,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -42,6 +44,7 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class DockedFrameUiTest {
     private var dock by mutableStateOf(DockEdge.RIGHT)
+    private var hidePane by mutableStateOf(false)
     private val drag = DockDragState()
     private val docked = mutableListOf<DockEdge>()
 
@@ -52,18 +55,20 @@ class DockedFrameUiTest {
         setContent {
             TestTheme {
                 val tabs = rememberSaveableStateHolder()
-                DockDropHost(drag, dock, sidePaneWidth = 300.dp, bandHeight = 240.dp) {
+                DockDropHost(drag, dock, sidePaneWidth = 300.dp, bandHeight = 240.dp, carry = { Text("Carrying the player") }) {
                     DockedFrame(
                         dock = dock,
                         frost = false,
                         modifier = Modifier.fillMaxSize(),
                         rail = { Text("Rail") },
-                        sidePane = { DockGrip(drag, dock, { docked += it }) { Text("Now playing") } },
+                        sidePane = if (hidePane) null else { { DockGrip(drag, dock, { docked += it }) { Text("Now playing") } } },
                         sidePaneWidth = 300.dp,
                         onGrowSidePane = {},
-                        band = {
-                            Box(Modifier.fillMaxSize()) {
-                                DockGrip(drag, dock, { docked += it }, Modifier.align(Alignment.TopCenter)) { Text("Now playing") }
+                        band = if (hidePane) null else {
+                            {
+                                Box(Modifier.fillMaxSize()) {
+                                    DockGrip(drag, dock, { docked += it }, Modifier.align(Alignment.TopCenter)) { Text("Now playing") }
+                                }
                             }
                         },
                         bandHeight = 240.dp,
@@ -84,7 +89,7 @@ class DockedFrameUiTest {
                                 },
                             )
                         }
-                        Box(Modifier.weight(1f).fillMaxSize()) {
+                        Box(Modifier.weight(1f).fillMaxSize().testTag("content")) {
                             tabs.SaveableStateProvider("Library") {
                                 val list = rememberLazyListState()
                                 LazyColumn(Modifier.fillMaxSize(), state = list) {
@@ -129,6 +134,55 @@ class DockedFrameUiTest {
     }
 
     private fun ComposeUiTest.grip() = onNodeWithContentDescription("Drag to move the player to another edge")
+
+    @Test fun movingThePlayerNeverComposesItTwice() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        mainClock.autoAdvance = false
+        for (edge in listOf(DockEdge.LEFT, DockEdge.TOP, DockEdge.RIGHT)) {
+            dock = edge
+            // Sample the slide while both the leaving and the arriving slot are on screen.
+            for (step in 1..6) {
+                mainClock.advanceTimeBy(48)
+                onAllNodesWithText("Now playing").assertCountEquals(1)
+            }
+            mainClock.advanceTimeBy(1_000)
+            onAllNodesWithText("Now playing").assertCountEquals(1)
+        }
+    }
+
+    @Test fun hidingThePlayerFoldsTheSlotAwayAndShowingItBringsItBack() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        val shown = onNodeWithText("Now playing").getBoundsInRoot()
+        val contentBeside = onNodeWithTag("content").getBoundsInRoot()
+        hidePane = true
+        waitForIdle()
+        onNodeWithText("Now playing").assertDoesNotExist()
+        assertTrue(onNodeWithTag("content").getBoundsInRoot().right > shown.left, "The content took the pane's room")
+        hidePane = false
+        waitForIdle()
+        assertEquals(shown, onNodeWithText("Now playing").getBoundsInRoot())
+        assertEquals(contentBeside, onNodeWithTag("content").getBoundsInRoot())
+    }
+
+    @Test fun theCarriedCardFollowsTheDragAndIsGoneOnceACancelSettles() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        onNodeWithText("Carrying the player").assertDoesNotExist()
+        val grip = grip().getBoundsInRoot()
+        grip().performTouchInput {
+            down(center)
+            moveTo(Offset(-grip.left.toPx() + 30f, center.y), delayMillis = 50)
+        }
+        waitForIdle()
+        onNodeWithText("Carrying the player").assertIsDisplayed()
+        assertTrue(drag.cancel())
+        waitForIdle()
+        onNodeWithText("Drag to an edge to move the player. Esc cancels.").assertDoesNotExist()
+        onNodeWithText("Let go to put the player on the left").assertDoesNotExist()
+        onNodeWithText("Carrying the player").assertDoesNotExist()
+        grip().performTouchInput { up() }
+        waitForIdle()
+        assertEquals(emptyList(), docked)
+    }
 
     @Test fun draggingTheGripToAnEdgeDocksThere() = runDesktopComposeUiTest(width = 1280, height = 900) {
         showFrame()
