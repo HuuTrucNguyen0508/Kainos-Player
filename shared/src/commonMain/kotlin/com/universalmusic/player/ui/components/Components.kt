@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
@@ -166,59 +168,119 @@ fun TrackRow(
     val needsNetwork = availability == null && track.requiresNetworkToPlay() &&
         remember(track.canonicalId) { !isNetworkAvailable() }
     val source = (track.playableSources().firstOrNull() ?: track.sources.firstOrNull())?.provider
+    val table = LocalTrackTable.current
     LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted, onLongClick = onLongClick) {
-        Box {
-            ArtworkImage(
-                track.artwork, track.title, Modifier.size(artSize), track.title,
-                shape = RoundedCornerShape(LocalSkinTokens.current.rounding.small),
-            )
-            if (folio && source != null) {
-                Box(
-                    Modifier.align(Alignment.BottomCenter).offset(y = 5.dp).size(16.dp, 2.dp)
-                        .background(LocalKainosPalette.current.accent(SourceKind.of(source).slot, AccentUse.Mark)),
-                )
-            }
-        }
-        Column(Modifier.weight(1f)) {
+        TrackCover(track, if (table != null) TrackTableCoverSize else artSize, folio, source)
+        if (table != null) {
             Text(
                 track.title,
-                style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(table.titleWeight),
             )
-            Text(
-                track.artistLine,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            MutedCell(track.artistLine, Modifier.weight(table.artistWeight))
+            if (table.showAlbum) MutedCell(track.album?.title.orEmpty(), Modifier.weight(table.albumWeight))
+            Column(Modifier.width(TrackTableAvailabilityWidth)) {
+                TrackAvailabilityLines(availability, status, needsNetwork)
+            }
+            Box(Modifier.width(TrackTableSourceWidth)) {
+                if (source != null) SourceMark(SourceKind.of(source), source.shortLabel)
+            }
+            TrackTableTrailing(table) { trailing?.invoke() }
+        } else {
+            StackedTrackCells(track, compact, availability, status, needsNetwork, source, trailing)
+        }
+    }
+}
+
+@Composable
+private fun RowScope.StackedTrackCells(
+    track: Track,
+    compact: Boolean,
+    availability: TrackAvailabilityInfo?,
+    status: TrackAvailability?,
+    needsNetwork: Boolean,
+    source: ProviderId?,
+    trailing: @Composable (() -> Unit)?,
+) {
+    Column(Modifier.weight(1f)) {
+        Text(
+            track.title,
+            style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            track.artistLine,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TrackAvailabilityLines(availability, status, needsNetwork)
+    }
+    if (!compact && source != null) {
+        SourceMark(SourceKind.of(source), source.shortLabel)
+    }
+    trailing?.invoke()
+}
+
+@Composable
+private fun TrackCover(track: Track, size: Dp, folio: Boolean, source: ProviderId?) {
+    Box {
+        ArtworkImage(
+            track.artwork, track.title, Modifier.size(size), track.title,
+            shape = RoundedCornerShape(LocalSkinTokens.current.rounding.small),
+        )
+        if (folio && source != null) {
+            Box(
+                Modifier.align(Alignment.BottomCenter).offset(y = 5.dp).size(16.dp, 2.dp)
+                    .background(LocalKainosPalette.current.accent(SourceKind.of(source).slot, AccentUse.Mark)),
             )
-            if (status != null && availability != null) {
-                AvailabilityMark(status, availability.label, Modifier.padding(top = 2.dp))
-            } else if (needsNetwork) {
-                AvailabilityMark(TrackAvailability.WAITING_FOR_NETWORK, "Needs connection", Modifier.padding(top = 2.dp))
-            }
-            if (availability?.status == TrackAvailability.DOWNLOADING) {
-                val progress = availability.progress
-                val color = LocalKainosPalette.current.accent(Accents.downloading, AccentUse.Mark)
-                if (progress != null) {
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        color = color,
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
-                    )
-                } else {
-                    LinearProgressIndicator(
-                        color = color,
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
-                    )
-                }
-            }
         }
-        if (!compact && source != null) {
-            SourceMark(SourceKind.of(source), source.shortLabel)
+    }
+}
+
+@Composable
+private fun MutedCell(text: String, modifier: Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+/** The offline mark ("Needs connection", a failed or missing file) and a download's progress line. */
+@Composable
+private fun TrackAvailabilityLines(
+    availability: TrackAvailabilityInfo?,
+    status: TrackAvailability?,
+    needsNetwork: Boolean,
+) {
+    if (status != null && availability != null) {
+        AvailabilityMark(status, availability.label, Modifier.padding(top = 2.dp))
+    } else if (needsNetwork) {
+        AvailabilityMark(TrackAvailability.WAITING_FOR_NETWORK, "Needs connection", Modifier.padding(top = 2.dp))
+    }
+    if (availability?.status == TrackAvailability.DOWNLOADING) {
+        val progress = availability.progress
+        val color = LocalKainosPalette.current.accent(Accents.downloading, AccentUse.Mark)
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                color = color,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
+            )
+        } else {
+            LinearProgressIndicator(
+                color = color,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp),
+            )
         }
-        trailing?.invoke()
     }
 }
 
