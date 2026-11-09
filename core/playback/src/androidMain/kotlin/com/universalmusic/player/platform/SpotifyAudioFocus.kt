@@ -28,7 +28,9 @@ internal class SpotifyAudioFocus(private val context: Context) {
                 else -> SpotifyFocusPolicy.Change.GAIN
             }
             if (event == SpotifyFocusPolicy.Change.LOSS) held = false
-            when (policy.change(event, playing)) {
+            val action = policy.change(event, playing)
+            PlaybackTrace.log("Engine", "Spotify audio focus $event -> $action")
+            when (action) {
                 SpotifyFocusPolicy.Action.PAUSE -> { focusPause = true; AndroidMediaControls.pause() }
                 SpotifyFocusPolicy.Action.RESUME -> AndroidMediaControls.play()
                 SpotifyFocusPolicy.Action.NONE -> Unit
@@ -37,6 +39,7 @@ internal class SpotifyAudioFocus(private val context: Context) {
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                PlaybackTrace.log("Engine", "audio output became noisy (headphones or Bluetooth disconnected); pausing Spotify")
                 policy.userPause()
                 AndroidMediaControls.pause()
             }
