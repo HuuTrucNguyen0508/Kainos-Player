@@ -1,6 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +79,8 @@ internal fun LibraryTabStrip(
                 text = { Text(item.name, maxLines = 1) },
                 selectedContentColor = ink,
                 unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.widthIn(min = 104.dp).drawBehind {
+                // A Tab fills the width it is offered; its text's own width keeps the row at natural size.
+                modifier = Modifier.widthIn(min = 104.dp).width(IntrinsicSize.Max).drawBehind {
                     if (on) {
                         val line = 2.dp.toPx()
                         drawRect(ink, Offset(0f, size.height - line), Size(size.width, line))
