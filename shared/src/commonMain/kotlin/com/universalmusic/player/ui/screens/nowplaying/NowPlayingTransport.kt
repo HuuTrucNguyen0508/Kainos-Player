@@ -83,9 +83,13 @@ internal fun NowPlayingTransport(
     onToggleShuffle: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenSleepTimer: () -> Unit,
+    /** Previous / play / next; a wide band gives the group its natural width instead of the whole row. */
+    primaryModifier: Modifier = Modifier.fillMaxWidth(),
+    /** Heart, repeat, shuffle, queue and sleep. */
+    secondaryModifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     Row(
-        Modifier.fillMaxWidth(),
+        primaryModifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
@@ -126,7 +130,7 @@ internal fun NowPlayingTransport(
 
     Spacer(Modifier.height(4.dp))
     Row(
-        Modifier.fillMaxWidth(),
+        secondaryModifier,
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
