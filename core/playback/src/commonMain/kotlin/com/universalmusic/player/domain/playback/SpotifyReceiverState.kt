@@ -81,7 +81,8 @@ internal suspend fun awaitSpotifyStart(
     elapsedMs: () -> Long,
 ): SpotifyStartOutcome {
     while (true) {
-        delay(pollMs)
+        // Slow observations must not push the last poll past the deadline.
+        delay(pollMs.coerceAtMost((SPOTIFY_START_DEADLINE_MS - elapsedMs()).coerceAtLeast(0)))
         if (!stillWaiting()) return SpotifyStartOutcome.Abandoned
         val observed = observe?.let { call ->
             runCatching { withTimeoutOrNull(SPOTIFY_OBSERVE_TIMEOUT_MS) { call() } }.getOrNull()

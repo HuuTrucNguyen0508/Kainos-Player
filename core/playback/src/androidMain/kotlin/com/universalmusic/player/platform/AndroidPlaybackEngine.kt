@@ -460,17 +460,16 @@ class AndroidPlaybackEngine(
                 }
                 if (_state.value.status == EngineStatus.PLAYING) startTicker()
                 else {
-                    val intent = transportIntent
                     scope.launch {
                         val waitingSince = System.currentTimeMillis()
                         val outcome = awaitSpotifyStart(
                             trackId = handle.trackId,
                             pollMs = if (noReceiver) SPOTIFY_START_POLL_NO_RECEIVER_MS else SPOTIFY_START_POLL_MS,
                             observe = spotify.observe,
+                            // Pause, resume and stop move the status off BUFFERING; a seek keeps the deadline running.
                             stillWaiting = {
                                 activeBackend == ActiveBackend.SPOTIFY && activePlayGeneration == generation &&
-                                    !receiverConfirmed && transportIntent == intent &&
-                                    _state.value.status == EngineStatus.BUFFERING
+                                    !receiverConfirmed && _state.value.status == EngineStatus.BUFFERING
                             },
                             elapsedMs = { System.currentTimeMillis() - waitingSince },
                         )

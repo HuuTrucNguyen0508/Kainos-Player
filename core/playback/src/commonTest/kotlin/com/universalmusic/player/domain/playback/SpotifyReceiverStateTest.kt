@@ -121,4 +121,14 @@ class SpotifyReceiverStateTest {
         assertEquals(SpotifyStartOutcome.Playing(progressMs = 4_000), outcome)
         assertEquals(SPOTIFY_START_POLL_NO_RECEIVER_MS, at)
     }
+
+    @Test fun slowObservationsStillFailWithinOneObservationOfTheDeadline() = runTest {
+        val slow: suspend () -> SpotifyObservedPlayback? = {
+            kotlinx.coroutines.delay(SPOTIFY_OBSERVE_TIMEOUT_MS - 100)
+            playing("previous")
+        }
+        val (outcome, at) = await(slow)
+        assertEquals(SpotifyStartOutcome.Failed, outcome)
+        assertTrue(at <= SPOTIFY_START_DEADLINE_MS + SPOTIFY_OBSERVE_TIMEOUT_MS, "failed at $at ms")
+    }
 }
