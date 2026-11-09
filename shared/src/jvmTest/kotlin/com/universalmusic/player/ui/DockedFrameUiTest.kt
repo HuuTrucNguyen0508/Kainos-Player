@@ -47,6 +47,7 @@ class DockedFrameUiTest {
 
     /** The app's frame with a saved, scrollable screen in the content slot, as Library sits in AppScaffold. */
     private var searchEscapes = 0
+    private var queueColumn by mutableStateOf(false)
 
     private fun ComposeUiTest.showFrame(searchField: Boolean = false) {
         setContent {
@@ -62,7 +63,7 @@ class DockedFrameUiTest {
                         sidePaneWidth = 300.dp,
                         onGrowSidePane = {},
                         band = {
-                            Box(Modifier.fillMaxSize()) {
+                            Box(Modifier.fillMaxSize().testTag("band")) {
                                 DockGrip(drag, dock, { docked += it }, Modifier.align(Alignment.TopCenter)) { Text("Now playing") }
                             }
                         },
@@ -70,6 +71,8 @@ class DockedFrameUiTest {
                         onGrowBand = {},
                         notices = {},
                         footer = {},
+                        queueColumn = if (queueColumn) { { Text("Queue column") } } else null,
+                        queueColumnWidth = 400.dp,
                     ) {
                         if (searchField) {
                             // Like LibraryHeader's search: it eats Escape to clear itself.
@@ -127,6 +130,42 @@ class DockedFrameUiTest {
         val band = onNodeWithText("Now playing").getBoundsInRoot()
         assertTrue(band.bottom <= onNodeWithText("Song 000").getBoundsInRoot().top, "The top band sits above the content")
     }
+
+    @Test fun theUltrawideQueueColumnKeepsTheLibraryScrolledThroughDockMovesAndToggles() =
+        runDesktopComposeUiTest(width = 2600, height = 1000) {
+            queueColumn = true
+            showFrame()
+            onNode(hasScrollToIndexAction()).performScrollToIndex(120)
+            waitForIdle()
+
+            for (edge in listOf(DockEdge.LEFT, DockEdge.TOP, DockEdge.BOTTOM, DockEdge.RIGHT)) {
+                dock = edge
+                waitForIdle()
+                onNodeWithText("Song 120").assertIsDisplayed()
+                onNodeWithText("Song 000").assertDoesNotExist()
+                val content = onNodeWithText("Song 120").getBoundsInRoot()
+                val queue = onNodeWithText("Queue column").getBoundsInRoot()
+                val player = onNodeWithText("Now playing").getBoundsInRoot()
+                assertTrue(content.right <= queue.left, "$edge: the queue stands right of the content, got $content $queue")
+                when (edge) {
+                    DockEdge.RIGHT -> assertTrue(queue.right <= player.left, "rail | content | queue | player, got $queue $player")
+                    DockEdge.LEFT -> assertTrue(player.right <= content.left, "rail | player | content | queue, got $player $content")
+                    // The band ends where the queue column begins.
+                    else -> {
+                        val band = onNodeWithTag("band").getBoundsInRoot()
+                        assertTrue(band.right <= queue.left && queue.left - band.right < 20.dp, "$edge: band | queue, got $band $queue")
+                    }
+                }
+            }
+
+            queueColumn = false
+            waitForIdle()
+            onNodeWithText("Queue column").assertDoesNotExist()
+            onNodeWithText("Song 120").assertIsDisplayed()
+            queueColumn = true
+            waitForIdle()
+            onNodeWithText("Song 120").assertIsDisplayed()
+        }
 
     private fun ComposeUiTest.grip() = onNodeWithContentDescription("Drag to move the player to another edge")
 

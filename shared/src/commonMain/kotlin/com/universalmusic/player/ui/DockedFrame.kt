@@ -67,7 +67,8 @@ import com.universalmusic.player.ui.components.SkinPane
 /**
  * The desktop frame: rail, then the player on whichever [dock] edge, wrapped around the content.
  * The content column keeps one call site whatever the dock, so moving the player never resets a
- * screen's saved state (Library's scroll, the open tab).
+ * screen's saved state (Library's scroll, the open tab). A [queueColumn] stands right of the content
+ * at full height, so a top or bottom band ends where it begins and a right-docked player sits past it.
  */
 @Composable
 internal fun DockedFrame(
@@ -86,6 +87,8 @@ internal fun DockedFrame(
     onGrowBand: (Dp) -> Unit,
     notices: @Composable ColumnScope.() -> Unit,
     footer: @Composable ColumnScope.() -> Unit,
+    queueColumn: (@Composable () -> Unit)? = null,
+    queueColumnWidth: Dp = DesktopQueueColumnWidth,
     content: @Composable RowScope.() -> Unit,
 ) {
     val side = sidePane.takeIf { dock.isSide }
@@ -111,6 +114,10 @@ internal fun DockedFrame(
                 BandPane(bandHeight, strip)
             }
             footer()
+        }
+        if (queueColumn != null) {
+            PaneSeam(frost)
+            SkinPane(Modifier.width(queueColumnWidth).fillMaxHeight(), content = queueColumn)
         }
         if (side != null && dock == DockEdge.RIGHT) {
             SideSeam(frost, onGrowSidePane, growsTowardPointer = false)

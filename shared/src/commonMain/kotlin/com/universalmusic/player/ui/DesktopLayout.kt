@@ -36,6 +36,12 @@ val DesktopNarrowMaxWidth: Dp = 840.dp
 /** At/above this width, Queue can sit beside Library while Now Playing stays open. */
 val DesktopWideMinWidth: Dp = 1200.dp
 
+/** At/above this width (a 3440 ultrawide, two 1080p panels) the Queue stands in the frame as its own column. */
+val DesktopUltraWideMinWidth: Dp = 2000.dp
+
+/** The Queue column's width on an ultrawide window. */
+val DesktopQueueColumnWidth: Dp = 400.dp
+
 val DesktopNowPlayingPaneMinWidth: Dp = 280.dp
 val DesktopNowPlayingPaneMaxWidth: Dp = 560.dp
 val DesktopNowPlayingPaneDefaultWidth: Dp = 380.dp
@@ -50,6 +56,12 @@ enum class DesktopLayoutBand {
 
     /** Content + optional Queue column beside Library + Now Playing pane. */
     Wide,
+
+    /** Everything [Wide] does, with the Queue standing as a column of the frame instead of an overlay. */
+    UltraWide;
+
+    /** [Wide] and up: the Queue sits beside the content instead of taking the player's place. */
+    val isWide: Boolean get() = this == Wide || this == UltraWide
 }
 
 /**
@@ -112,6 +124,7 @@ fun clampNowPlayingBandHeight(height: Dp, windowHeight: Dp): Dp =
 
 fun desktopLayoutBand(maxWidth: Dp): DesktopLayoutBand = when {
     maxWidth < DesktopNarrowMaxWidth -> DesktopLayoutBand.Narrow
+    maxWidth >= DesktopUltraWideMinWidth -> DesktopLayoutBand.UltraWide
     maxWidth >= DesktopWideMinWidth -> DesktopLayoutBand.Wide
     else -> DesktopLayoutBand.Standard
 }
@@ -129,6 +142,14 @@ internal fun nowPlayingPaneShown(
     remoteAvailable: Boolean = false,
     explicitlyOpened: Boolean = false,
 ): Boolean = expanded && (!nothingEverPlayed || remoteAvailable || explicitlyOpened)
+
+/**
+ * Whether the ultrawide frame shows its Queue column. [choice] is the listener's own toggle this
+ * session; until they make one the column follows the player pane's rule and waits for something
+ * to have played.
+ */
+internal fun queueColumnShown(band: DesktopLayoutBand, choice: Boolean?, nothingEverPlayed: Boolean): Boolean =
+    band == DesktopLayoutBand.UltraWide && (choice ?: !nothingEverPlayed)
 
 /**
  * Drag to resize the pane beside it. [vertical] drags a horizontal seam up and down (the portrait

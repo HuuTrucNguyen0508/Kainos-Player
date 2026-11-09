@@ -23,6 +23,33 @@ class DesktopLayoutBandTest {
     fun wideFrom1200() {
         assertEquals(DesktopLayoutBand.Wide, desktopLayoutBand(1200.dp))
         assertEquals(DesktopLayoutBand.Wide, desktopLayoutBand(1920.dp))
+        assertEquals(DesktopLayoutBand.Wide, desktopLayoutBand(1999.dp))
+    }
+
+    @Test
+    fun ultraWideFrom2000KeepsEverythingWideDoes() {
+        assertEquals(DesktopLayoutBand.UltraWide, desktopLayoutBand(2000.dp))
+        // The 3440x1440 ultrawide's maximised window.
+        assertEquals(DesktopLayoutBand.UltraWide, desktopLayoutBand(3418.dp))
+        assertEquals(true, DesktopLayoutBand.UltraWide.isWide)
+        assertEquals(true, DesktopLayoutBand.Wide.isWide)
+        assertEquals(false, DesktopLayoutBand.Standard.isWide)
+    }
+
+    @Test
+    fun theQueueColumnStandsOnlyOnUltrawideWindows() {
+        for (band in listOf(DesktopLayoutBand.Narrow, DesktopLayoutBand.Standard, DesktopLayoutBand.Wide)) {
+            assertEquals(false, queueColumnShown(band, choice = true, nothingEverPlayed = false), "$band")
+        }
+        assertEquals(true, queueColumnShown(DesktopLayoutBand.UltraWide, choice = null, nothingEverPlayed = false))
+    }
+
+    @Test
+    fun theQueueColumnWaitsForSomethingToHavePlayedUntilTheListenerChooses() {
+        val ultra = DesktopLayoutBand.UltraWide
+        assertEquals(false, queueColumnShown(ultra, choice = null, nothingEverPlayed = true))
+        assertEquals(true, queueColumnShown(ultra, choice = true, nothingEverPlayed = true))
+        assertEquals(false, queueColumnShown(ultra, choice = false, nothingEverPlayed = false))
     }
 
     @Test
