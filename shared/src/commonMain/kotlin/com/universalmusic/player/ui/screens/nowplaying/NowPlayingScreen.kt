@@ -490,7 +490,7 @@ fun NowPlayingScreen(
 
 /** A band at least this wide splits into cover and title, transport, and volume with details. */
 internal val NowPlayingBandZonesMinWidth = 1600.dp
-private val BandTrackColumnWidth = 240.dp
+private val BandTrackColumnWidth = 320.dp
 private val BandTransportMaxWidth = 880.dp
 private val BandPrimaryTransportWidth = 360.dp
 private val BandSecondaryActionsWidth = 480.dp
