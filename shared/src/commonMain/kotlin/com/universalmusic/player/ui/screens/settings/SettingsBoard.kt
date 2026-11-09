@@ -45,14 +45,16 @@ internal fun settingsBoardColumnCount(width: Dp): Int = when {
 
 /**
  * Which sections stand in which column. Fixed, so a section never hops between columns as the
- * window changes within a band: everyday choices first, setup in the middle, upkeep last.
+ * window changes within a band: everyday choices first, setup in the middle, upkeep last. The
+ * four-column split pairs the short sections so the columns end near the same height: what you
+ * hear and keep offline, how it looks, where music comes from, then devices and upkeep.
  */
 internal fun settingsBoardColumns(count: Int): List<List<SettingsSection>> = when (count) {
     4 -> listOf(
-        listOf(SettingsSection.Playback, SettingsSection.Appearance),
-        listOf(SettingsSection.Sources, SettingsSection.Downloads),
-        listOf(SettingsSection.Devices),
-        listOf(SettingsSection.Backup, SettingsSection.Advanced),
+        listOf(SettingsSection.Playback, SettingsSection.Downloads),
+        listOf(SettingsSection.Appearance),
+        listOf(SettingsSection.Sources),
+        listOf(SettingsSection.Devices, SettingsSection.Backup, SettingsSection.Advanced),
     )
     3 -> listOf(
         listOf(SettingsSection.Playback, SettingsSection.Appearance),
