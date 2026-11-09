@@ -55,10 +55,11 @@ internal fun libraryLayout(width: Dp): LibraryLayout {
  * What a split Library's right pane shows: the selected tab, or while Songs is selected (Songs has
  * the left pane to itself) the last other tab the listener chose.
  */
-internal fun libraryOtherTab(selected: LibraryTab, lastOther: LibraryTab): LibraryTab = when {
+internal fun libraryOtherTab(selected: LibraryTab, lastOther: LibraryTab?, populated: Set<LibraryTab> = emptySet()): LibraryTab = when {
     selected != LibraryTab.Songs -> selected
-    lastOther != LibraryTab.Songs -> lastOther
-    else -> LibraryTab.Albums
+    lastOther != null && lastOther != LibraryTab.Songs -> lastOther
+    else -> listOf(LibraryTab.Albums, LibraryTab.Artists, LibraryTab.Playlists, LibraryTab.Folders)
+        .firstOrNull { it in populated } ?: LibraryTab.Albums
 }
 
 /** Tabs at their natural width with an ink underline under the chosen one, so a wide pane is not five islands. */

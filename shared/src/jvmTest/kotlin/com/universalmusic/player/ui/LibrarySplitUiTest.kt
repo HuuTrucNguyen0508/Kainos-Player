@@ -62,6 +62,33 @@ class LibrarySplitUiTest {
         track("Song $n", "Artist $n", album = "Album $n", provider = ProviderId.LOCAL, canonicalId = "local:$index")
     }
 
+    @Test fun noAlbumsDefaultsToArtistsAndCompactFiltersRemainReachableAfterScrolling() = runDesktopComposeUiTest(width = 2400, height = 800) {
+        var width by mutableStateOf(2200.dp)
+        setContent {
+            TestTheme {
+                val scope = rememberCoroutineScope()
+                val presenter = remember { presenter(library.map { it.copy(album = null) }, scope) }
+                Box(Modifier.width(width).fillMaxHeight()) {
+                    LibraryScreen(MutableStateFlow(""), { "" }, presenter, { _, _ -> }, RecordedTrackActions().presenter)
+                }
+            }
+        }
+        onNodeWithText("No albums").assertDoesNotExist()
+        // Artists is shown beside Songs, and the explicit Albums choice still wins.
+        onNodeWithText("Albums").performClick()
+        waitForIdle()
+        onNodeWithText("No albums").assertIsDisplayed()
+        width = 1600.dp
+        waitForIdle()
+        onNodeWithText("Songs").performClick()
+        onNode(hasScrollToIndexAction()).performScrollToIndex(80)
+        onNodeWithText("Favorites only").assertIsDisplayed().performClick()
+        waitForIdle()
+        onNodeWithText("Favorites only").assertIsDisplayed().performClick()
+        waitForIdle()
+        onNodeWithText("Song 000", useUnmergedTree = true).assertIsDisplayed()
+    }
+
     @Test fun crossingTheSplitKeepsTheTabAndEveryScroll() = runDesktopComposeUiTest(width = 2400, height = 800) {
         var width by mutableStateOf(1600.dp)
         setContent {

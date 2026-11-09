@@ -67,6 +67,14 @@ class WideLayoutTest {
         assertEquals(LibraryTab.Albums, libraryOtherTab(LibraryTab.Songs, LibraryTab.Songs))
     }
 
+    @Test fun unchosenRightPaneUsesFirstPopulatedTabButExplicitChoiceWins() {
+        assertEquals(LibraryTab.Artists, libraryOtherTab(LibraryTab.Songs, null, setOf(LibraryTab.Artists, LibraryTab.Folders)))
+        assertEquals(LibraryTab.Playlists, libraryOtherTab(LibraryTab.Songs, null, setOf(LibraryTab.Playlists, LibraryTab.Folders)))
+        assertEquals(LibraryTab.Folders, libraryOtherTab(LibraryTab.Songs, null, setOf(LibraryTab.Folders)))
+        assertEquals(LibraryTab.Albums, libraryOtherTab(LibraryTab.Songs, null, setOf(LibraryTab.Albums, LibraryTab.Artists)))
+        assertEquals(LibraryTab.Albums, libraryOtherTab(LibraryTab.Songs, LibraryTab.Albums, setOf(LibraryTab.Artists)))
+    }
+
     @Test fun searchSplitsOnlyResultsWithSomethingForTheRightPane() {
         assertTrue(searchSplit(2000.dp, showingResults = true, hasTracks = true, hasPlaylists = true, playlistOpen = false))
         assertTrue(searchSplit(2000.dp, showingResults = true, hasTracks = true, hasPlaylists = false, playlistOpen = true))

@@ -87,14 +87,11 @@ internal fun LibraryScreen(
         runCatching { LibraryTab.valueOf(tabName) }.getOrDefault(LibraryTab.Songs)
     }
     // The tab a split Library shows beside Songs; kept narrow too, so widening finds it again.
-    var lastOtherTabName by rememberSaveable { mutableStateOf(LibraryTab.Albums.name) }
+    var lastOtherTabName by rememberSaveable { mutableStateOf<String?>(null) }
     val lastOtherTab = remember(lastOtherTabName) {
-        runCatching { LibraryTab.valueOf(lastOtherTabName) }.getOrDefault(LibraryTab.Albums)
+        lastOtherTabName?.let { name -> LibraryTab.entries.firstOrNull { it.name == name } }
     }
     var split by remember { mutableStateOf(false) }
-    val otherTab = libraryOtherTab(tab, lastOtherTab)
-    // The list on screen that is not Songs: the selected tab, or in a split Library the right pane's.
-    val shownOther = if (split) otherTab else tab
     var sortMenuOpen by remember { mutableStateOf(false) }
     var queryField by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     val query = queryField.text
@@ -111,6 +108,13 @@ internal fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val emitted by presenter.state.collectAsState()
     val state = remember(emitted, query) { emitted.withQuery(query) }
+    val otherTab = libraryOtherTab(tab, lastOtherTab, buildSet {
+        if (state.albums.isNotEmpty()) add(LibraryTab.Albums)
+        if (state.artists.isNotEmpty()) add(LibraryTab.Artists)
+        if (state.kainosPlaylists.isNotEmpty() || state.spotifyPlaylists.isNotEmpty()) add(LibraryTab.Playlists)
+        if (state.folders.isNotEmpty()) add(LibraryTab.Folders)
+    })
+    val shownOther = if (split) otherTab else tab
     SideEffect { presenter.setQuery(query) }
     // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
     val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
@@ -361,19 +365,18 @@ internal fun LibraryScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
+                .then(if (layout.compactHeader) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)),
         ) {
-            LibraryCollapsingHeader(
+            if (layout.compactHeader) {
+                LibraryCompactLine(state.localState, presenter::refreshLocal, searchField, filters)
+                if (showSpotifyError) LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
+            } else LibraryCollapsingHeader(
                 scrollBehavior = scrollBehavior,
                 chromeHeightPx = chromeHeightPx,
                 onChromeHeightPx = { chromeHeightPx = it },
             ) {
-                if (layout.compactHeader) {
-                    LibraryCompactLine(state.localState, presenter::refreshLocal, searchField, filters)
-                } else {
-                    LibraryTitleRow(state.localState, presenter::refreshLocal)
-                    searchField(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp))
-                }
+                LibraryTitleRow(state.localState, presenter::refreshLocal)
+                searchField(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp))
                 if (showSpotifyError) {
                     LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
                 }
