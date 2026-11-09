@@ -111,6 +111,11 @@ class DbListeningExchangeStore(
             export != null && export.last_active_at_ms >= peer.last_active_at_ms) return@write HandoffClaim.LOCAL_CHANGED
         val represented = db.readRemoteSession()
         if (represented != null && peer.last_active_at_ms <= represented.lastActiveAtMs) return@write HandoffClaim.NOT_NEWER
+        // The install runs inside the write lock on purpose: another connection (GUI vs hub-only)
+        // must not claim between the checks above and the commit, or a stale peer could reach the
+        // live session (HandoffConcurrencyTest). It is bounded: RemoteSessionLoader abandons an
+        // install the session thread has not started within 500 ms, and the install itself is
+        // in-memory work that never touches the database.
         val commit = runBlocking { accept() } ?: return@write HandoffClaim.INSTALL_REJECTED
         queries.upsertApplied(deviceId, revision.value, export?.revision ?: 0L)
         db.commitListening(commit, cached = null, pruneReceipts = false)

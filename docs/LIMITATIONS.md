@@ -41,9 +41,9 @@ Save a YouTube Data API key in Settings or set `YOUTUBE_DATA_API_KEY` to enable 
 
 ## Gapless playback and volume
 
-Gapless playback covers local files on Linux only, where mpv plays one straight into the next. Spotify and YouTube tracks have a short gap on Linux, and every track does on Android.
+Local files play gaplessly on both platforms: mpv on Linux, and on Android the next file waits in ExoPlayer behind the playing one. Spotify and YouTube tracks have a short gap. There is no crossfade.
 
-The Spotify receiver applies Spotify Loud normalization at +3 dB on both platforms, with no switch. Local files and YouTube play at their own level; there is no volume normalization for them.
+The Spotify receiver applies Spotify Loud normalization at +3 dB on both platforms, with no switch. Local files with ReplayGain tags are levelled (Settings → Playback, on by default); untagged files and YouTube play at their own level, as there is no loudness analysis. See `docs/CURRENT_STATE.md` for the details.
 
 ## Adding another provider
 

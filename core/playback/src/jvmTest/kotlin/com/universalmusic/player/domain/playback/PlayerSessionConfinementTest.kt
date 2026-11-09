@@ -10,6 +10,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
@@ -113,6 +114,49 @@ class PlayerSessionConfinementTest {
             }
 
             assertEquals(1f, engine.volumes.lastOrNull() ?: 1f, "cancel restores full volume and nothing lowers it again")
+        } finally {
+            scope.cancel()
+            executor.shutdownNow()
+        }
+    }
+    @Test
+    fun aHeartFromAnotherThreadAppliesAfterEarlierCallsAndOnlyToItsTrack() = runBlocking {
+        val executor = Executors.newSingleThreadExecutor { Thread(it, "kainos-session-test") }
+        val sessionDispatcher = executor.asCoroutineDispatcher()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        // The library, which the session re-reads whenever a track (re)starts, as in the app.
+        val library = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        try {
+            val session = PlayerSession(
+                engine = ThreadRecordingEngine(),
+                resolver = DefaultSourceResolver(),
+                scope = scope,
+                confineTo = sessionDispatcher,
+                workContext = Dispatchers.Default,
+                isFavorite = { it in library },
+            )
+            val first = track("First", "A", provider = ProviderId.SAMPLE)
+            val second = track("Second", "A", provider = ProviderId.SAMPLE)
+            session.play(listOf(first, second), startIndex = 0)
+            withContext(sessionDispatcher) { }
+            assertEquals("First", session.nowPlaying.value.track?.title)
+
+            // The session thread is busy (a click being handled) while a media button skips and the
+            // notification hearts the track it was showing, which by then is no longer playing.
+            val busy = CountDownLatch(1)
+            executor.execute { busy.await() }
+            session.skipToNext()
+            library += first.canonicalId
+            session.syncFavorite(first.canonicalId, favorite = true)
+            busy.countDown()
+            withContext(sessionDispatcher) { }
+            assertEquals("Second", session.nowPlaying.value.track?.title)
+            assertFalse(session.nowPlaying.value.favorite, "a heart for the previous track must not land on the next one")
+
+            library += second.canonicalId
+            session.syncFavorite(second.canonicalId, favorite = true)
+            withContext(sessionDispatcher) { }
+            assertTrue(session.nowPlaying.value.favorite, "a heart for the track now playing applies to it")
         } finally {
             scope.cancel()
             executor.shutdownNow()

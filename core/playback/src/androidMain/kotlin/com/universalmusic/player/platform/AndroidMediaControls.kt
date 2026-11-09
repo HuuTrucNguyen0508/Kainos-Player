@@ -172,7 +172,7 @@ object AndroidMediaControls {
         val current = session ?: return false
         val track = current.nowPlaying.value.track ?: return false
         val favorite = toggleFavoriteAction?.invoke(track) ?: return false
-        current.setFavorite(favorite)
+        current.syncFavorite(track.canonicalId, favorite)
         return true
     }
 

@@ -54,7 +54,7 @@ internal class NowPlayingPresenter(
     private val toggleShuffleAction: () -> Unit,
     private val canSkipNextAction: () -> Boolean,
     private val toggleFavoriteTrack: (Track) -> Boolean,
-    private val setFavoriteFlag: (Boolean) -> Unit,
+    private val setFavoriteFlag: (canonicalId: String, favorite: Boolean) -> Unit,
     private val setVolumeLive: (Float) -> Unit,
     private val setPlaybackVolumeAction: (Float) -> Unit,
     private val retry: () -> Unit,
@@ -96,7 +96,7 @@ internal class NowPlayingPresenter(
 
     fun toggleFavorite(track: Track) {
         val favorite = toggleFavoriteTrack(track)
-        setFavoriteFlag(favorite)
+        setFavoriteFlag(track.canonicalId, favorite)
     }
 
     fun setVolume(volume: Float) = setVolumeLive(volume)
@@ -179,7 +179,7 @@ internal class NowPlayingPresenter(
             toggleShuffleAction = container.player::toggleShuffle,
             canSkipNextAction = container.player::canSkipNext,
             toggleFavoriteTrack = container.library::toggleFavorite,
-            setFavoriteFlag = container.player::setFavorite,
+            setFavoriteFlag = container.player::syncFavorite,
             setVolumeLive = container.player::setVolume,
             setPlaybackVolumeAction = container::setPlaybackVolume,
             retry = container.player::retryPlayback,

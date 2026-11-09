@@ -52,6 +52,25 @@ class JvmLocalTrackSourceTest {
         assertEquals(listOf("kept"), provider.refresh().map { it.title })
     }
 
+    @Test fun unreadableNestedFolderKeepsItsCachedTracks() = withTempDirectory { root ->
+        val open = Files.createDirectory(root.resolve("Open"))
+        val locked = Files.createDirectory(root.resolve("Locked"))
+        Files.write(open.resolve("open.mp3"), byteArrayOf())
+        Files.write(locked.resolve("locked.mp3"), byteArrayOf())
+        val provider = LocalMusicProvider(JvmLocalTrackSource(listOf(root)))
+        assertEquals(setOf("open", "locked"), provider.refresh().map { it.title }.toSet())
+        val permissions = Files.getPosixFilePermissions(locked)
+        Files.setPosixFilePermissions(locked, emptySet())
+        try {
+            // Root ignores permissions, so there is nothing to test.
+            if (Files.isReadable(locked)) return@withTempDirectory
+            assertEquals(setOf("open", "locked"), provider.refresh().map { it.title }.toSet())
+            assertEquals(emptyList(), provider.scanResult.value!!.unavailableRoots)
+        } finally {
+            Files.setPosixFilePermissions(locked, permissions)
+        }
+    }
+
     @Test fun disconnectedRootKeepsCachedTracksAndReportsUnavailable() = withTempDirectory { root ->
         val folder = Files.createDirectory(root.resolve("External Music"))
         val source = JvmLocalTrackSource(listOf(folder))
