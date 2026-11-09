@@ -61,7 +61,7 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile override var receiverGeneration: Long = 0L
         private set
     private var session: Session? = null
-    private var player: Player? = null
+    @Volatile private var player: Player? = null
     /** Set by [installLibrespotStaleTaskGuard] when the current player's audio thread died. */
     @Volatile private var audioSinkDied = false
     private val credentialsDir = File(filesDir, "librespot")
@@ -213,7 +213,10 @@ internal class AndroidLibrespotPlaybackHost(
         // Synchronous: resolves the one-track context and starts loading its audio. On failure
         // librespot logs it, enters its PANIC state and leaves the previous track current.
         receiver.load(uri, true, false)
-        check(receiver.currentPlayable()?.toSpotifyUri() == uri) { "player did not take $uri" }
+        // A failed reload of the same track keeps its URI current, but a PANIC always stops playing.
+        check(receiver.currentPlayable()?.toSpotifyUri() == uri && receiver.stateWrapper.state.isPlaying) {
+            "player did not take $uri"
+        }
     }
 
     override suspend fun pause() = onReceiver("pause") { it.pause() }
@@ -345,6 +348,13 @@ internal class AndroidLibrespotPlaybackHost(
     private inner class LibrespotEventsTrace : Player.EventsListener {
         private fun trace(message: String) = PlaybackTrace.log("Librespot", message)
 
+        /** A replaced player's queued callbacks must not reach the track its successor plays. */
+        private fun Player.isCurrent() = this === this@AndroidLibrespotPlaybackHost.player
+
+        private fun emit(player: Player, kind: SpotifyReceiverEvent.Kind, position: Long? = null) {
+            if (player.isCurrent()) receiverEvent(kind, position)
+        }
+
         override fun onContextChanged(player: Player, newUri: String) = trace("context=$newUri")
 
         override fun onTrackChanged(
@@ -353,35 +363,36 @@ internal class AndroidLibrespotPlaybackHost(
             metadata: MetadataWrapper?,
             userInitiated: Boolean,
         ) {
+            trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
+            if (!player.isCurrent()) return
             haltFilter.reset()
             receiverTrackId = id.toSpotifyUri().removePrefix("spotify:track:")
             lastHalted = null
-            trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
         }
 
         override fun onPlaybackEnded(player: Player) {
             trace("playbackEnded")
-            receiverEvent(SpotifyReceiverEvent.Kind.END_OF_TRACK)
+            emit(player, SpotifyReceiverEvent.Kind.END_OF_TRACK)
         }
 
         override fun onPlaybackPaused(player: Player, trackTime: Long) {
             trace("paused at $trackTime")
-            receiverEvent(SpotifyReceiverEvent.Kind.PAUSED, trackTime)
+            emit(player, SpotifyReceiverEvent.Kind.PAUSED, trackTime)
         }
 
         override fun onPlaybackResumed(player: Player, trackTime: Long) {
             trace("resumed at $trackTime")
-            receiverEvent(SpotifyReceiverEvent.Kind.PLAYING, trackTime)
+            emit(player, SpotifyReceiverEvent.Kind.PLAYING, trackTime)
         }
 
         override fun onPlaybackFailed(player: Player, e: Exception) {
             trace("playbackFailed: $e")
-            receiverEvent(SpotifyReceiverEvent.Kind.UNAVAILABLE)
+            emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
         }
 
         override fun onTrackSeeked(player: Player, trackTime: Long) {
             trace("seeked to $trackTime")
-            receiverEvent(SpotifyReceiverEvent.Kind.SEEKED, trackTime)
+            emit(player, SpotifyReceiverEvent.Kind.SEEKED, trackTime)
         }
 
         override fun onMetadataAvailable(player: Player, metadata: MetadataWrapper) = Unit
@@ -392,7 +403,7 @@ internal class AndroidLibrespotPlaybackHost(
         override fun onPlaybackHaltStateChanged(player: Player, halted: Boolean, trackTime: Long) {
             if (halted == lastHalted) return
             lastHalted = halted
-            receiverEvent(when {
+            emit(player, when {
                 player.stateWrapper.state.isPaused -> SpotifyReceiverEvent.Kind.PAUSED
                 halted -> SpotifyReceiverEvent.Kind.BUFFERING
                 else -> SpotifyReceiverEvent.Kind.PLAYING
@@ -401,21 +412,21 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onInactiveSession(player: Player, timeout: Boolean) {
             trace("inactiveSession timeout=$timeout")
-            receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
+            emit(player, SpotifyReceiverEvent.Kind.PAUSED)
         }
 
         override fun onVolumeChanged(player: Player, volume: Float) = Unit
 
         override fun onPanicState(player: Player) {
             trace("PANIC state")
-            receiverEvent(SpotifyReceiverEvent.Kind.UNAVAILABLE)
+            emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
         }
 
         override fun onStartedLoading(player: Player) = trace("startedLoading")
 
         override fun onFinishedLoading(player: Player) {
             trace("finishedLoading")
-            receiverEvent(if (player.stateWrapper.state.isPaused) SpotifyReceiverEvent.Kind.PAUSED else SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
+            emit(player, if (player.stateWrapper.state.isPaused) SpotifyReceiverEvent.Kind.PAUSED else SpotifyReceiverEvent.Kind.PLAYING, player.time().toLong())
         }
     }
 
