@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -50,6 +51,20 @@ import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.ui.theme.LocalSignal
 import com.universalmusic.player.ui.theme.SpotifyGreen
 
+/** The sticky band at the top of a Library list: its [content], then a rule. */
+@Composable
+internal fun LibraryLedgerSurface(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            content()
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        }
+    }
+}
+
 @Composable
 internal fun LibraryLedger(
     countLine: String,
@@ -72,106 +87,137 @@ internal fun LibraryLedger(
     onPlay: () -> Unit,
     showActions: Boolean,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        modifier = Modifier.fillMaxWidth(),
+    LibraryLedgerSurface {
+        LibraryLedgerBar(
+            countLine, localCount, spotifyCount, cachedCount, localOnly, favoritesOnly, localScanning,
+            spotifyConnected, spotifyLoading, onRefreshSpotify, sortLabel, sortMenuOpen, onSortMenuOpen,
+            onSortMenuDismiss, onSortSelected, currentSort, playLabel, onPlay, showActions,
+        )
+    }
+}
+
+/** A list's count and source tallies, with Sort and Play all at the end when [showActions]. */
+@Composable
+internal fun LibraryLedgerBar(
+    countLine: String,
+    localCount: Int,
+    spotifyCount: Int,
+    cachedCount: Int = 0,
+    localOnly: Boolean,
+    favoritesOnly: Boolean,
+    localScanning: Boolean,
+    spotifyConnected: Boolean,
+    spotifyLoading: Boolean,
+    onRefreshSpotify: () -> Unit,
+    sortLabel: String,
+    sortMenuOpen: Boolean,
+    onSortMenuOpen: () -> Unit,
+    onSortMenuDismiss: () -> Unit,
+    onSortSelected: (TrackSort) -> Unit,
+    currentSort: TrackSort,
+    playLabel: String,
+    onPlay: () -> Unit,
+    showActions: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
+        Column(Modifier.weight(1f)) {
+            Text(
+                countLine,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 40.dp)
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        countLine,
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                when {
+                    localScanning -> Text(
+                        "Scanning your folders…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        when {
-                            localScanning -> Text(
-                                "Scanning your folders…",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            else -> {
-                                if (localCount > 0 || localOnly || favoritesOnly) {
-                                    SourceTally(sourceMark(Accents.local), "$localCount local")
-                                }
-                                if (cachedCount > 0) {
-                                    SourceTally(sourceMark(Accents.cached), "$cachedCount cached")
-                                }
-                                if (!localOnly && spotifyConnected) {
-                                    Row(
-                                        Modifier
-                                            .clip(MaterialTheme.shapes.small)
-                                            .clickable(enabled = !spotifyLoading, onClick = onRefreshSpotify)
-                                            .semantics { contentDescription = "Refresh Spotify library" }
-                                            .padding(vertical = 2.dp, horizontal = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        SourceDot(sourceMark(Accents.spotify))
-                                        Text(
-                                            if (spotifyLoading) "Spotify loading…" else "$spotifyCount Spotify",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        if (spotifyLoading) {
-                                            CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp)
-                                        }
-                                    }
-                                }
-                            }
+                    else -> {
+                        if (localCount > 0 || localOnly || favoritesOnly) {
+                            SourceTally(sourceMark(Accents.local), "$localCount local")
                         }
-                    }
-                }
-                if (showActions) {
-                    Box {
-                        TextButton(
-                            onClick = onSortMenuOpen,
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                        ) {
-                            Text(sortLabel, style = MaterialTheme.typography.labelLarge)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                        if (cachedCount > 0) {
+                            SourceTally(sourceMark(Accents.cached), "$cachedCount cached")
                         }
-                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = onSortMenuDismiss) {
-                            TrackSort.entries.forEach { sort ->
-                                DropdownMenuItem(
-                                    text = { Text(sort.label()) },
-                                    onClick = { onSortSelected(sort) },
-                                    trailingIcon = {
-                                        if (currentSort == sort) {
-                                            Icon(Icons.Default.Check, contentDescription = "Selected")
-                                        }
-                                    },
+                        if (!localOnly && spotifyConnected) {
+                            Row(
+                                Modifier
+                                    .clip(MaterialTheme.shapes.small)
+                                    .clickable(enabled = !spotifyLoading, onClick = onRefreshSpotify)
+                                    .semantics { contentDescription = "Refresh Spotify library" }
+                                    .padding(vertical = 2.dp, horizontal = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                SourceDot(sourceMark(Accents.spotify))
+                                Text(
+                                    if (spotifyLoading) "Spotify loading…" else "$spotifyCount Spotify",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                if (spotifyLoading) {
+                                    CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                                }
                             }
                         }
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    FilledTonalButton(
-                        onClick = onPlay,
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        modifier = Modifier.height(36.dp),
-                    ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(playLabel, style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        }
+        if (showActions) {
+            Box {
+                TextButton(
+                    onClick = onSortMenuOpen,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) {
+                    Text(sortLabel, style = MaterialTheme.typography.labelLarge)
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+                DropdownMenu(expanded = sortMenuOpen, onDismissRequest = onSortMenuDismiss) {
+                    TrackSort.entries.forEach { sort ->
+                        DropdownMenuItem(
+                            text = { Text(sort.label()) },
+                            onClick = { onSortSelected(sort) },
+                            trailingIcon = {
+                                if (currentSort == sort) {
+                                    Icon(Icons.Default.Check, contentDescription = "Selected")
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+            FilledTonalButton(
+                onClick = onPlay,
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                modifier = Modifier.height(36.dp),
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(playLabel, style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }
+
+/** Width of a Library table row's trailing slot: heart, source dots, time and the ⋮ menu. */
+internal val LibraryTrailingWidth = 180.dp
+
+/** The time's right edge sits this far in from the slot's end: 8dp of [LibraryTrackTrailing] padding, a 12dp gap, the 40dp menu. */
+internal val LibraryTimeEndInset = 60.dp
 
 @Composable
 internal fun LibraryTrackTrailing(favorite: Boolean, track: Track) {
