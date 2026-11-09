@@ -425,6 +425,8 @@ private fun AppScaffold(
         }
         DockedFrame(
             dock = dock,
+            layoutBand = layoutBand,
+            portrait = portrait,
             frost = frost,
             modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).padding(sheetGap),
             rail = if (!desktop) null else {

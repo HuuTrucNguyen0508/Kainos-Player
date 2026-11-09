@@ -37,6 +37,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
+import com.universalmusic.player.data.settings.NowPlayingDock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -44,6 +45,9 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class DockedFrameUiTest {
     private var dock by mutableStateOf(DockEdge.RIGHT)
+    private var layoutBand by mutableStateOf(DesktopLayoutBand.Wide)
+    private var dockSetting by mutableStateOf(NowPlayingDock.RIGHT)
+    private var portrait by mutableStateOf(false)
     private var hidePane by mutableStateOf(false)
     private val drag = DockDragState()
     private val docked = mutableListOf<DockEdge>()
@@ -55,16 +59,20 @@ class DockedFrameUiTest {
         setContent {
             TestTheme {
                 val tabs = rememberSaveableStateHolder()
+                val dock = if (dockSetting == NowPlayingDock.AUTO) resolveDockEdge(dockSetting, portrait) else dock
+                val paneHidden = hidePane || layoutBand == DesktopLayoutBand.Narrow
                 DockDropHost(drag, dock, sidePaneWidth = 300.dp, bandHeight = 240.dp, carry = { Text("Carrying the player") }) {
                     DockedFrame(
                         dock = dock,
+                        layoutBand = layoutBand,
+                        portrait = portrait,
                         frost = false,
                         modifier = Modifier.fillMaxSize(),
                         rail = { Text("Rail") },
-                        sidePane = if (hidePane) null else { { DockGrip(drag, dock, { docked += it }) { Text("Now playing") } } },
+                        sidePane = if (paneHidden) null else { { DockGrip(drag, dock, { docked += it }) { Text("Now playing") } } },
                         sidePaneWidth = 300.dp,
                         onGrowSidePane = {},
-                        band = if (hidePane) null else {
+                        band = if (paneHidden) null else {
                             {
                                 Box(Modifier.fillMaxSize()) {
                                     DockGrip(drag, dock, { docked += it }, Modifier.align(Alignment.TopCenter)) { Text("Now playing") }
@@ -101,6 +109,69 @@ class DockedFrameUiTest {
                 }
             }
         }
+    }
+
+    @Test fun releasingOnTheCurrentEdgeReturnsTheCarryToItsGrip() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        grip().performTouchInput {
+            down(center)
+            moveTo(center + Offset(40f, 0f), delayMillis = 50)
+        }
+        waitForIdle()
+        assertEquals(DockEdge.RIGHT, drag.target)
+        val held = onNodeWithText("Carrying the player").getBoundsInRoot()
+        mainClock.autoAdvance = false
+        grip().performTouchInput { up() }
+        mainClock.advanceTimeBy(208)
+        val settling = onNodeWithText("Carrying the player").getBoundsInRoot()
+        assertTrue(settling.left < held.left + 20.dp, "The card returns to the grip, not the zone centre: $settling vs $held")
+        assertEquals(null, drag.lastRelease?.edge, "Cancellation settles at drag.anchor rather than the zone centre")
+        assertEquals(emptyList(), docked)
+        mainClock.advanceTimeBy(300)
+        onNodeWithText("Carrying the player").assertDoesNotExist()
+    }
+
+    @Test fun responsiveLayoutChangesLeaveNoSlotGhostAfterOneFrame() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        dockSetting = NowPlayingDock.AUTO
+        showFrame()
+        mainClock.autoAdvance = false
+        val beside = onNodeWithTag("content").getBoundsInRoot()
+        layoutBand = DesktopLayoutBand.Narrow
+        mainClock.advanceTimeByFrame()
+        val narrow = onNodeWithTag("content").getBoundsInRoot()
+        assertTrue(narrow.right >= beside.right + 300.dp, "Narrow content immediately takes the entire side slot: $narrow vs $beside")
+        layoutBand = DesktopLayoutBand.Wide
+        mainClock.advanceTimeByFrame()
+        assertEquals(beside, onNodeWithTag("content").getBoundsInRoot())
+        portrait = true
+        mainClock.advanceTimeByFrame()
+        val below = onNodeWithTag("content").getBoundsInRoot()
+        assertEquals(narrow.right, below.right, "AUTO portrait has no leaving right-slot width")
+        assertTrue(below.bottom <= beside.bottom - 240.dp, "The bottom slot arrives at full height in one frame")
+        portrait = false
+        mainClock.advanceTimeByFrame()
+        assertEquals(beside, onNodeWithTag("content").getBoundsInRoot(), "AUTO landscape leaves no bottom-slot ghost")
+    }
+
+    @Test fun releasedZonesHoldTheirArrivalAndEmphasisWhileFading() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        mainClock.autoAdvance = false
+        val grip = grip().getBoundsInRoot()
+        grip().performTouchInput {
+            down(center)
+            moveTo(Offset(-grip.left.toPx() + 640f, 450f - grip.top.toPx()), delayMillis = 50)
+        }
+        mainClock.advanceTimeBy(48)
+        // Enter a new zone before either arrival or emphasis can finish.
+        grip().performTouchInput { moveTo(Offset(-grip.left.toPx() + 30f, center.y), delayMillis = 16) }
+        mainClock.advanceTimeBy(32)
+        grip().performTouchInput { up() }
+        mainClock.advanceTimeByFrame()
+        val released = onNodeWithText("Left").getBoundsInRoot()
+        mainClock.advanceTimeBy(64)
+        assertEquals(released, onNodeWithText("Left").getBoundsInRoot(), "Arrival and emphasis hold during opacity fade")
+        mainClock.advanceTimeBy(300)
+        onNodeWithText("Left").assertDoesNotExist()
     }
 
     @Test fun movingThePlayerKeepsTheLibraryWhereItWasScrolled() = runDesktopComposeUiTest(width = 1280, height = 900) {
@@ -151,10 +222,12 @@ class DockedFrameUiTest {
     }
 
     @Test fun theSlotsTradeWidthWhileThePlayerSlidesSoTheContentNeverGaps() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        dockSetting = NowPlayingDock.AUTO
         showFrame()
         mainClock.autoAdvance = false
         val before = onNodeWithTag("content").getBoundsInRoot()
         val width = before.right - before.left
+        dockSetting = NowPlayingDock.LEFT
         dock = DockEdge.LEFT
         var lastLeft = before.left
         var sampledMidway = false

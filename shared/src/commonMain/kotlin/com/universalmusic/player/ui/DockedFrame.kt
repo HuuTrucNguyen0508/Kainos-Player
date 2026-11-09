@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,8 @@ internal fun DockedFrame(
     dock: DockEdge,
     frost: Boolean,
     modifier: Modifier,
+    layoutBand: DesktopLayoutBand? = null,
+    portrait: Boolean = false,
     rail: (@Composable () -> Unit)?,
     /** Shown only on a side dock: the player, or the Queue standing in for it. */
     sidePane: (@Composable () -> Unit)?,
@@ -92,20 +95,22 @@ internal fun DockedFrame(
     val rightGhost = rememberGraphicsLayer()
     val topGhost = rememberGraphicsLayer()
     val bottomGhost = rememberGraphicsLayer()
+    // Reset slot transitions on responsive changes; the content keeps its composition and scroll.
+    val slotKey = layoutBand to portrait
     Row(modifier) {
         if (rail != null) {
             SheetOrPlain(frost, Modifier.fillMaxHeight()) { rail() }
             PaneSeam(frost)
         }
-        SideSlot(DockEdge.LEFT, side.takeIf { dock == DockEdge.LEFT }, sidePaneWidth, leftGhost, frost, onGrowSidePane)
+        SideSlot(DockEdge.LEFT, side.takeIf { dock == DockEdge.LEFT }, sidePaneWidth, leftGhost, slotKey, frost, onGrowSidePane)
         Column(Modifier.weight(1f).fillMaxSize()) {
             notices()
-            BandSlot(DockEdge.TOP, strip.takeIf { dock == DockEdge.TOP }, bandHeight, topGhost, onGrowBand)
+            BandSlot(DockEdge.TOP, strip.takeIf { dock == DockEdge.TOP }, bandHeight, topGhost, slotKey, onGrowBand)
             Row(Modifier.weight(1f).fillMaxWidth()) { content() }
-            BandSlot(DockEdge.BOTTOM, strip.takeIf { dock == DockEdge.BOTTOM }, bandHeight, bottomGhost, onGrowBand)
+            BandSlot(DockEdge.BOTTOM, strip.takeIf { dock == DockEdge.BOTTOM }, bandHeight, bottomGhost, slotKey, onGrowBand)
             footer()
         }
-        SideSlot(DockEdge.RIGHT, side.takeIf { dock == DockEdge.RIGHT }, sidePaneWidth, rightGhost, frost, onGrowSidePane)
+        SideSlot(DockEdge.RIGHT, side.takeIf { dock == DockEdge.RIGHT }, sidePaneWidth, rightGhost, slotKey, frost, onGrowSidePane)
     }
 }
 
@@ -116,12 +121,13 @@ private fun RowScope.SideSlot(
     live: (@Composable () -> Unit)?,
     width: Dp,
     ghost: GraphicsLayer,
+    layoutKey: Pair<DesktopLayoutBand?, Boolean>,
     frost: Boolean,
     onGrow: ((Dp) -> Unit)?,
 ) {
     val anchor = if (edge == DockEdge.LEFT) Alignment.Start else Alignment.End
     AnimatedVisibility(
-        visible = live != null,
+        visibleState = remember(layoutKey) { MutableTransitionState(live != null) }.apply { targetState = live != null },
         enter = expandHorizontally(dockSlotSpec(), expandFrom = anchor) + fadeIn(dockFadeSpec()),
         exit = shrinkHorizontally(dockSlotSpec(), shrinkTowards = anchor) + fadeOut(dockFadeSpec()),
     ) {
@@ -145,11 +151,12 @@ private fun ColumnScope.BandSlot(
     live: (@Composable () -> Unit)?,
     height: Dp,
     ghost: GraphicsLayer,
+    layoutKey: Pair<DesktopLayoutBand?, Boolean>,
     onGrow: (Dp) -> Unit,
 ) {
     val anchor = if (edge == DockEdge.TOP) Alignment.Top else Alignment.Bottom
     AnimatedVisibility(
-        visible = live != null,
+        visibleState = remember(layoutKey) { MutableTransitionState(live != null) }.apply { targetState = live != null },
         enter = expandVertically(dockSlotSpec(), expandFrom = anchor) + fadeIn(dockFadeSpec()),
         exit = shrinkVertically(dockSlotSpec(), shrinkTowards = anchor) + fadeOut(dockFadeSpec()),
     ) {
@@ -236,7 +243,7 @@ internal fun DockGrip(
             .pointerInput(drag) {
                 detectDragGestures(
                     onDragStart = { drag.start(origin + it) },
-                    onDragEnd = { drag.release()?.takeIf { it != here }?.let(dock) },
+                    onDragEnd = { drag.release(here)?.takeIf { it != here }?.let(dock) },
                     onDragCancel = { drag.cancel() },
                     onDrag = { change, _ ->
                         change.consume()

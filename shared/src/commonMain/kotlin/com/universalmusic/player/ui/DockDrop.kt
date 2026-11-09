@@ -1,14 +1,11 @@
 package com.universalmusic.player.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -44,6 +41,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -134,7 +132,7 @@ internal class DockDragState {
         return true
     }
 
-    fun release(): DockEdge? = target.also { end(it) }
+    fun release(current: DockEdge): DockEdge? = target?.takeIf { it != current }.also { end(it) }
 
     private fun end(edge: DockEdge?) {
         pointer = null
@@ -192,7 +190,7 @@ internal fun DockDropHost(
             enter = fadeIn(tween(OverlayInMs, easing = DockEasing)),
             exit = fadeOut(tween(OverlayOutMs, easing = DockEasing)),
         ) {
-            DockDropZones(zones, target = shownTarget, current = shownCurrent, light = light)
+            DockDropZones(zones, target = shownTarget, current = shownCurrent, light = light, dragging = drag.dragging)
         }
         if (carry != null) DockCarry(drag, zones, light, carry)
     }
@@ -216,12 +214,14 @@ internal fun dockZoneRects(width: Float, height: Float, sideWidth: Float, bandDe
 }
 
 @Composable
-private fun DockDropZones(zones: Map<DockEdge, Rect>, target: DockEdge?, current: DockEdge, light: Color) {
+private fun DockDropZones(zones: Map<DockEdge, Rect>, target: DockEdge?, current: DockEdge, light: Color, dragging: Boolean) {
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
     // The edges open: each zone slides in from its own edge as the dim settles over the app.
     val arrive = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { arrive.animateTo(1f, tween(ZoneArriveMs, easing = DockEasing)) }
+    LaunchedEffect(dragging) {
+        if (dragging) arrive.animateTo(1f, tween(ZoneArriveMs, easing = DockEasing))
+    }
     // Dim the app enough that the zones, not the screen under them, are what the eye reads.
     Box(Modifier.fillMaxSize().background(scheme.background.copy(alpha = .84f))) {
         for ((edge, rect) in zones) {
@@ -235,6 +235,7 @@ private fun DockDropZones(zones: Map<DockEdge, Rect>, target: DockEdge?, current
             DropZone(
                 edge = edge,
                 chosen = edge == target,
+                dragging = dragging,
                 here = edge == current,
                 light = light,
                 modifier = Modifier
@@ -263,20 +264,24 @@ private fun DockDropZones(zones: Map<DockEdge, Rect>, target: DockEdge?, current
  * there. Chosen: swells inward from its edge and fills with the cover's light spilling in from it.
  */
 @Composable
-private fun DropZone(edge: DockEdge, chosen: Boolean, here: Boolean, light: Color, modifier: Modifier) {
+private fun DropZone(edge: DockEdge, chosen: Boolean, dragging: Boolean, here: Boolean, light: Color, modifier: Modifier) {
     val scheme = MaterialTheme.colorScheme
     val tokens = LocalSkinTokens.current
     val radius = tokens.rounding.large
-    val spec = tween<Float>(ZoneEmphasisMs, easing = DockEasing)
-    val glow by animateFloatAsState(if (chosen) 1f else 0f, spec, label = "zoneGlow")
-    val scale by animateFloatAsState(if (chosen) 1f else .97f, spec, label = "zoneScale")
-    val stroke by animateDpAsState(if (chosen) 2.dp else 1.dp, tween(ZoneEmphasisMs, easing = DockEasing), label = "zoneStroke")
-    val fill by animateColorAsState(
-        if (chosen) scheme.surfaceContainerHigh.copy(alpha = .55f) else scheme.surfaceContainerHigh.copy(alpha = if (here) .5f else .35f),
-        tween(ZoneEmphasisMs, easing = DockEasing),
-        label = "zoneFill",
+    // Cancelling the effect on release holds every emphasis value while the host fades out.
+    val emphasis = remember { Animatable(if (chosen) 1f else 0f) }
+    LaunchedEffect(chosen, dragging) {
+        if (dragging) emphasis.animateTo(if (chosen) 1f else 0f, tween(ZoneEmphasisMs, easing = DockEasing))
+    }
+    val glow = emphasis.value
+    val scale = .97f + .03f * glow
+    val stroke = (1f + glow).dp
+    val fill = lerp(
+        scheme.surfaceContainerHigh.copy(alpha = if (here) .5f else .35f),
+        scheme.surfaceContainerHigh.copy(alpha = .55f),
+        glow,
     )
-    val ink by animateColorAsState(if (chosen) scheme.primary else scheme.onSurfaceVariant, tween(ZoneEmphasisMs, easing = DockEasing), label = "zoneInk")
+    val ink = lerp(scheme.onSurfaceVariant, scheme.primary, glow)
     val outline = when {
         chosen -> scheme.primary
         here -> scheme.onSurfaceVariant.copy(alpha = .6f)
