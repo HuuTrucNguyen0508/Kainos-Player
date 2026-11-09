@@ -46,7 +46,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import com.universalmusic.player.ui.components.LocalTrackTable
+import com.universalmusic.player.ui.components.anyAlbumName
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.domain.model.Playlist
@@ -79,6 +83,8 @@ internal fun SearchPlaylistScreen(
     onBack: () -> Unit,
     onPlay: (List<Track>, Int, Boolean) -> Unit,
     openLink: (String) -> Unit,
+    /** The width this page has, measured by Search; wide pages lay their rows out as a table. */
+    listWidth: Dp = 0.dp,
 ) {
     val pageState = presenter.state.collectAsState()
     val state by pageState
@@ -101,8 +107,10 @@ internal fun SearchPlaylistScreen(
         }
     }
 
+    val showAlbums = remember(state.tracks) { state.tracks.anyAlbumName() }
     Column(Modifier.fillMaxSize()) {
         PlaylistTopBar(playlist, onBack, openLink)
+        CompositionLocalProvider(LocalTrackTable provides searchTable(listWidth, showAlbums)) {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             item(key = "header") {
                 PlaylistHeader(
@@ -139,6 +147,7 @@ internal fun SearchPlaylistScreen(
             item(key = "footer") {
                 PlaylistFooter(state, onRetry = presenter::loadMore)
             }
+        }
         }
     }
 }

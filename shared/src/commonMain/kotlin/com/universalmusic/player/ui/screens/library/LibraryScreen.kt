@@ -420,7 +420,7 @@ internal fun LibraryScreen(
                             songsTab(this, false)
                         }
                     }
-                    LibraryPaneSeam()
+                    ContentPaneSeam()
                     Column(
                         Modifier
                             .weight(1f - LibrarySongsShare)

@@ -1,12 +1,7 @@
 package com.universalmusic.player.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
@@ -23,8 +18,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
-import com.universalmusic.player.ui.components.isFrost
-import com.universalmusic.player.ui.theme.LocalKainosPalette
 
 /** At this width Library's title, search and filters share one line, and the tabs share theirs with the count. */
 internal val LibraryCompactHeaderMinWidth: Dp = 1500.dp
@@ -34,9 +27,6 @@ internal val LibrarySplitMinWidth: Dp = 2000.dp
 
 /** The share of a split Library that Songs takes; the other tabs get the rest. */
 internal const val LibrarySongsShare: Float = .55f
-
-/** The seam between the two panes of a split Library: a hairline with 8dp of air on each side. */
-internal val LibraryPaneSeamWidth: Dp = 17.dp
 
 /** How Library lays itself out at its own width, decided once per screen. */
 internal data class LibraryLayout(
@@ -50,7 +40,7 @@ internal data class LibraryLayout(
 
 internal fun libraryLayout(width: Dp): LibraryLayout {
     val split = width >= LibrarySplitMinWidth
-    val panes = width - LibraryPaneSeamWidth
+    val panes = width - ContentPaneSeamWidth
     return LibraryLayout(
         compactHeader = width >= LibraryCompactHeaderMinWidth,
         split = split,
@@ -96,19 +86,6 @@ internal fun LibraryTabStrip(
             )
         }
     }
-}
-
-/** The line between Songs and the other tabs: a quiet hairline inside the one content sheet. */
-@Composable
-internal fun LibraryPaneSeam() {
-    val line = if (isFrost()) LocalKainosPalette.current.hair else MaterialTheme.colorScheme.outlineVariant
-    Box(
-        Modifier
-            .width(LibraryPaneSeamWidth)
-            .fillMaxHeight()
-            .padding(horizontal = 8.dp, vertical = 12.dp)
-            .background(line),
-    )
 }
 
 /** Calls [onPress] whenever a press lands anywhere inside, without taking the press from what is under it. */
