@@ -30,30 +30,49 @@ class LibrespotStaleTaskGuardTest {
         )
     }
 
+    /** The frames from the phone trace of 2026-11-09 10:45:01, after a PANIC released the AudioTrack. */
+    private fun releasedAudioTrack() = IllegalStateException("Unable to retrieve AudioTrack pointer for stop()").apply {
+        stackTrace = arrayOf(
+            StackTraceElement("android.media.AudioTrack", "native_stop", "AudioTrack.java", -2),
+            StackTraceElement("android.media.AudioTrack", "stop", "AudioTrack.java", 3088),
+            StackTraceElement("xyz.gianlu.librespot.android.sink.AndroidSinkOutput", "stop", "AndroidSinkOutput.java", 99),
+            StackTraceElement("xyz.gianlu.librespot.player.mixing.AudioSink", "run", "AudioSink.java", 160),
+            StackTraceElement("java.lang.Thread", "run", "Thread.java", 1571),
+        )
+    }
+
     @Test fun staleLibrespotTasksNoLongerKillTheAppButOtherCrashesStillDo() {
         val original = Thread.getDefaultUncaughtExceptionHandler()
         val forwarded = mutableListOf<Throwable>()
+        var deadSinks = 0
         try {
             Thread.setDefaultUncaughtExceptionHandler { _, error -> forwarded += error }
             installLibrespotStaleTaskGuard()
-            installLibrespotStaleTaskGuard()
-            for ((name, failure) in listOf("player-queue-146042085" to endOfContextFailure(), "player-session-45586647" to closedSessionLoadRetry())) {
+            installLibrespotStaleTaskGuard(onAudioSinkDied = { deadSinks++ })
+            for ((name, failure) in listOf(
+                "player-queue-146042085" to endOfContextFailure(),
+                "player-session-45586647" to closedSessionLoadRetry(),
+                "player-audio-sink" to releasedAudioTrack(),
+            )) {
                 val thread = Thread({ throw failure }, name)
                 thread.start()
                 thread.join()
             }
             assertEquals(emptyList(), forwarded)
+            assertEquals(1, deadSinks)
 
             val handler = Thread.getDefaultUncaughtExceptionHandler()
             val thread = Thread.currentThread()
             handler.uncaughtException(thread, IllegalStateException("Cannot set output for PlayerQueueEntry{x}"))
             handler.uncaughtException(thread, closedSessionLoadRetry(poolState = "Running"))
             handler.uncaughtException(thread, RejectedExecutionException("Task PlayerQueueEntry{y} rejected"))
+            handler.uncaughtException(thread, IllegalStateException("Unable to retrieve AudioTrack pointer for stop()"))
             handler.uncaughtException(thread, RuntimeException("elsewhere"))
             assertEquals(
-                listOf("IllegalStateException", "RejectedExecutionException", "RejectedExecutionException", "RuntimeException"),
+                listOf("IllegalStateException", "RejectedExecutionException", "RejectedExecutionException", "IllegalStateException", "RuntimeException"),
                 forwarded.map { it::class.simpleName },
             )
+            assertEquals(1, deadSinks)
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(original)
         }

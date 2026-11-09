@@ -62,6 +62,8 @@ internal class AndroidLibrespotPlaybackHost(
         private set
     private var session: Session? = null
     private var player: Player? = null
+    /** Set by [installLibrespotStaleTaskGuard] when the current player's audio thread died. */
+    @Volatile private var audioSinkDied = false
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
 
@@ -181,19 +183,37 @@ internal class AndroidLibrespotPlaybackHost(
         true
     }
 
+    /**
+     * While librespot's AP connection is down and it waits to reconnect, every load panics and
+     * Spotify answers the Web API transfer with 500, so Kainos skipped track after track (phone
+     * traces of 2026-11-05 19:38 and 2026-11-09 10:59). A fresh session connects at once, so a
+     * failed load rebuilds the receiver and retries once. A receiver whose audio thread died is
+     * rebuilt before it loads. The generation stays the same: the rebuilt receiver loads this track.
+     */
     override suspend fun playTrack(trackId: String): Boolean {
-        val receiver = mutex.withLock {
-            ensureStarted(interactive = false, oauthCredentials = null) ?: return false
-            player
-        } ?: return false
         val uri = "spotify:track:$trackId"
-        return runDirect("load $uri") {
-            // A fresh player must finish registering with Spotify before it can load.
-            receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
-            // Synchronous: resolves the one-track context and starts loading its audio.
-            receiver.load(uri, true, false)
-            check(receiver.currentPlayable()?.toSpotifyUri() == uri) { "player did not take $uri" }
+        val receiver = receiverForLoad(replacing = null) ?: return false
+        if (runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) }) return true
+        val rebuilt = receiverForLoad(replacing = receiver) ?: return false
+        return runDirect("load $uri on a rebuilt receiver") { load(rebuilt, uri) }
+    }
+
+    private suspend fun receiverForLoad(replacing: Player?): Player? = mutex.withLock {
+        if (player != null && (audioSinkDied || player === replacing)) {
+            PlaybackTrace.log("Librespot", "rebuilding the receiver${if (audioSinkDied) " (its audio thread died)" else ""}")
+            shutdownLocked()
         }
+        ensureStarted(interactive = false, oauthCredentials = null) ?: return@withLock null
+        player
+    }
+
+    private fun load(receiver: Player, uri: String) {
+        // A fresh player must finish registering with Spotify before it can load.
+        receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
+        // Synchronous: resolves the one-track context and starts loading its audio. On failure
+        // librespot logs it, enters its PANIC state and leaves the previous track current.
+        receiver.load(uri, true, false)
+        check(receiver.currentPlayable()?.toSpotifyUri() == uri) { "player did not take $uri" }
     }
 
     override suspend fun pause() = onReceiver("pause") { it.pause() }
@@ -213,13 +233,17 @@ internal class AndroidLibrespotPlaybackHost(
      * one at a time keeps a stale load from landing after the next track's, or after a pause.
      * Failures return false so the caller falls back to the Web API.
      */
-    private suspend fun runDirect(action: String, command: () -> Unit): Boolean = try {
+    private suspend fun runDirect(
+        action: String,
+        onFailure: String = "using the Web API",
+        command: () -> Unit,
+    ): Boolean = try {
         directCommands.withLock { withContext(Dispatchers.IO) { command() } }
         true
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (failure: Throwable) {
-        PlaybackTrace.log("Librespot", "direct $action failed, using the Web API: $failure")
+        PlaybackTrace.log("Librespot", "direct $action failed, $onFailure: $failure")
         false
     }
 
@@ -237,6 +261,7 @@ internal class AndroidLibrespotPlaybackHost(
         val oldSession = session
         player = null
         session = null
+        audioSinkDied = false
         runCatching { oldPlayer?.close() }
         runCatching { oldSession?.close() }
     }
@@ -293,7 +318,7 @@ internal class AndroidLibrespotPlaybackHost(
                     override fun onConnectionEstablished() = Unit
                 })
                 // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
-                installLibrespotStaleTaskGuard()
+                installLibrespotStaleTaskGuard(onAudioSinkDied = { audioSinkDied = true })
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
                 return createdSession to createdPlayer
