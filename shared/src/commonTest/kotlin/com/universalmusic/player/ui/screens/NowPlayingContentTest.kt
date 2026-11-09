@@ -218,7 +218,7 @@ class NowPlayingPresenterTest {
         toggleShuffleAction = {},
         canSkipNextAction = { false },
         toggleFavoriteTrack = { false },
-        setFavoriteFlag = {},
+        setFavoriteFlag = { _, _ -> },
         setVolumeLive = {},
         setPlaybackVolumeAction = {},
         retry = {},

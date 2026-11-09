@@ -447,7 +447,7 @@ class AppContainer(
         monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
         startupMark("mpris_begin")
         bindPlatformMediaControls(player, scope) { track ->
-            library.toggleFavorite(track).also(player::setFavorite)
+            library.toggleFavorite(track).also { player.syncFavorite(track.canonicalId, it) }
         }
         startupMark("mpris_end")
         // The Now Playing / media-session heart follows the library, including hearts that
