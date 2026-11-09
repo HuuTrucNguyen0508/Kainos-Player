@@ -30,11 +30,13 @@ class JvmLocalTrackSource(
         val roots = rootsProvider().map { it.toAbsolutePath().normalize() }.distinct()
         val optional = optionalRootsProvider().map { it.toAbsolutePath().normalize() }.toSet()
         val unavailable = mutableListOf<Path>()
+        // Folders and files inside a readable root that the walk could not enter or read.
+        val skipped = mutableListOf<Path>()
         var readable = 0
         roots.forEach { root ->
             val found = linkedMapOf<Path, Path>()
             try {
-                scanRoot(root, found)
+                scanRoot(root, found, skipped)
                 check(isReadableDirectory(root))
                 discovered.putAll(found)
                 readable++
@@ -66,7 +68,7 @@ class JvmLocalTrackSource(
             }
         val retained = previous.filter { track ->
             val path = runCatching { Paths.get(java.net.URI(track.location)).toAbsolutePath().normalize() }.getOrNull()
-            path != null && unavailable.any { path.startsWith(it) }
+            path != null && (unavailable.any { path.startsWith(it) } || skipped.any { path.startsWith(it) })
         }
         LocalScanResult(
             tracks = (tracks + retained).distinctBy(LocalTrack::location), reused = reused, probed = probed,
@@ -74,14 +76,19 @@ class JvmLocalTrackSource(
         )
     }
 
-    private fun scanRoot(root: Path, discovered: MutableMap<Path, Path>) {
+    private fun scanRoot(root: Path, discovered: MutableMap<Path, Path>, skipped: MutableList<Path>) {
         check(isReadableDirectory(root)) { "Cannot read music folder: $root. Reconnect the drive and retry." }
         try {
             Files.walkFileTree(
                 root,
                 object : SimpleFileVisitor<Path>() {
                     override fun preVisitDirectory(directory: Path, attributes: BasicFileAttributes): FileVisitResult =
-                        if (isReadableDirectory(directory)) FileVisitResult.CONTINUE else FileVisitResult.SKIP_SUBTREE
+                        if (isReadableDirectory(directory)) {
+                            FileVisitResult.CONTINUE
+                        } else {
+                            normalizedPathOrNull(directory)?.let(skipped::add)
+                            FileVisitResult.SKIP_SUBTREE
+                        }
 
                     override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
                         if (attributes.isRegularFile && Files.isReadable(file) && file.audioExtension() != null) {
@@ -92,6 +99,7 @@ class JvmLocalTrackSource(
 
                     override fun visitFileFailed(file: Path, error: IOException): FileVisitResult {
                         if (file == root) throw error
+                        normalizedPathOrNull(file)?.let(skipped::add)
                         return FileVisitResult.CONTINUE
                     }
                 },
