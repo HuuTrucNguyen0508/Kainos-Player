@@ -179,15 +179,20 @@ internal fun DockDropHost(
             bandDepth = with(density) { bandHeight.toPx() },
             inset = with(density) { ZoneInset.toPx() },
         )
-        // Once let go, the pointer is gone; the zones fade out as they were at release, not reset.
+        // Once let go, the pointer is gone and the dock is already changing; the zones and the hint fade
+        // out exactly as they were at release instead of flipping to "keep" and "Player is here".
         var shownTarget by remember { mutableStateOf<DockEdge?>(null) }
-        if (drag.dragging) shownTarget = drag.target
+        var shownCurrent by remember { mutableStateOf(current) }
+        if (drag.dragging) {
+            shownTarget = drag.target
+            shownCurrent = current
+        }
         AnimatedVisibility(
             visible = drag.dragging,
             enter = fadeIn(tween(OverlayInMs, easing = DockEasing)),
             exit = fadeOut(tween(OverlayOutMs, easing = DockEasing)),
         ) {
-            DockDropZones(zones, target = shownTarget, current = current, light = light)
+            DockDropZones(zones, target = shownTarget, current = shownCurrent, light = light)
         }
         if (carry != null) DockCarry(drag, zones, light, carry)
     }
@@ -367,11 +372,16 @@ private fun DockCarry(drag: DockDragState, zones: Map<DockEdge, Rect>, light: Co
     if (!held && presence.value == 0f) return
     val density = LocalDensity.current
     val hang = with(density) { 14.dp.toPx() }
+    val margin = with(density) { 8.dp.toPx() }
     Box(
         Modifier
             .offset {
+                // Hangs under the hand, but stays whole inside the window when the hand is at an edge.
                 val at = position.value
-                IntOffset((at.x - size.width / 2f).roundToInt(), (at.y + hang).roundToInt())
+                val host = drag.hostSize
+                val x = (at.x - size.width / 2f).coerceIn(margin, (host.width - size.width - margin).coerceAtLeast(margin))
+                val y = (at.y + hang).coerceIn(margin, (host.height - size.height - margin).coerceAtLeast(margin))
+                IntOffset(x.roundToInt(), y.roundToInt())
             }
             .onSizeChanged { size = it }
             .graphicsLayer {

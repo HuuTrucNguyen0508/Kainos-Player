@@ -150,6 +150,31 @@ class DockedFrameUiTest {
         }
     }
 
+    @Test fun theSlotsTradeWidthWhileThePlayerSlidesSoTheContentNeverGaps() = runDesktopComposeUiTest(width = 1280, height = 900) {
+        showFrame()
+        mainClock.autoAdvance = false
+        val before = onNodeWithTag("content").getBoundsInRoot()
+        val width = before.right - before.left
+        dock = DockEdge.LEFT
+        var lastLeft = before.left
+        var sampledMidway = false
+        // 240-280 ms slide, sampled every 70 ms: the content column keeps its width while it moves right.
+        for (step in 1..5) {
+            mainClock.advanceTimeBy(70)
+            val content = onNodeWithTag("content").getBoundsInRoot()
+            val now = content.right - content.left
+            assertTrue(now.value in width.value - 1f..width.value + 1f, "content width held at $content vs $before")
+            assertTrue(content.left >= lastLeft, "content only moves right: $content after $lastLeft")
+            if (content.left > before.left + 20.dp && content.left < before.left + 280.dp) sampledMidway = true
+            lastLeft = content.left
+        }
+        assertTrue(sampledMidway, "a sample landed mid-slide")
+        mainClock.advanceTimeBy(1_000)
+        val after = onNodeWithTag("content").getBoundsInRoot()
+        assertEquals(width, after.right - after.left)
+        assertTrue(after.left > before.left + 290.dp, "the whole pane now sits on the left: $after")
+    }
+
     @Test fun hidingThePlayerFoldsTheSlotAwayAndShowingItBringsItBack() = runDesktopComposeUiTest(width = 1280, height = 900) {
         showFrame()
         val shown = onNodeWithText("Now playing").getBoundsInRoot()
