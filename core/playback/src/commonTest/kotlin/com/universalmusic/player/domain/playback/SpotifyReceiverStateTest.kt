@@ -31,12 +31,23 @@ class SpotifyReceiverStateTest {
     }
 
     @Test fun unconfirmedStartFailsAtTheDeadlineInsteadOfFakingPlayback() {
-        assertEquals(SpotifyStartCheck.PLAYING, spotifyStartCheck(observedPlaying = true, waitedMs = 10_000))
+        val requested = "spotify:track:wanted"
+        fun seen(playing: Boolean, id: String? = "wanted") = SpotifyObservedPlayback(isPlaying = playing, progressMs = 1_000, trackId = id)
+        assertEquals(SpotifyStartCheck.PLAYING, spotifyStartCheck(seen(true), requested, waitedMs = 10_000))
         // An observation that failed is not proof of sound.
-        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(observedPlaying = null, waitedMs = 10_000))
-        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(observedPlaying = null, waitedMs = SPOTIFY_START_DEADLINE_MS))
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(null, requested, waitedMs = 10_000))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(null, requested, waitedMs = SPOTIFY_START_DEADLINE_MS))
         // A receiver that never starts must not keep the start buffering forever.
-        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(observedPlaying = false, waitedMs = 20_000))
-        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(observedPlaying = false, waitedMs = SPOTIFY_START_DEADLINE_MS))
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(seen(false), requested, waitedMs = 20_000))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(seen(false), requested, waitedMs = SPOTIFY_START_DEADLINE_MS))
+    }
+
+    @Test fun anotherTrackPlayingDoesNotConfirmTheRequestedStart() {
+        val requested = "spotify:track:wanted"
+        fun seen(id: String?) = SpotifyObservedPlayback(isPlaying = true, progressMs = 1_000, trackId = id)
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(seen("previous"), requested, waitedMs = 10_000))
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(seen(null), requested, waitedMs = 10_000))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(seen("previous"), requested, waitedMs = SPOTIFY_START_DEADLINE_MS))
+        assertEquals(SpotifyStartCheck.PLAYING, spotifyStartCheck(seen("wanted"), "wanted", waitedMs = 10_000))
     }
 }

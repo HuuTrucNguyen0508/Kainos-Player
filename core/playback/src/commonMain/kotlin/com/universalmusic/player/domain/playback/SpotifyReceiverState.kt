@@ -38,11 +38,12 @@ internal const val SPOTIFY_START_DEADLINE_MS = 30_000L
 internal enum class SpotifyStartCheck { PLAYING, WAIT, FAIL }
 
 /**
- * A start the receiver has not confirmed. Only an observed `isPlaying` proves sound; an observation
- * that fails or says not playing waits until the deadline, then fails so the session can skip it.
+ * A start the receiver has not confirmed. Only an observation of [trackId] itself playing proves sound;
+ * one that fails, says not playing, or shows another track waits until the deadline, then fails so
+ * the session can skip it.
  */
-internal fun spotifyStartCheck(observedPlaying: Boolean?, waitedMs: Long): SpotifyStartCheck = when {
-    observedPlaying == true -> SpotifyStartCheck.PLAYING
+internal fun spotifyStartCheck(observed: SpotifyObservedPlayback?, trackId: String, waitedMs: Long): SpotifyStartCheck = when {
+    observed?.isPlaying == true && observed.trackId == trackId.removePrefix("spotify:track:") -> SpotifyStartCheck.PLAYING
     waitedMs >= SPOTIFY_START_DEADLINE_MS -> SpotifyStartCheck.FAIL
     else -> SpotifyStartCheck.WAIT
 }
