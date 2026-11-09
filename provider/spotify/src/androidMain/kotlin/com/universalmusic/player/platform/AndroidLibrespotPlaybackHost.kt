@@ -64,6 +64,8 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile private var player: Player? = null
     /** Set by [installLibrespotStaleTaskGuard] when the current player's audio thread died. */
     @Volatile private var audioSinkDied = false
+    /** playTrack reports a failed load itself, so its PANIC must not fail the track first. */
+    @Volatile private var loadingDirectly = false
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
 
@@ -192,10 +194,15 @@ internal class AndroidLibrespotPlaybackHost(
      */
     override suspend fun playTrack(trackId: String): Boolean {
         val uri = "spotify:track:$trackId"
-        val receiver = receiverForLoad(replacing = null) ?: return false
-        if (runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) }) return true
-        val rebuilt = receiverForLoad(replacing = receiver) ?: return false
-        return runDirect("load $uri on a rebuilt receiver") { load(rebuilt, uri) }
+        loadingDirectly = true
+        try {
+            val receiver = receiverForLoad(replacing = null) ?: return false
+            if (runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) }) return true
+            val rebuilt = receiverForLoad(replacing = receiver) ?: return false
+            return runDirect("load $uri on a rebuilt receiver") { load(rebuilt, uri) }
+        } finally {
+            loadingDirectly = false
+        }
     }
 
     private suspend fun receiverForLoad(replacing: Player?): Player? = mutex.withLock {
@@ -419,7 +426,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onPanicState(player: Player) {
             trace("PANIC state")
-            emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
+            if (!loadingDirectly) emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
         }
 
         override fun onStartedLoading(player: Player) = trace("startedLoading")
