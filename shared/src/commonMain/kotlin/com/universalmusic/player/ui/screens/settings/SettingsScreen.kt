@@ -2,6 +2,7 @@ package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,12 +38,12 @@ internal fun SettingsScreen(container: AppContainer, target: SettingsTarget? = n
     val advanced = remember(container) { SettingsAdvancedPresenter.from(container, scope) }
     val backup = remember(container) { SettingsBackupPresenter.retainedFor(container) }
     val sources = remember(container) { SourcesPresenter.from(container, scope) }
-    SettingsFrame(target) { section ->
+    SettingsFrame(target) { section, visible ->
         when (section) {
             SettingsSection.Playback -> SettingsPlaybackSection(preferences)
             SettingsSection.Appearance -> SettingsAppearanceSection(preferences)
-            SettingsSection.Sources -> SettingsSourcesSection(folders, connect, sources)
-            SettingsSection.Devices -> SettingsDevicesSection(preferences, sync)
+            SettingsSection.Sources -> SettingsSourcesSection(folders, connect, sources, visible)
+            SettingsSection.Devices -> SettingsDevicesSection(preferences, sync, visible)
             SettingsSection.Downloads -> DownloadsSection(container)
             SettingsSection.Backup -> SettingsBackupSection(backup)
             SettingsSection.Advanced -> SettingsAdvancedSection(advanced, sync)
@@ -50,25 +51,35 @@ internal fun SettingsScreen(container: AppContainer, target: SettingsTarget? = n
     }
 }
 
-/** The section chips and scroller. Opening at [target] selects its section; a later change of target does too. */
+/**
+ * The section chips and scroller, or from [SettingsBoardMinWidth] the board with every section.
+ * Opening at [target] selects its section; a later change of target does too.
+ */
 @Composable
-internal fun SettingsFrame(target: SettingsTarget?, content: @Composable (SettingsSection) -> Unit) {
+internal fun SettingsFrame(target: SettingsTarget?, content: @Composable (SettingsSection, visible: Boolean) -> Unit) {
     var sectionName by rememberSaveable { mutableStateOf((target?.section ?: SettingsSection.Playback).name) }
     LaunchedEffect(target) { target?.let { sectionName = it.section.name } }
     val section = SettingsSection.entries.firstOrNull { it.name == sectionName } ?: SettingsSection.Playback
     CompositionLocalProvider(LocalSettingsArrival provides target) {
-        Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            Text("Settings", style = MaterialTheme.typography.displaySmall)
-            Row(Modifier.horizontalScroll(rememberScrollState()).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsSection.entries.forEach { item ->
-                    KainosChip(section == item, { sectionName = item.name }, item.label, accent = item.accent)
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val columns = settingsBoardColumnCount(maxWidth)
+            if (columns > 1) {
+                SettingsBoard(innerWidth = maxWidth - 40.dp, columnCount = columns, content = content)
+            } else {
+                Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp).padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                ) {
+                    Text("Settings", style = MaterialTheme.typography.displaySmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsSection.entries.forEach { item ->
+                            KainosChip(section == item, { sectionName = item.name }, item.label, accent = item.accent)
+                        }
+                    }
+                    content(section, true)
                 }
             }
-            content(section)
         }
     }
 }
@@ -78,9 +89,18 @@ internal fun SettingsSourcesSection(
     folders: SettingsFoldersPresenter,
     connect: SettingsConnectPresenter,
     sources: SourcesPresenter,
+    /** False while the section sits off screen on the board; the tool check waits until it is seen. */
+    visible: Boolean = true,
 ) {
     val readiness by sources.state.collectAsState()
-    LaunchedEffect(sources) { sources.recheck() }
+    // Once per visit, as opening the section always did; the board composes it before it is seen.
+    var checked by remember(sources) { mutableStateOf(false) }
+    LaunchedEffect(sources, visible) {
+        if (visible && !checked) {
+            checked = true
+            sources.recheck()
+        }
+    }
     fun of(source: MusicSource) = readiness.first { it.source == source }
     // Setup is read closely, so it keeps a readable measure however wide the window gets.
     Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {

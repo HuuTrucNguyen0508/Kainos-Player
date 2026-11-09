@@ -188,7 +188,7 @@ private fun ComposeUiTest.showApp(device: FakeDevice) {
                     onOpenLibrary = {},
                 )
             } else {
-                SettingsFrame(target) { section ->
+                SettingsFrame(target) { section, _ ->
                     if (section == SettingsSection.Sources) SettingsSourcesSection(folders, connect, sources)
                 }
             }

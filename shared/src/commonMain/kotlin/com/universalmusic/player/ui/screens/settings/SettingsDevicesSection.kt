@@ -23,20 +23,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.ui.PlatformBackHandler
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun SettingsDevicesSection(preferences: SettingsPreferencesPresenter, syncPresenter: SettingsSyncPresenter) {
+internal fun SettingsDevicesSection(
+    preferences: SettingsPreferencesPresenter,
+    syncPresenter: SettingsSyncPresenter,
+    /** False while the section sits off screen on the board: the pairing code stops refreshing until it is seen. */
+    visible: Boolean = true,
+) {
     DisposableEffect(syncPresenter) { onDispose { syncPresenter.dispose() } }
     val settings by preferences.state.collectAsState()
     val syncUi by syncPresenter.state.collectAsState()
     val syncStatus = syncUi.status
     val syncBusy = syncUi.busy
     val syncNotice = syncUi.notice
-    val pairingLink by syncPresenter.pairingLink.collectAsState()
+    val pairingLink by remember(visible) { if (visible) syncPresenter.pairingLink else MutableStateFlow(null) }.collectAsState()
     var scanning by remember { mutableStateOf(false) }
     PlatformBackHandler(enabled = scanning) { scanning = false }
     Text("Devices and sync", style = MaterialTheme.typography.titleMedium)
