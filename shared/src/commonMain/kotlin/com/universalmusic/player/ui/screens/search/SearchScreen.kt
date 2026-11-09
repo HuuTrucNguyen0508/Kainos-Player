@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -203,42 +204,52 @@ internal fun SearchScreen(
                     )
                 }
             }
-            when {
-                state.searchable.isEmpty() -> Column {
-                    EmptyState(
-                        "Search needs Spotify or YouTube",
-                        "Search covers those two services. Your local files have their own search in Library.",
+            val statusContent: @Composable () -> Unit = {
+                when {
+                    state.searchable.isEmpty() -> Column {
+                        EmptyState(
+                            "Search needs Spotify or YouTube",
+                            "Search covers those two services. Your local files have their own search in Library.",
+                        )
+                        Row(
+                            Modifier.padding(horizontal = 32.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(onClick = { onOpenSettings(SettingsTarget.YouTubeKey) }) { Text("Set up YouTube") }
+                            OutlinedButton(onClick = {
+                                onOpenSettings(
+                                    if (spotify == ProviderState.NOT_CONFIGURED) SettingsTarget.SpotifyClientId else SettingsTarget.SpotifySignIn,
+                                )
+                            }) { Text("Set up Spotify") }
+                        }
+                    }
+                    loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
+                    error != null -> Text(
+                        error,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(20.dp),
                     )
-                    Row(
-                        Modifier.padding(horizontal = 32.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Button(onClick = { onOpenSettings(SettingsTarget.YouTubeKey) }) { Text("Set up YouTube") }
-                        OutlinedButton(onClick = {
-                            onOpenSettings(
-                                if (spotify == ProviderState.NOT_CONFIGURED) SettingsTarget.SpotifyClientId else SettingsTarget.SpotifySignIn,
-                            )
-                        }) { Text("Set up Spotify") }
+                    query.isBlank() -> EmptyState(
+                        state.searchHint,
+                        "Your local files are not included here. Library has its own search for those.",
+                    )
+                    tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
+                        CircularProgressIndicator(Modifier.padding(24.dp))
+                    } else {
+                        EmptyState(
+                            "No matches for \"${query.trim()}\"",
+                            "Nothing matched on ${state.searchable.joinToString(" or ") { it.title }}. Try a different title or artist.",
+                        )
                     }
                 }
-                loading && tracks == null && query.isNotBlank() -> CircularProgressIndicator(Modifier.padding(24.dp))
-                error != null -> Text(
-                    error,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(20.dp),
-                )
-                query.isBlank() -> EmptyState(
-                    state.searchHint,
-                    "Your local files are not included here. Library has its own search for those.",
-                )
-                tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
-                    CircularProgressIndicator(Modifier.padding(24.dp))
-                } else {
-                    EmptyState(
-                        "No matches for \"${query.trim()}\"",
-                        "Nothing matched on ${state.searchable.joinToString(" or ") { it.title }}. Try a different title or artist.",
-                    )
-                }
+            }
+            if (!showingResults) {
+                if (width >= SearchCompactHeaderMinWidth) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(Modifier.widthIn(max = 720.dp), horizontalAlignment = Alignment.CenterHorizontally) { statusContent() }
+                    }
+                } else statusContent()
+            } else when {
                 split -> Row(Modifier.weight(1f).fillMaxWidth()) {
                     val tracksWidth = (width - ContentPaneSeamWidth) * SearchTracksShare
                     val otherWidth = width - ContentPaneSeamWidth - tracksWidth
@@ -258,8 +269,8 @@ internal fun SearchScreen(
                         }
                     }
                 }
-                else -> CompositionLocalProvider(LocalTrackTable provides searchTable(width, showAlbums)) {
-                    LazyColumn(state = listState) {
+                else -> CompositionLocalProvider(LocalTrackTable provides searchTable(minOf(width, SingleTrackTableMaxWidth), showAlbums)) {
+                    LazyColumn(state = listState, modifier = Modifier.widthIn(max = SingleTrackTableMaxWidth)) {
                         trackItems()
                         playlistItems(false)
                     }

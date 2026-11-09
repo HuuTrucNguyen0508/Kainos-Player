@@ -26,3 +26,6 @@ internal fun searchSplit(
     hasPlaylists: Boolean,
     playlistOpen: Boolean,
 ): Boolean = width >= SearchSplitMinWidth && showingResults && hasTracks && (hasPlaylists || playlistOpen)
+
+/** Keep a lone ledger readable rather than separating its marks from its text. */
+internal val SingleTrackTableMaxWidth: Dp = 1600.dp

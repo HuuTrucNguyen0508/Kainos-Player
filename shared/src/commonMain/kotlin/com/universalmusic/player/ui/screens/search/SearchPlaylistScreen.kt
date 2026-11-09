@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -108,9 +109,9 @@ internal fun SearchPlaylistScreen(
     }
 
     val showAlbums = remember(state.tracks) { state.tracks.namesAlbums() }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.widthIn(max = SingleTrackTableMaxWidth).fillMaxSize()) {
         PlaylistTopBar(playlist, onBack, openLink)
-        CompositionLocalProvider(LocalTrackTable provides searchTable(listWidth, showAlbums)) {
+        CompositionLocalProvider(LocalTrackTable provides searchTable(minOf(listWidth, SingleTrackTableMaxWidth), showAlbums)) {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             item(key = "header") {
                 PlaylistHeader(
