@@ -15,6 +15,8 @@ import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PreparedPlayback
+import com.universalmusic.player.domain.playback.SpotifyStartCheck
+import com.universalmusic.player.domain.playback.spotifyStartCheck
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executor
@@ -460,7 +462,7 @@ class AndroidPlaybackEngine(
                 else {
                     val intent = transportIntent
                     scope.launch {
-                        // Without receiver events the clock is all we have; never sit in buffering.
+                        val waitingSince = System.currentTimeMillis()
                         while (true) {
                             fun stillWaiting() = activeBackend == ActiveBackend.SPOTIFY &&
                                 activePlayGeneration == generation && !receiverConfirmed &&
@@ -469,11 +471,25 @@ class AndroidPlaybackEngine(
                             if (!stillWaiting()) return@launch
                             val observed = runCatching { spotify.observe?.invoke() }.getOrNull()
                             if (!stillWaiting()) return@launch
-                            if (observed?.isPlaying == false) continue
-                            trace("no receiver event after ${RECEIVER_CONFIRM_TIMEOUT_MS}ms -> wall clock")
-                            spotifyStartedAt = System.currentTimeMillis()
-                            _state.update { it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs) }
-                            startTicker()
+                            val waited = System.currentTimeMillis() - waitingSince
+                            when (spotifyStartCheck(observed?.isPlaying, waited)) {
+                                SpotifyStartCheck.WAIT -> continue
+                                SpotifyStartCheck.PLAYING -> {
+                                    trace("no receiver event after ${waited}ms, Spotify reports playing -> wall clock")
+                                    spotifyStartedAt = System.currentTimeMillis()
+                                    _state.update { it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs) }
+                                    startTicker()
+                                }
+                                SpotifyStartCheck.FAIL -> {
+                                    trace("Spotify did not confirm playback after ${waited}ms (observed=${observed?.isPlaying}) -> FAILED")
+                                    ticker?.cancel()
+                                    _state.update { it.copy(status = EngineStatus.FAILED, error = "Spotify did not start playing") }
+                                    // A late start would play under whatever the session moves to next.
+                                    enqueueSpotifyCommand("Spotify Connect stop") {
+                                        if (activePlayGeneration == generation) spotify.pause()
+                                    }
+                                }
+                            }
                             return@launch
                         }
                     }

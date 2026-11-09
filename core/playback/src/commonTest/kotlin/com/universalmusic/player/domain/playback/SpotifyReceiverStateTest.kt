@@ -29,4 +29,14 @@ class SpotifyReceiverStateTest {
         assertFalse(spotifyTrackFinished(Kind.PLAYING, sameTrack = false, confirmed = false, positionMs = 179_000, durationMs = 180_000))
         assertFalse(spotifyTrackFinished(Kind.PAUSED, sameTrack = false, confirmed = true, positionMs = 179_000, durationMs = 180_000))
     }
+
+    @Test fun unconfirmedStartFailsAtTheDeadlineInsteadOfFakingPlayback() {
+        assertEquals(SpotifyStartCheck.PLAYING, spotifyStartCheck(observedPlaying = true, waitedMs = 10_000))
+        // An observation that failed is not proof of sound.
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(observedPlaying = null, waitedMs = 10_000))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(observedPlaying = null, waitedMs = SPOTIFY_START_DEADLINE_MS))
+        // A receiver that never starts must not keep the start buffering forever.
+        assertEquals(SpotifyStartCheck.WAIT, spotifyStartCheck(observedPlaying = false, waitedMs = 20_000))
+        assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(observedPlaying = false, waitedMs = SPOTIFY_START_DEADLINE_MS))
+    }
 }

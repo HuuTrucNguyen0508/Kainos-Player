@@ -31,3 +31,18 @@ internal fun spotifyReceiverStatus(kind: SpotifyReceiverEvent.Kind, current: Eng
     SpotifyReceiverEvent.Kind.UNAVAILABLE -> EngineStatus.FAILED
     else -> current
 }
+
+/** How long a Spotify start may wait for the receiver to confirm before it counts as failed. */
+internal const val SPOTIFY_START_DEADLINE_MS = 30_000L
+
+internal enum class SpotifyStartCheck { PLAYING, WAIT, FAIL }
+
+/**
+ * A start the receiver has not confirmed. Only an observed `isPlaying` proves sound; an observation
+ * that fails or says not playing waits until the deadline, then fails so the session can skip it.
+ */
+internal fun spotifyStartCheck(observedPlaying: Boolean?, waitedMs: Long): SpotifyStartCheck = when {
+    observedPlaying == true -> SpotifyStartCheck.PLAYING
+    waitedMs >= SPOTIFY_START_DEADLINE_MS -> SpotifyStartCheck.FAIL
+    else -> SpotifyStartCheck.WAIT
+}
