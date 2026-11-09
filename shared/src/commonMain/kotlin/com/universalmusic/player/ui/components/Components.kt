@@ -177,10 +177,11 @@ fun TrackRow(
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(table.titleWeight),
+                modifier = Modifier.width(table.titleWidth),
             )
-            MutedCell(track.artistLine, Modifier.weight(table.artistWeight))
-            if (table.showAlbum) MutedCell(track.album?.title.orEmpty(), Modifier.weight(table.albumWeight))
+            MutedCell(track.artistLine, Modifier.width(table.artistWidth))
+            table.albumWidth?.let { MutedCell(track.albumName.orEmpty(), Modifier.width(it)) }
+            Spacer(Modifier.weight(1f))
             Column(Modifier.width(TrackTableAvailabilityWidth)) {
                 TrackAvailabilityLines(availability, status, needsNetwork)
             }

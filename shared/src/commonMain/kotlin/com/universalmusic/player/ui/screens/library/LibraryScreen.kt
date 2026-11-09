@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.CompositionLocalProvider
 import com.universalmusic.player.ui.components.LocalTrackTable
-import com.universalmusic.player.ui.components.anyAlbumName
+import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.ui.components.trackTableColumns
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -349,7 +349,7 @@ internal fun LibraryScreen(
             leadingIcon = Icons.Default.OfflinePin,
         )
     }
-    val showAlbums = remember(state.queueSongs) { state.queueSongs.anyAlbumName() }
+    val showAlbums = remember(state.queueSongs) { state.queueSongs.namesAlbums() }
 
     // One measurement for the whole screen: rows read the table from LocalTrackTable instead of measuring themselves.
     BoxWithConstraints(Modifier.fillMaxSize()) {

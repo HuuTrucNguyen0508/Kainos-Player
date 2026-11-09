@@ -32,9 +32,12 @@ internal val SettingsBoardColumnMaxWidth: Dp = 700.dp
 
 internal val SettingsBoardGutter: Dp = 40.dp
 
-/** How many board columns Settings gets at its own [width]; 1 means the chip layout. */
+/**
+ * How many board columns Settings gets at its own [width]; 1 means the chip layout. Four start at
+ * 2800dp so a 3440 window with the player docked below (a sheet about 2885dp wide) gets all four.
+ */
 internal fun settingsBoardColumnCount(width: Dp): Int = when {
-    width >= 2900.dp -> 4
+    width >= 2800.dp -> 4
     width >= 2300.dp -> 3
     width >= SettingsBoardMinWidth -> 2
     else -> 1

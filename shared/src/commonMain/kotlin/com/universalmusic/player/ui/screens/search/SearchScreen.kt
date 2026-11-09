@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.Dp
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.ui.components.LocalTrackTable
 import com.universalmusic.player.ui.components.TrackTableHeader
-import com.universalmusic.player.ui.components.anyAlbumName
+import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.ui.components.trackTableColumns
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -89,7 +89,7 @@ internal fun SearchScreen(
     val showingResults = state.searchable.isNotEmpty() && error == null && query.isNotBlank() &&
         !(loading && tracks == null) && !(tracks.isNullOrEmpty() && playlists.isEmpty())
     val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-    val showAlbums = remember(tracks) { tracks.orEmpty().anyAlbumName() }
+    val showAlbums = remember(tracks) { tracks.orEmpty().namesAlbums() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val width = maxWidth

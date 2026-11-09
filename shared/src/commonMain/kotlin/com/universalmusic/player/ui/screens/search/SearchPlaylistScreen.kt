@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
 import com.universalmusic.player.ui.components.LocalTrackTable
-import com.universalmusic.player.ui.components.anyAlbumName
+import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.domain.model.Playlist
@@ -107,7 +107,7 @@ internal fun SearchPlaylistScreen(
         }
     }
 
-    val showAlbums = remember(state.tracks) { state.tracks.anyAlbumName() }
+    val showAlbums = remember(state.tracks) { state.tracks.namesAlbums() }
     Column(Modifier.fillMaxSize()) {
         PlaylistTopBar(playlist, onBack, openLink)
         CompositionLocalProvider(LocalTrackTable provides searchTable(listWidth, showAlbums)) {

@@ -3,7 +3,7 @@ package com.universalmusic.player.ui.screens
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.ProviderId
-import com.universalmusic.player.ui.components.anyAlbumName
+import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.ui.components.trackTableColumns
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,18 +17,30 @@ class WideLayoutTest {
         assertNull(trackTableColumns(1099.dp, showAlbum = true, trailingWidth = 40.dp))
         val table = assertNotNull(trackTableColumns(1100.dp, showAlbum = true, trailingWidth = 40.dp))
         assertTrue(table.showAlbum)
-        assertEquals(1f, table.titleWeight + table.artistWeight + table.albumWeight, .0001f)
-        val noAlbum = assertNotNull(trackTableColumns(2000.dp, showAlbum = false, trailingWidth = 40.dp))
-        assertEquals(1f, noAlbum.titleWeight + noAlbum.artistWeight, .0001f)
+        // Everything fits the row: insets, cover, text, marks and trailing.
+        val used = 32 + 40 + 150 + 84 + 40 + 12 * 7 + (table.titleWidth + table.artistWidth + table.albumWidth!!).value
+        assertTrue(used <= 1100.5f, "row needs $used dp")
     }
 
-    @Test fun theAlbumColumnShowsOnlyWhenSomeTrackNamesItsAlbum() {
-        assertFalse(listOf(track("A", "X", provider = ProviderId.LOCAL)).anyAlbumName())
-        assertFalse(listOf(track("A", "X", album = " ", provider = ProviderId.LOCAL)).anyAlbumName())
-        assertTrue(
-            listOf(track("A", "X", provider = ProviderId.LOCAL), track("B", "X", album = "Gold", provider = ProviderId.LOCAL))
-                .anyAlbumName(),
-        )
+    @Test fun textColumnsStopGrowingSoAWideListDoesNotStretchItsTitles() {
+        val wide = assertNotNull(trackTableColumns(2850.dp, showAlbum = false, trailingWidth = 40.dp))
+        assertEquals(640.dp, wide.titleWidth)
+        assertEquals(400.dp, wide.artistWidth)
+        assertNull(wide.albumWidth)
+        val pane = assertNotNull(trackTableColumns(1580.dp, showAlbum = true, trailingWidth = 180.dp))
+        assertTrue(pane.titleWidth < 640.dp && pane.titleWidth > pane.artistWidth)
+    }
+
+    @Test fun theAlbumColumnShowsWhenAQuarterOfTheTracksNameTheirAlbum() {
+        fun list(named: Int, unnamed: Int) =
+            List(named) { track("N$it", "X", album = "Gold", provider = ProviderId.LOCAL) } +
+                List(unnamed) { track("U$it", "X", provider = ProviderId.LOCAL) }
+        assertFalse(emptyList<com.universalmusic.player.domain.model.Track>().namesAlbums())
+        assertFalse(listOf(track("A", "X", album = " ", provider = ProviderId.LOCAL)).namesAlbums())
+        assertFalse(list(named = 2, unnamed = 625).namesAlbums())
+        assertTrue(list(named = 1, unnamed = 3).namesAlbums())
+        // YouTube's placeholder album is the service's name, not an album.
+        assertFalse(List(4) { track("Y$it", "X", album = "YouTube Music", provider = ProviderId.YOUTUBE_MUSIC) }.namesAlbums())
     }
 
     @Test fun libraryCompactsAt1500AndSplitsAt2000() {
@@ -68,8 +80,8 @@ class WideLayoutTest {
         assertEquals(1, settingsBoardColumnCount(1699.dp))
         assertEquals(2, settingsBoardColumnCount(1700.dp))
         assertEquals(3, settingsBoardColumnCount(2300.dp))
-        assertEquals(3, settingsBoardColumnCount(2899.dp))
-        assertEquals(4, settingsBoardColumnCount(2900.dp))
+        assertEquals(3, settingsBoardColumnCount(2799.dp))
+        assertEquals(4, settingsBoardColumnCount(2800.dp))
     }
 
     @Test fun everyBoardLayoutShowsEachSectionOnce() {
