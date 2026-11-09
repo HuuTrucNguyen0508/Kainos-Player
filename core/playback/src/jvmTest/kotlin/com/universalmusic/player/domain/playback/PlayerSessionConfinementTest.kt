@@ -118,6 +118,43 @@ class PlayerSessionConfinementTest {
             executor.shutdownNow()
         }
     }
+    @Test
+    fun aHeartFromAnotherThreadAppliesAfterEarlierCallsAndOnlyToItsTrack() = runBlocking {
+        val executor = Executors.newSingleThreadExecutor { Thread(it, "kainos-session-test") }
+        val sessionDispatcher = executor.asCoroutineDispatcher()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val session = PlayerSession(
+                engine = ThreadRecordingEngine(),
+                resolver = DefaultSourceResolver(),
+                scope = scope,
+                confineTo = sessionDispatcher,
+                workContext = Dispatchers.Default,
+            )
+            val first = track("First", "A", provider = ProviderId.SAMPLE)
+            val second = track("Second", "A", provider = ProviderId.SAMPLE)
+            session.play(listOf(first, second), startIndex = 0)
+            withContext(sessionDispatcher) { }
+            assertEquals("First", session.nowPlaying.value.track?.title)
+
+            // The session thread is busy (a click being handled) while a media button skips and
+            // the library reports hearts for both tracks.
+            val busy = CountDownLatch(1)
+            executor.execute { busy.await() }
+            session.skipToNext()
+            session.syncFavorite(first.canonicalId, favorite = true)
+            session.syncFavorite(second.canonicalId, favorite = true)
+            busy.countDown()
+            withContext(sessionDispatcher) { }
+
+            val now = session.nowPlaying.value
+            assertEquals("Second", now.track?.title)
+            assertTrue(now.favorite, "the heart for the track now playing applies after the skip it followed")
+        } finally {
+            scope.cancel()
+            executor.shutdownNow()
+        }
+    }
 }
 
 private class ThreadRecordingEngine : PlaybackEngine {

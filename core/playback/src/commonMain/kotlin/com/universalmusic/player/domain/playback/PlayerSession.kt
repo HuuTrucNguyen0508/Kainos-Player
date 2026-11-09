@@ -732,15 +732,12 @@ class PlayerSession(
         editQueue { setRepeat(next) }
     }
 
-    fun setFavorite(favorite: Boolean) {
-        _nowPlaying.update { it.copy(favorite = favorite) }
-    }
-
     /**
      * Keep the Now Playing heart in step with the library when [canonicalId] is still the
-     * current track (hearts can change from Home sync merges or other devices mid-track).
+     * current track (hearts change from the media controls, Home sync merges or other devices
+     * mid-track). Runs on the session thread in call order, so it never lands on a later track.
      */
-    fun syncFavorite(canonicalId: String, favorite: Boolean) {
+    fun syncFavorite(canonicalId: String, favorite: Boolean) = onSession {
         _nowPlaying.update { state ->
             if (state.track?.canonicalId == canonicalId && state.favorite != favorite) {
                 state.copy(favorite = favorite)
