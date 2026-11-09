@@ -1,6 +1,8 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.platform.SpotifyReceiverEvent
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** How close to the end a receiver event must land to mean the track finished. */
 internal const val SPOTIFY_END_WINDOW_MS = 5_000L
@@ -49,4 +51,46 @@ internal fun spotifyStartCheck(observed: SpotifyObservedPlayback?, trackId: Stri
     observed?.isPlaying == true && observed.trackId == trackId.removePrefix("spotify:track:") -> SpotifyStartCheck.PLAYING
     waitedMs >= SPOTIFY_START_DEADLINE_MS -> SpotifyStartCheck.FAIL
     else -> SpotifyStartCheck.WAIT
+}
+
+/** Poll gap while the in-app receiver may still confirm the start with its own event. */
+internal const val SPOTIFY_START_POLL_MS = 10_000L
+
+/** Poll gap with no in-app receiver: only the Web API can confirm, so ask sooner. */
+internal const val SPOTIFY_START_POLL_NO_RECEIVER_MS = 3_000L
+
+/** A stalled observation must not hold the start past the deadline by more than this. */
+internal const val SPOTIFY_OBSERVE_TIMEOUT_MS = 5_000L
+
+internal sealed interface SpotifyStartOutcome {
+    data class Playing(val progressMs: Long?) : SpotifyStartOutcome
+    data object Failed : SpotifyStartOutcome
+    /** The start was confirmed, paused, stopped or replaced while waiting; leave the state alone. */
+    data object Abandoned : SpotifyStartOutcome
+}
+
+/**
+ * Watches a Spotify start the receiver has not confirmed: polls [observe] every [pollMs] until it
+ * shows [trackId] playing, or fails once [elapsedMs] passes [SPOTIFY_START_DEADLINE_MS].
+ */
+internal suspend fun awaitSpotifyStart(
+    trackId: String,
+    pollMs: Long,
+    observe: (suspend () -> SpotifyObservedPlayback?)?,
+    stillWaiting: () -> Boolean,
+    elapsedMs: () -> Long,
+): SpotifyStartOutcome {
+    while (true) {
+        delay(pollMs)
+        if (!stillWaiting()) return SpotifyStartOutcome.Abandoned
+        val observed = observe?.let { call ->
+            runCatching { withTimeoutOrNull(SPOTIFY_OBSERVE_TIMEOUT_MS) { call() } }.getOrNull()
+        }
+        if (!stillWaiting()) return SpotifyStartOutcome.Abandoned
+        when (spotifyStartCheck(observed, trackId, elapsedMs())) {
+            SpotifyStartCheck.WAIT -> continue
+            SpotifyStartCheck.PLAYING -> return SpotifyStartOutcome.Playing(observed?.progressMs)
+            SpotifyStartCheck.FAIL -> return SpotifyStartOutcome.Failed
+        }
+    }
 }

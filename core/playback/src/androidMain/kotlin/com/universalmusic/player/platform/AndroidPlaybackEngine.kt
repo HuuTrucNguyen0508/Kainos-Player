@@ -15,9 +15,10 @@ import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PreparedPlayback
-import com.universalmusic.player.domain.playback.SPOTIFY_START_DEADLINE_MS
-import com.universalmusic.player.domain.playback.SpotifyStartCheck
-import com.universalmusic.player.domain.playback.spotifyStartCheck
+import com.universalmusic.player.domain.playback.SPOTIFY_START_POLL_MS
+import com.universalmusic.player.domain.playback.SPOTIFY_START_POLL_NO_RECEIVER_MS
+import com.universalmusic.player.domain.playback.SpotifyStartOutcome
+import com.universalmusic.player.domain.playback.awaitSpotifyStart
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executor
@@ -28,7 +29,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -437,11 +437,8 @@ class AndroidPlaybackEngine(
                 val duration = handle.durationMs
                     ?: AndroidMediaControls.currentDurationMs()
                     ?: AndroidMediaControls.currentTrack()?.durationMs
-                if (!receiverConfirmed && spotify.receiverEvents?.isAvailable != true) publishState(EngineState(
-                    status = EngineStatus.PLAYING,
-                    positionMs = 0,
-                    durationMs = duration,
-                ))
+                // With no in-app receiver nothing proves sound yet; the start watchdog confirms it from the Web API.
+                val noReceiver = spotify.receiverEvents?.isAvailable != true
                 runMediaCommand {
                     AndroidMediaControls.forwardingPlayer?.publishSessionState(
                         mediaId = AndroidMediaControls.currentTrack()?.canonicalId ?: handle.trackId,
@@ -466,42 +463,42 @@ class AndroidPlaybackEngine(
                     val intent = transportIntent
                     scope.launch {
                         val waitingSince = System.currentTimeMillis()
-                        while (true) {
-                            fun stillWaiting() = activeBackend == ActiveBackend.SPOTIFY &&
-                                activePlayGeneration == generation && !receiverConfirmed &&
-                                transportIntent == intent && _state.value.status == EngineStatus.BUFFERING
-                            delay(RECEIVER_CONFIRM_TIMEOUT_MS)
-                            if (!stillWaiting()) return@launch
-                            // Keep the deadline even when the observation request itself stalls.
-                            val remaining = (SPOTIFY_START_DEADLINE_MS - (System.currentTimeMillis() - waitingSince)).coerceAtLeast(1)
-                            val observed = runCatching { withTimeoutOrNull(remaining) { spotify.observe?.invoke() } }.getOrNull()
-                            if (!stillWaiting()) return@launch
-                            val waited = System.currentTimeMillis() - waitingSince
-                            when (spotifyStartCheck(observed, handle.trackId, waited)) {
-                                SpotifyStartCheck.WAIT -> continue
-                                SpotifyStartCheck.PLAYING -> {
-                                    trace("no receiver event after ${waited}ms, Spotify reports playing -> wall clock")
-                                    spotifyStartedAt = System.currentTimeMillis()
-                                    _state.update {
-                                        if (it.playGeneration != generation) it
-                                        else it.copy(status = EngineStatus.PLAYING, durationMs = duration ?: it.durationMs)
-                                    }
-                                    startTicker()
+                        val outcome = awaitSpotifyStart(
+                            trackId = handle.trackId,
+                            pollMs = if (noReceiver) SPOTIFY_START_POLL_NO_RECEIVER_MS else SPOTIFY_START_POLL_MS,
+                            observe = spotify.observe,
+                            stillWaiting = {
+                                activeBackend == ActiveBackend.SPOTIFY && activePlayGeneration == generation &&
+                                    !receiverConfirmed && transportIntent == intent &&
+                                    _state.value.status == EngineStatus.BUFFERING
+                            },
+                            elapsedMs = { System.currentTimeMillis() - waitingSince },
+                        )
+                        val waited = System.currentTimeMillis() - waitingSince
+                        when (outcome) {
+                            SpotifyStartOutcome.Abandoned -> Unit
+                            is SpotifyStartOutcome.Playing -> {
+                                trace("no receiver event after ${waited}ms, Spotify reports the track playing -> wall clock")
+                                spotifyOffset = outcome.progressMs ?: spotifyOffset
+                                spotifyStartedAt = System.currentTimeMillis()
+                                _state.update {
+                                    if (it.playGeneration != generation) it
+                                    else it.copy(status = EngineStatus.PLAYING, positionMs = spotifyOffset, durationMs = duration ?: it.durationMs)
                                 }
-                                SpotifyStartCheck.FAIL -> {
-                                    trace("Spotify did not confirm playback after ${waited}ms (observed=$observed) -> FAILED")
-                                    ticker?.cancel()
-                                    _state.update {
-                                        if (it.playGeneration != generation) it
-                                        else it.copy(status = EngineStatus.FAILED, error = "Spotify did not start playing")
-                                    }
-                                    // A late start would play under whatever the session moves to next.
-                                    enqueueSpotifyCommand("Spotify Connect stop") {
-                                        if (activePlayGeneration == generation) spotify.pause()
-                                    }
+                                if (_state.value.playGeneration == generation) startTicker()
+                            }
+                            SpotifyStartOutcome.Failed -> {
+                                trace("Spotify did not confirm playback after ${waited}ms -> FAILED")
+                                ticker?.cancel()
+                                _state.update {
+                                    if (it.playGeneration != generation) it
+                                    else it.copy(status = EngineStatus.FAILED, error = "Spotify did not start playing")
+                                }
+                                // A late start would play under whatever the session moves to next.
+                                enqueueSpotifyCommand("Spotify Connect stop") {
+                                    if (activePlayGeneration == generation) spotify.pause()
                                 }
                             }
-                            return@launch
                         }
                     }
                 }
@@ -853,6 +850,8 @@ class AndroidPlaybackEngine(
         scope.launch {
             val observed = runCatching { spotify.observe?.invoke() }.getOrNull() ?: return@launch
             if (activeBackend != ActiveBackend.SPOTIFY || activePlayGeneration != generation || transportIntent != intent) return@launch
+            // An unconfirmed start belongs to the start watchdog, which checks the track id.
+            if (!receiverConfirmed && _state.value.status == EngineStatus.BUFFERING) return@launch
             spotifyOffset = observed.progressMs ?: _state.value.positionMs
             spotifyStartedAt = System.currentTimeMillis()
             _state.update { it.copy(
@@ -884,7 +883,6 @@ class AndroidPlaybackEngine(
 
     private companion object {
         const val TICK_MS = 400L
-        const val RECEIVER_CONFIRM_TIMEOUT_MS = 10_000L
         const val RECEIVER_END_GRACE_MS = 5_000L
         /** ~2 s of frozen position while PLAYING before the ticker writes a stall line. */
         const val STALL_TICKS_BEFORE_TRACE = 5

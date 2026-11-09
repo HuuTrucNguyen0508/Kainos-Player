@@ -1,11 +1,16 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.platform.SpotifyReceiverEvent.Kind
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SpotifyReceiverStateTest {
     @Test fun receiverStallFreezesPlaybackAndOnlyReceiverEndCompletesIt() {
         assertEquals(EngineStatus.BUFFERING, spotifyReceiverStatus(Kind.BUFFERING, EngineStatus.PLAYING))
@@ -60,5 +65,60 @@ class SpotifyReceiverStateTest {
         // With no confirmation and no usable observation, the watchdog fails the start at the deadline.
         assertEquals(EngineStatus.BUFFERING, spotifyReceiverStatus(Kind.BUFFERING, EngineStatus.BUFFERING))
         assertEquals(SpotifyStartCheck.FAIL, spotifyStartCheck(null, "spotify:track:wanted", waitedMs = SPOTIFY_START_DEADLINE_MS))
+    }
+
+    private fun playing(id: String?) = SpotifyObservedPlayback(isPlaying = true, progressMs = 4_000, trackId = id)
+
+    private suspend fun TestScope.await(
+        observe: (suspend () -> SpotifyObservedPlayback?)?,
+        pollMs: Long = SPOTIFY_START_POLL_MS,
+        stillWaiting: () -> Boolean = { true },
+    ): Pair<SpotifyStartOutcome, Long> {
+        val start = testScheduler.currentTime
+        val outcome = awaitSpotifyStart("spotify:track:wanted", pollMs, observe, stillWaiting) { testScheduler.currentTime - start }
+        return outcome to testScheduler.currentTime - start
+    }
+
+    @Test fun watchdogConfirmsOnlyTheRequestedTrackAndCarriesItsPosition() = runTest {
+        val (outcome, at) = await({ playing("wanted") })
+        assertEquals(SpotifyStartOutcome.Playing(progressMs = 4_000), outcome)
+        assertEquals(SPOTIFY_START_POLL_MS, at)
+    }
+
+    @Test fun watchdogFailsAtTheDeadlineWhenOnlyAnotherTrackOrNothingIsSeen() = runTest {
+        assertEquals(SpotifyStartOutcome.Failed to SPOTIFY_START_DEADLINE_MS, await({ playing("previous") }))
+        assertEquals(SpotifyStartOutcome.Failed to SPOTIFY_START_DEADLINE_MS, await(observe = null))
+        assertEquals(SpotifyStartOutcome.Failed to SPOTIFY_START_DEADLINE_MS, await({ error("HTTP 429") }))
+    }
+
+    @Test fun aStalledObservationIsCutOffAndALaterPollStillConfirms() = runTest {
+        var calls = 0
+        val (outcome, at) = await({
+            calls++
+            if (calls == 1) CompletableDeferred<SpotifyObservedPlayback?>().await() else playing("wanted")
+        })
+        assertEquals(SpotifyStartOutcome.Playing(progressMs = 4_000), outcome)
+        assertEquals(2 * SPOTIFY_START_POLL_MS + SPOTIFY_OBSERVE_TIMEOUT_MS, at)
+    }
+
+    @Test fun thePollAtTheDeadlineCanStillConfirm() = runTest {
+        var calls = 0
+        val (outcome, at) = await({ calls++; playing(if (calls < 3) "previous" else "wanted") })
+        assertEquals(SpotifyStartOutcome.Playing(progressMs = 4_000), outcome)
+        assertEquals(SPOTIFY_START_DEADLINE_MS, at)
+    }
+
+    @Test fun aStartThatIsReplacedOrConfirmedMeanwhileIsAbandoned() = runTest {
+        var waiting = true
+        val (outcome, at) = await({ waiting = false; playing("wanted") }, stillWaiting = { waiting })
+        assertEquals(SpotifyStartOutcome.Abandoned, outcome)
+        assertEquals(SPOTIFY_START_POLL_MS, at)
+        assertEquals(SpotifyStartOutcome.Abandoned, await({ playing("wanted") }, stillWaiting = { false }).first)
+    }
+
+    @Test fun withoutAReceiverTheWebApiIsAskedSooner() = runTest {
+        val (outcome, at) = await({ playing("wanted") }, pollMs = SPOTIFY_START_POLL_NO_RECEIVER_MS)
+        assertEquals(SpotifyStartOutcome.Playing(progressMs = 4_000), outcome)
+        assertEquals(SPOTIFY_START_POLL_NO_RECEIVER_MS, at)
     }
 }
