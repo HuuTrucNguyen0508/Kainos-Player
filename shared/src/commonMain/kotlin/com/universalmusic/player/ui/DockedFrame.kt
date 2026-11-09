@@ -203,6 +203,9 @@ internal fun DockDropHost(
     current: DockEdge,
     sidePaneWidth: Dp,
     bandHeight: Dp,
+    queueWidth: Dp = 0.dp,
+    railInset: Dp = 0.dp,
+    frameInset: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -220,7 +223,7 @@ internal fun DockDropHost(
             },
     ) {
         content()
-        if (drag.dragging) DockDropZones(drag, current, sidePaneWidth, bandHeight)
+        if (drag.dragging) DockDropZones(drag, current, sidePaneWidth, bandHeight, queueWidth, railInset, frameInset)
     }
 }
 
@@ -295,25 +298,26 @@ private fun GripDots(rows: Int, columns: Int, lit: Boolean, horizontalPad: Dp, v
 }
 
 @Composable
-private fun DockDropZones(drag: DockDragState, current: DockEdge, sidePaneWidth: Dp, bandHeight: Dp) {
+private fun DockDropZones(drag: DockDragState, current: DockEdge, sidePaneWidth: Dp, bandHeight: Dp, queueWidth: Dp, railInset: Dp, frameInset: Dp) {
     val density = LocalDensity.current
     val scheme = MaterialTheme.colorScheme
     val target = drag.target
     val width = with(density) { drag.hostSize.width.toDp() }
     val height = with(density) { drag.hostSize.height.toDp() }
     // Each zone is the footprint the player would take there, kept clear of the window's middle.
-    val inset = 12.dp
+    val inset = if (queueWidth > 0.dp) frameInset else 12.dp
     val sideWidth = minOf(sidePaneWidth, width * .28f)
     val bandDepth = minOf(bandHeight, height * .28f)
-    val bandWidth = (width - sideWidth * 2 - inset * 4).coerceAtLeast(0.dp)
+    val bandStart = if (queueWidth > 0.dp) inset + railInset else inset * 2 + sideWidth
+    val bandWidth = (if (queueWidth > 0.dp) width - bandStart - inset - queueWidth else width - sideWidth * 2 - inset * 4).coerceAtLeast(0.dp)
     // Dim the app enough that the zones, not the screen under them, are what the eye reads.
     Box(Modifier.fillMaxSize().background(scheme.background.copy(alpha = .84f))) {
         for (edge in DockEdge.entries) {
             val zone = when (edge) {
-                DockEdge.LEFT -> Modifier.offset(inset, inset).size(sideWidth, height - inset * 2)
+                DockEdge.LEFT -> Modifier.offset(if (queueWidth > 0.dp) bandStart else inset, inset).size(sideWidth, height - inset * 2)
                 DockEdge.RIGHT -> Modifier.offset(width - inset - sideWidth, inset).size(sideWidth, height - inset * 2)
-                DockEdge.TOP -> Modifier.offset(inset * 2 + sideWidth, inset).size(bandWidth, bandDepth)
-                DockEdge.BOTTOM -> Modifier.offset(inset * 2 + sideWidth, height - inset - bandDepth).size(bandWidth, bandDepth)
+                DockEdge.TOP -> Modifier.offset(bandStart, inset).size(bandWidth, bandDepth)
+                DockEdge.BOTTOM -> Modifier.offset(bandStart, height - inset - bandDepth).size(bandWidth, bandDepth)
             }
             DropZone(edge, chosen = edge == target, here = edge == current, modifier = zone)
         }

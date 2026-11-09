@@ -397,6 +397,9 @@ private fun AppScaffold(
         current = dock,
         sidePaneWidth = nowPlayingPaneWidthDp.dp.coerceIn(DesktopNowPlayingPaneMinWidth, DesktopNowPlayingPaneMaxWidth),
         bandHeight = nowPlayingBandHeight,
+        queueWidth = if (desktop && queueColumnOpen) DesktopQueueColumnWidth + (if (frost) 10.dp else 1.dp) else 0.dp,
+        railInset = if (desktop) 88.dp + (if (frost) 10.dp else 1.dp) else 0.dp,
+        frameInset = if (frost) 10.dp else 0.dp,
     ) {
     FrostOrPlainGround(frost) {
     Scaffold(
