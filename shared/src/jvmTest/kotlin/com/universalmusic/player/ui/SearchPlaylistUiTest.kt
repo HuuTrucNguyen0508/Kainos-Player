@@ -197,6 +197,29 @@ class SearchPlaylistUiTest {
         text("Spotify playlist by Harbour Radio, 62 songs").assertIsDisplayed()
     }
 
+    @Test fun aWideSearchOpensThePlaylistBesideTheResults() = runDesktopComposeUiTest(width = 2400, height = 900, effectContext = providerDispatcher) {
+        showSearch()
+        // Two panes: results on the left, the playlist results on the right, both on screen at once.
+        text("Result 1").assertIsDisplayed()
+        text("Night Ferry").assertIsDisplayed()
+        text("Night Ferry").performClick()
+        awaitRequests(listOf(null))
+        releasePage(0, PlaylistTracksPage(firstPage, next = "50", total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
+
+        // The playlist page takes the right pane; the track results stay where they were.
+        text("Moonlit Quay 1").assertIsDisplayed()
+        text("Result 1").assertIsDisplayed()
+        onNode(hasSetTextAction()).assertIsDisplayed()
+        savePng("wide-playlist-beside-results.png")
+
+        onNodeWithContentDescription("Back to search results").performClick()
+        waitForIdle()
+        text("Night Ferry").assertIsDisplayed()
+        text("Result 1").assertIsDisplayed()
+        onNodeWithText("Moonlit Quay 1", useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test fun playAndARowQueueTheWholePlaylist() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
         showSearch()
         openPlaylistFromResults()
