@@ -31,6 +31,9 @@ import com.universalmusic.player.data.sync.HeartOp
 import com.universalmusic.player.data.sync.LocalSyncIdentity
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.model.PlaybackSource
+import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.QualityConfidence
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
@@ -351,6 +354,37 @@ class DatabaseRoundTripTest {
             assertEquals(setOf(measured, failed, synced), reopened.readAll().toSet())
             reopened.upsert(listOf(measured.copy(album = null)))
             assertEquals(measured.copy(album = null), reopened.readAll().single { it.location == measured.location })
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaNineAddsSpotifyLibraryAndSkipTablesThatSurviveARestart() = runTest {
+        val directory = Files.createTempDirectory("kainos-v9-l2c-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/9.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                KainosDatabase.Schema.migrate(driver, 9, KainosDatabase.Schema.version)
+                driver.execute(null, "PRAGMA user_version = ${KainosDatabase.Schema.version}", 0)
+                listOf("spotify_library_state", "spotify_liked_track", "spotify_playlist", "spotify_playlist_track", "home_sync_skip")
+                    .forEach { assertEquals(0L, driver.count(it)) }
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            }
+            val song = Track("spotify:track:a", "A", artists = emptyList(), sources = listOf(PlaybackSource(ProviderId.SPOTIFY, "a", isPlayable = true,
+                handle = PlaybackHandle.ProviderPlayback(ProviderId.SPOTIFY, "a", null))))
+            val liked = com.universalmusic.player.data.spotify.SavedLikedSongs(
+                listOf(com.universalmusic.player.data.spotify.SavedLikedTrack("a", "2026-11-11T10:00:00Z", song)), 1, 0, 7,
+            )
+            DbSpotifyLibraryStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })).saveLiked("me", liked)
+            val skip = com.universalmusic.player.data.sync.SkippedCopy(
+                "pc", com.universalmusic.player.data.sync.SkippedCopyKind.CACHED_AUDIO, "yt:abc",
+                com.universalmusic.player.data.sync.VaultCopyDirection.TO_LOCAL, "5:tok", "Download offline copy: A", 5, 9,
+            )
+            DbHomeSyncSkipStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })).skip(listOf(skip))
+            assertEquals(liked, DbSpotifyLibraryStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })).load("me")!!.liked)
+            assertEquals(listOf(skip), DbHomeSyncSkipStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })).skipped("pc"))
         } finally {
             directory.toFile().deleteRecursively()
         }

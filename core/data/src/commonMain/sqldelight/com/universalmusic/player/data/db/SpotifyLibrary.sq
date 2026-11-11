@@ -1,0 +1,115 @@
+-- The signed-in Spotify account's library as last read from the Web API (lane L2c), so Liked Songs
+-- and playlists show at launch without the network and a refresh fetches only what changed.
+-- Every row carries the account it belongs to; an account switch or disconnect deletes them all.
+
+-- liked_total and liked_unmapped are Spotify's count at the last Liked Songs check and how many of
+-- those entries could not be shown (removed or unavailable songs). A refresh that pages only the
+-- newest songs checks its result against them and reads the whole list again when they disagree.
+CREATE TABLE spotify_library_state (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    liked_total INTEGER,
+    liked_unmapped INTEGER NOT NULL DEFAULT 0,
+    liked_checked_at_ms INTEGER,
+    playlists_checked_at_ms INTEGER
+);
+
+-- Newest first, as Spotify lists them. spotify_track_id and added_at identify an entry across refreshes.
+CREATE TABLE spotify_liked_track (
+    account_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    spotify_track_id TEXT NOT NULL,
+    added_at TEXT,
+    track_json TEXT NOT NULL,
+    PRIMARY KEY (account_id, position)
+);
+
+-- tracks_snapshot_id is the snapshot_id the stored songs were read at; NULL when none are stored.
+-- A playlist whose snapshot_id still equals it has not changed and is not read again.
+CREATE TABLE spotify_playlist (
+    account_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    snapshot_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT,
+    artwork_url TEXT,
+    owner_name TEXT,
+    track_count INTEGER,
+    tracks_snapshot_id TEXT,
+    tracks_saved_at_ms INTEGER,
+    PRIMARY KEY (account_id, playlist_id)
+);
+
+CREATE TABLE spotify_playlist_track (
+    account_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    track_json TEXT NOT NULL,
+    PRIMARY KEY (account_id, playlist_id, position)
+);
+
+selectAccounts:
+SELECT account_id FROM spotify_library_state;
+
+selectState:
+SELECT * FROM spotify_library_state WHERE account_id = ?;
+
+upsertState:
+INSERT OR REPLACE INTO spotify_library_state (
+    account_id, liked_total, liked_unmapped, liked_checked_at_ms, playlists_checked_at_ms
+)
+VALUES (?, ?, ?, ?, ?);
+
+selectLiked:
+SELECT * FROM spotify_liked_track WHERE account_id = ? ORDER BY position;
+
+deleteLiked:
+DELETE FROM spotify_liked_track WHERE account_id = ?;
+
+insertLiked:
+INSERT INTO spotify_liked_track (account_id, position, spotify_track_id, added_at, track_json)
+VALUES (?, ?, ?, ?, ?);
+
+selectPlaylists:
+SELECT * FROM spotify_playlist WHERE account_id = ? ORDER BY position;
+
+deletePlaylists:
+DELETE FROM spotify_playlist WHERE account_id = ?;
+
+insertPlaylist:
+INSERT INTO spotify_playlist (
+    account_id, playlist_id, position, snapshot_id, title, description, artwork_url, owner_name,
+    track_count, tracks_snapshot_id, tracks_saved_at_ms
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+setPlaylistTracksSnapshot:
+UPDATE spotify_playlist SET tracks_snapshot_id = ?, tracks_saved_at_ms = ?
+WHERE account_id = ? AND playlist_id = ?;
+
+selectPlaylistTracks:
+SELECT track_json FROM spotify_playlist_track WHERE account_id = ? AND playlist_id = ? ORDER BY position;
+
+deletePlaylistTracks:
+DELETE FROM spotify_playlist_track WHERE account_id = ? AND playlist_id = ?;
+
+deleteOrphanPlaylistTracks:
+DELETE FROM spotify_playlist_track
+WHERE account_id = :account AND playlist_id NOT IN (
+    SELECT playlist_id FROM spotify_playlist WHERE account_id = :account
+);
+
+insertPlaylistTrack:
+INSERT INTO spotify_playlist_track (account_id, playlist_id, position, track_json) VALUES (?, ?, ?, ?);
+
+deleteAll:
+DELETE FROM spotify_library_state;
+
+deleteAllLiked:
+DELETE FROM spotify_liked_track;
+
+deleteAllPlaylists:
+DELETE FROM spotify_playlist;
+
+deleteAllPlaylistTracks:
+DELETE FROM spotify_playlist_track;

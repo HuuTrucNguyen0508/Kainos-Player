@@ -37,6 +37,12 @@ expect fun createLocalLibraryScanCache(): LocalLibraryScanCache?
 /** Loudness measurements in the app database. */
 expect fun createLoudnessStore(): com.universalmusic.player.data.loudness.LoudnessStore?
 
+/** The Spotify account's saved Liked Songs and playlists in the app database. */
+expect fun createSpotifyLibraryStore(): com.universalmusic.player.data.spotify.SpotifyLibraryStore
+
+/** Home sync copies the user skipped, in the app database. */
+expect fun createHomeSyncSkipStore(): com.universalmusic.player.data.sync.HomeSyncSkipStore
+
 expect fun loadAppConfig(): AppConfig
 
 /**

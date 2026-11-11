@@ -132,6 +132,12 @@ actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = DbLocalLibrar
 actual fun createLoudnessStore(): com.universalmusic.player.data.loudness.LoudnessStore? =
     com.universalmusic.player.data.db.DbLoudnessStore(kainosStorage)
 
+actual fun createSpotifyLibraryStore(): com.universalmusic.player.data.spotify.SpotifyLibraryStore =
+    com.universalmusic.player.data.db.DbSpotifyLibraryStore(kainosStorage)
+
+actual fun createHomeSyncSkipStore(): com.universalmusic.player.data.sync.HomeSyncSkipStore =
+    com.universalmusic.player.data.db.DbHomeSyncSkipStore(kainosStorage)
+
 actual fun loadAppConfig(): AppConfig {
     val env = System.getenv()
     val props = Properties()
