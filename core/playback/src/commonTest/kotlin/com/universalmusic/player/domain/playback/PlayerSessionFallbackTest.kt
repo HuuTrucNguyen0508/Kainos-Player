@@ -21,6 +21,21 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun aRateLimitDuringResolutionHoldsTheCurrentEntry() = runTest {
+        val resolver = object : SourceResolver {
+            override suspend fun resolve(track: Track, preferences: PlaybackPreferences): ResolvedPlayback {
+                throw ProviderRateLimitedException("Spotify rate limited", 120_000)
+            }
+        }
+        val session = PlayerSession(RecordingEngine {}, resolver, backgroundScope)
+        session.play(listOf(track("One", "Artist", provider = ProviderId.SPOTIFY), track("Two", "Artist", provider = ProviderId.SPOTIFY)))
+        runCurrent()
+        assertEquals("One", session.nowPlaying.value.track?.title)
+        assertFalse(session.nowPlaying.value.isPlaying)
+        assertTrue(session.nowPlaying.value.error.orEmpty().contains("paused"))
+    }
+
+    @Test
     fun truncatedStreamResolvesAgainAtItsPositionOnlyOnce() = runTest {
         var calls = 0
         val engine = RecordingEngine { calls++ }
