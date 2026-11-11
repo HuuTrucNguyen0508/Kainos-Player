@@ -17,6 +17,8 @@ import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.ui.components.EmptyState
+import com.universalmusic.player.ui.components.LocalTrackTable
+import com.universalmusic.player.ui.components.TrackTableHeader
 
 @Composable
 internal fun ColumnScope.LibrarySongsTab(
@@ -30,6 +32,8 @@ internal fun ColumnScope.LibrarySongsTab(
     trackActions: TrackActionsPresenter,
     onRefreshSpotify: () -> Unit,
     trackAvailability: (Track) -> TrackAvailabilityInfo,
+    /** False when the count, Sort and Play all sit in Library's header instead of atop the list. */
+    barInList: Boolean = true,
 ) {
     val songs = state.songs
     val queueSongs = state.queueSongs
@@ -58,40 +62,17 @@ internal fun ColumnScope.LibrarySongsTab(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 8.dp),
         ) {
+            // Always present, so row indices stay put when the bar moves up into the header at wide widths.
             stickyHeader(key = "ledger") {
-                LibraryLedger(
-                    countLine = songsCountLine(
-                        visible = songs.size,
-                        total = queueSongs.size,
-                        queryActive = state.needle.isNotEmpty(),
-                        favoritesOnly = state.favoritesOnly,
-                        readyOffline = state.readyOffline,
-                    ),
-                    localCount = state.localCount,
-                    cachedCount = state.cachedCount,
-                    spotifyCount = state.spotifyCount,
-                    localOnly = state.localOnly || state.readyOffline,
-                    favoritesOnly = state.favoritesOnly,
-                    localScanning = state.localState == ProviderState.LOADING,
-                    spotifyConnected = state.spotifyConnected,
-                    spotifyLoading = state.spotifyLoading,
-                    onRefreshSpotify = onRefreshSpotify,
-                    sortLabel = state.songSort.shortLabel(),
-                    sortMenuOpen = sortMenuOpen,
-                    onSortMenuOpen = onSortMenuOpen,
-                    onSortMenuDismiss = onSortMenuDismiss,
-                    onSortSelected = onSortSelected,
-                    currentSort = state.songSort,
-                    // Search only filters what is shown; chips define the queue, same as row taps and Enter.
-                    playLabel = when {
-                        state.needle.isNotEmpty() -> "Play all ${queueSongs.size}"
-                        state.favoritesOnly -> "Play favorites"
-                        state.readyOffline -> "Play offline"
-                        else -> "Play all"
-                    },
-                    onPlay = { onPlayTracks(queueSongs, 0) },
-                    showActions = true,
-                )
+                LibraryLedgerSurface {
+                    if (barInList) {
+                        SongsLedgerBar(
+                            state, sortMenuOpen, onSortMenuOpen, onSortMenuDismiss, onSortSelected,
+                            onPlayTracks, onRefreshSpotify,
+                        )
+                    }
+                    LocalTrackTable.current?.let { TrackTableHeader(it, Modifier.padding(horizontal = 8.dp)) }
+                }
             }
             items(songs, key = { it.canonicalId }) { track ->
                 ActionTrackRow(
@@ -117,4 +98,53 @@ internal fun ColumnScope.LibrarySongsTab(
             }
         }
     }
+}
+
+/** The Songs count, source tallies, Sort and Play all, wherever the layout puts them. */
+@Composable
+internal fun SongsLedgerBar(
+    state: LibraryUiState,
+    sortMenuOpen: Boolean,
+    onSortMenuOpen: () -> Unit,
+    onSortMenuDismiss: () -> Unit,
+    onSortSelected: (TrackSort) -> Unit,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    onRefreshSpotify: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val queueSongs = state.queueSongs
+    LibraryLedgerBar(
+        countLine = songsCountLine(
+            visible = state.songs.size,
+            total = queueSongs.size,
+            queryActive = state.needle.isNotEmpty(),
+            favoritesOnly = state.favoritesOnly,
+            readyOffline = state.readyOffline,
+        ),
+        localCount = state.localCount,
+        cachedCount = state.cachedCount,
+        spotifyCount = state.spotifyCount,
+        localOnly = state.localOnly || state.readyOffline,
+        favoritesOnly = state.favoritesOnly,
+        localScanning = state.localState == ProviderState.LOADING,
+        spotifyConnected = state.spotifyConnected,
+        spotifyLoading = state.spotifyLoading,
+        onRefreshSpotify = onRefreshSpotify,
+        sortLabel = state.songSort.shortLabel(),
+        sortMenuOpen = sortMenuOpen,
+        onSortMenuOpen = onSortMenuOpen,
+        onSortMenuDismiss = onSortMenuDismiss,
+        onSortSelected = onSortSelected,
+        currentSort = state.songSort,
+        // Search only filters what is shown; chips define the queue, same as row taps and Enter.
+        playLabel = when {
+            state.needle.isNotEmpty() -> "Play all ${queueSongs.size}"
+            state.favoritesOnly -> "Play favorites"
+            state.readyOffline -> "Play offline"
+            else -> "Play all"
+        },
+        onPlay = { onPlayTracks(queueSongs, 0) },
+        showActions = true,
+        modifier = modifier,
+    )
 }

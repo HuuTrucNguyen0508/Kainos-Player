@@ -152,6 +152,9 @@ internal fun DockDropHost(
     bandHeight: Dp,
     light: Color = MaterialTheme.colorScheme.primary,
     carry: (@Composable () -> Unit)? = null,
+    queueWidth: Dp = 0.dp,
+    railInset: Dp = 0.dp,
+    frameInset: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -175,7 +178,9 @@ internal fun DockDropHost(
             height = drag.hostSize.height.toFloat(),
             sideWidth = with(density) { sidePaneWidth.toPx() },
             bandDepth = with(density) { bandHeight.toPx() },
-            inset = with(density) { ZoneInset.toPx() },
+            inset = with(density) { (if (queueWidth > 0.dp) frameInset else ZoneInset).toPx() },
+            queueWidth = with(density) { queueWidth.toPx() },
+            railInset = with(density) { railInset.toPx() },
         )
         // Once let go, the pointer is gone and the dock is already changing; the zones and the hint fade
         // out exactly as they were at release instead of flipping to "keep" and "Player is here".
@@ -198,15 +203,27 @@ internal fun DockDropHost(
 
 private val ZoneInset = 12.dp
 
-/** Each zone is the footprint the player would take there, kept clear of the window's middle. */
-internal fun dockZoneRects(width: Float, height: Float, sideWidth: Float, bandDepth: Float, inset: Float): Map<DockEdge, Rect> {
+/**
+ * Each zone is the footprint the player would take there, kept clear of the window's middle. With an
+ * ultrawide queue column ([queueWidth] > 0) the bands start after the rail and end where the queue begins.
+ */
+internal fun dockZoneRects(
+    width: Float,
+    height: Float,
+    sideWidth: Float,
+    bandDepth: Float,
+    inset: Float,
+    queueWidth: Float = 0f,
+    railInset: Float = 0f,
+): Map<DockEdge, Rect> {
     val side = minOf(sideWidth, width * .28f)
     val depth = minOf(bandDepth, height * .28f)
-    val bandWidth = (width - side * 2 - inset * 4).coerceAtLeast(0f)
     val sideHeight = (height - inset * 2).coerceAtLeast(0f)
-    val bandLeft = inset * 2 + side
+    val withQueue = queueWidth > 0f
+    val bandLeft = if (withQueue) inset + railInset else inset * 2 + side
+    val bandWidth = (if (withQueue) width - bandLeft - inset - queueWidth else width - side * 2 - inset * 4).coerceAtLeast(0f)
     return mapOf(
-        DockEdge.LEFT to Rect(Offset(inset, inset), Size(side, sideHeight)),
+        DockEdge.LEFT to Rect(Offset(if (withQueue) bandLeft else inset, inset), Size(side, sideHeight)),
         DockEdge.RIGHT to Rect(Offset(width - inset - side, inset), Size(side, sideHeight)),
         DockEdge.TOP to Rect(Offset(bandLeft, inset), Size(bandWidth, depth)),
         DockEdge.BOTTOM to Rect(Offset(bandLeft, height - inset - depth), Size(bandWidth, depth)),

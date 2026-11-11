@@ -9,6 +9,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.CompositionLocalProvider
+import com.universalmusic.player.ui.components.LocalTrackTable
+import com.universalmusic.player.ui.components.namesAlbums
+import com.universalmusic.player.ui.components.trackTableColumns
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -77,6 +86,12 @@ internal fun LibraryScreen(
     val tab = remember(tabName) {
         runCatching { LibraryTab.valueOf(tabName) }.getOrDefault(LibraryTab.Songs)
     }
+    // The tab a split Library shows beside Songs; kept narrow too, so widening finds it again.
+    var lastOtherTabName by rememberSaveable { mutableStateOf<String?>(null) }
+    val lastOtherTab = remember(lastOtherTabName) {
+        lastOtherTabName?.let { name -> LibraryTab.entries.firstOrNull { it.name == name } }
+    }
+    var split by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
     var queryField by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     val query = queryField.text
@@ -93,13 +108,28 @@ internal fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val emitted by presenter.state.collectAsState()
     val state = remember(emitted, query) { emitted.withQuery(query) }
+    val otherTab = libraryOtherTab(tab, lastOtherTab, buildSet {
+        if (state.albums.isNotEmpty()) add(LibraryTab.Albums)
+        if (state.artists.isNotEmpty()) add(LibraryTab.Artists)
+        if (state.kainosPlaylists.isNotEmpty() || state.spotifyPlaylists.isNotEmpty()) add(LibraryTab.Playlists)
+        if (state.folders.isNotEmpty()) add(LibraryTab.Folders)
+    })
+    val shownOther = if (split) otherTab else tab
     SideEffect { presenter.setQuery(query) }
     // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
     val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
     var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
-    LaunchedEffect(tab, state.localOnly, state.favoritesOnly, state.readyOffline, state.needle) {
-        if (tab != LibraryTab.Artists) selectedArtistId = null
+    /** A tab the listener picked: leaving Artists closes the open artist, as it always has. */
+    fun selectTab(item: LibraryTab) {
+        if (item != LibraryTab.Artists) selectedArtistId = null
+        tabName = item.name
+        if (item != LibraryTab.Songs) lastOtherTabName = item.name
+    }
+    /** A press in one pane of a split Library: that pane's tab becomes the one a narrower window shows. */
+    fun touchTab(item: LibraryTab) {
+        tabName = item.name
+        if (item != LibraryTab.Songs) lastOtherTabName = item.name
     }
     var folderId by rememberSaveable { mutableStateOf<String?>(null) }
     val folderTrail = remember(state.folders, folderId) { state.folders.trailTo(folderId) }
@@ -118,7 +148,7 @@ internal fun LibraryScreen(
         foldersListState.scrollToItem(index, offset)
     }
     val folderUp: (() -> Unit)? = folderTrail
-        ?.takeIf { tab == LibraryTab.Folders }
+        ?.takeIf { shownOther == LibraryTab.Folders }
         ?.let { trail -> { openFolder(trail.getOrNull(trail.lastIndex - 1)?.id) } }
     DisposableEffect(folderUp != null, folderTrail?.last()?.id) {
         onInnerBack(folderUp)
@@ -132,6 +162,10 @@ internal fun LibraryScreen(
     var deletePlaylistId by remember { mutableStateOf<String?>(null) }
     var createDraft by remember { mutableStateOf<String?>(null) }
     var dismissSpotifyError by rememberSaveable { mutableStateOf(false) }
+    val refreshSpotify = {
+        dismissSpotifyError = false
+        presenter.refreshSpotify()
+    }
     val showSpotifyError = !state.localOnly && !state.favoritesOnly && !state.readyOffline &&
         state.spotifyError != null && !dismissSpotifyError
 
@@ -144,7 +178,7 @@ internal fun LibraryScreen(
             scrollBehavior.state.heightOffsetLimit = -chromeHeightPx.toFloat()
         }
     }
-    LaunchedEffect(tab) {
+    LaunchedEffect(shownOther) {
         scrollBehavior.state.heightOffset = 0f
     }
 
@@ -158,7 +192,7 @@ internal fun LibraryScreen(
                 val next = (if (typeAheadActive || searchFocused) queryField.text else "") + typed
                 queryField = TextFieldValue(next, selection = TextRange(next.length))
                 typeAheadActive = true
-                tabName = LibraryTab.Songs.name
+                if (split) touchTab(LibraryTab.Songs) else selectTab(LibraryTab.Songs)
                 scrollBehavior.state.heightOffset = 0f
                 // Frame callbacks run before composition. Let the field receive its new value
                 // before handing it subsequent keystrokes, including any queued during that frame.
@@ -179,7 +213,8 @@ internal fun LibraryScreen(
             return@LaunchedEffect
         }
         scrollBehavior.state.heightOffset = 0f
-        when (tab) {
+        if (split) songsListState.scrollToItem(0)
+        when (shownOther) {
             LibraryTab.Songs -> songsListState.scrollToItem(0)
             LibraryTab.Albums -> albumsListState.scrollToItem(0)
             LibraryTab.Artists -> artistsListState.scrollToItem(0)
@@ -188,85 +223,9 @@ internal fun LibraryScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-    ) {
-        LibraryCollapsingHeader(
-            scrollBehavior = scrollBehavior,
-            chromeHeightPx = chromeHeightPx,
-            onChromeHeightPx = { chromeHeightPx = it },
-            queryField = queryField,
-            onQueryField = { queryField = it },
-            searchFocusRequester = searchFocusRequester,
-            onSearchFocusChanged = { focused ->
-                searchFocused = focused
-                if (!focused) typeAheadActive = false
-            },
-            tab = tab,
-            songs = state.songs,
-            queueSongs = state.queueSongs,
-            onPlayTracks = playSongs,
-            localState = state.localState,
-            onRefreshLocal = presenter::refreshLocal,
-            showSpotifyError = showSpotifyError,
-            spotifyError = state.spotifyError,
-            onDismissSpotifyError = { dismissSpotifyError = true },
-        )
-        // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
-        // the header can fully hide; without this the Favorites chip is unreachable.
-        // Three chips overflow a 360dp phone; scroll them sideways rather than wrap and push the list down.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            KainosChip(
-                selected = state.localOnly,
-                onClick = presenter::toggleLocalOnly,
-                label = "Local files only",
-                accent = Accents.local,
-                leadingIcon = Icons.Default.SdStorage,
-            )
-            KainosChip(
-                selected = state.favoritesOnly,
-                onClick = presenter::toggleFavoritesOnly,
-                label = "Favorites only",
-                accent = Accents.heart,
-                leadingIcon = Icons.Default.Favorite,
-            )
-            KainosChip(
-                selected = state.readyOffline,
-                onClick = presenter::toggleReadyOffline,
-                label = "Ready offline",
-                accent = Accents.cached,
-                leadingIcon = Icons.Default.OfflinePin,
-            )
-        }
-        val tabs = @Composable {
-            LibraryTab.entries.forEach { item ->
-                Tab(
-                    selected = tab == item,
-                    onClick = { tabName = item.name },
-                    text = { Text(item.name, maxLines = 1) },
-                )
-            }
-        }
-        // Five labels do not fit a phone's width at equal shares; let them scroll there instead of wrap.
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (maxWidth < 520.dp) {
-                PrimaryScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 8.dp, tabs = tabs)
-            } else {
-                TabRow(selectedTabIndex = tab.ordinal, tabs = tabs)
-            }
-        }
-        when (tab) {
-            LibraryTab.Songs -> LibrarySongsTab(
+    val songsTab = @Composable { column: ColumnScope, barInList: Boolean ->
+        with(column) {
+            LibrarySongsTab(
                 state = state,
                 listState = songsListState,
                 sortMenuOpen = sortMenuOpen,
@@ -278,66 +237,230 @@ internal fun LibraryScreen(
                 },
                 onPlayTracks = playSongs,
                 trackActions = trackActions,
-                onRefreshSpotify = {
-                    dismissSpotifyError = false
-                    presenter.refreshSpotify()
-                },
+                onRefreshSpotify = refreshSpotify,
                 trackAvailability = presenter::trackAvailability,
-            )
-            LibraryTab.Albums -> LibraryAlbumsTab(
-                state = state,
-                listState = albumsListState,
-                presenter = presenter,
-                onPlayTracks = onPlayTracks,
-            )
-            LibraryTab.Artists -> LibraryArtistsTab(
-                state = state,
-                listState = artistsListState,
-                selectedArtist = selectedArtist,
-                onSelectedArtistId = { selectedArtistId = it },
-                onPlayTracks = onPlayTracks,
-                trackActions = trackActions,
-                trackAvailability = presenter::trackAvailability,
-            )
-            LibraryTab.Playlists -> LibraryPlaylistsTab(
-                state = state,
-                presenter = presenter,
-                listState = playlistsListState,
-                scope = scope,
-                onPlayTracks = onPlayTracks,
-                trackActions = trackActions,
-                playlistBusyId = playlistBusyId,
-                onPlaylistBusyId = { playlistBusyId = it },
-                playlistError = playlistError,
-                onPlaylistError = { playlistError = it },
-                expandedKainosId = expandedKainosId,
-                onExpandedKainosId = { expandedKainosId = it },
-                renamePlaylistId = renamePlaylistId,
-                onRenamePlaylistId = { renamePlaylistId = it },
-                renameDraft = renameDraft,
-                onRenameDraft = { renameDraft = it },
-                deletePlaylistId = deletePlaylistId,
-                onDeletePlaylistId = { deletePlaylistId = it },
-                createDraft = createDraft,
-                onCreateDraft = { createDraft = it },
-            )
-            LibraryTab.Folders -> LibraryFoldersTab(
-                state = state,
-                listState = foldersListState,
-                trail = folderTrail,
-                onOpenFolder = ::openFolder,
-                onPlayTracks = onPlayTracks,
-                onShuffleTracks = onShuffleTracks,
-                onPinFolder = { folder, pin ->
-                    if (pin) {
-                        presenter.pinHome(HomePinKind.LOCAL_FOLDER, folder.id, folder.name, "Local folder")
-                    } else {
-                        presenter.unpinHome(HomePinKind.LOCAL_FOLDER, folder.id)
-                    }
-                },
-                trackActions = trackActions,
-                trackAvailability = presenter::trackAvailability,
+                barInList = barInList,
             )
         }
     }
+    val songsBar = @Composable { modifier: Modifier ->
+        SongsLedgerBar(
+            state, sortMenuOpen, { sortMenuOpen = true }, { sortMenuOpen = false },
+            { sort ->
+                sortMenuOpen = false
+                presenter.setSort(sort)
+            },
+            playSongs, refreshSpotify, modifier,
+        )
+    }
+    val otherTabContent = @Composable { column: ColumnScope, which: LibraryTab ->
+        with(column) {
+            when (which) {
+                LibraryTab.Songs -> Unit
+                LibraryTab.Albums -> LibraryAlbumsTab(
+                    state = state,
+                    listState = albumsListState,
+                    presenter = presenter,
+                    onPlayTracks = onPlayTracks,
+                )
+                LibraryTab.Artists -> LibraryArtistsTab(
+                    state = state,
+                    listState = artistsListState,
+                    selectedArtist = selectedArtist,
+                    onSelectedArtistId = { selectedArtistId = it },
+                    onPlayTracks = onPlayTracks,
+                    trackActions = trackActions,
+                    trackAvailability = presenter::trackAvailability,
+                )
+                LibraryTab.Playlists -> LibraryPlaylistsTab(
+                    state = state,
+                    presenter = presenter,
+                    listState = playlistsListState,
+                    scope = scope,
+                    onPlayTracks = onPlayTracks,
+                    trackActions = trackActions,
+                    playlistBusyId = playlistBusyId,
+                    onPlaylistBusyId = { playlistBusyId = it },
+                    playlistError = playlistError,
+                    onPlaylistError = { playlistError = it },
+                    expandedKainosId = expandedKainosId,
+                    onExpandedKainosId = { expandedKainosId = it },
+                    renamePlaylistId = renamePlaylistId,
+                    onRenamePlaylistId = { renamePlaylistId = it },
+                    renameDraft = renameDraft,
+                    onRenameDraft = { renameDraft = it },
+                    deletePlaylistId = deletePlaylistId,
+                    onDeletePlaylistId = { deletePlaylistId = it },
+                    createDraft = createDraft,
+                    onCreateDraft = { createDraft = it },
+                )
+                LibraryTab.Folders -> LibraryFoldersTab(
+                    state = state,
+                    listState = foldersListState,
+                    trail = folderTrail,
+                    onOpenFolder = ::openFolder,
+                    onPlayTracks = onPlayTracks,
+                    onShuffleTracks = onShuffleTracks,
+                    onPinFolder = { folder, pin ->
+                        if (pin) {
+                            presenter.pinHome(HomePinKind.LOCAL_FOLDER, folder.id, folder.name, "Local folder")
+                        } else {
+                            presenter.unpinHome(HomePinKind.LOCAL_FOLDER, folder.id)
+                        }
+                    },
+                    trackActions = trackActions,
+                    trackAvailability = presenter::trackAvailability,
+                )
+            }
+        }
+    }
+    val searchField = @Composable { modifier: Modifier ->
+        LibrarySearchField(
+            queryField = queryField,
+            onQueryField = { queryField = it },
+            searchFocusRequester = searchFocusRequester,
+            onSearchFocusChanged = { focused ->
+                searchFocused = focused
+                if (!focused) typeAheadActive = false
+            },
+            songsShown = split || tab == LibraryTab.Songs,
+            songs = state.songs,
+            queueSongs = state.queueSongs,
+            onPlayTracks = playSongs,
+            modifier = modifier,
+        )
+    }
+    val filters = @Composable {
+        KainosChip(
+            selected = state.localOnly,
+            onClick = presenter::toggleLocalOnly,
+            label = "Local files only",
+            accent = Accents.local,
+            leadingIcon = Icons.Default.SdStorage,
+        )
+        KainosChip(
+            selected = state.favoritesOnly,
+            onClick = presenter::toggleFavoritesOnly,
+            label = "Favorites only",
+            accent = Accents.heart,
+            leadingIcon = Icons.Default.Favorite,
+        )
+        KainosChip(
+            selected = state.readyOffline,
+            onClick = presenter::toggleReadyOffline,
+            label = "Ready offline",
+            accent = Accents.cached,
+            leadingIcon = Icons.Default.OfflinePin,
+        )
+    }
+    val showAlbums = remember(state.queueSongs) { state.queueSongs.namesAlbums() }
+
+    // One measurement for the whole screen: rows read the table from LocalTrackTable instead of measuring themselves.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val width = maxWidth
+        val layout = libraryLayout(width)
+        SideEffect { split = layout.split }
+        val songsTable = trackTableColumns(layout.songsWidth, showAlbums, LibraryTrailingWidth, LibraryTimeEndInset)
+        val otherTable = trackTableColumns(layout.otherWidth, showAlbums, LibraryTrailingWidth, LibraryTimeEndInset)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (layout.compactHeader) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)),
+        ) {
+            if (layout.compactHeader) {
+                LibraryCompactLine(state.localState, presenter::refreshLocal, searchField, filters)
+                if (showSpotifyError) LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
+            } else LibraryCollapsingHeader(
+                scrollBehavior = scrollBehavior,
+                chromeHeightPx = chromeHeightPx,
+                onChromeHeightPx = { chromeHeightPx = it },
+            ) {
+                LibraryTitleRow(state.localState, presenter::refreshLocal)
+                searchField(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 8.dp))
+                if (showSpotifyError) {
+                    LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
+                }
+            }
+            if (!layout.compactHeader) {
+                // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
+                // the header can fully hide; without this the Favorites chip is unreachable.
+                // Three chips overflow a 360dp phone; scroll them sideways rather than wrap and push the list down.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { filters() }
+                val tabs = @Composable {
+                    LibraryTab.entries.forEach { item ->
+                        Tab(
+                            selected = tab == item,
+                            onClick = { selectTab(item) },
+                            text = { Text(item.name, maxLines = 1) },
+                        )
+                    }
+                }
+                // Five labels do not fit a phone's width at equal shares; let them scroll there instead of wrap.
+                if (width < 520.dp) {
+                    PrimaryScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 8.dp, tabs = tabs)
+                } else {
+                    TabRow(selectedTabIndex = tab.ordinal, tabs = tabs)
+                }
+            }
+            if (layout.split) {
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(
+                        Modifier
+                            .weight(LibrarySongsShare)
+                            .fillMaxHeight()
+                            .onAnyPress { touchTab(LibraryTab.Songs) },
+                    ) {
+                        songsBar(Modifier.height(LibraryTabLineHeight))
+                        CompositionLocalProvider(LocalTrackTable provides songsTable) {
+                            songsTab(this, false)
+                        }
+                    }
+                    ContentPaneSeam()
+                    Column(
+                        Modifier
+                            .weight(1f - LibrarySongsShare)
+                            .fillMaxHeight()
+                            .onAnyPress { touchTab(otherTab) },
+                    ) {
+                        LibraryTabStrip(LibraryTab.entries - LibraryTab.Songs, otherTab, ::selectTab, Modifier.height(LibraryTabLineHeight))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        CompositionLocalProvider(LocalTrackTable provides otherTable) {
+                            otherTabContent(this, otherTab)
+                        }
+                    }
+                }
+            } else {
+                if (layout.compactHeader) {
+                    Row(
+                        Modifier.fillMaxWidth().height(LibraryTabLineHeight).padding(start = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        LibraryTabStrip(LibraryTab.entries, tab, ::selectTab, Modifier.fillMaxHeight())
+                        if (tab == LibraryTab.Songs) songsBar(Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                }
+                if (tab == LibraryTab.Songs) {
+                    CompositionLocalProvider(LocalTrackTable provides songsTable) {
+                        songsTab(this, !layout.compactHeader)
+                    }
+                } else {
+                    CompositionLocalProvider(LocalTrackTable provides otherTable) {
+                        otherTabContent(this, tab)
+                    }
+                }
+            }
+        }
+    }
 }
+
+/** The tab line under a wide Library's title line: tabs, count, Sort and Play all. */
+private val LibraryTabLineHeight = 48.dp

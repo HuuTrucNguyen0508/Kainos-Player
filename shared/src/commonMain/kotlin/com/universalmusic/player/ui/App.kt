@@ -149,7 +149,8 @@ private fun AppScaffold(
     windowHeight: Dp = Dp.Unspecified,
 ) {
     val desktop = layoutBand != DesktopLayoutBand.Narrow
-    val wide = layoutBand == DesktopLayoutBand.Wide
+    val wide = layoutBand.isWide
+    val ultraWide = layoutBand == DesktopLayoutBand.UltraWide
     val frost = isFrost()
     val dock = resolveDockEdge(dockSetting, portrait)
     val dockDrag = remember { DockDragState() }
@@ -160,6 +161,8 @@ private fun AppScaffold(
     var screenBack by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    // The ultrawide Queue column's toggle for this session; null until the listener uses it.
+    var queueColumnChoice by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var settingsTarget by remember { mutableStateOf<SettingsTarget?>(null) }
     var nowPlayingPaneExpanded by rememberNowPlayingPaneExpanded(compactPlayer)
     var nowPlayingPaneWidthDp by rememberSaveable {
@@ -187,6 +190,7 @@ private fun AppScaffold(
     val recentlyPlayed by container.library.recentlyPlayed.collectAsState()
     val remote by container.remoteControl.state.collectAsState()
     val nothingEverPlayed = appReady && recentlyPlayed.isEmpty() && currentTrack == null
+    val queueColumnOpen = queueColumnShown(layoutBand, queueColumnChoice, nothingEverPlayed)
     val imageContext = LocalPlatformContext.current
     LaunchedEffect(queue, imageContext) {
         container.player.nowPlaying.map { it.isPlaying }.distinctUntilChanged().collectLatest { playing ->
@@ -232,12 +236,18 @@ private fun AppScaffold(
                 }
             }
         }
+        // An open Queue carries into the ultrawide column instead of showing in two places.
+        if (layoutBand == DesktopLayoutBand.UltraWide && showQueue) {
+            queueColumnChoice = true
+            showQueue = false
+        }
         previousBand = layoutBand
     }
 
-    // On wide windows Queue sits beside content; on standard width it takes the side pane's place. A
-    // player docked as a band keeps its band, so there Queue shows in the content instead.
-    val showWideQueueColumn = desktop && showQueue && wide
+    // On ultrawide windows Queue is a column of the frame; on wide windows it sits beside content; on
+    // standard width it takes the side pane's place. A player docked as a band keeps its band, so
+    // there Queue shows in the content instead.
+    val showWideQueueColumn = desktop && showQueue && wide && !ultraWide
     val queueReplacesSidePane = desktop && showQueue && !wide && dock.isSide
     val queueInContent = desktop && showQueue && !wide && !dock.isSide
     val playerPaneShown = desktop && !queueReplacesSidePane && nowPlayingPaneShown(nowPlayingPaneExpanded, nothingEverPlayed, remote.available, showNowPlaying)
@@ -263,6 +273,11 @@ private fun AppScaffold(
             true
         }
         else -> false
+    }
+
+    /** The player's queue button: opens the overlay, or toggles the ultrawide column. */
+    fun openQueue() {
+        if (ultraWide) queueColumnChoice = !queueColumnOpen else showQueue = true
     }
 
     fun navigateToTab(next: AppDestination) {
@@ -367,7 +382,7 @@ private fun AppScaffold(
     val handleUiRequest by rememberUpdatedState<(UiRequest) -> Unit> { request ->
         when (request) {
             UiRequest.FOCUS_SEARCH -> navigateToTab(AppDestination.Search)
-            UiRequest.TOGGLE_QUEUE -> showQueue = !showQueue
+            UiRequest.TOGGLE_QUEUE -> if (ultraWide) queueColumnChoice = !queueColumnOpen else showQueue = !showQueue
             UiRequest.DISMISS_OVERLAY -> handleSystemBack()
             UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
             UiRequest.FOCUS_LIBRARY_SEARCH -> {
@@ -389,6 +404,9 @@ private fun AppScaffold(
         bandHeight = nowPlayingBandHeight,
         light = carriedLight,
         carry = if (!desktop) null else { { DockCarryBody(currentTrack) } },
+        queueWidth = if (desktop && queueColumnOpen) DesktopQueueColumnWidth + (if (frost) 10.dp else 1.dp) else 0.dp,
+        railInset = if (desktop) 88.dp + (if (frost) 10.dp else 1.dp) else 0.dp,
+        frameInset = if (frost) 10.dp else 0.dp,
     ) {
     FrostOrPlainGround(frost) {
     Scaffold(
@@ -470,7 +488,7 @@ private fun AppScaffold(
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 NowPlayingScreen(
                                     container,
-                                    onOpenQueue = { showQueue = true },
+                                    onOpenQueue = ::openQueue,
                                     compact = true,
                                 )
                             }
@@ -490,7 +508,7 @@ private fun AppScaffold(
                     Box(Modifier.fillMaxSize()) {
                         NowPlayingScreen(
                             container,
-                            onOpenQueue = { showQueue = true },
+                            onOpenQueue = ::openQueue,
                             onClose = hidePlayer,
                             compact = true,
                             band = true,
@@ -507,6 +525,9 @@ private fun AppScaffold(
             notices = {
                 FailureBar(container.failures)
                 HandoffNoticeBar(container)
+            },
+            queueColumn = if (!desktop || !queueColumnOpen) null else {
+                { QueueScreen(container) { queueColumnChoice = false } }
             },
             footer = {
                 // Rises from the bottom edge as the pane folds away, and sinks back when it returns.

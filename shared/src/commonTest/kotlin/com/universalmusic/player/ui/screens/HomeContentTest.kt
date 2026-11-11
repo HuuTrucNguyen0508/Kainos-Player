@@ -28,6 +28,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import androidx.compose.ui.unit.dp
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -260,6 +262,40 @@ class HomeContentTest {
         assertEquals(3, continueListeningColumns(1300))
         assertEquals(2, continueListeningColumns(800))
         assertEquals(1, continueListeningColumns(500))
+    }
+
+    @Test
+    fun homeStaysOneCappedColumnBelowTheSpreadOrWithNothingToPickUp() {
+        val laptop = homeColumns(1800.dp, hasHistory = true)
+        assertNull(laptop.end)
+        assertEquals(1480.dp, laptop.maxWidth)
+        assertEquals(1480.dp - 56.dp, laptop.start)
+        assertTrue(laptop.cardsInRow)
+
+        assertNull(homeColumns(1899.dp, hasHistory = true).end)
+        // A first listen with no history yet: the second column would be empty.
+        assertNull(homeColumns(2890.dp, hasHistory = false).end)
+        // A narrow window keeps its narrow padding and stacked cards.
+        assertEquals(20.dp, homeColumns(700.dp, hasHistory = true).sidePad)
+        assertFalse(homeColumns(700.dp, hasHistory = true).cardsInRow)
+    }
+
+    @Test
+    fun anUltrawideHomeSpreadsIntoTwoColumnsWhoseGridsFitTheirOwnWidth() {
+        val atLine = homeColumns(1900.dp, hasHistory = true)
+        val start = atLine.start
+        val end = assertNotNull(atLine.end)
+        assertEquals(1900.dp - 56.dp - HomeSpreadGutter, start + end)
+        assertTrue(start > end, "the start column is the wider one")
+        // Even at the narrowest spread the three cards keep their row, in a column of their own.
+        assertTrue(atLine.cardsInRow)
+        assertEquals(2, continueListeningColumns(end.value.toInt()))
+
+        // The 3440 ultrawide with the player as a bottom band: Home is capped at 2800dp.
+        val band = homeColumns(2890.dp, hasHistory = true)
+        assertEquals(2800.dp, band.maxWidth)
+        assertEquals(2800.dp - 56.dp - HomeSpreadGutter, band.start + assertNotNull(band.end))
+        assertEquals(3, continueListeningColumns(assertNotNull(band.end).value.toInt()))
     }
 }
 

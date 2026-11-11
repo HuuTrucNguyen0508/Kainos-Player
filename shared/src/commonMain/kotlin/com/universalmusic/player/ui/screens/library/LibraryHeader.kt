@@ -2,12 +2,14 @@ package com.universalmusic.player.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,7 +41,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,28 +51,16 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.reportsTextInputFocus
 import kotlin.math.roundToInt
 
+/** The part of Library's chrome that folds away on the way down the list and comes back at its top. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LibraryCollapsingHeader(
     scrollBehavior: TopAppBarScrollBehavior,
     chromeHeightPx: Int,
     onChromeHeightPx: (Int) -> Unit,
-    queryField: TextFieldValue,
-    onQueryField: (TextFieldValue) -> Unit,
-    searchFocusRequester: FocusRequester,
-    onSearchFocusChanged: (Boolean) -> Unit,
-    tab: LibraryTab,
-    songs: List<Track>,
-    queueSongs: List<Track>,
-    onPlayTracks: (List<Track>, Int) -> Unit,
-    localState: ProviderState,
-    onRefreshLocal: () -> Unit,
-    showSpotifyError: Boolean,
-    spotifyError: String?,
-    onDismissSpotifyError: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
-    val focusManager = LocalFocusManager.current
     val heightOffset = scrollBehavior.state.heightOffset
     val chromeModifier = if (chromeHeightPx == 0) {
         Modifier.fillMaxWidth()
@@ -95,95 +84,151 @@ internal fun LibraryCollapsingHeader(
                 .offset {
                     IntOffset(0, if (chromeHeightPx == 0) 0 else heightOffset.roundToInt())
                 },
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Library", style = MaterialTheme.typography.headlineMedium)
-                IconButton(
-                    onClick = onRefreshLocal,
-                    enabled = localState != ProviderState.LOADING,
-                ) {
-                    if (localState == ProviderState.LOADING) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "Rescan music folders",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            OutlinedTextField(
-                value = queryField,
-                onValueChange = onQueryField,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 8.dp)
-                    .focusRequester(searchFocusRequester)
-                    .onFocusChanged { onSearchFocusChanged(it.isFocused) }
-                    .reportsTextInputFocus()
-                    .onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (event.key) {
-                            Key.Enter, Key.NumPadEnter -> {
-                                val top = songs.firstOrNull()
-                                if (tab != LibraryTab.Songs || top == null) return@onPreviewKeyEvent false
-                                val index = queueSongs.indexOfFirst { it.canonicalId == top.canonicalId }
-                                    .coerceAtLeast(0)
-                                onPlayTracks(queueSongs, index)
-                                focusManager.clearFocus()
-                                true
-                            }
-                            Key.Escape -> {
-                                onQueryField(TextFieldValue(""))
-                                focusManager.clearFocus()
-                                true
-                            }
-                            else -> false
-                        }
-                    },
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                placeholder = { Text("Search library") },
-                // Phone keyboard: the Search key just hides the keyboard so the ranked results show.
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
-                trailingIcon = {
-                    if (queryField.text.isNotEmpty()) {
-                        IconButton(onClick = { onQueryField(TextFieldValue("")) }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear library search")
-                        }
-                    }
-                },
+            content = content,
+        )
+    }
+}
+
+/** The narrow title line: "Library" and the rescan button. */
+@Composable
+internal fun LibraryTitleRow(localState: ProviderState, onRefreshLocal: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Library", style = MaterialTheme.typography.headlineMedium)
+        LibraryRefreshButton(localState, onRefreshLocal)
+    }
+}
+
+/** The wide title line: title, a capped search field and the filters, with rescan at the far end. */
+@Composable
+internal fun LibraryCompactLine(
+    localState: ProviderState,
+    onRefreshLocal: () -> Unit,
+    searchField: @Composable (Modifier) -> Unit,
+    filters: @Composable () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Library", style = MaterialTheme.typography.headlineMedium, maxLines = 1)
+        searchField(Modifier.width(LibraryCompactSearchWidth))
+        Row(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { filters() }
+        LibraryRefreshButton(localState, onRefreshLocal)
+    }
+}
+
+internal val LibraryCompactSearchWidth = 520.dp
+
+@Composable
+private fun LibraryRefreshButton(localState: ProviderState, onRefreshLocal: () -> Unit) {
+    IconButton(
+        onClick = onRefreshLocal,
+        enabled = localState != ProviderState.LOADING,
+    ) {
+        if (localState == ProviderState.LOADING) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                Icons.Default.Refresh,
+                contentDescription = "Rescan music folders",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (showSpotifyError) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        spotifyError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onDismissSpotifyError) {
-                        Text("Dismiss")
+        }
+    }
+}
+
+/**
+ * Library's search field. Enter plays the top match when Songs is on screen; Escape clears and
+ * lets go of focus, so typing elsewhere starts a fresh type-to-search.
+ */
+@Composable
+internal fun LibrarySearchField(
+    queryField: TextFieldValue,
+    onQueryField: (TextFieldValue) -> Unit,
+    searchFocusRequester: FocusRequester,
+    onSearchFocusChanged: (Boolean) -> Unit,
+    songsShown: Boolean,
+    songs: List<Track>,
+    queueSongs: List<Track>,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
+    OutlinedTextField(
+        value = queryField,
+        onValueChange = onQueryField,
+        modifier = modifier
+            .focusRequester(searchFocusRequester)
+            .onFocusChanged { onSearchFocusChanged(it.isFocused) }
+            .reportsTextInputFocus()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.Enter, Key.NumPadEnter -> {
+                        val top = songs.firstOrNull()
+                        if (!songsShown || top == null) return@onPreviewKeyEvent false
+                        val index = queueSongs.indexOfFirst { it.canonicalId == top.canonicalId }
+                            .coerceAtLeast(0)
+                        onPlayTracks(queueSongs, index)
+                        focusManager.clearFocus()
+                        true
                     }
+                    Key.Escape -> {
+                        onQueryField(TextFieldValue(""))
+                        focusManager.clearFocus()
+                        true
+                    }
+                    else -> false
+                }
+            },
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        placeholder = { Text("Search library") },
+        // Phone keyboard: the Search key just hides the keyboard so the ranked results show.
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+        trailingIcon = {
+            if (queryField.text.isNotEmpty()) {
+                IconButton(onClick = { onQueryField(TextFieldValue("")) }) {
+                    Icon(Icons.Default.Clear, contentDescription = "Clear library search")
                 }
             }
+        },
+    )
+}
+
+@Composable
+internal fun LibrarySpotifyError(spotifyError: String, onDismiss: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            spotifyError,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDismiss) {
+            Text("Dismiss")
         }
     }
 }

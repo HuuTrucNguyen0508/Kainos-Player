@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -123,7 +124,8 @@ fun NowPlayingScreen(
                 }
             }
 
-            val trackSection: @Composable ColumnScope.() -> Unit = {
+            // Each piece is placed once: stacked in the pane, or spread over the zones of a wide band.
+            val titleBlock: @Composable ColumnScope.() -> Unit = {
                 Text(
                     track?.title ?: "Nothing playing",
                     style = MaterialTheme.typography.headlineSmall,
@@ -142,7 +144,8 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .padding(top = 2.dp),
                 )
-                Spacer(Modifier.height(12.dp))
+            }
+            val progressBlock: @Composable ColumnScope.() -> Unit = {
                 if (ui.now.buffering) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(
@@ -156,8 +159,8 @@ fun NowPlayingScreen(
                     nowPlaying = presenter.nowPlaying,
                     onSeek = presenter::seekTo,
                 )
-
-                Spacer(Modifier.height(8.dp))
+            }
+            val transportBlock: @Composable (primary: Modifier, secondary: Modifier) -> Unit = { primary, secondary ->
                 NowPlayingTransport(
                     track = track,
                     isPlaying = ui.now.isPlaying,
@@ -178,16 +181,19 @@ fun NowPlayingScreen(
                     onToggleShuffle = presenter::toggleShuffle,
                     onOpenQueue = onOpenQueue,
                     onOpenSleepTimer = { showSleepTimerDialog = true },
+                    primaryModifier = primary,
+                    secondaryModifier = secondary,
                 )
-
-                Spacer(Modifier.height(4.dp))
+            }
+            val volumeBlock: @Composable () -> Unit = {
                 NowPlayingVolume(
                     volume = presenter.volume,
                     scheme = scheme,
                     onDragVolume = presenter::setVolume,
                     onCommitVolume = presenter::setPlaybackVolume,
                 )
-
+            }
+            val providerBlock: @Composable ColumnScope.() -> Unit = {
                 ProviderQualityRow(
                     // Before a restored track resolves, name its own source instead of nothing.
                     providerName = ui.providerName,
@@ -207,7 +213,8 @@ fun NowPlayingScreen(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-
+            }
+            val errorBlock: @Composable () -> Unit = {
                 ui.now.error?.let { raw ->
                     NowPlayingErrorBlock(
                         message = friendlyPlaybackMessage(raw),
@@ -218,6 +225,31 @@ fun NowPlayingScreen(
                         onTryAnother = presenter::tryAnotherSource,
                         onToggleDiagnostics = { showErrorDiagnostics = !showErrorDiagnostics },
                     )
+                }
+            }
+            val trackSection: @Composable ColumnScope.() -> Unit = {
+                titleBlock()
+                Spacer(Modifier.height(12.dp))
+                progressBlock()
+                Spacer(Modifier.height(8.dp))
+                transportBlock(Modifier.fillMaxWidth(), Modifier.fillMaxWidth())
+                Spacer(Modifier.height(4.dp))
+                volumeBlock()
+                providerBlock()
+                errorBlock()
+            }
+            val remoteLines: @Composable ColumnScope.() -> Unit = {
+                if (remote.available) {
+                    NowPlayingDeviceChip(
+                        remote = remote,
+                        onSelect = container.remoteControl::select,
+                        onContinue = { container.remoteControl.playHere(it) },
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
+                remote.message?.let { note ->
+                    RemoteMessageLine(note.text, onDismiss = { container.remoteControl.dismissMessage(note.id) })
+                    Spacer(Modifier.height(12.dp))
                 }
             }
             val detailSection: @Composable ColumnScope.() -> Unit = {
@@ -262,40 +294,75 @@ fun NowPlayingScreen(
 
             if (band && remoteDevice == null) {
                 val bandArtMax = minOf(maxWidth * .3f, 360.dp)
+                val zoned = maxWidth >= NowPlayingBandZonesMinWidth
+                val bandArtwork: @Composable () -> Unit = {
+                    key(trackIdentity) {
+                        NowPlayingArtworkFrame(
+                            title = track?.title,
+                            artwork = track?.artwork,
+                            light = albumLight,
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .widthIn(max = bandArtMax)
+                                .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                                .onGloballyPositioned { artBounds = it.boundsInRoot() },
+                        )
+                    }
+                }
                 Box(Modifier.fillMaxSize()) {
-                    Row(
-                        Modifier.fillMaxSize().padding(start = 20.dp, end = 56.dp, top = 18.dp, bottom = 18.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        key(trackIdentity) {
-                            NowPlayingArtworkFrame(
-                                title = track?.title,
-                                artwork = track?.artwork,
-                                light = albumLight,
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .widthIn(max = bandArtMax)
-                                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                                    .onGloballyPositioned { artBounds = it.boundsInRoot() },
-                            )
+                    if (zoned) {
+                        // Stretched across an ultrawide, one column of controls puts a 3000dp seek bar
+                        // under the cover. Three zones keep each control at a width a hand can travel.
+                        Row(
+                            Modifier.fillMaxSize().padding(start = 20.dp, end = 56.dp, top = 18.dp, bottom = 18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(40.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                Modifier.fillMaxHeight(),
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                bandArtwork()
+                                Column(
+                                    Modifier.width(BandTrackColumnWidth).verticalScroll(rememberScrollState()),
+                                ) {
+                                    remoteLines()
+                                    titleBlock()
+                                    providerBlock()
+                                }
+                            }
+                            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                                Column(
+                                    Modifier.widthIn(max = BandTransportMaxWidth).fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    progressBlock()
+                                    Spacer(Modifier.height(8.dp))
+                                    transportBlock(Modifier.width(BandPrimaryTransportWidth), Modifier.width(BandSecondaryActionsWidth))
+                                }
+                            }
+                            Box(Modifier.width(BandDetailColumnWidth).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                                Column(Modifier.fillMaxWidth().verticalScroll(scrollState)) {
+                                    volumeBlock()
+                                    detailSection()
+                                    errorBlock()
+                                }
+                            }
                         }
-                        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
-                            Column(Modifier.fillMaxWidth().verticalScroll(scrollState)) {
-                                if (remote.available) {
-                                    NowPlayingDeviceChip(
-                                        remote = remote,
-                                        onSelect = container.remoteControl::select,
-                                        onContinue = { container.remoteControl.playHere(it) },
-                                        modifier = Modifier.padding(bottom = 12.dp),
-                                    )
+                    } else {
+                        Row(
+                            Modifier.fillMaxSize().padding(start = 20.dp, end = 56.dp, top = 18.dp, bottom = 18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(28.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            bandArtwork()
+                            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                                Column(Modifier.fillMaxWidth().verticalScroll(scrollState)) {
+                                    remoteLines()
+                                    trackSection()
+                                    detailSection()
                                 }
-                                remote.message?.let { note ->
-                                    RemoteMessageLine(note.text, onDismiss = { container.remoteControl.dismissMessage(note.id) })
-                                    Spacer(Modifier.height(12.dp))
-                                }
-                                trackSection()
-                                detailSection()
                             }
                         }
                     }
@@ -328,18 +395,7 @@ fun NowPlayingScreen(
                         Spacer(Modifier.height(12.dp))
                     }
 
-                    if (remote.available) {
-                        NowPlayingDeviceChip(
-                            remote = remote,
-                            onSelect = container.remoteControl::select,
-                            onContinue = { container.remoteControl.playHere(it) },
-                            modifier = Modifier.padding(bottom = 12.dp),
-                        )
-                    }
-                    remote.message?.let { note ->
-                        RemoteMessageLine(note.text, onDismiss = { container.remoteControl.dismissMessage(note.id) })
-                        Spacer(Modifier.height(12.dp))
-                    }
+                    remoteLines()
 
                     if (remoteDevice != null) {
                         key(remoteDevice.deviceId, remoteDevice.status?.currentItemId) {
@@ -431,6 +487,14 @@ fun NowPlayingScreen(
         }
     }
 }
+
+/** A band at least this wide splits into cover and title, transport, and volume with details. */
+internal val NowPlayingBandZonesMinWidth = 1600.dp
+private val BandTrackColumnWidth = 320.dp
+private val BandTransportMaxWidth = 880.dp
+private val BandPrimaryTransportWidth = 360.dp
+private val BandSecondaryActionsWidth = 480.dp
+private val BandDetailColumnWidth = 360.dp
 
 private fun albumLightCenter(screen: Rect?, art: Rect?): Offset {
     if (screen == null || art == null || screen.width <= 0f || screen.height <= 0f) {

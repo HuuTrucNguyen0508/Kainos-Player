@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -46,7 +47,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import com.universalmusic.player.ui.components.LocalTrackTable
+import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.domain.model.Playlist
@@ -79,6 +84,8 @@ internal fun SearchPlaylistScreen(
     onBack: () -> Unit,
     onPlay: (List<Track>, Int, Boolean) -> Unit,
     openLink: (String) -> Unit,
+    /** The width this page has, measured by Search; wide pages lay their rows out as a table. */
+    listWidth: Dp = 0.dp,
 ) {
     val pageState = presenter.state.collectAsState()
     val state by pageState
@@ -101,8 +108,10 @@ internal fun SearchPlaylistScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    val showAlbums = remember(state.tracks) { state.tracks.namesAlbums() }
+    Column(Modifier.widthIn(max = SingleTrackTableMaxWidth).fillMaxSize()) {
         PlaylistTopBar(playlist, onBack, openLink)
+        CompositionLocalProvider(LocalTrackTable provides searchTable(minOf(listWidth, SingleTrackTableMaxWidth), showAlbums)) {
         LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
             item(key = "header") {
                 PlaylistHeader(
@@ -139,6 +148,7 @@ internal fun SearchPlaylistScreen(
             item(key = "footer") {
                 PlaylistFooter(state, onRetry = presenter::loadMore)
             }
+        }
         }
     }
 }

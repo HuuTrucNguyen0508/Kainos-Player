@@ -15,6 +15,8 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 internal data class ResolvedHomePin(
     val pin: PersistedHomePin,
@@ -50,6 +52,44 @@ internal fun sessionFocusOf(
 /** Desktop hides the session card while the Now Playing pane is open. */
 internal fun homeSessionCardVisible(playerPaneVisible: Boolean, sessionFocus: SessionFocus?): Boolean =
     !playerPaneVisible && sessionFocus != null
+
+/** Home's own width from which it spreads into two columns side by side. */
+internal val HomeSpreadMinWidth = 1900.dp
+private val HomeSingleMaxWidth = 1480.dp
+private val HomeSpreadMaxWidth = 2800.dp
+internal val HomeSpreadGutter = 40.dp
+private val HomeWideMinWidth = 900.dp
+private val HomeWidePad = 28.dp
+private val HomeNarrowPad = 20.dp
+
+/** "Start something" is a little wider than "pick up where you left off". */
+internal const val HomeStartWeight = 1.15f
+
+/**
+ * How Home sits in [width]: one column capped at [maxWidth], or two columns under the hero when the
+ * page is wide enough and [hasHistory] gives the second column something to show. [start] and [end]
+ * are the columns' own widths inside the side padding, which is what their cards and grids are sized
+ * against; [end] is null for a single column.
+ */
+internal data class HomeColumns(
+    val maxWidth: Dp,
+    val sidePad: Dp,
+    val start: Dp,
+    val end: Dp?,
+    /** Discover, Favorites and the library card share a row instead of stacking. */
+    val cardsInRow: Boolean,
+)
+
+internal fun homeColumns(width: Dp, hasHistory: Boolean): HomeColumns {
+    if (width >= HomeSpreadMinWidth && hasHistory) {
+        val inner = minOf(width, HomeSpreadMaxWidth) - HomeWidePad * 2 - HomeSpreadGutter
+        val start = inner * (HomeStartWeight / (HomeStartWeight + 1f))
+        return HomeColumns(HomeSpreadMaxWidth, HomeWidePad, start, inner - start, cardsInRow = start + HomeWidePad * 2 >= HomeWideMinWidth)
+    }
+    val wide = width >= HomeWideMinWidth
+    val pad = if (wide) HomeWidePad else HomeNarrowPad
+    return HomeColumns(HomeSingleMaxWidth, pad, minOf(width, HomeSingleMaxWidth) - pad * 2, null, cardsInRow = wide)
+}
 
 internal const val CONTINUE_LISTENING_ROWS = 6
 

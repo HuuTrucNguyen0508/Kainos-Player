@@ -70,11 +70,11 @@ class SearchPlaylistUiTest {
     private fun song(title: String, artist: String): Track =
         track(title, artist, provider = ProviderId.SPOTIFY, canonicalId = "spotify:$title")
 
-    private fun ComposeUiTest.showSearch() {
+    private fun ComposeUiTest.showSearch(withPlaylists: Boolean = true) {
         setContent {
             TestTheme {
                 val scope = rememberCoroutineScope()
-                val presenter = remember { presenter(scope) }
+                val presenter = remember { presenter(scope, withPlaylists) }
                 SearchScreen(
                     presenter = presenter,
                     onPlayTrackInList = { _, _ -> },
@@ -89,12 +89,12 @@ class SearchPlaylistUiTest {
         mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Result 1")).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    private fun presenter(scope: CoroutineScope) = SearchPresenter(
+    private fun presenter(scope: CoroutineScope, withPlaylists: Boolean = true) = SearchPresenter(
         settings = MutableStateFlow(AppSettings()),
         spotify = MutableStateFlow(ProviderState.AVAILABLE),
         youtube = MutableStateFlow(ProviderState.NOT_CONFIGURED),
         downloads = MutableStateFlow(emptyMap()),
-        search = { UnifiedSearchResult(results, emptyList(), emptyList(), listOf(playlist), emptyMap()) },
+        search = { UnifiedSearchResult(results, emptyList(), emptyList(), if (withPlaylists) listOf(playlist) else emptyList(), emptyMap()) },
         availability = { TrackAvailabilityInfo(TrackAvailability.STREAMABLE, "Spotify", PlaybackSourceKind.SPOTIFY_STREAM, "Spotify") },
         loadPlaylistPage = { _, cursor ->
             val request = PageRequest(cursor)
@@ -158,6 +158,28 @@ class SearchPlaylistUiTest {
         ImageIO.write(image, "png", directory.resolve(name).toFile())
     }
 
+    @Test fun ultrawideBlankSearchIsCenteredInTheSheet() = runDesktopComposeUiTest(width = 2800, height = 900, effectContext = providerDispatcher) {
+        setContent {
+            TestTheme {
+                val scope = rememberCoroutineScope()
+                val presenter = remember { presenter(scope) }
+                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter)
+            }
+        }
+        val text = text("Your local files are not included here. Library has its own search for those.").fetchSemanticsNode().boundsInRoot
+        kotlin.test.assertTrue(text.left > 1000f && text.top > 300f, "blank state was stranded at $text")
+        savePng("search-blank-ultrawide.png")
+    }
+
+    @Test fun loneUltrawideResultsKeepTheirSourceMarksCloseToTheTitle() = runDesktopComposeUiTest(width = 2800, height = 900, effectContext = providerDispatcher) {
+        showSearch(withPlaylists = false)
+        val list = onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot
+        kotlin.test.assertTrue(list.width <= 1600f, "standalone table width was ${list.width}")
+        kotlin.test.assertTrue(list.left < 20f, "standalone table must align left")
+        text("Result 1").assertIsDisplayed()
+        savePng("search-lone-ultrawide.png")
+    }
+
     @Test fun aPlaylistResultOpensItsPageAndBackKeepsTheResultsScroll() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {
         showSearch()
         onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Night Ferry"))
@@ -195,6 +217,29 @@ class SearchPlaylistUiTest {
         // The playlist row sits below 24 results, so it is only on screen if the scroll was kept.
         text("Night Ferry").assertIsDisplayed()
         text("Spotify playlist by Harbour Radio, 62 songs").assertIsDisplayed()
+    }
+
+    @Test fun aWideSearchOpensThePlaylistBesideTheResults() = runDesktopComposeUiTest(width = 2400, height = 900, effectContext = providerDispatcher) {
+        showSearch()
+        // Two panes: results on the left, the playlist results on the right, both on screen at once.
+        text("Result 1").assertIsDisplayed()
+        text("Night Ferry").assertIsDisplayed()
+        text("Night Ferry").performClick()
+        awaitRequests(listOf(null))
+        releasePage(0, PlaylistTracksPage(firstPage, next = "50", total = 62))
+        mainClock.advanceTimeUntil(timeoutMillis = WAIT_MS) { onAllNodes(hasText("Moonlit Quay 1")).fetchSemanticsNodes().isNotEmpty() }
+
+        // The playlist page takes the right pane; the track results stay where they were.
+        text("Moonlit Quay 1").assertIsDisplayed()
+        text("Result 1").assertIsDisplayed()
+        onNode(hasSetTextAction()).assertIsDisplayed()
+        savePng("wide-playlist-beside-results.png")
+
+        onNodeWithContentDescription("Back to search results").performClick()
+        waitForIdle()
+        text("Night Ferry").assertIsDisplayed()
+        text("Result 1").assertIsDisplayed()
+        onNodeWithText("Moonlit Quay 1", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test fun playAndARowQueueTheWholePlaylist() = runDesktopComposeUiTest(width = 560, height = 900, effectContext = providerDispatcher) {

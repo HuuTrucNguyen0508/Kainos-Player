@@ -61,7 +61,8 @@ import com.universalmusic.player.ui.components.SkinPane
 /**
  * The desktop frame: rail, then the player on whichever [dock] edge, wrapped around the content.
  * The content column keeps one call site whatever the dock, so moving the player never resets a
- * screen's saved state (Library's scroll, the open tab).
+ * screen's saved state (Library's scroll, the open tab). A [queueColumn] stands right of the content
+ * at full height, so a top or bottom band ends where it begins and a right-docked player sits past it.
  *
  * Each edge is a slot that grows out of its edge when the player arrives and folds back into it when
  * the player leaves or hides. A leaving slot shows the pane's last drawn frame, not a second live
@@ -86,6 +87,8 @@ internal fun DockedFrame(
     onGrowBand: (Dp) -> Unit,
     notices: @Composable ColumnScope.() -> Unit,
     footer: @Composable ColumnScope.() -> Unit,
+    queueColumn: (@Composable () -> Unit)? = null,
+    queueColumnWidth: Dp = DesktopQueueColumnWidth,
     content: @Composable RowScope.() -> Unit,
 ) {
     val side = sidePane.takeIf { dock.isSide }
@@ -109,6 +112,10 @@ internal fun DockedFrame(
             Row(Modifier.weight(1f).fillMaxWidth()) { content() }
             BandSlot(DockEdge.BOTTOM, strip.takeIf { dock == DockEdge.BOTTOM }, bandHeight, bottomGhost, slotKey, onGrowBand)
             footer()
+        }
+        if (queueColumn != null) {
+            PaneSeam(frost)
+            SkinPane(Modifier.width(queueColumnWidth).fillMaxHeight(), content = queueColumn)
         }
         SideSlot(DockEdge.RIGHT, side.takeIf { dock == DockEdge.RIGHT }, sidePaneWidth, rightGhost, slotKey, frost, onGrowSidePane)
     }
