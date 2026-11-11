@@ -73,6 +73,7 @@ internal data class SpotifyPlaylist(
     val owner: SpotifyOwner? = null,
     val tracks: SpotifyPlaylistTracks? = null,
     val items: SpotifyPlaylistTracks? = null,
+    val snapshot_id: String? = null,
 )
 
 @Serializable
@@ -107,6 +108,7 @@ internal data class SpotifyImage(
 @Serializable
 internal data class SpotifySavedTrack(
     val track: SpotifyTrack? = null,
+    val added_at: String? = null,
 )
 
 @Serializable

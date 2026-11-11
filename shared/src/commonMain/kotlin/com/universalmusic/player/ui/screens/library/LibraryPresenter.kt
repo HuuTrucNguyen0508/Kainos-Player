@@ -69,6 +69,7 @@ internal class LibraryPresenter(
     private val offlineTrack: (Track) -> Track? = Track::offlineOnly,
     /** The platform default music folder, browsed in Folders until the listener picks their own. */
     private val defaultMusicFolder: () -> String = { "" },
+    private val spotifySavedAtMs: StateFlow<Long?> = MutableStateFlow(null),
 ) {
     private val queryText = MutableStateFlow("")
 
@@ -86,6 +87,7 @@ internal class LibraryPresenter(
         val loading: Boolean,
         val error: String?,
         val providerState: ProviderState,
+        val savedAtMs: Long? = null,
     )
 
     private data class PinsSlice(
@@ -99,11 +101,12 @@ internal class LibraryPresenter(
         combine(
             spotifyTracks,
             spotifyPlaylists,
-            spotifyLibraryLoading,
+            combine(spotifyLibraryLoading, spotifySavedAtMs, ::Pair),
             spotifyLibraryError,
             spotifyState,
-            ::SpotifySlice,
-        ),
+        ) { tracks, playlists, (loading, savedAtMs), error, providerState ->
+            SpotifySlice(tracks, playlists, loading, error, providerState, savedAtMs)
+        },
         combine(kainosPlaylistRows, homePins, downloads, ::PinsSlice),
     ) { catalog, spotify, pins ->
         derive(catalog, spotify, pins, "").also { it.searchIndex.warm() }
@@ -194,6 +197,7 @@ internal class LibraryPresenter(
             loading = spotifyLibraryLoading.value,
             error = spotifyLibraryError.value,
             providerState = spotifyState.value,
+            savedAtMs = spotifySavedAtMs.value,
         ),
         PinsSlice(
             kainosRows = kainosPlaylistRows.value,
@@ -220,6 +224,7 @@ internal class LibraryPresenter(
         homePins = pins.homePins,
         spotifyLoading = spotify.loading,
         spotifyError = spotify.error,
+        spotifySavedAtMs = spotify.savedAtMs,
         spotifyState = spotify.providerState,
         downloads = pins.downloads,
         query = query,
@@ -245,6 +250,7 @@ internal class LibraryPresenter(
             homePins = container.library.homePins,
             spotifyLibraryLoading = container.spotifyLibraryLoading,
             spotifyLibraryError = container.spotifyLibraryError,
+            spotifySavedAtMs = container.spotifyLibrarySavedAtMs,
             spotifyState = container.spotify.state,
             downloads = container.heartedAudio.downloads,
             scope = scope,

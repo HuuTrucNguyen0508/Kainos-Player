@@ -301,9 +301,11 @@ class SpotifyProviderTest {
             }
         }
 
-        val result = loadSpotifyLibrary(provider)
+        val library = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), provider, clock = { 1_000L })
+        val result = library.refresh("me")
 
-        assertEquals("Saved song", result.tracks.getOrThrow().single().title)
+        assertEquals("Saved song", library.liked.value.single().title)
+        assertTrue(result.liked.isSuccess)
         assertTrue(result.playlists.isFailure)
     }
 
@@ -317,10 +319,32 @@ class SpotifyProviderTest {
             }
         }
 
-        val result = loadSpotifyLibrary(provider)
+        val library = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), provider, clock = { 1_000L })
+        val result = library.refresh("me")
 
-        assertTrue(result.tracks.isFailure)
-        assertEquals("Saved playlist", result.playlists.getOrThrow().single().title)
+        assertTrue(result.liked.isFailure)
+        assertEquals("Saved playlist", library.playlists.value.single().title)
+    }
+
+    @Test
+    fun likedSongsCarryAddedAtAndPlaylistsTheirSnapshot() = runTest {
+        val provider = provider(TokenStoreFake(AuthTokens("access"))) { request ->
+            if (request.url.encodedPath.endsWith("/me/tracks")) {
+                respondJson("""{"items":[{"added_at":"2026-11-10T08:00:00Z","track":{"id":"song","name":"Saved song"}},{"added_at":"2026-11-09T08:00:00Z","track":null}],"total":2,"next":null}""")
+            } else {
+                respondJson("""{"items":[{"id":"list","name":"Mix","snapshot_id":"snap-7","items":{"total":4}}],"total":1,"next":null}""")
+            }
+        }
+
+        val page = provider.likedSongsPage(0)
+        val heads = provider.libraryPlaylistHeads()
+
+        assertEquals(listOf("song" to "2026-11-10T08:00:00Z", null to "2026-11-09T08:00:00Z"), page.entries.map { it.spotifyTrackId to it.addedAt })
+        assertEquals("Saved song", page.entries.first().track?.title)
+        assertEquals(null, page.entries.last().track)
+        assertEquals(2 to false, page.total to page.hasMore)
+        assertEquals("snap-7", heads.single().snapshotId)
+        assertEquals(4, heads.single().playlist.trackCount)
     }
 
     @Test
