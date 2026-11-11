@@ -14,11 +14,18 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import java.io.File
+import java.io.IOException
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import xyz.gianlu.librespot.core.Session
+import xyz.gianlu.librespot.dealer.ApiClient
 import xyz.gianlu.librespot.metadata.ImageId
 import xyz.gianlu.librespot.metadata.PlaylistId
 import xyz.gianlu.librespot.metadata.TrackId
@@ -34,7 +41,7 @@ actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? 
         return@withContext null
     }
     try {
-        withMetadataSession { session ->
+        withMetadataSession("Discover Weekly") { session ->
             val list = session.api().getPlaylist(PlaylistId.fromUri("spotify:playlist:$id"))
             val attrs = if (list.hasAttributes()) list.attributes else null
             val name = attrs?.takeIf { it.hasName() }?.name?.takeIf { it.isNotBlank() } ?: "Discover Weekly"
@@ -68,7 +75,7 @@ actual suspend fun fetchLibrespotTrackRadio(trackId: String, excludeCanonicalIds
         check(librespotCredentials().let { it.isFile && it.length() > 0L }) {
             "no librespot credentials (connect Spotify playback first)"
         }
-        withMetadataSession { session ->
+        withMetadataSession("Spotify radio") { session ->
             // seed_to_playlist answers {"mediaItems":[{"uri":"spotify:playlist:…"}]}.
             val answer = session.api().getRadioForTrack(TrackId.fromUri("spotify:track:$trackId"))
             val radioUri = answer.getAsJsonArray("mediaItems")
@@ -84,8 +91,33 @@ actual suspend fun fetchLibrespotTrackRadio(trackId: String, excludeCanonicalIds
 
 private fun librespotCredentials() = File(androidContext.filesDir, "librespot/credentials.json")
 
-/** A short-lived librespot session on the stored credentials, closed after [block]. */
-private fun <T> withMetadataSession(block: (Session) -> T): T {
+/**
+ * Runs [block] on the playback receiver's connected session, which already holds an AP connection,
+ * or on a short-lived session when no receiver is up. A fresh session per call needed its own AP
+ * connect, which Spotify refused on mobile data while the receiver stayed connected (every Discover
+ * Weekly fetch from 2026-11-04 to 11-09 failed so). Refusals, resets, a receiver rebuilt mid-call
+ * and Spotify 5xx answers are retried with backoff; each attempt takes the session again.
+ */
+private suspend fun <T> withMetadataSession(label: String, block: suspend (Session) -> T): T =
+    retryTransient(label, isTransient = ::isTransientMetadataFailure) {
+        val shared = receiverHost?.metadataSession()
+        if (shared == null) {
+            withFreshSession(label, block)
+        } else {
+            PlaybackTrace.log("Librespot", "$label: reading through the receiver's session")
+            try {
+                block(shared)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (receiverHost?.metadataSession() !== shared) throw ReceiverSessionReplaced(failure)
+                throw failure
+            }
+        }
+    }
+
+private suspend fun <T> withFreshSession(label: String, block: suspend (Session) -> T): T {
+    PlaybackTrace.log("Librespot", "$label: no connected receiver; opening a metadata session")
     val conf = Session.Configuration.Builder()
         .setStoreCredentials(true)
         .setStoredCredentialsFile(librespotCredentials())
@@ -104,14 +136,49 @@ private fun <T> withMetadataSession(block: (Session) -> T): T {
     }
 }
 
+/** The receiver closed the session a call was using; its successor (or a fresh one) gets the retry. */
+private class ReceiverSessionReplaced(cause: Throwable) :
+    IOException("the playback receiver was rebuilt during the call", cause)
+
+private fun isTransientMetadataFailure(failure: Throwable): Boolean =
+    failure is ReceiverSessionReplaced ||
+        isTransientNetworkFailure(failure) ||
+        (failure is ApiClient.StatusCodeException && failure.code >= 500)
+
 private fun Playlist4ApiProto.SelectedListContent.trackUris(): List<String> =
     (if (hasContents()) contents.itemsList else emptyList())
         .mapNotNull { item -> item.takeIf { it.hasUri() }?.uri }
         .filter { it.startsWith("spotify:track:") }
 
-private fun Session.tracksFor(uris: List<String>): List<Track> = uris.mapNotNull { uri ->
-    val trackId = runCatching { TrackId.fromUri(uri) }.getOrNull() ?: return@mapNotNull null
-    val meta = runCatching { api().getMetadata4Track(trackId) }.getOrNull() ?: return@mapNotNull null
+/**
+ * Track metadata is one spclient request per track. Reading [METADATA_PARALLELISM] at a time turns a
+ * 30-track Discover Weekly from 30 sequential round trips into 5 on a high-latency mobile link.
+ * A track that fails is left out, but when every one fails the first failure is thrown so the
+ * caller can retry (a dead connection fails them all).
+ */
+private suspend fun Session.tracksFor(uris: List<String>): List<Track> = coroutineScope {
+    val gate = Semaphore(METADATA_PARALLELISM)
+    val results = uris.map { uri ->
+        async(Dispatchers.IO) {
+            gate.withPermit {
+                try {
+                    Result.success(trackFor(uri))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    Result.failure(failure)
+                }
+            }
+        }
+    }.awaitAll()
+    val tracks = results.mapNotNull { it.getOrNull() }
+    if (tracks.isEmpty()) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
+    tracks
+}
+
+private fun Session.trackFor(uri: String): Track? {
+    val trackId = runCatching { TrackId.fromUri(uri) }.getOrNull() ?: return null
+    val meta = api().getMetadata4Track(trackId)
     val base62 = uri.removePrefix("spotify:track:")
     val artists = meta.artistList.mapNotNull { artist ->
         artist.name?.takeIf { it.isNotBlank() }?.let { ArtistRef("spotify-artist:${it.lowercase()}", it) }
@@ -129,7 +196,7 @@ private fun Session.tracksFor(uris: List<String>): List<Track> = uris.mapNotNull
         }
         else -> null
     }
-    Track(
+    return Track(
         canonicalId = "spotify:$base62",
         title = meta.name,
         artists = artists,
@@ -157,3 +224,5 @@ private const val TAG = "KainosDiscover"
 
 /** Track metadata is one request per track; a radio refill never needs more than a batch. */
 private const val RADIO_METADATA_LIMIT = 25
+
+private const val METADATA_PARALLELISM = 6

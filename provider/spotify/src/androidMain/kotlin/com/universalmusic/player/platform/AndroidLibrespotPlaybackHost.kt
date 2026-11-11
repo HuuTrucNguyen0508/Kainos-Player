@@ -338,6 +338,15 @@ internal class AndroidLibrespotPlaybackHost(
         replaceReceiverLocked()
     }
 
+    /**
+     * The connected receiver's session for metadata reads (playlists, radio, track metadata), which
+     * go over spclient HTTPS on its existing login instead of a new AP connection. Null while no
+     * receiver is up or its AP connection is being replaced. Never waits on [mutex], so a long load
+     * or rebuild does not hold metadata back; a caller whose session is closed under it retries.
+     * Blocking: call off the main thread.
+     */
+    internal fun metadataSession(): Session? = session?.takeIf { !it.reconnecting() && it.isValid }
+
     private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
 
     private fun hasCachedCredentials(): Boolean =

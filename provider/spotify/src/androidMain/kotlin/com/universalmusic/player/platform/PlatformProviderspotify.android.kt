@@ -13,7 +13,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
-    AndroidLibrespotPlaybackHost()
+    AndroidLibrespotPlaybackHost().also { receiverHost = it }
+
+/** The app's in-process receiver. Metadata reads borrow its connected session instead of opening one. */
+@Volatile internal var receiverHost: AndroidLibrespotPlaybackHost? = null
 
 actual fun requiresExplicitSpotifyDevice(): Boolean = false
 
