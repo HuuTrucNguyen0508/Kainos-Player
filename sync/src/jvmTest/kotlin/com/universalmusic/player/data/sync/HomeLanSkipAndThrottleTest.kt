@@ -27,6 +27,7 @@ class HomeLanSkipAndThrottleTest {
     private var scannedAt: Long? = null
     private var rescans = 0
     private var syncs = 0
+    private var duringRescan: suspend () -> Unit = {}
     private val library = LibraryRepository()
     private val vault = tempVaultStore().second
     private var settings = AppSettings(
@@ -72,7 +73,7 @@ class HomeLanSkipAndThrottleTest {
             FakeVaultClient(ByteArray(0), VaultIndexDocument("hub", remoteSizes.map { (name, size) -> VaultFileEntry(name, size, 5L) }))
         },
         vaultStore = vault,
-        refreshLocalLibrary = { rescans++ },
+        refreshLocalLibrary = { rescans++; duringRescan() },
         rematchLocalHearts = { syncs++; 0 },
         clock = { now },
         isDesktop = false,
@@ -190,9 +191,52 @@ class HomeLanSkipAndThrottleTest {
         assertEquals(4, syncs)
         foreground.cancel()
     }
+
+    @Test
+    fun aHeartMadeWhileASyncRescansGoesOutOnTheNextResume() = runTest {
+        val foreground = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        suspend fun settle() = foreground.coroutineContext.job.children.toList().joinAll()
+        val service = service(foreground)
+        duringRescan = {
+            duringRescan = {}
+            library.toggleFavorite(Track("yt:mid", "Hearted mid-sync", emptyList()))
+        }
+        service.onAppForeground()
+        settle()
+        assertEquals(1, rescans)
+        val afterFirst = syncs
+
+        now += 60_000
+        scannedAt = now
+        service.onAppForeground()
+        settle()
+        assertEquals(afterFirst + 1, syncs, "the heart was not in what the first sync sent")
+        foreground.cancel()
+    }
 }
 
 class CopySkipsTest {
+    @Test
+    fun anotherFileOfTheSameSizeWithoutAHashIsOfferedAgain() = kotlinx.coroutines.test.runTest {
+        val skips = CopySkips(MemoryHomeSyncSkipStore()) { 5 }
+        // Android sends no content hash; its modification time tells two files apart.
+        val skipped = PendingVaultTransfer("a.flac", VaultCopyDirection.TO_REMOTE, 10, mtimeMs = 1_000)
+        skips.skip("pc", listOf(skipped), emptyList())
+        assertEquals(emptyList(), skips.apply("pc", listOf(skipped), audio = null).vault)
+
+        val replaced = skipped.copy(mtimeMs = 2_000)
+        assertEquals(listOf(replaced), skips.apply("pc", listOf(replaced), audio = null).vault)
+    }
+
+    @Test
+    fun aHashedFileStaysSkippedWhenOnlyItsTimeChanges() = kotlinx.coroutines.test.runTest {
+        val skips = CopySkips(MemoryHomeSyncSkipStore()) { 5 }
+        val skipped = PendingVaultTransfer("a.flac", VaultCopyDirection.TO_LOCAL, 10, mtimeMs = 1_000, contentHash = "ab12")
+        skips.skip("pc", listOf(skipped), emptyList())
+
+        assertEquals(emptyList(), skips.apply("pc", listOf(skipped.copy(mtimeMs = 2_000)), audio = null).vault)
+    }
+
     private fun audio(token: String, size: Long = 10) = PendingCachedAudioTransfer(
         CachedAudioOffer("yt:abc", "abc", token, size, title = "A song"),
         VaultCopyDirection.TO_LOCAL,

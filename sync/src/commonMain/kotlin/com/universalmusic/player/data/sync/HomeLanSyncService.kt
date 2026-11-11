@@ -498,6 +498,9 @@ class HomeLanSyncService(
                         playlists.mergeAndPersistSyncState(remotePlaylists)
                         val remotePins = client.syncHomePins().getOrThrow()
                         remotePins?.let { library.mergeAndPersistHomePins(it, livePlaylistIds()) }
+                        // What this sync sent and merged. Taken now, not when the slower vault and
+                        // rescan steps end, so a heart made meanwhile still goes out on the next resume.
+                        val exchangedState = localSyncState()
                         // Null when this side or the peer does not sync cached audio.
                         val plannedAudio = cachedAudio?.let { copies ->
                             val local = cachedAudioDocument(deviceId, library, copies)
@@ -601,7 +604,7 @@ class HomeLanSyncService(
                                 bytesTotal = 0,
                             )
                         }
-                        lastSyncMark = SyncMark(now, localSyncState())
+                        lastSyncMark = SyncMark(now, exchangedState)
                         detail
                     }
                 }
