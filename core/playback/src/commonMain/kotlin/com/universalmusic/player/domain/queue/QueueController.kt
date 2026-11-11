@@ -203,6 +203,34 @@ class QueueController(
         }
     }
 
+    /**
+     * Drop every entry after the current one in playback order, keeping history and the current
+     * entry. Undo puts them back. False when nothing follows the current entry.
+     */
+    fun clearUpcoming(): Boolean {
+        val current = _queue.value
+        if (current.upcoming.isEmpty()) return false
+        val order = current.playbackOrder()
+        val currentPos = order.indexOf(current.currentIndex.coerceIn(0, current.items.lastIndex))
+        val keep = order.take(currentPos + 1).toSet()
+        undoSnapshot = current
+        val items = current.items.filterIndexed { index, _ -> index in keep }
+        val currentId = current.items[current.currentIndex.coerceIn(0, current.items.lastIndex)].id
+        val newIndex = items.indexOfFirst { it.id == currentId }
+        _queue.value = current.copy(
+            items = items,
+            currentIndex = newIndex,
+            shuffleOrder = preserveShuffleOrder(
+                previous = current,
+                newItems = items,
+                newCurrentIndex = newIndex,
+                playNextId = null,
+                appendNewIds = emptyList(),
+            ),
+        )
+        return true
+    }
+
     fun clear() {
         if (_queue.value.items.isNotEmpty()) undoSnapshot = _queue.value
         _queue.value = PlaybackQueue(
