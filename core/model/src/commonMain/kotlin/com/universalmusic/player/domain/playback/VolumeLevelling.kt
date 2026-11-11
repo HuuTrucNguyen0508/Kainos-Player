@@ -1,6 +1,7 @@
 package com.universalmusic.player.domain.playback
 
 import kotlin.math.log10
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -99,11 +100,13 @@ object VolumeLevelling {
 
     /**
      * Gain plus [PREAMP_DB], never above what the peak allows or [ceilingDb]. A tagged sample peak
-     * may reach full scale; an analysed true peak stops at [TRUE_PEAK_CEILING_DBTP].
+     * may reach full scale; an analysed true peak stops at [TRUE_PEAK_CEILING_DBTP]. The peak only
+     * limits a boost: many masters already peak above 0 dBTP, and cutting one below its own level
+     * for that would leave it quieter than its neighbours without removing any overs it shipped with.
      */
     fun appliedGainDb(replayGain: ReplayGain, ceilingDb: Double = Double.POSITIVE_INFINITY): Double {
         val headroomDb = if (replayGain.source == GainSource.ANALYSED) TRUE_PEAK_CEILING_DBTP else 0.0
-        val peakLimitDb = replayGain.peak?.let { headroomDb - 20 * log10(it) } ?: Double.POSITIVE_INFINITY
+        val peakLimitDb = replayGain.peak?.let { max(headroomDb - 20 * log10(it), 0.0) } ?: Double.POSITIVE_INFINITY
         return min(min(replayGain.gainDb + PREAMP_DB, peakLimitDb), ceilingDb)
     }
 

@@ -56,8 +56,11 @@ class VolumeLevellingTest {
     @Test fun analysedBoostStopsOneDecibelUnderTheTruePeak() {
         // -30 LUFS asks for +12 + 7 = +19 dB; a -10 dBTP peak allows +9 dB.
         assertEquals(9.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-30.0, -10.0))), 1e-9)
-        // A loud master: -12.6 LUFS wants +1.6 dB, but a +1.0 dBTP peak brings it to -2 dB.
-        assertEquals(-2.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-12.6, 1.0))), 1e-9)
+        // A real master: -12.6 LUFS wants +1.6 dB, but it already peaks at +1.0 dBTP, so it plays
+        // at its own level rather than being boosted or cut for its overs.
+        assertEquals(0.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-12.6, 1.0))), 1e-9)
+        // A hot master that needs cutting anyway gets its full target cut.
+        assertEquals(-4.8, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-6.2, 3.3))), 1e-9)
         // Unbounded by the peak, the target is Spotify Loud: -11 LUFS.
         assertEquals(3.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-14.0, -10.0))), 1e-9)
     }
