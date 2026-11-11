@@ -855,6 +855,7 @@ class AppContainer(
     }
 
     fun onAppForeground() {
+        heartedAudio.setForeground(true)
         heartedAudio.notifyNetworkChanged()
         foregroundHandoff.onForeground()
         foreground.isVisible = true
@@ -863,6 +864,7 @@ class AppContainer(
     }
 
     suspend fun onAppBackground() {
+        heartedAudio.setForeground(false)
         foreground.isVisible = false
         flushListeningSession()
         homeLanSync.scheduleListeningDeliveryIfPending()

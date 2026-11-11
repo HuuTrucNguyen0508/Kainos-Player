@@ -32,6 +32,98 @@ class DownloadQueueResilienceTest {
 
     private fun yt(id: String) = Track("yt:$id", id.uppercase(), emptyList())
 
+
+    @Test fun incomingCopyDoesNotResurrectAnExcludedHeart() = runTest {
+        val cache = cache()
+        val service = service(cache, FakeDownloader { _, _ -> null })
+        service.enqueueMissing(listOf(yt("a"))); runCurrent()
+        service.removeAndKeepOff("yt:a"); runCurrent()
+        val token = service.copyGeneration("yt:a")
+        val file = File(cache.audioDirectoryPath(), "copy.webm").apply { writeBytes(ByteArray(8)) }
+        val entry = HeartedAudioCacheEntry("yt:a", "a", file.toURI().toString(), sizeBytes = 8)
+        assertEquals(HeartedAudioCacheService.CopyAdoption.STALE, service.adoptCopiedFile(entry, token))
+        assertNull(cache.get("yt:a"))
+        assertTrue(cache.isUserExcluded("yt:a"))
+    }
+
+    @Test fun meteredSwitchCancelsAnActiveDownloadAndResumesWithoutBurningATry() = runTest {
+        var metered = false
+        var cancelled = false
+        val calls = mutableListOf<String>()
+        val downloader = object : com.universalmusic.player.platform.YouTubeAudioDownloader {
+            override fun isAvailable() = true
+            override suspend fun downloadAudio(videoId: String, destinationDirectory: String,
+                fileBaseName: String, onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult {
+                calls += videoId
+                try { kotlinx.coroutines.awaitCancellation() }
+                finally { cancelled = true }
+            }
+        }
+        val service = HeartedAudioCacheService(backgroundScope, cache(), downloader, { emptyList() },
+            networkAvailable = { true }, meteredNetwork = { metered }, wifiOnly = { true })
+        service.enqueue(yt("a")); runCurrent()
+        metered = true
+        service.notifyNetworkChanged(); runCurrent()
+        assertTrue(cancelled, "mobile data must not finish a Wi-Fi-only download")
+        assertEquals(DownloadPhase.WAITING_FOR_WIFI, service.downloads.value["yt:a"]?.phase)
+        metered = false
+        service.notifyNetworkChanged(); runCurrent()
+        assertEquals(listOf("a", "a"), calls)
+    }
+
+    @Test fun backoffShowsOfflineWhileConnectionIsLost() = runTest {
+        var online = true
+        val downloader = FakeDownloader { _, _ ->
+            YouTubeDownloadResult.Failed(YouTubeFailureKind.TRANSIENT, "HTTP 503")
+        }
+        val service = service(cache(), downloader, online = { online })
+        service.enqueue(yt("a")); runCurrent()
+        online = false
+        service.notifyNetworkChanged(); runCurrent()
+        assertEquals(DownloadPhase.WAITING_FOR_NETWORK, service.downloads.value["yt:a"]?.phase)
+        service.removeAndKeepOff("yt:a"); runCurrent()
+        advanceTimeBy(600_000); runCurrent()
+        assertEquals(listOf("a"), downloader.calls)
+    }
+
+
+    @Test fun extractorFailureIsNotRetriedOnEveryHeartListRefresh() = runTest {
+        val downloader = FakeDownloader { _, _ ->
+            YouTubeDownloadResult.Failed(YouTubeFailureKind.OUTDATED_EXTRACTOR, "signature extraction failed")
+        }
+        val service = service(cache(), downloader)
+        service.enqueueMissing(listOf(yt("a"))); runCurrent()
+        repeat(3) { service.enqueueMissing(listOf(yt("a"))); runCurrent() }
+        assertEquals(listOf("a"), downloader.calls)
+    }
+
+    @Test fun backoffCannotDownloadInBackgroundAndResumesOnReturn() = runTest {
+        val downloader = FakeDownloader { _, attempt ->
+            if (attempt == 1) YouTubeDownloadResult.Failed(YouTubeFailureKind.TRANSIENT, "HTTP 503") else null
+        }
+        val service = service(cache(), downloader)
+        service.enqueue(yt("a")); runCurrent()
+        service.setForeground(false)
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(listOf("a"), downloader.calls)
+        service.setForeground(true); runCurrent()
+        assertEquals(listOf("a", "a"), downloader.calls)
+        assertEquals(DownloadPhase.CACHED, service.downloads.value["yt:a"]?.phase)
+    }
+
+    @Test fun clearAndRemoveDuringBackoffNeverRestoreTheirJobs() = runTest {
+        val downloader = FakeDownloader { _, _ ->
+            YouTubeDownloadResult.Failed(YouTubeFailureKind.TRANSIENT, "HTTP 503")
+        }
+        val service = service(cache(), downloader)
+        service.enqueue(yt("a")); service.enqueue(yt("b")); runCurrent()
+        service.removeAndKeepOff("yt:a"); runCurrent()
+        service.clear(listOf("yt:a", "yt:b"))
+        advanceTimeBy(600_000); runCurrent()
+        assertEquals(listOf("a", "b"), downloader.calls)
+        assertTrue(service.downloads.value.isEmpty())
+    }
+
     @Test fun brokenVideoFailsWithItsReasonAndDoesNotBlockTheRest() = runTest {
         val cache = cache()
         val reason = "ERROR: [youtube] bad: Video unavailable. This video has been removed by the uploader"

@@ -17,6 +17,7 @@ import java.util.UUID
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -79,12 +80,16 @@ class HeartedAudioCacheService(
     private val wake = Channel<Unit>(Channel.UNLIMITED)
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val known = ConcurrentHashMap<String, HeartedAudioCacheEntry>()
+    private val extractorAttempted = ConcurrentHashMap.newKeySet<String>()
     private val trackMeta = ConcurrentHashMap<String, Track>()
     private val youtubeQueue = ArrayDeque<HeartedCacheJob>()
     private val spotifyQueue = ArrayDeque<HeartedCacheJob>()
     private val mutationMutex = Mutex()
     private val generations = mutableMapOf<String, Long>()
     private var clearGeneration = 0L
+    private data class Retry(val job: HeartedCacheJob, val deadline: Long, var timer: Job? = null)
+    private val retries = mutableMapOf<String, Retry>()
+    private var foreground = true
     private var active: Pair<HeartedCacheJob, Deferred<Unit>>? = null
 
     private fun current(job: HeartedCacheJob): Boolean = synchronized(youtubeQueue) {
@@ -93,6 +98,7 @@ class HeartedAudioCacheService(
 
     private fun invalidate(canonicalId: String): Pair<Long, Long> = synchronized(youtubeQueue) {
         generations[canonicalId] = (generations[canonicalId] ?: 0L) + 1L
+        retries.remove(canonicalId)?.timer?.cancel()
         pending.remove(canonicalId)
         known.remove(canonicalId)
         youtubeQueue.removeAll { it.track.canonicalId == canonicalId }
@@ -219,7 +225,7 @@ class HeartedAudioCacheService(
                     if (cache.isUserExcluded(track.canonicalId)) return@forEach
                     var failure = cache.failure(track.canonicalId)
                     // An outdated extractor is not this video's fault: try again once the app or yt-dlp moved on.
-                    if (failure?.kind == YouTubeFailureKind.OUTDATED_EXTRACTOR.name) {
+                    if (failure?.kind == YouTubeFailureKind.OUTDATED_EXTRACTOR.name && extractorAttempted.add(track.canonicalId)) {
                         cache.clearFailure(track.canonicalId)
                         failure = null
                     }
@@ -356,6 +362,8 @@ class HeartedAudioCacheService(
         val keptOff = synchronized(youtubeQueue) {
             clearGeneration++
             active?.second?.cancel()
+            retries.values.forEach { it.timer?.cancel() }
+            retries.clear()
             pending.clear()
             known.clear()
             youtubeQueue.clear()
@@ -373,8 +381,36 @@ class HeartedAudioCacheService(
     suspend fun stats(): HeartedAudioCacheStats = cache.stats()
 
     /** Connectivity, metering or the Wi-Fi-only switch changed: re-check what may download. */
-    fun notifyNetworkChanged() {
+    fun notifyNetworkChanged() = synchronized(youtubeQueue) {
+        if (gate() != NetworkGate.OPEN) active?.second?.cancel()
+        labelQueued(gate().queuedPhase())
         if (workerStarted) wake.trySend(Unit)
+        Unit
+    }
+
+    /** Suspend downloads and retry timers while the app is backgrounded; keep their jobs for return. */
+    fun setForeground(visible: Boolean) = synchronized(youtubeQueue) {
+        foreground = visible
+        if (!visible) {
+            active?.second?.cancel()
+            retries.values.forEach { it.timer?.cancel(); it.timer = null }
+        } else {
+            retries.values.toList().forEach(::armRetry)
+            wake.trySend(Unit)
+        }
+        Unit
+    }
+
+    private fun armRetry(retry: Retry) {
+        if (!foreground || retry.timer != null) return
+        retry.timer = scope.launch {
+            delay((retry.deadline - clock()).coerceAtLeast(0))
+            synchronized(youtubeQueue) {
+                if (retries[retry.job.track.canonicalId] !== retry) return@synchronized
+                retries.remove(retry.job.track.canonicalId)
+                requeue(retry.job)
+            }
+        }
     }
 
     private fun gate(): NetworkGate = when {
@@ -447,7 +483,7 @@ class HeartedAudioCacheService(
             while (true) {
                 val gate = gate()
                 labelQueued(gate.queuedPhase())
-                if (gate != NetworkGate.OPEN) break
+                if (gate != NetworkGate.OPEN || !synchronized(youtubeQueue) { foreground }) break
                 val job = synchronized(youtubeQueue) {
                     youtubeQueue.removeFirstOrNull() ?: spotifyQueue.removeFirstOrNull()
                 } ?: break
@@ -461,6 +497,9 @@ class HeartedAudioCacheService(
                     task.await()
                 } catch (_: CancellationException) {
                     currentCoroutineContext().ensureActive()
+                    synchronized(youtubeQueue) {
+                        if (current(job)) requeue(job)
+                    }
                 } finally {
                     synchronized(youtubeQueue) { if (active?.second === task) active = null }
                 }
@@ -471,7 +510,7 @@ class HeartedAudioCacheService(
 
     /** Shows every queued job as [phase]: Queued, Waiting for network or Waiting for Wi-Fi. */
     private fun labelQueued(phase: DownloadPhase) = synchronized(youtubeQueue) {
-        val queued = (youtubeQueue + spotifyQueue).filter(::current).map { it.track.canonicalId }.toSet()
+        val queued = (youtubeQueue + spotifyQueue + retries.values.map { it.job }).filter(::current).map { it.track.canonicalId }.toSet()
         if (queued.isEmpty()) return@synchronized
         _downloads.update { map ->
             map.mapValues { (id, item) ->
@@ -483,6 +522,7 @@ class HeartedAudioCacheService(
     /** Puts [job] back at the end of its queue, unless a retry, removal or clear replaced it meanwhile. */
     private fun requeue(job: HeartedCacheJob) = synchronized(youtubeQueue) {
         if (!current(job)) return@synchronized
+        pending.add(job.track.canonicalId)
         when (job.priority) {
             HeartedCachePriority.YOUTUBE -> youtubeQueue.addLast(job)
             HeartedCachePriority.SPOTIFY -> spotifyQueue.addLast(job)
@@ -514,9 +554,12 @@ class HeartedAudioCacheService(
                             youtubeVideoId = videoId, retryAtMs = clock() + wait)
                     }
                     val next = job.copy(attempts = job.attempts + 1)
-                    scope.launch {
-                        delay(wait)
-                        requeue(next)
+                    synchronized(youtubeQueue) {
+                        if (current(job)) {
+                            val retry = Retry(next, clock() + wait)
+                            retries[canonicalId] = retry
+                            armRetry(retry)
+                        }
                     }
                     true
                 }
@@ -526,7 +569,10 @@ class HeartedAudioCacheService(
                     } else {
                         reason
                     }
-                    if (kind == YouTubeFailureKind.OUTDATED_EXTRACTOR) extractorIssue.value = reason
+                    if (kind == YouTubeFailureKind.OUTDATED_EXTRACTOR) {
+                        extractorAttempted.add(canonicalId)
+                        extractorIssue.value = reason
+                    }
                     cache.recordFailure(HeartedCacheFailure(canonicalId, message, clock(), videoId, kind.name))
                     publish(job) {
                         upsertDownload(job.track, DownloadPhase.FAILED, errorMessage = message, youtubeVideoId = videoId)
@@ -660,7 +706,7 @@ class HeartedAudioCacheService(
         // Nothing after the commit may be cancelled, or the caller would delete a file the index names.
         return withContext(NonCancellable) {
             val adopted = mutationMutex.withLock {
-                if (!current(owner, generation)) return@withLock CopyAdoption.STALE
+                if (!current(owner, generation) || cache.isUserExcluded(owner)) return@withLock CopyAdoption.STALE
                 if (cache.get(owner) != null) return@withLock CopyAdoption.ALREADY_CACHED
                 putReportingEvictions(entry)
                 val pinned = cache.isPinned(owner)

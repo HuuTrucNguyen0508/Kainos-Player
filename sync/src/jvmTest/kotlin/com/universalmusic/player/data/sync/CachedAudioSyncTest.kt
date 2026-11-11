@@ -176,6 +176,21 @@ class CachedAudioSyncTest {
     }
 
     @Test
+    fun anExcludedHeartRejectsAReceivedCopyWithoutResurrectingAudio() = scenario { pc, phone, client ->
+        val track = ytTrack("excluded")
+        pc.heart(track); phone.heart(track)
+        pc.seed(track, bytes(4096, 2))
+        // The exclusion persisted by Downloads → Remove must survive even a confirmed peer copy.
+        phone.cache.setUserExcluded(track.canonicalId, true)
+        val outcome = phone.execute(client, phone.plan(client).single())
+        assertContains(outcome, "Skipped Song excluded")
+        assertNull(phone.cache.get(track.canonicalId))
+        assertTrue(phone.cache.isUserExcluded(track.canonicalId))
+        assertTrue(phone.audioFiles().isEmpty())
+        assertTrue(phone.incoming().isEmpty())
+    }
+
+    @Test
     fun clearingTheOfflineCacheDuringACopyKeepsTheCopyOut() = scenario { pc, phone, client ->
         val track = ytTrack("kkk")
         pc.heart(track); phone.heart(track)
