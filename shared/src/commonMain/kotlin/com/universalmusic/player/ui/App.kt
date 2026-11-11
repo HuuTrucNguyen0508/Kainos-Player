@@ -106,6 +106,12 @@ import com.universalmusic.player.ui.screens.QueueScreen
 import com.universalmusic.player.ui.screens.SearchScreen
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.TrackActionsPresenter
+import com.universalmusic.player.ui.screens.CollectionCatalog
+import com.universalmusic.player.ui.screens.PagesOverTab
+import com.universalmusic.player.ui.screens.CollectionNavigator
+import com.universalmusic.player.ui.screens.CollectionRef
+import com.universalmusic.player.ui.screens.LocalTrackActions
+import com.universalmusic.player.platform.openUrl
 import com.universalmusic.player.ui.screens.SettingsScreen
 import com.universalmusic.player.ui.screens.SettingsTarget
 import com.universalmusic.player.ui.theme.KainosTheme
@@ -182,8 +188,18 @@ private fun AppScaffold(
     val searchScope = rememberCoroutineScope()
     val searchPresenter = remember(container) { SearchPresenter.from(container, searchScope) }
     val libraryPresenter = remember(container) { LibraryPresenter.from(container, searchScope) }
-    val trackActions = remember(container) { TrackActionsPresenter.from(container) }
-    val searchPlaylist by searchPresenter.playlist.collectAsState()
+    val collections = remember(container) { CollectionNavigator(searchScope, CollectionCatalog.from(container)) }
+    // The menu lives as long as the app; these follow the scaffold's current state.
+    val menuRoutes = remember { MenuRoutes() }
+    val trackActions = remember(container) {
+        TrackActionsPresenter.from(
+            container,
+            openCollection = { menuRoutes.open(it) },
+            startRadio = { menuRoutes.radio(it) },
+        )
+    }
+    val currentPages by collections.stack(destination).stack.collectAsState()
+    val downloads by container.heartedAudio.downloads.collectAsState()
     val currentTrack by playbackChromeTrack(container.player.nowPlaying)
     val queue by container.player.queueState.collectAsState()
     val appReady by container.ready.collectAsState()
@@ -285,7 +301,11 @@ private fun AppScaffold(
             showNowPlaying = false
             showQueue = false
         }
-        if (next.name == destinationName) return
+        if (next.name == destinationName) {
+            // The tab already shown: back to its own top, as tapping a tab twice does elsewhere.
+            collections.stack(next).clear()
+            return
+        }
         if (next == AppDestination.Home) {
             // Home is the root: clear history so the next back can leave the app.
             tabBackStackNames = emptyList()
@@ -299,7 +319,7 @@ private fun AppScaffold(
     fun handleSystemBack(): Boolean {
         if (dockDrag.cancel()) return true
         if (dismissOverlayStack()) return true
-        if (destination == AppDestination.Search && searchPresenter.closePlaylist()) return true
+        if (collections.stack(destination).back()) return true
         screenBack?.let { back ->
             back()
             return true
@@ -355,18 +375,39 @@ private fun AppScaffold(
         openNowPlaying()
     }
 
-    /** Play or Shuffle on a Search playlist page; Shuffle starts on a random song of a fresh order. */
+    /**
+     * An album, artist or playlist page over the current tab. On a phone the player and queue
+     * close so the page is what shows; the desktop pane stays beside it.
+     */
+    fun openCollection(ref: CollectionRef) {
+        if (!desktop) {
+            showNowPlaying = false
+            showQueue = false
+        } else if (queueInContent) {
+            showQueue = false
+        }
+        collections.stack(destination).push(ref)
+    }
+
+    fun startRadio(track: Track) {
+        container.library.recordPlay(track)
+        if (container.startRadio(track)) openNowPlaying()
+    }
+    menuRoutes.open = ::openCollection
+    menuRoutes.radio = ::startRadio
+
+    /** Play or Shuffle on a collection page; Shuffle starts on a random song of a fresh order. */
     fun playPlaylist(tracks: List<Track>, startIndex: Int, shuffle: Boolean) {
         if (tracks.isEmpty()) return
         if (shuffle && !container.player.queueState.value.shuffle) container.player.toggleShuffle()
         playTracks(tracks, if (shuffle) Random.nextInt(tracks.size) else startIndex)
     }
 
-    // Queue → Now Playing → Search playlist → previous tab → … → Home. At root Home, let the system leave the app.
+    // Queue → Now Playing → open page → previous tab → … → Home. At root Home, let the system leave the app.
     PlatformBackHandler(
         enabled = showQueue ||
             showNowPlaying ||
-            (destination == AppDestination.Search && searchPlaylist != null) ||
+            currentPages.isNotEmpty() ||
             (desktop && nowPlayingPaneExpanded && compactPlayer) ||
             screenBack != null ||
             tabBackStackNames.isNotEmpty(),
@@ -397,6 +438,7 @@ private fun AppScaffold(
 
     // The cover's light goes with the player while it is carried; the scheme accent when nothing plays.
     val carriedLight = if (desktop) rememberAlbumLight(currentTrack?.artwork?.url).value else MaterialTheme.colorScheme.primary
+    CompositionLocalProvider(LocalTrackActions provides trackActions) {
     DockDropHost(
         drag = dockDrag,
         current = dock,
@@ -559,7 +601,19 @@ private fun AppScaffold(
                         onOpenQueue = { showQueue = true },
                         onClose = { showNowPlaying = false },
                     )
-                    else -> tabStateHolder.SaveableStateProvider(destination.name) {
+                    // Search places its pages itself, beside its results on wide windows.
+                    else -> PagesOverTab(
+                        stack = collections.stack(destination),
+                        holder = tabStateHolder,
+                        tabKey = destination.name,
+                        rootBackLabel = "Back to ${destination.label}",
+                        trackActions = trackActions,
+                        availability = container::trackAvailability,
+                        downloads = downloads,
+                        onPlay = ::playPlaylist,
+                        openLink = ::openUrl,
+                        enabled = destination != AppDestination.Search,
+                    ) {
                         when (destination) {
                             AppDestination.Home -> HomeScreen(
                                 container,
@@ -577,6 +631,7 @@ private fun AppScaffold(
                                 onPlayTrackInList = ::playSearchTracks,
                                 onPlayPlaylist = ::playPlaylist,
                                 trackActions = trackActions,
+                                pages = collections.stack(AppDestination.Search),
                                 requestFocus = true,
                                 onOpenSettings = ::openSettings,
                             )
@@ -589,6 +644,7 @@ private fun AppScaffold(
                                 onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
                                 onShuffleTracks = ::shuffleTracks,
                                 onInnerBack = { screenBack = it },
+                                onOpenCollection = ::openCollection,
                             )
                             AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                         }
@@ -609,6 +665,7 @@ private fun AppScaffold(
                 }
             }
         }
+    }
     }
     }
     }
@@ -866,3 +923,9 @@ private fun DockCarryBody(track: Track?) {
 internal fun playbackChromeTrack(nowPlaying: StateFlow<NowPlayingState>): State<Track?> =
     remember(nowPlaying) { nowPlaying.map { it.track }.distinctUntilChanged() }
         .collectAsState(initial = nowPlaying.value.track)
+
+/** Where the app-long track menu sends Go to and Start radio; the scaffold points these at itself. */
+private class MenuRoutes {
+    var open: (CollectionRef) -> Unit = {}
+    var radio: (Track) -> Unit = {}
+}

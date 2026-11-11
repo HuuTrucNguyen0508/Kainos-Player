@@ -1,17 +1,13 @@
 package com.universalmusic.player.ui.screens
 
-import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.domain.matching.track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
-import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
-import com.universalmusic.player.domain.model.UnifiedSearchResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -25,7 +21,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class SearchPlaylistPresenterTest {
+class CollectionPresenterTest {
     private val playlist = Playlist(
         canonicalId = "spotify-playlist:mix",
         title = "Late Mix",
@@ -50,17 +46,13 @@ class SearchPlaylistPresenterTest {
         }
     }
 
-    private fun TestScope.searchWith(pages: FakePages) = SearchPresenter(
-        settings = MutableStateFlow(AppSettings()),
-        spotify = MutableStateFlow(ProviderState.AVAILABLE),
-        youtube = MutableStateFlow(ProviderState.NOT_CONFIGURED),
-        downloads = MutableStateFlow(emptyMap()),
-        search = { UnifiedSearchResult(emptyList(), emptyList(), emptyList(), listOf(playlist), emptyMap()) },
-        availability = { error("not used") },
-        loadPlaylistPage = pages::load,
-        scope = backgroundScope,
-        searchDispatcher = StandardTestDispatcher(testScheduler),
-    )
+    private fun TestScope.searchWith(pages: FakePages) = stackWith(pages::load)
+
+    private fun TestScope.stackWith(load: suspend (ProviderEntityRef, String?) -> PlaylistTracksPage) =
+        testCollectionStack(
+            backgroundScope,
+            testCollectionCatalog(StandardTestDispatcher(testScheduler), providerPlaylistPage = load),
+        )
 
     @Test
     fun openingLoadsTheFirstPageAndLoadMoreAppendsTheNext() = runTest {
@@ -71,9 +63,9 @@ class SearchPlaylistPresenterTest {
             ),
         )
         val search = searchWith(pages)
-        search.openPlaylist(playlist)
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
         runCurrent()
-        val page = search.playlist.value!!
+        val page = search.top!!.presenter
         assertEquals(listOf("One", "Two"), page.state.value.tracks.map { it.title })
         assertEquals(PlaylistCursor.After("2"), page.state.value.cursor)
 
@@ -97,8 +89,8 @@ class SearchPlaylistPresenterTest {
             ),
         )
         val search = searchWith(pages)
-        search.openPlaylist(playlist)
-        val page = search.playlist.value!!
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
+        val page = search.top!!.presenter
         // Like the list's scroll trigger: react to the new cursor while the first fetch is still finishing.
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             page.state.collect { if (it.cursor is PlaylistCursor.After) page.loadMore() }
@@ -117,9 +109,9 @@ class SearchPlaylistPresenterTest {
             ),
         )
         val search = searchWith(pages)
-        search.openPlaylist(playlist)
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
         runCurrent()
-        val page = search.playlist.value!!
+        val page = search.top!!.presenter
         page.loadMore()
         runCurrent()
         assertEquals(listOf("One", "Two"), page.state.value.tracks.map { it.title })
@@ -144,15 +136,15 @@ class SearchPlaylistPresenterTest {
             ),
         )
         val search = searchWith(pages)
-        search.openPlaylist(playlist)
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
         runCurrent()
         val played = mutableListOf<String>()
-        search.playlist.value!!.play(startIndex = 1, shuffle = true) { tracks, index, shuffle ->
+        search.top!!.presenter.play(startIndex = 1, shuffle = true) { tracks, index, shuffle ->
             played += "${tracks.joinToString(",") { it.title }}|$index|$shuffle"
         }
         runCurrent()
         assertEquals(listOf("One,Two,Three,Four,Five|1|true"), played)
-        assertFalse(search.playlist.value!!.state.value.preparingPlay)
+        assertFalse(search.top!!.presenter.state.value.preparingPlay)
     }
 
     @Test
@@ -164,9 +156,9 @@ class SearchPlaylistPresenterTest {
             ),
         )
         val search = searchWith(pages)
-        search.openPlaylist(playlist)
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
         runCurrent()
-        val page = search.playlist.value!!
+        val page = search.top!!.presenter
         val played = mutableListOf<Int>()
         page.play(startIndex = 0, shuffle = false) { tracks, _, _ -> played += tracks.size }
         runCurrent()
@@ -183,34 +175,24 @@ class SearchPlaylistPresenterTest {
     @Test
     fun backClosesThePageAndCancelsAPendingPlay() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val search = SearchPresenter(
-            settings = MutableStateFlow(AppSettings()),
-            spotify = MutableStateFlow(ProviderState.AVAILABLE),
-            youtube = MutableStateFlow(ProviderState.NOT_CONFIGURED),
-            downloads = MutableStateFlow(emptyMap()),
-            search = { error("not used") },
-            availability = { error("not used") },
-            loadPlaylistPage = { _, cursor ->
-                if (cursor == null) PlaylistTracksPage(songs("One"), next = "1")
-                else {
-                    gate.await()
-                    PlaylistTracksPage(songs("Two"), next = null)
-                }
-            },
-            scope = backgroundScope,
-            searchDispatcher = StandardTestDispatcher(testScheduler),
-        )
-        assertFalse(search.closePlaylist(), "Nothing to close before a playlist opens")
-        search.openPlaylist(playlist)
+        val search = stackWith { _, cursor ->
+            if (cursor == null) PlaylistTracksPage(songs("One"), next = "1")
+            else {
+                gate.await()
+                PlaylistTracksPage(songs("Two"), next = null)
+            }
+        }
+        assertFalse(search.back(), "Nothing to close before a playlist opens")
+        search.openFresh(CollectionRef.ProviderPlaylist(playlist))
         runCurrent()
         val played = mutableListOf<Int>()
-        search.playlist.value!!.play(0, shuffle = false) { tracks, _, _ -> played += tracks.size }
+        search.top!!.presenter.play(0, shuffle = false) { tracks, _, _ -> played += tracks.size }
         runCurrent()
 
-        assertTrue(search.closePlaylist())
+        assertTrue(search.back())
         gate.complete(Unit)
         runCurrent()
-        assertNull(search.playlist.value)
+        assertNull(search.top)
         assertEquals(emptyList(), played, "Leaving the page must not start playback afterwards")
     }
 }

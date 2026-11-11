@@ -12,6 +12,9 @@ import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -35,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -109,6 +113,8 @@ internal fun TrackActionsMenuButton(
                 Icon(Icons.Default.MoreVert, contentDescription = "More actions for ${track.title}", modifier = Modifier.size(20.dp))
             }
         }
+        // The page already open is not offered again: Go to album on its own album does nothing.
+        val here = LocalCollectionKey.current
         DropdownMenu(expanded = expanded, onDismissRequest = ::close) {
             TrackActionsMenuItems(
                 track = track,
@@ -117,6 +123,11 @@ internal fun TrackActionsMenuButton(
                 canQueue = actions.canQueue(track),
                 playlists = playlists,
                 extras = extras,
+                albumPage = actions.albumPage(track)?.takeIf { it.key != here },
+                artistPages = actions.artistPages(track).filter { it.key != here },
+                canStartRadio = actions.canStartRadio(track),
+                onGoTo = { ref -> close(); actions.goTo(ref) },
+                onStartRadio = { close(); actions.startRadio(track) },
                 onPage = { page = it },
                 onPlayNext = { close(); actions.playNext(track) },
                 onAddToQueue = { close(); actions.addToQueue(track) },
@@ -140,7 +151,13 @@ internal fun TrackActionsMenuButton(
     }
 }
 
-internal enum class TrackMenuPage { Actions, Playlists }
+internal enum class TrackMenuPage { Actions, Playlists, Artists }
+
+/** The key of the collection page a row sits on, so its menu does not offer that same page. */
+internal val LocalCollectionKey = staticCompositionLocalOf<String?> { null }
+
+/** The app's track menu actions, for screens that are not handed them, such as Now Playing. */
+internal val LocalTrackActions = staticCompositionLocalOf<TrackActionsPresenter?> { null }
 
 /** Stateless menu body, shared by the dropdown and the specimen gallery. */
 @Composable
@@ -158,6 +175,11 @@ internal fun TrackActionsMenuItems(
     onAddToPlaylist: (String) -> Unit,
     onNewPlaylist: () -> Unit,
     onExtra: (TrackMenuExtra) -> Unit,
+    albumPage: CollectionRef? = null,
+    artistPages: List<CollectionRef> = emptyList(),
+    canStartRadio: Boolean = false,
+    onGoTo: (CollectionRef) -> Unit = {},
+    onStartRadio: () -> Unit = {},
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     when (page) {
@@ -197,6 +219,19 @@ internal fun TrackActionsMenuItems(
                 trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
                 onClick = { onPage(TrackMenuPage.Playlists) },
             )
+            if (canStartRadio) MenuEntry("Start radio", Icons.Default.Radio, onStartRadio)
+            if (albumPage != null || artistPages.isNotEmpty()) HorizontalDivider()
+            albumPage?.let { MenuEntry("Go to album", Icons.Default.Album) { onGoTo(it) } }
+            when (artistPages.size) {
+                0 -> Unit
+                1 -> MenuEntry("Go to artist", Icons.Default.Person) { onGoTo(artistPages.single()) }
+                else -> DropdownMenuItem(
+                    text = { Text("Go to artist") },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    trailingIcon = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
+                    onClick = { onPage(TrackMenuPage.Artists) },
+                )
+            }
             if (extras.isNotEmpty()) {
                 HorizontalDivider()
                 extras.forEach { extra -> MenuEntry(extra.label, extra.icon) { onExtra(extra) } }
@@ -229,6 +264,21 @@ internal fun TrackActionsMenuItems(
                 )
             }
             MenuEntry("New playlist…", Icons.Default.Add, onNewPlaylist)
+        }
+        TrackMenuPage.Artists -> {
+            DropdownMenuItem(
+                text = { Text("Go to artist", style = MaterialTheme.typography.labelLarge, color = muted) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to song actions") },
+                onClick = { onPage(TrackMenuPage.Actions) },
+            )
+            HorizontalDivider()
+            artistPages.forEach { ref ->
+                DropdownMenuItem(
+                    text = { Text(ref.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp)) },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    onClick = { onGoTo(ref) },
+                )
+            }
         }
     }
 }

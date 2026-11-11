@@ -164,6 +164,15 @@ class KainosPlaylistRepository(
             playlist.copy(entries = playlist.entries.filterNot { it.entryId == entryId })
         }
 
+    /** Puts a removed [entry] back at [index] with its own id, so undo leaves no trace. */
+    fun restoreEntry(playlistId: String, entry: PersistedPlaylistEntry, index: Int): PersistedKainosPlaylist? =
+        mutate(playlistId) { playlist ->
+            if (playlist.entries.any { it.entryId == entry.entryId }) return@mutate playlist
+            val entries = playlist.entries.toMutableList()
+            entries.add(index.coerceIn(0, entries.size), entry)
+            playlist.copy(entries = entries)
+        }
+
     fun removeTrackByCanonicalId(playlistId: String, canonicalId: String): PersistedKainosPlaylist? =
         mutate(playlistId) { playlist ->
             playlist.copy(entries = playlist.entries.filterNot { it.track.canonicalId == canonicalId })

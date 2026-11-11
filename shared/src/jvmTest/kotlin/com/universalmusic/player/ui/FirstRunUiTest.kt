@@ -162,7 +162,6 @@ private class FakeDevice(
         downloads = MutableStateFlow(emptyMap<String, DownloadItemState>()),
         search = { UnifiedSearchResult(emptyList(), emptyList(), emptyList(), emptyList(), emptyMap()) },
         availability = { error("no tracks in these tests") as TrackAvailabilityInfo },
-        loadPlaylistPage = { _, _ -> error("no playlists in these tests") },
         scope = scope,
     )
 }
@@ -402,7 +401,7 @@ class FirstRunUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { FakeDevice(spotify = ProviderState.AUTH_REQUIRED).search(scope) }
-                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter, onOpenSettings = { opened = it })
+                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter, emptyPages(scope), onOpenSettings = { opened = it })
             }
         }
         node("Search needs Spotify or YouTube").assertIsDisplayed()
@@ -416,7 +415,7 @@ class FirstRunUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { FakeDevice(youtube = ProviderState.AVAILABLE).search(scope) }
-                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter)
+                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter, emptyPages(scope))
             }
         }
         onAllNodesWithText("Search YouTube", useUnmergedTree = true).assertCountEquals(2)

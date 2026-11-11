@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.playlist.playlistEntryAvailabilityLabel
 import com.universalmusic.player.data.spotify.isDiscoverWeekly
+import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.EmptyState
@@ -54,8 +55,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
     onPlaylistBusyId: (String?) -> Unit,
     playlistError: String?,
     onPlaylistError: (String?) -> Unit,
-    expandedKainosId: String?,
-    onExpandedKainosId: (String?) -> Unit,
+    onOpenPlaylist: (Playlist) -> Unit,
     renamePlaylistId: String?,
     onRenamePlaylistId: (String?) -> Unit,
     renameDraft: String,
@@ -77,8 +77,6 @@ internal fun ColumnScope.LibraryPlaylistsTab(
         onRenameDraft = onRenameDraft,
         onRenamePlaylistId = onRenamePlaylistId,
         deletePlaylistId = deletePlaylistId,
-        expandedKainosId = expandedKainosId,
-        onExpandedKainosId = onExpandedKainosId,
         onDeletePlaylistId = onDeletePlaylistId,
         presenter = presenter,
     )
@@ -171,7 +169,6 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                     }
                 }
                 items(state.kainosPlaylists, key = { it.canonicalId }) { playlist ->
-                    val expanded = expandedKainosId == playlist.canonicalId
                     val kainosIndex = state.kainosPlaylists.indexOfFirst { it.canonicalId == playlist.canonicalId }
                     val kainosPinned =
                         "${HomePinKind.KAINOS_PLAYLIST.name}|${playlist.canonicalId}" in state.pinnedKeys
@@ -179,7 +176,7 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                         Modifier
                             .fillMaxWidth()
                             .clickable {
-                                onExpandedKainosId(if (expanded) null else playlist.canonicalId)
+                                onOpenPlaylist(playlist)
                             }
                             .padding(start = 24.dp, end = 8.dp, top = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -270,57 +267,6 @@ internal fun ColumnScope.LibraryPlaylistsTab(
                         }
                         IconButton(onClick = { onDeletePlaylistId(playlist.canonicalId) }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete ${playlist.title}")
-                        }
-                    }
-                    if (expanded) {
-                        TextButton(
-                            onClick = {
-                                val tracks = presenter.currentQueueTracks()
-                                if (tracks.isNotEmpty()) {
-                                    presenter.addTracks(playlist.canonicalId, tracks)
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        ) { Text("Add current queue") }
-                        playlist.tracks.forEachIndexed { index, track ->
-                            val entryId = state.kainosRows
-                                .firstOrNull { it.id == playlist.canonicalId }
-                                ?.entries?.getOrNull(index)?.entryId
-                            ActionTrackRow(
-                                track = track,
-                                actions = trackActions,
-                                onClick = { onPlayTracks(playlist.tracks, index) },
-                                trailing = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            playlistEntryAvailabilityLabel(track),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(end = 4.dp),
-                                        )
-                                        if (entryId != null) {
-                                            IconButton(
-                                                onClick = {
-                                                    presenter.removeEntry(playlist.canonicalId, entryId)
-                                                },
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Clear,
-                                                    contentDescription = "Remove ${track.title}",
-                                                )
-                                            }
-                                        }
-                                    }
-                                },
-                            )
-                        }
-                        if (playlist.tracks.isEmpty()) {
-                            Text(
-                                "Empty playlist. Save a queue or add the current queue.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                            )
                         }
                     }
                 }

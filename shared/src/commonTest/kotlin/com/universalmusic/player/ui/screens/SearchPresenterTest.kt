@@ -35,7 +35,6 @@ class SearchPresenterTest {
                 emptyResult()
             },
             availability = { error("not used") },
-            loadPlaylistPage = { _, _ -> error("not used") },
             scope = backgroundScope,
             searchDispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -74,7 +73,6 @@ class SearchPresenterTest {
             downloads = MutableStateFlow(emptyMap()),
             search = { requests++; emptyResult() },
             availability = { error("not used") },
-            loadPlaylistPage = { _, _ -> error("not used") },
             scope = backgroundScope,
             searchDispatcher = StandardTestDispatcher(testScheduler),
         )
