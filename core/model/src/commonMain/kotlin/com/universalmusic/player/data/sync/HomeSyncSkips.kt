@@ -27,8 +27,12 @@ interface HomeSyncSkipStore {
     suspend fun unskip(peerDeviceId: String, kind: SkippedCopyKind, subject: String, direction: VaultCopyDirection)
 }
 
-/** What a skip of [this] remembers about the file: size and content hash. Android sends no hash. */
-val PendingVaultTransfer.fileIdentity: String get() = "$sizeBytes:$contentHash"
+/**
+ * What a skip of [this] remembers about the file: size and content hash. Android sends no hash, so
+ * its files are told apart by size and modification time instead.
+ */
+val PendingVaultTransfer.fileIdentity: String
+    get() = if (contentHash.isNotBlank()) "$sizeBytes:$contentHash" else "$sizeBytes:mtime=$mtimeMs"
 
 /** A new cache file always gets a new token, so the token with the size names one file. */
 val PendingCachedAudioTransfer.fileIdentity: String get() = "${offer.sizeBytes}:${offer.fileToken}"
