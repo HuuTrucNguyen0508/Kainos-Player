@@ -4,6 +4,8 @@ Source plan: `~/Downloads/KAINOS_ECHO_GATEWAY_IMPLEMENTATION_PLAN.md` (2026-09-2
 
 Standalone service that transcodes local FLAC for Alexa `AudioPlayer` over public HTTPS (Tailscale Funnel later). Kept separate from Home Sync and `PlayerSession`.
 
+**Where it runs (2026-11-11).** From the main checkout: the systemd user unit `kainos-echo-gateway.service` has WorkingDirectory `<main checkout>/tools/echo-gateway`, and `scripts/install-autostart.sh` writes it from the checkout that holds `.env`. The `.claude/worktrees/echo-live` worktree it once ran from is no longer used. The loopback-only now-playing API listens on `127.0.0.1:8788`; the stream and skill port stays `127.0.0.1:8787`.
+
 ## Codex review (2026-09-21)
 
 **Verdict:** REQUEST CHANGES for the full roadmap. **GO** for Phases 1–2 only.

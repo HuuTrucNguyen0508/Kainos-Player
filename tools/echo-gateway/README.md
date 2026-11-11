@@ -141,7 +141,9 @@ systemctl --user start kainos-echo-gateway.service
 
 The installer writes the unit with this checkout's absolute path and enables
 linger, so the unit runs at boot without a login. Run it from the checkout that
-holds `.env`.
+holds `.env`. On the owner's machine that is the main checkout's
+`tools/echo-gateway` (verified 2026-11-11 in the installed unit's
+`WorkingDirectory`); the old `echo-live` worktree is no longer used.
 
 ## Quick start (local only)
 

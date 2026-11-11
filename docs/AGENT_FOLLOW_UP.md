@@ -1,5 +1,7 @@
 # Agent follow-up: M3 project check
 
+> Historical (2026-09-08). Read `docs/CURRENT_STATE.md` for the current state.
+
 Review date: 2026-09-08. User requested an immediate handoff because usage is low.
 
 ## Repair status (same day)

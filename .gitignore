@@ -55,3 +55,6 @@ scripts/perf/library-*.log
 !/scripts/perf/gapless-results/verification.json
 !/scripts/perf/gapless-results/*-pcm-results.json
 !/scripts/perf/gapless-results/rejected-forced-resampling-results.json
+
+# JVM crash reports
+hs_err_pid*.log
