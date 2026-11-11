@@ -24,7 +24,20 @@ class KainosForwardingPlayer internal constructor(
 ) : ForwardingPlayer(exo) {
     private val listeners = CopyOnWriteArrayList<Player.Listener>()
 
-    internal var retainedForTransition = false
+    private var retainedForTransition = false
+    private var transitionTargetUri: Uri? = null
+
+    internal fun retainForTransition() {
+        retainedForTransition = true
+        transitionTargetUri = null
+    }
+
+    internal fun expectTransitionMedia(url: String) {
+        transitionTargetUri = Uri.parse(url)
+    }
+
+    private fun retainedItemIsStale(): Boolean = retainedForTransition &&
+        (transitionTargetUri == null || exo.currentMediaItem?.localConfiguration?.uri != transitionTargetUri)
 
     @Volatile private var spotifyActive = false
     @Volatile private var overlayPlaying = false
@@ -412,7 +425,7 @@ class KainosForwardingPlayer internal constructor(
 
     override fun play() {
         trace("play()")
-        if (spotifyActive || retainedForTransition) {
+        if (spotifyActive || retainedItemIsStale()) {
             AndroidMediaControls.play()
         } else {
             // After clearQueue the session owns transport; do not revive retained Exo items.
@@ -438,7 +451,7 @@ class KainosForwardingPlayer internal constructor(
 
     override fun setPlayWhenReady(playWhenReady: Boolean) {
         trace("setPlayWhenReady($playWhenReady)")
-        if (retainedForTransition && playWhenReady) {
+        if (retainedItemIsStale() && playWhenReady) {
             AndroidMediaControls.play()
         } else if (spotifyActive) {
             if (playWhenReady) AndroidMediaControls.play() else AndroidMediaControls.pause()

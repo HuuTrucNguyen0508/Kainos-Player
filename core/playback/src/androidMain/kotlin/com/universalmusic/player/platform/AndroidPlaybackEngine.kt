@@ -334,7 +334,7 @@ class AndroidPlaybackEngine internal constructor(
                         forwarding.onLevellingChanged = ::publishMedia3Levelling
                         forwarding.setLevelling(levellingEnabled)
                     }
-                    AndroidMediaControls.forwardingPlayer?.retainedForTransition = false
+                    AndroidMediaControls.forwardingPlayer?.expectTransitionMedia(handle.url)
                     activeBackend = ActiveBackend.MEDIA3
                     AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
                     ticker?.cancel()
@@ -603,7 +603,7 @@ class AndroidPlaybackEngine internal constructor(
         ticker?.cancel()
         publishState(EngineState(status = EngineStatus.BUFFERING))
         launchMediaCommand { player ->
-            AndroidMediaControls.forwardingPlayer?.retainedForTransition = true
+            AndroidMediaControls.forwardingPlayer?.retainForTransition()
             player.pause()
             // Only the item after the paused one goes; the paused item keeps focus and the island.
             successor.sync(player, activePlayGeneration) { null }

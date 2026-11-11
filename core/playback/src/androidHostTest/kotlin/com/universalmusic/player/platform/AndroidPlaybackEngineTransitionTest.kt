@@ -109,6 +109,12 @@ class AndroidPlaybackEngineTransitionTest {
         assertEquals(false, exo.playWhenReady)
         forwarding.playWhenReady = true
         assertEquals(false, exo.playWhenReady)
+        // The engine knows the next URL before MediaController has delivered setMediaItem.
+        forwarding.expectTransitionMedia("content://media/third.flac")
+        forwarding.play()
+        assertEquals(false, exo.playWhenReady)
+        forwarding.playWhenReady = true
+        assertEquals(false, exo.playWhenReady)
         playUrl("third", 3)
         assertTrue(exo.playWhenReady)
     }
