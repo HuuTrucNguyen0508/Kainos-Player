@@ -10,6 +10,17 @@ import kotlinx.coroutines.CancellationException
 object PlaybackTrace {
     fun log(tag: String, message: String) = writePlaybackTrace(tag, redactCredentials(message))
 
+    /**
+     * Off unless switched on (desktop: `KAINOS_TRACE_DEBUG=1`). Per-connection Home sync detail
+     * filled 44-82% of the phone's 2 MB rotation and pushed playback evidence out of shared logs.
+     */
+    @kotlin.concurrent.Volatile var debugEnabled: Boolean = false
+
+    /** Detail that only helps while debugging one connection: TLS setup, address probes. */
+    fun debug(tag: String, message: String) {
+        if (debugEnabled) log(tag, message)
+    }
+
     /** The log is shared by hand, and exception messages quote request URLs and the JSON being decoded. */
     fun failure(tag: String, message: String, cause: Throwable) =
         writePlaybackTrace(tag, "$message\n" + redactCredentials(cause.stackTraceToString()))
@@ -28,6 +39,36 @@ internal fun redactCredentials(text: String): String = text
     .replace(CREDENTIAL_FIELD, "$1\"<redacted>\"")
     .replace(BEARER, "Bearer <redacted>")
     .replace(URL_QUERY, "$1?<redacted>")
+
+/**
+ * A retry loop's failure line: written the first time and whenever the reason changes, so a
+ * device away from home leaves one line, not one per retry. The next success, or a different
+ * reason, reports how many identical failures were left out. One instance per loop.
+ */
+class RepeatedFailureTrace(private val tag: String) {
+    private var reason: String? = null
+    private var dropped = 0
+
+    fun failed(reason: String, line: (String) -> String) {
+        if (reason == this.reason) {
+            dropped++
+            return
+        }
+        flushDropped()
+        this.reason = reason
+        PlaybackTrace.log(tag, line(reason))
+    }
+
+    fun succeeded() {
+        flushDropped()
+        reason = null
+    }
+
+    private fun flushDropped() {
+        if (dropped > 0) PlaybackTrace.log(tag, "previous failure repeated $dropped more times: $reason")
+        dropped = 0
+    }
+}
 
 /** For a failure the caller recovers from: it stays handled, and the shared log still has its cause. */
 fun <T> Result<T>.logged(tag: String, message: String): Result<T> = onFailure {

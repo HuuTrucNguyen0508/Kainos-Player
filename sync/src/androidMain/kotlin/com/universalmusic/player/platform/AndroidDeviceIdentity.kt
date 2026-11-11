@@ -76,28 +76,28 @@ internal class AndroidDeviceIdentity(private val keyAlias: String = ALIAS) : Dev
     }
 
     fun keyManager(): X509ExtendedKeyManager {
-        PlaybackTrace.log("HomeSync", "TLS key manager start")
+        PlaybackTrace.debug("HomeSync", "TLS key manager start")
         val entry = material()
-        PlaybackTrace.log("HomeSync", "TLS key manager ready algorithm=${entry.privateKey.algorithm}")
+        PlaybackTrace.debug("HomeSync", "TLS key manager ready algorithm=${entry.privateKey.algorithm}")
         return object : X509ExtendedKeyManager() {
             override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? =
                 if (keyType == "EC") arrayOf(keyAlias) else null
             override fun chooseClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, socket: Socket?): String? {
                 val alias = keyAlias.takeIf { keyTypes?.contains("EC") == true }
-                PlaybackTrace.log("HomeSync", "TLS chooseClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
+                PlaybackTrace.debug("HomeSync", "TLS chooseClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
                 return alias
             }
             override fun chooseEngineClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?): String? {
                 val alias = keyAlias.takeIf { keyTypes?.contains("EC") == true }
-                PlaybackTrace.log("HomeSync", "TLS chooseEngineClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
+                PlaybackTrace.debug("HomeSync", "TLS chooseEngineClientAlias types=${keyTypes?.joinToString()} selected=${alias != null}")
                 return alias
             }
             override fun getCertificateChain(alias: String?): Array<X509Certificate>? {
-                PlaybackTrace.log("HomeSync", "TLS getCertificateChain matched=${alias == keyAlias}")
+                PlaybackTrace.debug("HomeSync", "TLS getCertificateChain matched=${alias == keyAlias}")
                 return if (alias == keyAlias) entry.certificateChain.map { it as X509Certificate }.toTypedArray() else null
             }
             override fun getPrivateKey(alias: String?): PrivateKey? {
-                PlaybackTrace.log("HomeSync", "TLS getPrivateKey matched=${alias == keyAlias}")
+                PlaybackTrace.debug("HomeSync", "TLS getPrivateKey matched=${alias == keyAlias}")
                 return if (alias == keyAlias) entry.privateKey else null
             }
             override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null

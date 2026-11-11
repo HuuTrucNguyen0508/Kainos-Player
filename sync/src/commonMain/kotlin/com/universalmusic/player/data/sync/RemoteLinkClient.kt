@@ -1,6 +1,7 @@
 package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.platform.PlaybackTrace
+import com.universalmusic.player.platform.RepeatedFailureTrace
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.readLocalArtworkBytes
@@ -107,6 +108,7 @@ class RemoteLinkClient(
 
     private var generation = 0L
     private var failures = 0
+    private val linkFailures = RepeatedFailureTrace(REMOTE_TRACE_TAG)
     private val reconnect = Channel<Unit>(Channel.CONFLATED)
     private var latestIntent = 0L
     private var forcePollStatus = false
@@ -227,7 +229,9 @@ class RemoteLinkClient(
                 if (err is CancellationException && err !is TimeoutCancellationException) throw err
                 val wait = backoffMs[failures.coerceAtMost(backoffMs.lastIndex)]
                 failures++
-                trace("link to ${current.hub.displayName} failed (${err.message ?: err}); retry in $wait ms")
+                linkFailures.failed(err.message ?: err.toString()) {
+                    "link to ${current.hub.displayName} failed ($it); retry in $wait ms"
+                }
                 _state.update { it.copy(connected = false, unreachable = true) }
                 backoff(wait)
             }
@@ -275,6 +279,7 @@ class RemoteLinkClient(
             directLeaseAt = monotonicClock.markNow()
             val wasConnected = _state.value.connected
             failures = 0
+            linkFailures.succeeded()
             if (!reply.superseded) {
                 val transit = (sentAt.elapsedNow().inWholeMilliseconds - reply.heldMs).coerceAtLeast(0)
                 val transfers = execute(reply, transit, request)

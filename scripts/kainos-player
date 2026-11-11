@@ -41,9 +41,14 @@ if [[ "${1:-}" == "--rebuild" ]]; then
   shift
 fi
 
+# The hub service gets its own names, so desktop-run-latest.log always means the GUI.
+RUN_KIND=desktop-run
+for arg in "$@"; do
+  if [[ "$arg" == "--hub-only" ]]; then RUN_KIND=hub-run; fi
+done
 mkdir -p "$ROOT/logs"
-LOG="$ROOT/logs/desktop-run-$(date +%Y%m%d-%H%M%S).log"
-ln -sfn "$(basename "$LOG")" "$ROOT/logs/desktop-run-latest.log"
+LOG="$ROOT/logs/$RUN_KIND-$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$(basename "$LOG")" "$ROOT/logs/$RUN_KIND-latest.log"
 
 if [[ ! -x "$JAVA_BIN" ]]; then
   echo "Kainos Player needs a JDK at $JAVA_HOME (expected bin/java)." >&2

@@ -146,6 +146,11 @@ enum class UiRequest {
 class AppContainer(
     httpClient: io.ktor.client.HttpClient? = null,
     private val startupMark: (String) -> Unit = {},
+    /**
+     * `--hub-only`: serve Home sync and nothing else. No media-key/MPRIS player, no restored
+     * queue a media key could start invisibly, no hearted-audio downloads racing the GUI's.
+     */
+    private val hubOnly: Boolean = false,
 ) {
     val failures = AppFailures.open
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + AppFailures.handler)
@@ -447,12 +452,14 @@ class AppContainer(
     }
 
     init {
-        monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
-        startupMark("mpris_begin")
-        bindPlatformMediaControls(player, scope) { track ->
-            library.toggleFavorite(track).also { player.syncFavorite(track.canonicalId, it) }
+        if (!hubOnly) {
+            monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
+            startupMark("mpris_begin")
+            bindPlatformMediaControls(player, scope) { track ->
+                library.toggleFavorite(track).also { player.syncFavorite(track.canonicalId, it) }
+            }
+            startupMark("mpris_end")
         }
-        startupMark("mpris_end")
         // The Now Playing / media-session heart follows the library, including hearts that
         // arrive from Home sync while the same track keeps playing.
         scope.launch {
@@ -499,13 +506,16 @@ class AppContainer(
             startupMark("library_load_end")
             AppFailures.reporting { kainosPlaylists.load() }
             AppFailures.reporting { listeningHistory.load() }
-            val favorites = library.favoriteIds.value
-            val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
-            heartedAudio.enqueueMissing(hearted)
+            if (!hubOnly) {
+                val favorites = library.favoriteIds.value
+                val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
+                heartedAudio.enqueueMissing(hearted)
+            }
             AppFailures.reporting { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            AppFailures.reporting { player.initializePersistence() }
+            // The GUI owns the session: a hub never restores or records it.
+            if (!hubOnly) AppFailures.reporting { player.initializePersistence() }
             _ready.value = true
             foreground.onReady {
                 foregroundHandoff.onForeground()
@@ -1100,9 +1110,13 @@ private fun playbackDispatcher(): CoroutineDispatcher =
 
 lateinit var appContainer: AppContainer
 
-fun ensureAppContainer(httpClient: io.ktor.client.HttpClient? = null, startupMark: (String) -> Unit = {}): AppContainer {
+fun ensureAppContainer(
+    httpClient: io.ktor.client.HttpClient? = null,
+    hubOnly: Boolean = false,
+    startupMark: (String) -> Unit = {},
+): AppContainer {
     if (!::appContainer.isInitialized) {
-        appContainer = AppContainer(httpClient, startupMark)
+        appContainer = AppContainer(httpClient, startupMark, hubOnly)
     }
     return appContainer
 }

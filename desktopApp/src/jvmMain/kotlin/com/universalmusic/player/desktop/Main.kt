@@ -27,6 +27,7 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.sync.HUB_OWNED_BY_ANOTHER_INSTANCE
 import com.universalmusic.player.data.sync.HubOwnership
 import com.universalmusic.player.data.sync.HubProcessMode
+import com.universalmusic.player.data.sync.hubOnlyExitStatus
 import com.universalmusic.player.platform.desktopHubOwnership
 import com.universalmusic.player.app.UiRequest
 import com.universalmusic.player.app.ensureAppContainer
@@ -48,6 +49,7 @@ import com.universalmusic.player.platform.createHttpClient
 
 fun main(args: Array<String>) {
     installCrashLogging()
+    com.universalmusic.player.platform.PlaybackTrace.debugEnabled = System.getenv("KAINOS_TRACE_DEBUG") == "1"
     if (args.firstOrNull() == "--perf-storage") {
         require(DesktopIsolation.current.isIsolated)
         runStorageProbe()
@@ -91,9 +93,9 @@ fun main(args: Array<String>) {
         val acquired = runBlocking { ownership.acquire() }
         if (!acquired) System.err.println(HUB_OWNED_BY_ANOTHER_INSTANCE)
         if (!acquired && mode != HubProcessMode.GUI) {
-            75
+            hubOnlyExitStatus(ownerLockAcquired = false)
         } else if (mode != HubProcessMode.GUI) {
-            runHubOnly(ensureAppContainer().also(container::set), ownership)
+            runHubOnly(ensureAppContainer(hubOnly = true).also(container::set), ownership)
         } else {
             runGui(container::set, httpClient)
             0
@@ -242,8 +244,10 @@ private fun runHubOnly(
     }
     container.homeLanSync.startHubIfNeeded()
     if (!container.homeLanSync.status.value.hubListening) {
-        System.err.println("Kainos home sync hub failed to listen: ${container.homeLanSync.status.value.lastError}")
-        return@runBlocking 1
+        val status = hubOnlyExitStatus(ownerLockAcquired = true)
+        val outcome = "exiting"
+        System.err.println("Kainos home sync hub failed to listen: ${container.homeLanSync.status.value.lastError}; $outcome")
+        return@runBlocking status
     }
     println("Kainos home sync hub listening")
     CompletableDeferred<Int>().await()

@@ -31,7 +31,7 @@ jobs:
         run: |
           chmod +x gradlew
           # The shallow checkout counts one commit. CI artifacts are never shipped.
-          ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug -PkainosVersionCode=${{ github.run_number }} --stacktrace
+          ./gradlew jvmTest :core:playback:testAndroidHostTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug :androidApp:assembleOptimized :androidApp:lintDebug -PkainosVersionCode=${{ github.run_number }} --stacktrace
 
       - name: Launcher and release gate tests
         run: |
