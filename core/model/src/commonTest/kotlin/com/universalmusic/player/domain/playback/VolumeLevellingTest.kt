@@ -1,5 +1,7 @@
 package com.universalmusic.player.domain.playback
 
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -27,4 +29,38 @@ class VolumeLevellingTest {
         assertEquals(9.0, VolumeLevelling.appliedGainDb(ReplayGain(2.0, null)), 1e-9)
         assertEquals(0.0, VolumeLevelling.appliedGainDb(ReplayGain(-2.0, 0.2), ceilingDb = 0.0), 1e-9)
     }
+
+    private val loud = MeasuredLoudness(-9.0, -3.0)
+    private val albumLevel = MeasuredLoudness(-14.0, -2.0)
+    private val analysed = TrackLoudness(loud, albumLevel, "album-1")
+
+    @Test fun tagsWinOverAnalysisWhichWinsOverNothing() {
+        val tags = ReplayGain(-6.0, 0.5)
+        assertEquals(tags, VolumeLevelling.choose(tags, analysed))
+        assertEquals(ReplayGain(-9.0, 10.0.pow(-3.0 / 20), GainSource.ANALYSED), VolumeLevelling.choose(null, analysed.copy(album = null)))
+        assertNull(VolumeLevelling.choose(null, null))
+    }
+
+    @Test fun albumGainFallsBackToTrackWhenTheAggregateIsMissing() {
+        val inAlbum = VolumeLevelling.choose(null, analysed)!!
+        assertEquals(-4.0, inAlbum.gainDb, 1e-9)
+        assertEquals(-2.0, 20 * log10(inAlbum.peak!!), 1e-9)
+        assertEquals(-9.0, VolumeLevelling.choose(null, analysed.copy(album = null))!!.gainDb, 1e-9)
+    }
+
+    @Test fun analysedBoostStopsOneDecibelUnderTheTruePeak() {
+        // -30 LUFS asks for +12 + 7 = +19 dB; a -10 dBTP peak allows +9 dB.
+        assertEquals(9.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-30.0, -10.0))), 1e-9)
+        // A real master: -12.6 LUFS wants +1.6 dB, but it already peaks at +1.0 dBTP, so it plays
+        // at its own level rather than being boosted or cut for its overs.
+        assertEquals(0.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-12.6, 1.0))), 1e-9)
+        // A hot master that needs cutting anyway gets its full target cut.
+        assertEquals(-4.8, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-6.2, 3.3))), 1e-9)
+        // Unbounded by the peak, the target is Spotify Loud: -11 LUFS.
+        assertEquals(3.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-14.0, -10.0))), 1e-9)
+    }
+    @Test fun albumPlaybackUsesOneGainStartingWithItsFirstTrack() {
+        assertEquals(VolumeLevelling.analysed(albumLevel), VolumeLevelling.choose(null, analysed))
+    }
+
 }

@@ -64,4 +64,23 @@ class LevellingAudioProcessorTest {
         processor.flush()
         assertArrayEquals(shortArrayOf(5012), process(10_000))
     }
+    @Test fun delayedOutputFormatsCarryTheirOwnGainAcrossLookaheadSkipAndSeek() {
+        val first = untagged.buildUpon().setCustomData(com.universalmusic.player.domain.playback.ReplayGain(-13.0, 0.1)).build()
+        val next = untagged.buildUpon().setCustomData(com.universalmusic.player.domain.playback.ReplayGain(-7.0, 0.1)).build()
+        // The decoder can read the next item before the previous format reaches the sink.
+        startStream(first)
+        assertArrayEquals(shortArrayOf(5012), process(10_000))
+        processor.stage(next)
+        processor.configure(pcm16)
+        assertArrayEquals(shortArrayOf(5012), process(10_000))
+        processor.flush()
+        assertArrayEquals(shortArrayOf(10_000), process(10_000))
+        // A skip discards the pending stream; a seek keeps this output format's gain.
+        startStream(first)
+        processor.flush()
+        assertArrayEquals(shortArrayOf(5012), process(10_000))
+        startStream(untagged)
+        assertArrayEquals(shortArrayOf(10_000), process(10_000))
+    }
+
 }

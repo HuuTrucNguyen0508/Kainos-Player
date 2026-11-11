@@ -17,6 +17,7 @@ import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.model.ResolvedPlayback
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.GainSource
 import com.universalmusic.player.domain.playback.Levelling
 import com.universalmusic.player.domain.playback.NowPlayingState
 import com.universalmusic.player.domain.playback.SleepTimerMode
@@ -166,7 +167,9 @@ class NowPlayingPresenterTest {
             Levelling.Applied(-6.04) to "Volume levelled by -6.0 dB from ReplayGain tags",
             Levelling.Applied(2.46) to "Volume levelled by +2.5 dB from ReplayGain tags",
             Levelling.Applied(0.0) to "ReplayGain tags read; volume left unchanged",
-            Levelling.Untagged to "No ReplayGain tags, so this track plays at its own level",
+            Levelling.Applied(-4.2, GainSource.ANALYSED) to "Analysed loudness: volume levelled by -4.2 dB",
+            Levelling.Applied(0.04, GainSource.ANALYSED) to "Loudness analysed; volume left unchanged",
+            Levelling.Untagged to "No ReplayGain tags or loudness analysis yet, so this track plays at its own level",
             Levelling.Off to "Volume levelling is off",
         )
         for ((levelling, line) in expected) {

@@ -4,7 +4,9 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PreparedPlayback
+import com.universalmusic.player.domain.playback.LoudnessLookup
 import com.universalmusic.player.domain.playback.ReplayGain
+import com.universalmusic.player.domain.playback.VolumeLevelling
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -32,8 +34,15 @@ internal class GaplessPlaylist {
     var awaitingSuccessor: Boolean = false
 }
 
-/** A successor appended to mpv's playlist, with what was probed from its file beforehand. */
-internal class ProbedSuccessor(val prepared: PreparedPlayback, val durationMs: Long?, val replayGain: ReplayGain?)
+/**
+ * A successor appended to mpv's playlist, with what was probed from its file beforehand. Its
+ * [replayGain] is already in mpv as the entry's own level filter.
+ */
+internal class ProbedSuccessor(
+    val prepared: PreparedPlayback,
+    val durationMs: Long?,
+    val replayGain: ReplayGain?,
+)
 
 /**
  * Joins the next local file onto the running mpv process. Owns the single prepared successor,
@@ -47,6 +56,7 @@ internal class GaplessBoundary(
     private val ticker: PositionTicker,
     private val runtime: DesktopPlaybackRuntime,
     private val scope: CoroutineScope,
+    private val loudness: LoudnessLookup,
     /** Drops mpv's lookahead by restarting the outgoing file at the published position. */
     private val restartOwningFileLocked: () -> Unit,
 ) {
@@ -80,6 +90,16 @@ internal class GaplessBoundary(
         prepared?.takeIf { enabled && it.generation == transport.activeGeneration }?.let(::prepareNext)
     }
 
+    /**
+     * Levelling was turned on or off. The successor already in mpv's playlist carries the old
+     * setting in its own filter, so it is appended again; a successor already decoding took the
+     * change with the playing file's filter.
+     */
+    fun refreshSuccessorLocked() {
+        val active = slot.active ?: return
+        if (active.gapless && active.playlist.crossing == null) prepared?.let(::prepareNext)
+    }
+
     fun configure(enabled: Boolean) {
         synchronized(transport.lock) { this.enabled = enabled }
         if (!enabled) prepareNext(null)
@@ -107,7 +127,10 @@ internal class GaplessBoundary(
                 scope.launch(Dispatchers.IO) {
                     val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
                     val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
-                    val replayGain = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
+                    val tags = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
+                    val analysed = if (candidate != null && compatible) loudness.loudnessOf(candidate.handle.url) else null
+                    // Use the same album aggregate as the outgoing file, starting at the first sample.
+                    val replayGain = VolumeLevelling.choose(tags, analysed)
                     synchronized(transport.lock) {
                         if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@launch
                         slot.enqueueLocked apply@{
@@ -135,7 +158,13 @@ internal class GaplessBoundary(
                                     if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@apply
                                     playlist.nextDuration = duration
                                 }
-                                val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(mpvMediaArgument(candidate.handle.url))},"append-play"]""", active.socket)
+                                val filter = levellingFilter(synchronized(transport.lock) { transport.levellingEnabled }, replayGain)
+                                // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                                val id = runtime.loadEntry(
+                                    """{"name":"loadfile","url":${Json.encodeToString(mpvMediaArgument(candidate.handle.url))},""" +
+                                        """"flags":"append-play","options":{"af-add":${Json.encodeToString(filter)}}}""",
+                                    active.socket,
+                                )
                                 synchronized(transport.lock) {
                                     if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain)
                                     else if (prepared === candidate) prepared = null

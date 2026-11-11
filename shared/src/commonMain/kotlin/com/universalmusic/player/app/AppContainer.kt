@@ -1,5 +1,14 @@
 package com.universalmusic.player.app
 
+import com.universalmusic.player.data.cache.HeartedAudioCacheEntry
+import com.universalmusic.player.data.local.LocalLoudnessPass
+import com.universalmusic.player.data.local.createLocalLoudnessAnalyzer
+import com.universalmusic.player.data.loudness.LoudnessRepository
+import com.universalmusic.player.data.loudness.LoudnessSubject
+import com.universalmusic.player.data.sync.LoudnessSyncDocument
+import com.universalmusic.player.data.sync.LoudnessSyncPort
+import com.universalmusic.player.platform.createLoudnessStore
+import kotlinx.coroutines.async
 import com.universalmusic.player.data.backup.BackupRestoreCounts
 import com.universalmusic.player.data.backup.KainosBackupFile
 import com.universalmusic.player.data.backup.KainosBackupService
@@ -207,6 +216,20 @@ class AppContainer(
         tagReader = createLocalTagReader(),
         onAlbumsRekeyed = library::remapLocalAlbumPins,
     )
+    /** Measured loudness of local and hearted-cache files, for levelling files without ReplayGain tags. */
+    private val loudness = LoudnessRepository(createLoudnessStore())
+    private val loudnessLoaded = scope.async {
+        runCatching { loudness.load() }.logged("Loudness", "stored measurements could not be read")
+    }
+    private val loudnessPass = LocalLoudnessPass(createLocalLoudnessAnalyzer(), loudness)
+    private var loudnessJob: Job? = null
+    private val loudnessSync = object : LoudnessSyncPort {
+        override fun export(deviceId: String) = loudness.export(deviceId, local.loudnessSubjects())
+        override suspend fun import(remote: LoudnessSyncDocument): Int {
+            loudnessLoaded.await()
+            return loudness.import(remote, local.loudnessSubjects())
+        }
+    }
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
     private var localLibraryRefreshJob: Job? = null
@@ -236,6 +259,7 @@ class AppContainer(
         protectedOwners = { protectedCacheOwners() },
         onCached = { canonicalId, entry ->
             library.attachHeartedCacheSource(canonicalId, entry.toLocalPlaybackSource())
+            measureCachedAudio(entry)
         },
         onRemoved = { canonicalId ->
             library.stripHeartedCacheSource(canonicalId)
@@ -281,6 +305,12 @@ class AppContainer(
                         mergePins(remote)
                     }
                 },
+                onLoudness = config.onLoudness?.let { exchange ->
+                    { remote ->
+                        loudnessLoaded.await()
+                        exchange(remote)
+                    }
+                },
                 cachedAudio = config.cachedAudio,
                 vault = config.vault,
                 heartedVaultFileNames = config.heartedVaultFileNames,
@@ -298,6 +328,7 @@ class AppContainer(
         identity = platformDeviceIdentity(),
         vaultStore = homeLanVault,
         cachedAudio = cachedAudioCopies,
+        loudness = loudnessSync,
         refreshLocalLibrary = { refreshLocalLibraryAndAwait() },
         rematchLocalHearts = { rematchLocalHeartsByFileName() },
         rematchPlaylistLocals = { rematchPlaylistLocalsByFileName() },
@@ -334,7 +365,7 @@ class AppContainer(
             receiverEvents = spotifyWebPlayback.receiverEvents,
             setVolume = spotify::setConnectVolume,
             resumeAt = spotify::resumeConnectPlayback,
-        )),
+        ), loudness = loudness),
         resolver = resolver,
         scope = scope,
         enrichSource = { track, source ->
@@ -878,6 +909,7 @@ class AppContainer(
     }
 
     suspend fun refreshLocalLibraryAndAwait() {
+        loudnessJob?.cancel()
         _localLibraryMessage.value = null
         runCatching { local.refresh() }
             .onSuccess {
@@ -894,6 +926,33 @@ class AppContainer(
         runCatching { local.enrichContentKeys() }.logged("Local", "content key pass failed")
         runCatching { local.enrichTags() }.logged("Local", "tag pass failed")
         runCatching { local.enrichEmbeddedArtwork() }.logged("Local", "embedded artwork pass failed")
+        startLoudnessPass()
+    }
+
+    /**
+     * Measures new and changed library files in the background (desktop; a phone gets the PC's
+     * values over Home sync). Its own job, so a scan never waits for it; a newer scan restarts it.
+     */
+    private fun startLoudnessPass() {
+        loudnessJob?.cancel()
+        loudnessJob = scope.launch(Dispatchers.Default) {
+            loudnessLoaded.await()
+            runCatching {
+                val cached = heartedAudioCache.allEntries().map { entry ->
+                    LoudnessSubject(entry.localUri, entry.sizeBytes.takeIf { it > 0 }, entry.downloadedAtMs.takeIf { it > 0 })
+                }
+                loudnessPass.run(local.loudnessSubjects() + cached)
+            }.logged("Loudness", "loudness pass failed")
+        }
+    }
+
+    /** A hearted download just finished: measure it, keyed by its cache entry. */
+    private fun measureCachedAudio(entry: HeartedAudioCacheEntry) {
+        scope.launch(Dispatchers.Default) {
+            loudnessLoaded.await()
+            val subject = LoudnessSubject(entry.localUri, entry.sizeBytes.takeIf { it > 0 }, entry.downloadedAtMs.takeIf { it > 0 })
+            runCatching { loudnessPass.measure(subject) }.logged("Loudness", "cached audio measurement failed")
+        }
     }
 
     /**

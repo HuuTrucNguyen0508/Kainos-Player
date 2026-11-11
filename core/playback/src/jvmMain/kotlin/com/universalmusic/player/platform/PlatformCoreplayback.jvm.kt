@@ -1,9 +1,10 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.domain.playback.LoudnessLookup
 import com.universalmusic.player.domain.playback.PlaybackEngine
 
-actual fun createPlaybackEngine(spotify: SpotifyPlaybackController): PlaybackEngine =
-    DesktopPlaybackEngine(spotify)
+actual fun createPlaybackEngine(spotify: SpotifyPlaybackController, loudness: LoudnessLookup): PlaybackEngine =
+    DesktopPlaybackEngine(spotify, loudness = loudness)
 
 actual fun audioPlayerInstalled(): Boolean = SystemDesktopPlaybackRuntime.findOnPath("mpv") != null
 

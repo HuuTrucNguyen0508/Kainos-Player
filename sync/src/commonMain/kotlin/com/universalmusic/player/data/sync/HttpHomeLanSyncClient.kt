@@ -80,6 +80,19 @@ class HttpHomeLanSyncClient(
         json.decodeFromString<HomePinsSyncDocument>(response.requireSuccess("Pin sync").bodyAsText())
     }
 
+    override suspend fun syncLoudness(local: LoudnessSyncDocument): Result<LoudnessSyncDocument?> = runCatching {
+        val response = http.post("${baseUrl()}$HOME_LAN_SYNC_PATH_V3_LOUDNESS") {
+            expectSuccess = false
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(local))
+        }
+        if (response.status == HttpStatusCode.NotFound) {
+            response.bodyAsBytes()
+            return@runCatching null
+        }
+        json.decodeFromString<LoudnessSyncDocument>(response.requireSuccess("Loudness sync").bodyAsText())
+    }
+
     override suspend fun fetchRemoteVaultIndex(local: VaultIndexDocument): Result<VaultIndexDocument> =
         runCatching {
             val text = postVersioned(HOME_LAN_SYNC_PATH_V2_VAULT_INDEX, HOME_LAN_SYNC_PATH_VAULT_INDEX) { v2 ->

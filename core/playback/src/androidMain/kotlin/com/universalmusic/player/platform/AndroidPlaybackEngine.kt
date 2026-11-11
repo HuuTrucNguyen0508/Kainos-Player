@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
+import com.universalmusic.player.domain.playback.LoudnessLookup
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PreparedPlayback
 import com.universalmusic.player.domain.playback.SPOTIFY_START_POLL_MS
@@ -45,11 +46,14 @@ import kotlin.coroutines.resumeWithException
 class AndroidPlaybackEngine internal constructor(
     context: Context,
     private val spotify: SpotifyPlaybackController,
-    /** Production binds a MediaController to [AndroidPlaybackService]; host tests hand in the player directly. */
+    /** Analysed loudness brought from the PC by Home sync. */
+    private val loudness: LoudnessLookup = LoudnessLookup.None,
+    /** Production binds a MediaController; host tests hand in the player directly. */
     private val connectPlayer: suspend (Context) -> Player,
+
 ) : PlaybackEngine {
-    constructor(context: Context, spotify: SpotifyPlaybackController) :
-        this(context, spotify, ::connectMediaController)
+    constructor(context: Context, spotify: SpotifyPlaybackController, loudness: LoudnessLookup = LoudnessLookup.None) :
+        this(context, spotify, loudness, ::connectMediaController)
 
     private val appContext = context.applicationContext
     /** Default scope for Spotify I/O and service connect. ExoPlayer work uses Main.immediate. */
@@ -272,7 +276,12 @@ class AndroidPlaybackEngine internal constructor(
 
     private fun syncSuccessor(player: Player) {
         if (activeBackend != ActiveBackend.MEDIA3) return
-        successor.sync(player, activePlayGeneration, AndroidMediaControls::queuedTrack)
+        successor.sync(
+            player,
+            activePlayGeneration,
+            decorate = { item, url -> item.withAnalysedGain(loudness, url) },
+            track = AndroidMediaControls::queuedTrack,
+        )
     }
 
     /**
@@ -349,7 +358,7 @@ class AndroidPlaybackEngine internal constructor(
                             url = handle.url,
                             track = track,
                             durationMs = track?.durationMs,
-                        ),
+                        ).withAnalysedGain(loudness, handle.url),
                     )
                     player.prepare()
                     player.play()

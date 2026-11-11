@@ -86,6 +86,9 @@ interface HomeLanSyncClient : AutoCloseable {
 
     suspend fun uploadBlob(relPath: String, offset: Long, totalSize: Long, chunk: ByteArray): Result<Unit>
 
+    /** The hub's own loudness measurements after it took ours; null when the hub predates loudness sync. */
+    suspend fun syncLoudness(local: LoudnessSyncDocument): Result<LoudnessSyncDocument?> = Result.success(null)
+
     /** The hub's cached-audio offers after it saw ours; null when the hub predates cached-audio sync. */
     suspend fun syncCachedAudio(local: CachedAudioSyncDocument): Result<CachedAudioSyncDocument?> = Result.success(null)
 

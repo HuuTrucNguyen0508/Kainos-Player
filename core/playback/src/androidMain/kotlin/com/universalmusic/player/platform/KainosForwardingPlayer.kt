@@ -121,7 +121,7 @@ class KainosForwardingPlayer internal constructor(
     /** Called with each item's tracks, which carry the tags; empty while the next item loads. */
     internal fun onAudioTracks(tracks: Tracks) {
         tracksKnown = !tracks.isEmpty
-        replayGain = replayGainOf(tracks)
+        replayGain = replayGainOf(tracks) ?: exo.currentMediaItem?.analysedGain()
         applyLevelling()
     }
 
@@ -133,7 +133,7 @@ class KainosForwardingPlayer internal constructor(
             !tracksKnown -> null
             !levellingEnabled -> Levelling.Off
             gainDb == null -> Levelling.Untagged
-            else -> Levelling.Applied(gainDb)
+            else -> Levelling.Applied(gainDb, replayGain?.source ?: com.universalmusic.player.domain.playback.GainSource.TAGS)
         }
         if (next != levelling) {
             levelling = next

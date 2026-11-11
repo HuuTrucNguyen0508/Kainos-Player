@@ -250,6 +250,15 @@ class DesktopHomeLanSyncHub(
                         call.respondText(json.encodeToString(localAfter), ContentType.Application.Json)
                     }
                 }
+                config.onLoudness?.let { onLoudness ->
+                    post(HOME_LAN_SYNC_PATH_V3_LOUDNESS) {
+                        call.pairedPeer() ?: return@post
+                        touchActivity()
+                        val body = call.receiveOrRespondTooLarge(MAX_LIBRARY_BODY_BYTES) ?: return@post
+                        val remote = json.decodeFromString<LoudnessSyncDocument>(body)
+                        call.respondText(json.encodeToString(onLoudness(remote)), ContentType.Application.Json)
+                    }
+                }
                 config.cachedAudio?.let { host ->
                     post(HOME_LAN_SYNC_PATH_V3_CACHED_AUDIO) {
                         val peer = call.pairedPeer() ?: return@post

@@ -12,6 +12,9 @@ import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.USER_LIBRARY_FORMAT_VERSION
 import com.universalmusic.player.data.library.UserLibrarySnapshot
 import com.universalmusic.player.data.local.LOCAL_TAGS_VERSION
+import com.universalmusic.player.data.loudness.LoudnessOrigin
+import com.universalmusic.player.data.loudness.StoredLoudness
+import com.universalmusic.player.domain.playback.MeasuredLoudness
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.local.StoredLocalTrack
 import com.universalmusic.player.data.local.toLocalTrackOrNull
@@ -321,6 +324,33 @@ class DatabaseRoundTripTest {
                 )
                 assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
             }
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaNineAddsAnEmptyLoudnessTableThatSurvivesARestart() = runTest {
+        val directory = Files.createTempDirectory("kainos-v9-loudness-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/9.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                KainosDatabase.Schema.migrate(driver, 9, KainosDatabase.Schema.version)
+                // What the app's driver records after migrating, so reopening it below does not create the schema again.
+                driver.execute(null, "PRAGMA user_version = ${KainosDatabase.Schema.version}", 0)
+                assertEquals(0L, driver.count("track_loudness"))
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            }
+            val measured = StoredLoudness("/m/a.flac", 10, 20, MeasuredLoudness(-12.6, 1.0), 300_106, "album:a",
+                MeasuredLoudness(-13.1, 1.0))
+            val failed = StoredLoudness("/m/broken.flac", 5, 6, track = null)
+            val synced = StoredLoudness("content://tree/a.flac", 10, 99, MeasuredLoudness(-9.5, -0.5), origin = LoudnessOrigin.SYNCED)
+            DbLoudnessStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 })).upsert(listOf(measured, failed, synced))
+            val reopened = DbLoudnessStore(KainosStorage(openDriver = { fileDriver(path) }, clock = { 0 }))
+            assertEquals(setOf(measured, failed, synced), reopened.readAll().toSet())
+            reopened.upsert(listOf(measured.copy(album = null)))
+            assertEquals(measured.copy(album = null), reopened.readAll().single { it.location == measured.location })
         } finally {
             directory.toFile().deleteRecursively()
         }

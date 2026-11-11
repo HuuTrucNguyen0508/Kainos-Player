@@ -19,6 +19,8 @@ class HomeLanHubConfig(
     val onPlaylists: suspend (PlaylistsSyncDocument) -> PlaylistsSyncDocument,
     /** Null leaves the pin route unanswered (404), as on hubs from before pin sync. */
     val onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
+    /** Takes a client's loudness measurements and answers with the hub's; null leaves the route unanswered (404). */
+    val onLoudness: (suspend (com.universalmusic.player.data.sync.LoudnessSyncDocument) -> com.universalmusic.player.data.sync.LoudnessSyncDocument)? = null,
     /** Null leaves the cached-audio routes unanswered (404), as on hubs from before cached-audio sync. */
     val cachedAudio: com.universalmusic.player.data.sync.CachedAudioHost? = null,
     val vault: HomeLanVaultStore?,

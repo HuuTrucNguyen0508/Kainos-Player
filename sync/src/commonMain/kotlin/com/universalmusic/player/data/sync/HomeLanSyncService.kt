@@ -67,6 +67,8 @@ class HomeLanSyncService(
     private val vaultStore: HomeLanVaultStore,
     /** This device's hearted audio cache as Home sync copies it; null leaves cached audio out of sync. */
     private val cachedAudio: com.universalmusic.player.data.cache.CachedAudioCopies? = null,
+    /** Loudness measurements; the PC's reach a phone, which cannot measure. Null leaves them out of sync. */
+    private val loudness: LoudnessSyncPort? = null,
     private val refreshLocalLibrary: suspend () -> Unit,
     private val rematchLocalHearts: suspend () -> Int = { 0 },
     private val rematchPlaylistLocals: suspend () -> Int = { 0 },
@@ -489,6 +491,8 @@ class HomeLanSyncService(
                         refreshLocalLibrary()
                         val rematchedAgain = rematchLocalHearts()
                         val rematchedPlaylistAgain = rematchPlaylistLocals()
+                        // After the rescan, so files that just arrived get their measurements too.
+                        val loudnessDetail = loudness?.let { port -> exchangeLoudness(client, port, deviceId) }
 
                         var vaultDetail = "vault skipped (not configured)"
                         var conflicts = emptyList<VaultConflict>()
@@ -518,6 +522,7 @@ class HomeLanSyncService(
                             append("; playlists (${remotePlaylists.playlists.size} peer)")
                             append(remotePins?.let { "; pins (${it.pins.size} peer)" } ?: "; pins skipped (peer too old)")
                             cachedAudioDetail?.let { append("; $it") }
+                            loudnessDetail?.let { append("; $it") }
                             append("; $vaultDetail")
                             if (rematched > 0) append(", rematched $rematched local hearts")
                             if (rematchedPl > 0) append(", rematched $rematchedPl playlist locals")
@@ -562,6 +567,16 @@ class HomeLanSyncService(
             }
         }
     }
+
+    /** A failed exchange leaves levelling as it was; the rest of the sync still stands. */
+    private suspend fun exchangeLoudness(client: HomeLanSyncClient, port: LoudnessSyncPort, deviceId: String): String =
+        client.syncLoudness(port.export(deviceId)).fold(
+            onSuccess = { remote -> remote?.let { "loudness: ${port.import(it)} received" } ?: "loudness skipped (peer too old)" },
+            onFailure = { err ->
+                if (err is kotlinx.coroutines.CancellationException) throw err
+                "loudness failed: ${err.message ?: err}"
+            },
+        )
 
     override suspend fun confirmVaultTransfer(
         relPath: String,
@@ -878,6 +893,9 @@ class HomeLanSyncService(
                         onHearts = { remote -> library.mergeAndPersistSyncState(remote) },
                         onPlaylists = { remote -> playlists.mergeAndPersistSyncState(remote) },
                         onHomePins = { remote -> library.mergeAndPersistHomePins(remote, livePlaylistIds()) },
+                        onLoudness = loudness?.let { port ->
+                            { remote -> port.import(remote); port.export(deviceId) }
+                        },
                         cachedAudio = cachedAudio?.let { CachedAudioHost({ deviceId }, library, it) },
                         vault = vaultStore.takeIf { it.isConfigured() },
                         heartedVaultFileNames = {
