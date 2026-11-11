@@ -83,6 +83,9 @@ internal fun deriveLibraryUiState(
     val localOnly = settings.libraryLocalOnly
     val favoritesOnly = settings.libraryFavoritesOnly
     val readyOffline = settings.libraryReadyOffline
+    val duplicates = libraryDuplicates(settings.libraryHideDuplicates, localTracks, saved, spotifyTracks)
+    // A heart on a hidden copy shows on, and filters in, the copy that is listed.
+    val shownFavorites = duplicates.effectiveFavorites(favorites)
     val queueSongs = libraryQueueSongs(
         local = localTracks,
         saved = saved,
@@ -90,26 +93,27 @@ internal fun deriveLibraryUiState(
         sort = settings.librarySongSort,
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
-        favorites = favorites,
+        favorites = shownFavorites,
         readyOffline = readyOffline,
         offlineTrack = offlineTrack,
+        duplicates = duplicates,
     )
     return LibraryUiState(
         songSort = settings.librarySongSort,
         localOnly = localOnly,
         favoritesOnly = favoritesOnly,
         readyOffline = readyOffline,
-        favorites = favorites,
+        favorites = shownFavorites,
         query = "",
         needle = needle,
         queueSongs = queueSongs,
         songs = libraryDisplaySongs(queueSongs, needle),
         localTracks = localTracks,
-        albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, favorites), needle),
-        artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, favorites), needle),
+        albums = libraryFilteredAlbums(libraryLocalAlbums(localTracks, favoritesOnly, shownFavorites), needle),
+        artists = libraryFilteredArtists(libraryLocalArtists(localTracks, favoritesOnly, shownFavorites), needle),
         folders = libraryFolderTree(
             musicFolders,
-            if (favoritesOnly) localTracks.filter { it.canonicalId in favorites } else localTracks,
+            if (favoritesOnly) localTracks.filter { it.canonicalId in shownFavorites } else localTracks,
         ),
         kainosRows = kainosRows,
         kainosPlaylists = libraryFilteredKainosPlaylists(kainosRows, needle, favoritesOnly),

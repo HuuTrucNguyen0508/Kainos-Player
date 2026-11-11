@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
+import com.universalmusic.player.domain.matching.DuplicateGroups
 
 /**
  * Where each kind of page gets its songs. Local albums, library artists and Kainos playlists follow
@@ -45,6 +47,8 @@ internal class CollectionCatalog(
     private val spotifyArtistAlbums: suspend (String) -> List<Album>,
     private val providerPlaylistPage: suspend (ProviderEntityRef, String?) -> PlaylistTracksPage,
     private val albumAliases: StateFlow<Map<String, List<AlbumRef>>> = MutableStateFlow(emptyMap()),
+    /** Streamed copies of listed songs that Hide duplicates leaves out, as Library does. */
+    private val duplicates: Flow<DuplicateGroups> = flowOf(DuplicateGroups.NONE),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : CollectionPages {
@@ -135,8 +139,8 @@ internal class CollectionCatalog(
 
     private fun libraryArtist(ref: CollectionRef.LibraryArtist): Flow<CollectionChunk> {
         val folded = foldedArtist(ref.name)
-        return combine(localTracks, streamedTracks, localOnly) { local, streamed, onlyLocal ->
-            val catalog = if (onlyLocal) local else (local + streamed).distinctBy(Track::canonicalId)
+        return combine(localTracks, streamedTracks, localOnly, duplicates) { local, streamed, onlyLocal, hidden ->
+            val catalog = if (onlyLocal) local else hidden.visible((local + streamed).distinctBy(Track::canonicalId))
             val tracks = TrackSort.YEAR_DESCENDING.sort(
                 catalog.filter { track -> track.artists.any { foldedArtist(it.name) == folded } },
             )
@@ -235,6 +239,7 @@ internal class CollectionCatalog(
         fun from(container: AppContainer): CollectionCatalog = CollectionCatalog(
             localTracks = container.local.libraryTracks,
             albumAliases = container.local.albumAliases,
+            duplicates = container.duplicateGroups,
             streamedTracks = combine(container.library.savedTracks, container.spotifyTracks) { saved, liked -> saved + liked },
             localOnly = container.settings.map { it.libraryLocalOnly }.distinctUntilChanged(),
             playlists = container.kainosPlaylists.playlists,

@@ -5,6 +5,7 @@ import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.domain.continuation.radioProvider
+import com.universalmusic.player.domain.matching.DuplicateGroups
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.PlayerSession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +33,9 @@ internal class TrackActionsPresenter(
     private val openCollection: ((CollectionRef) -> Unit)? = null,
     /** Plays the track with its own source's radio after it; null hides Start radio. */
     private val startRadioAction: ((Track) -> Unit)? = null,
+    /** Copies Hide duplicates leaves out: a heart on any copy shows on, and is removed from, the one listed. */
+    private val duplicates: StateFlow<DuplicateGroups> = MutableStateFlow(DuplicateGroups.NONE),
+    private val unheartTrackIds: (Set<String>) -> Unit = {},
 ) {
     private var nextNoticeId = 0L
     private val _notice = MutableStateFlow<TrackActionNotice?>(null)
@@ -52,7 +56,22 @@ internal class TrackActionsPresenter(
         announce("Added to queue: ${track.title}")
     }
 
+    /** Hearted directly, or through a copy Hide duplicates leaves out. */
+    fun isFavorite(track: Track, favorites: Set<String>): Boolean =
+        track.canonicalId in duplicates.value.effectiveFavorites(favorites)
+
     fun toggleFavorite(track: Track) {
+        val copies = duplicates.value.copiesOf(track.canonicalId) - track.canonicalId
+        val heartedCopies = copies.filterTo(mutableSetOf()) { it in favorites.value }
+        if (heartedCopies.isNotEmpty()) {
+            // Remove heart means the song: otherwise a hidden copy would keep the row hearted.
+            unheartTrackIds(heartedCopies)
+            if (track.canonicalId in favorites.value) toggleFavoriteTrack(track)
+            syncNowPlayingFavorite(track.canonicalId, false)
+            heartedCopies.forEach { syncNowPlayingFavorite(it, false) }
+            announce("Removed heart from ${track.title}")
+            return
+        }
         val favorite = toggleFavoriteTrack(track)
         // Only moves the Now Playing heart when this row is the current track.
         syncNowPlayingFavorite(track.canonicalId, favorite)
@@ -109,7 +128,10 @@ internal class TrackActionsPresenter(
             openCollection: ((CollectionRef) -> Unit)? = null,
             startRadio: ((Track) -> Unit)? = null,
         ): TrackActionsPresenter =
-            from(container.library, container.player, container.kainosPlaylists, openCollection, startRadio)
+            from(
+                container.library, container.player, container.kainosPlaylists, openCollection, startRadio,
+                container.duplicateGroups, container::catalogTrack,
+            )
 
         fun from(
             library: LibraryRepository,
@@ -117,6 +139,9 @@ internal class TrackActionsPresenter(
             playlists: KainosPlaylistRepository,
             openCollection: ((CollectionRef) -> Unit)? = null,
             startRadio: ((Track) -> Unit)? = null,
+            duplicates: StateFlow<DuplicateGroups> = MutableStateFlow(DuplicateGroups.NONE),
+            /** Listed copies by id, so a hidden copy's heart can be removed with its own track. */
+            catalogTrack: (String) -> Track? = { id -> library.savedTracks.value.firstOrNull { it.canonicalId == id } },
         ): TrackActionsPresenter = TrackActionsPresenter(
             favorites = library.favoriteIds,
             playlists = playlists.playlists,
@@ -128,6 +153,13 @@ internal class TrackActionsPresenter(
             createPlaylistWith = { name, tracks -> playlists.create(name, tracks) },
             openCollection = openCollection,
             startRadioAction = startRadio,
+            duplicates = duplicates,
+            unheartTrackIds = { ids ->
+                ids.forEach { id ->
+                    val copy = catalogTrack(id) ?: return@forEach
+                    if (id in library.favoriteIds.value) library.toggleFavorite(copy)
+                }
+            },
         )
     }
 }

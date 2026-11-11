@@ -1,5 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.domain.matching.DuplicateGroups
+import com.universalmusic.player.domain.matching.DuplicateTracks
+
 import com.universalmusic.player.data.cache.HEARTED_AUDIO_CACHE_PROVIDER_PREFIX
 import com.universalmusic.player.data.cache.offlineOnly
 import com.universalmusic.player.data.library.PersistedHomePin
@@ -35,11 +38,13 @@ internal fun libraryQueueSongs(
     favorites: Set<String>,
     readyOffline: Boolean = false,
     offlineTrack: (Track) -> Track? = Track::offlineOnly,
+    /** Copies to leave out; [favorites] should already count a hidden copy's heart for its keeper. */
+    duplicates: DuplicateGroups = DuplicateGroups.NONE,
 ): List<Track> {
     val catalog = if (localOnly) {
         local
     } else {
-        (local + saved + spotify).distinctBy(Track::canonicalId)
+        duplicates.visible((local + saved + spotify).distinctBy(Track::canonicalId))
     }
     val filtered = catalog.filter { !favoritesOnly || it.canonicalId in favorites }
     return sort.sort(if (readyOffline) filtered.filter { offlineTrack(it) != null } else filtered)
@@ -226,3 +231,11 @@ internal data class LibrarySearchIndex(
         FuzzyMatcher.matches(needle, artistKeys[i])
     }
 }
+
+/** What Library leaves out when Hide duplicates is on: grouped over every listed source. */
+internal fun libraryDuplicates(
+    hide: Boolean,
+    local: List<Track>,
+    saved: List<Track>,
+    spotify: List<Track>,
+): DuplicateGroups = if (hide) DuplicateTracks.group(local + saved + spotify) else DuplicateGroups.NONE

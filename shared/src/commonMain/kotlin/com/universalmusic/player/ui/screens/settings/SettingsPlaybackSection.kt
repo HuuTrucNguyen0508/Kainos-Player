@@ -69,6 +69,23 @@ internal fun SettingsPlaybackSection(presenter: SettingsPreferencesPresenter) {
 
 }
 
+@Composable
+internal fun SettingsLibrarySection(presenter: SettingsPreferencesPresenter) {
+    val settings by presenter.state.collectAsState()
+    Text("Library", style = MaterialTheme.typography.titleMedium)
+    SettingToggle("Hide duplicates", settings.libraryHideDuplicates) {
+        presenter.change { current -> current.copy(libraryHideDuplicates = it) }
+    }
+    Text(
+        "When a song you have as a file is also liked on Spotify or hearted from YouTube, Library " +
+            "and Home show the file once, and Play all plays it once. Matches need the same title, " +
+            "artist and length, so live, acoustic and remixed versions stay separate. A heart on " +
+            "either copy shows on the one you see. Search always shows every result.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
 /** Fixed behaviour with no switch in the app. */
 internal const val PLAYBACK_BEHAVIOUR_NOTE =
     "Local files play gaplessly, one into the next. Spotify and YouTube tracks have a short gap. " +

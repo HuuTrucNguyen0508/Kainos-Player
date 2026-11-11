@@ -52,17 +52,17 @@ internal fun settingsBoardColumnCount(width: Dp): Int = when {
 internal fun settingsBoardColumns(count: Int): List<List<SettingsSection>> = when (count) {
     4 -> listOf(
         listOf(SettingsSection.Playback, SettingsSection.Downloads),
-        listOf(SettingsSection.Appearance),
+        listOf(SettingsSection.Appearance, SettingsSection.Library),
         listOf(SettingsSection.Sources),
         listOf(SettingsSection.Devices, SettingsSection.Backup, SettingsSection.Advanced),
     )
     3 -> listOf(
-        listOf(SettingsSection.Playback, SettingsSection.Appearance),
+        listOf(SettingsSection.Playback, SettingsSection.Library, SettingsSection.Appearance),
         listOf(SettingsSection.Sources, SettingsSection.Downloads),
         listOf(SettingsSection.Devices, SettingsSection.Backup, SettingsSection.Advanced),
     )
     2 -> listOf(
-        listOf(SettingsSection.Playback, SettingsSection.Appearance, SettingsSection.Devices),
+        listOf(SettingsSection.Playback, SettingsSection.Library, SettingsSection.Appearance, SettingsSection.Devices),
         listOf(SettingsSection.Sources, SettingsSection.Downloads, SettingsSection.Backup, SettingsSection.Advanced),
     )
     else -> listOf(SettingsSection.entries)
@@ -75,7 +75,8 @@ internal fun settingsBoardColumnWidth(width: Dp, count: Int): Dp =
 /** Sections whose content opens with their own heading; the board titles the others. */
 internal val SettingsSection.titlesItself: Boolean
     get() = when (this) {
-        SettingsSection.Playback, SettingsSection.Devices, SettingsSection.Downloads, SettingsSection.Advanced -> true
+        SettingsSection.Playback, SettingsSection.Library, SettingsSection.Devices, SettingsSection.Downloads,
+        SettingsSection.Advanced -> true
         SettingsSection.Appearance, SettingsSection.Sources, SettingsSection.Backup -> false
     }
 

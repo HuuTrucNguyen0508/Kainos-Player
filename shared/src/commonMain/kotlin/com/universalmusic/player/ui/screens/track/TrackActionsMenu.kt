@@ -76,6 +76,7 @@ internal fun ActionTrackRow(
     availability: TrackAvailabilityInfo? = null,
     trailing: @Composable (() -> Unit)? = null,
     extras: List<TrackMenuExtra> = emptyList(),
+    highlighted: Boolean = false,
 ) {
     var menuOpen by remember(track.canonicalId) { mutableStateOf(false) }
     TrackRow(
@@ -84,6 +85,7 @@ internal fun ActionTrackRow(
         modifier = modifier.onSecondaryClick { menuOpen = true },
         compact = compact,
         availability = availability,
+        highlighted = highlighted,
         onLongClick = { menuOpen = true },
         trailing = {
             trailing?.invoke()
@@ -119,7 +121,7 @@ internal fun TrackActionsMenuButton(
             TrackActionsMenuItems(
                 track = track,
                 page = page,
-                favorite = track.canonicalId in favorites,
+                favorite = actions.isFavorite(track, favorites),
                 canQueue = actions.canQueue(track),
                 playlists = playlists,
                 extras = extras,
