@@ -15,13 +15,14 @@ cargo install librespot --version 0.8.0 --locked --root "$RUNTIME"
 cargo build --release --locked --manifest-path "$ROOT/tools/kainos-spotify-rootlist/Cargo.toml"
 mkdir -p "$RUNTIME/bin"
 # Replace atomically: a running Kainos may start the helper at any moment.
-install -m 0755 "$ROOT/tools/kainos-spotify-rootlist/target/release/kainos-spotify-rootlist" \
-  "$RUNTIME/bin/kainos-discover-weekly.new"
-mv -f "$RUNTIME/bin/kainos-discover-weekly.new" "$RUNTIME/bin/kainos-discover-weekly"
+staged_helper="$(mktemp "$RUNTIME/bin/.kainos-discover-weekly.XXXXXX")"
+trap 'rm -f "$staged_helper"' EXIT
+install -m 0755 "$ROOT/tools/kainos-spotify-rootlist/target/release/kainos-spotify-rootlist" "$staged_helper"
 # With no arguments the helper prints its usage, which names every mode, and exits 2.
-usage="$("$RUNTIME/bin/kainos-discover-weekly" 2>&1 || true)"
+usage="$("$staged_helper" 2>&1 || true)"
 if [[ "$usage" != *"radio:"* ]]; then
   echo "The built kainos-discover-weekly has no radio mode; check tools/kainos-spotify-rootlist." >&2
   exit 1
 fi
+mv -f "$staged_helper" "$RUNTIME/bin/kainos-discover-weekly"
 echo "Installed $RUNTIME/bin/kainos-discover-weekly (Discover Weekly, playlist and radio modes)."
