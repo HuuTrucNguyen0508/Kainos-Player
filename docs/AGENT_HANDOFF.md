@@ -1,5 +1,7 @@
 # Agent handoff
 
+> Historical (2026-09-07). Android Spotify now decodes in-app through librespot-java, so the "Connect-only" gaps below no longer apply. Read `docs/CURRENT_STATE.md` for the current state.
+
 Updated 2026-09-07 after finishing Android Spotify Connect routing.
 
 ## Latest user request

@@ -1,6 +1,6 @@
 # Home sync remote control
 
-Status: in progress, branch `feat/home-sync-remote-control`, based on `feat/redesign-folio-caelestia` at `53eff8f`.
+Status: implemented on `main` (the commits date from 2026-10-27 and `RemoteControl` is wired in `AppContainer`). Written as a plan on branch `feat/home-sync-remote-control`; the text below is the design. A locked phone's behaviour on the Poco is not recorded in these docs, and a `--hub-only` process still has no player (it answers commands with 409).
 
 ## Goal
 

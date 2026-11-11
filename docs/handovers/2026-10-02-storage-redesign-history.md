@@ -1,4 +1,4 @@
-> Current status (2026-10-03): read [HANDOVER.md](HANDOVER.md) first. Keyed identity/sync and module extraction are complete; 396 tests, migration verification, Android assembly and desktop packaging pass. The final modular APK is installed. The redesign was committed as `2aef455` and merged into main at the user's request on 2026-10-03. This file retains earlier history.
+> Archived on 2026-11-11 (this was the root `handover.md`). Status on 2026-10-03: see [2026-10-03-storage-redesign.md](2026-10-03-storage-redesign.md) first. Keyed identity/sync and module extraction are complete; 396 tests, migration verification, Android assembly and desktop packaging pass. The final modular APK is installed. The redesign was committed as `2aef455` and merged into main at the user's request on 2026-10-03. This file retains earlier history.
 
 # Handover: storage, identity, and module redesign
 

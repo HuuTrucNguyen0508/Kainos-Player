@@ -1,69 +1,61 @@
 # Current handover
 
-Updated 2026-10-03T01:12:17+00:00. Read this first; `handover.md` retains earlier branch/history details. The previous quota pause is archived in `docs/handovers/2026-10-02-quota-pause.md`.
+Written 2026-11-11 for local `main` at `9c1fad7` (before this docs commit). Read `docs/CURRENT_STATE.md` for what works and what does not. October's storage-redesign handovers are archived in `docs/handovers/`.
 
-## Goal and constraints
+## Where things stand
 
-Continue the approved Kainos Player storage, local identity/sync and module redesign. Its implementation is complete; manual device checks remain with the user. Use the current model, plain presenters, JDK 17 and pnpm for any JS work. The user authorized committing, pushing and merging the redesign into main on 2026-10-03. Publishing a release still requires an explicit request. Android testing is manual; wireless ADB updates are authorized with `install -r` to preserve data. Lyrics remain deferred.
+- Local `main` holds the whole 2026-11-11 program. `origin/main` (as last fetched) is at `a5c9498`, 91 commits behind, so none of it is pushed. No release or PR has been made from it. Pushing, merging into a remote and publishing a release need the owner's word.
+- Schema is 10 (migrations `1.sqm` to `9.sqm`). The Android version code is schema × 100,000 plus the commit count, so an older-schema APK is refused as a downgrade.
+- Merged, in order (`git log --first-parent main -13`): `aae92f0` Frost size fix, `7ef57dc` Frost polish, `4cd2486` dock motion, `f126234` ultrawide layouts, `c4833ff` Android Spotify streaming and the librespot cache, `39707e6` Spotify on mobile data round 2, `0c2742e` playback and platform fixes, `2cdbba4` local file tags, `669c36f` collection pages, `505f025` loudness levelling, `d5620cc` YouTube download fixes, `9c1fad7` queue, Shuffle and Hide duplicates. Each "reviewed" merge was reviewed and fixed on its own branch. Reports for two of them are in `docs/reviews/`.
+- The combined head has no recorded full test run. Run the commands below first.
 
-Root: `/home/theadenkingof/Documents/Code/Kainos-Player`. Branch: `main`; The redesign commit is `2aef455`, based on `c8ca79e`; use `git log -1` for the current revision and `git status -sb` for push state. The integration branch was fast-forward merged into main. Original refactor branches retain their history. Approved plan: `/home/theadenkingof/.cursor/plans/Storage identity modules redesign-961d0bc9.plan.md`.
+## Owner decisions
 
-## Completed files
+- Lyrics are dropped.
+- The branch that would write to Spotify Liked Songs (`feat/spotify-heart-choice`) was dropped.
+- YouTube stays as a fallback source for songs Spotify lacks. Fix it when it breaks; do not extend it.
+- The rule against caching Spotify audio on the device was lifted on 2026-11-11. The receivers' disk caches are on. Kainos still offers no Spotify offline library.
 
-- `shared/src/commonMain/kotlin/.../ui/screens/{library,home,nowplaying,settings,search,queue,downloads}/`: all seven presenters and split UI. AppContainer and provider-dependent SearchContinuationFetcher remain in shared.
-- `core/model/src/`: domain models, persisted/store contracts, HeartSyncModels, LocalSyncIdentity, playlist protocol helpers, platform primitives/trace. Existing Kotlin packages are unchanged.
-- `core/data/src/`: repositories, SQLDelight schema/drivers/imports, row writes and caches. Schema version 2 adds `heart_op.local_identity_json`; `1.sqm` and `databases/1.db` verify upgrade from the installed schema. JSON originals remain `*.json.migrated`.
-- `core/playback/src/`: PlayerSession, queue, timers, session persistence and Android Media3/desktop mpv/MPRIS.
-- `provider/{local,spotify,youtube}/src/`: scanners/content keys/folder pickers and streaming provider implementations. Local keys persist in indexed SQL and latest scan metadata feeds exports.
-- `sync/src/`: keyed hearts/unhearts, playlist/vault exchange, key-first rename/rematch and unambiguous alias merge. Tombstones preserve identity; pending keyed files show missing-file labels and remain eligible for hearts-only vault transfer. v1 converts IDs back to basenames and clears keys, retained for one release. Only 404 triggers fallback; pinned-client status validation no longer blocks that decision. Health/blob/pairing URI remain unchanged.
-- `build-logic/`, module build files, settings and catalog: KMP convention and dependency boundaries. Apps depend only on shared; core modules have no provider or sync runtime dependency. Shared test helpers live in `test-fixtures/kotlin`.
-- `AGENTS.md`, `docs/CURRENT_STATE.md`, `docs/ARCHITECTURE.md`, sync plan and handovers: current ownership, commands and results.
+## Still to test by the owner
 
-No implementation is currently in progress. The repository remains ready for review and user testing.
+On the phone, nothing from this program has run yet:
 
-## Verification
+- Streamed Spotify start, the 1 GiB cache, recovery after a network switch or takeover, and the rate-limit pause (a message, no skip).
+- Android radio and Discover Weekly through the receiver's session, and the Home shelf keeping its last good list.
+- Tags, albums, artists and sorts on a real library; collection pages and Go to album / Go to artist / Start radio; Search Albums and Artists.
+- Hide duplicates, Shuffle, the queue's Clear upcoming and Stop radio.
+- Volume levelling on analysed files, which needs the PC to measure first and then a Sync now.
+- Download on Wi-Fi only, failure reasons and Remove staying removed.
+- A skip after a failed track staying paused in the background on HyperOS.
+- Installing over the current build keeps data (`adb -t <transport> install -r`). Re-list transports first; they change.
 
-```bash
-JAVA_HOME=/home/theadenkingof/.jdks/temurin-17 ./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug --continue --console=plain
-```
+On the desktop:
 
-Passed: 396 tests, zero failures/errors/skips, SQL migration verification, desktop packaging, Android assembly and Android lint. Logs: `logs/module-split-final-verification-2026-10-03.log` and `logs/module-split-lint-2026-10-03.log`. Root `jvmTest` covers all modules; `:shared:jvmTest` now covers UI/presenters only. Core runtime dependency audit and `git diff --check` pass. CI and README now use root `jvmTest`, database migration verification and desktop packaging so extracted tests stay covered.
+- Ultrawide layouts (2000 dp and up), dock drag and motion, and the Frost size fixes.
+- The first loudness pass over the library (about 4 minutes for 561 files), and the Spotify receiver cache.
+- The hub service: opening the GUI stops it, closing the GUI starts it again; `--hub-only` binds no media keys.
+- After pulling, run `scripts/install-librespot.sh` (builds the radio-capable helper) and `scripts/install-yt-dlp.sh` (updates every yt-dlp copy).
+- The launcher runs the checkout it was installed from and only rebuilds with `--rebuild`. A plain launch can run a stale package.
 
-Live temporary loopback HTTPS tests verify new-hub v2 and old-client v1 responses, new pinned-client fallback against a v1-only server, encrypted vault indexes and blob download. They do not replace manual old/new APK and desktop interoperability checks.
+## Logs and where things are
 
-Installed phone build: `release/kainos-player-debug-modular-2026-10-03.apk`; `adb -t 1 install -r` succeeded. Log: `logs/android-apk-install-20261003-modular.log`. Transport ids can change; re-list first. User previously reported the storage-only build opened without problems; no manual feedback on this final build yet.
+- Desktop GUI runs: `logs/desktop-run-latest.log`. `--hub-only` runs: `logs/hub-run-latest.log`. Both are gitignored.
+- Phone: Settings → Advanced → Playback log (shareable), or the `KainosTrace` logcat tag. Phone screenshots and shared logs go in `~`.
+- Per-connection Home sync detail is off unless `KAINOS_TRACE_DEBUG=1` on desktop.
+- Echo gateway: runs from the main checkout's `tools/echo-gateway` under `kainos-echo-gateway.service`; now-playing API on `127.0.0.1:8788`.
+- A JVM crash leaves `hs_err_pid*.log` in the working directory. They are gitignored.
 
-Packaged desktop launched through `scripts/kainos-player`. Real-data import retained 66 favorites/heart ops, 168 remembered tracks, 41 recents, 512 scan tracks and 512 session entries. All collection counts match preserved JSON originals. Database version 2, quick_check and foreign_key_check pass. Session restored paused; a later toggle command started playback and resumed its saved position. Log: `logs/desktop-run-20261003-030811.log`; count checks: `logs/desktop-real-data-migration-2026-10-03.log`. UI/playback correctness remains a manual check.
-
-Not run: Android instrumentation, old/new actual device compatibility, exhaustive manual restart/record checks and Poco key-pass cost measurement. No known build/test failure remains. Legacy v1 has basename limitations; ambiguous distinct keyed hearts are omitted from downgrade. Content keys are a bounded fingerprint, not a full-file hash.
-
-## Preserved state and next steps
-
-Final WIP snapshot: `/tmp/kainos-redesign-complete-r9n0o7az/` (`tracked.patch`, `untracked.tar.gz`).
-
-Pre-module WIP: `/tmp/kainos-before-module-split-6h0iaysi/` (`tracked.patch`, `untracked.tar.gz`). Earlier snapshots are listed in the archived handover. Desktop data before live import: `/tmp/kainos-desktop-before-migration-xd68cez9/`; migrated originals also remain under `~/.universal-music-player/`. Do not delete backups automatically.
-
-1. Recheck authoritative quotas before further work. Pause at 98% used/2% remaining in either limit. Current-model switching or agents do not evade shared quotas.
-2. Ask for/inspect user feedback on the installed app; fix any reproduced issue. Inspect shared playback logs in `~` when supplied.
-3. Manual compatibility checks should use isolated old-build data/device, not a downgrade of the user's schema-v2 installation. Check new phone ↔ old desktop and old phone ↔ new desktop, renamed keyed tracks, heart/unheart and missing vault files.
-4. Continue from main and inspect user feedback. Publish a release only when requested.
-
-Useful commands:
+## Checks
 
 ```bash
-cd /home/theadenkingof/Documents/Code/Kainos-Player
-git status --short
-git diff --check
-export JAVA_HOME=/home/theadenkingof/.jdks/temurin-17
-./gradlew jvmTest :core:data:verifyCommonMainKainosDatabaseMigration :desktopApp:createDistributable :androidApp:assembleDebug --console=plain
-adb devices -l
-# Substitute the freshly listed transport id if another install is needed.
-adb -t 1 install -r release/kainos-player-debug-modular-2026-10-03.apk
-scripts/kainos-player
+export JAVA_HOME="$HOME/.jdks/temurin-17"
+./gradlew jvmTest :core:playback:testAndroidHostTest :core:data:verifyCommonMainKainosDatabaseMigration :androidApp:assembleDebug :desktopApp:createDistributable --console=plain
 ```
 
-## Processes and usage
+Build serially. Do not use adb, restart the owner's app, or take over the owner's display for tests: use a private Xvfb (`scripts/perf/private_xvfb.py`) for UI proof.
 
-No child agents were spawned. Builds, tests and ADB installation finished. Gradle/Kotlin daemons may remain idle. The packaged desktop app launched by this turn remains open for user testing; phone lifetime is controlled by the user. No desktop process was killed.
+## Known gaps
 
-Fresh authoritative telemetry lifted the previous pause on 2026-10-03. Latest check: 49% five-hour used, 8% weekly used. Read `account/rateLimits/read` from initialized `codex app-server --stdio` without a model turn, or `/status` in the authenticated CLI. Five-hour reset epoch: 1790997075; weekly reset epoch: 1791583875. Never infer quota from tokens/context; recheck rather than trusting these historical numbers.
+- `AppContainer` has no test of its own (`docs/ARCHITECTURE.md`).
+- Many old local branches remain unmerged. Treat them as stale unless the owner names one.
+- Sync between an old and a new build of the phone and PC has not been tested on real devices.

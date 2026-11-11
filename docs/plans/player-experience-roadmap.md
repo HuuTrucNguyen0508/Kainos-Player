@@ -1,16 +1,18 @@
 # Player experience roadmap
 
+Status, 2026-11-11: every phase below is done except Phase 8, which was closed without a provider and is now dropped. This page stays as the record of the intent and acceptance rules; `docs/CURRENT_STATE.md` says what ships today.
+
 ## Goal
 
 Make Kainos feel like one player across local files, Spotify, and YouTube. Prioritize returning to a listening session, make Now Playing feel intentional, and connect playlists, favorites, offline status, and Home without hiding which provider will supply a track.
 
-This roadmap covers the proposed Now Playing redesign, playback session restore, Home pins, Kainos playlists, offline management, desktop layout, sleep timer, and lyrics.
+This roadmap covers the Now Playing redesign, playback session restore, Home pins, Kainos playlists, offline management, desktop layout, sleep timer, and lyrics (dropped).
 
 ## Product constraints
 
 - Keep `PlayerSession` as the owner of queue, metadata, and transport behavior.
 - Keep local audio locations on device. Never persist resolved streaming URLs.
-- Do not cache protected Spotify audio. Offline audio remains limited to supported local files and the existing hearted YouTube cache and YouTube matches for Spotify favorites.
+- Offline audio is limited to supported local files and the hearted YouTube cache, including YouTube matches for Spotify favorites. Kainos never saves Spotify audio as a playable download. Lifted 2026-11-11: the earlier rule against caching Spotify audio on the device. The librespot receivers now keep their own disk cache of the encrypted audio they fetched (Linux 2 GB, Android 1 GiB), which only speeds up a replay and is not part of the offline library.
 - Restore after process death in a paused state. Never start audio unexpectedly after an app or device restart.
 - Preserve phone-initiated, foreground-only Home sync behavior. This roadmap does not add cloud storage or a phone background daemon.
 - Shared playback and UI behavior belong in `shared`; platform storage, audio, and window behavior use existing Android and JVM actuals where needed.
@@ -19,11 +21,15 @@ This roadmap covers the proposed Now Playing redesign, playback session restore,
 
 ### Phase 0: Agree on the Now Playing direction
 
+**Status: done.** The direction was settled in the Phase 2 build (2026-10-01); no prototype is kept in the repository.
+
 Create a compact phone and desktop screen prototype before implementation. Keep the current control set and audio details, but establish a clear hierarchy among artwork, track title, provider/quality, timeline, transport, and secondary actions. Test long titles, short screens, no artwork, buffering, loss of connection, and each color scheme.
 
 **Acceptance:** phone controls fit on a typical screen without scrolling in the common state; smaller screens can scroll without clipping controls; desktop sizing uses available width; shuffle and repeat active states remain clear; provider and quality stay readable; artwork-derived colors respect the selected light/dark scheme.
 
 ### Phase 1: Persist and restore a listening session
+
+**Status: done (2026-10-01).** The snapshot lives in `kainos.db` and restores paused. It also keeps the radio feeding the queue, since schema 9 (`8.sqm`).
 
 Add a versioned session snapshot using the repository's existing JSON/file persistence patterns. Store queue entries and stable provider identities, current queue position, current track identity, playback position, repeat, shuffle, and shuffle order. Store local file identity/location only in the owning device's snapshot. Do not store signed or resolved stream URLs.
 
@@ -35,6 +41,8 @@ Keep notification tap behavior from the HyperOS work: it opens Now Playing for a
 
 ### Phase 2: Refine Now Playing
 
+**Status: done (2026-10-01), with album light added 2026-10-02.** Later changes: an album line with links to the album and artist pages, the applied volume-levelling gain, and a dock for the desktop pane.
+
 Implement the approved prototype in shared Compose. Use artwork as a restrained optional color source rather than replacing the user's selected theme. Keep the large play/pause and skip controls reachable, keep favorite, repeat, shuffle, queue, and volume easy to find, and retain the existing quality details behind a clear disclosure. Improve mini-player expansion and dismissal if they fit the same interaction model.
 
 Avoid artwork or title movement when metadata refreshes. Keep playback transitions and the MediaSession metadata path stable so artwork remains consistent across Now Playing, notification, and island.
@@ -42,6 +50,8 @@ Avoid artwork or title movement when metadata refreshes. Keep playback transitio
 **Acceptance:** UI states from Phase 0 work on Android and desktop; transport remains bound to `PlayerSession`; screen reader labels express current action/state; the currently playing artwork agrees across the in-app screen and Android media controls; no clipping at compact phone dimensions or a narrow desktop window.
 
 ### Phase 3: Kainos playlists across providers
+
+**Status: done (2026-10-01).** Playlists are in `kainos.db` and sync over Home sync with revisions and tombstones. Playlist pages remove entries with undo and reorder.
 
 Add app-owned playlist models and JSON persistence. A playlist entry must reference a stable source identity and retain display metadata; it must not depend on a transient stream URL. Support create, rename, delete, reorder, add/remove tracks, and Save queue as playlist. Keep provider playlists distinct from Kainos playlists and label source availability clearly.
 
@@ -51,9 +61,9 @@ For matching identities, reuse app favorites and provider source metadata. Playl
 
 ### Phase 4: Offline status and download management
 
-**Status: implemented (2026-09-29).** Availability is separate from favorite state. Settings → Downloads manages progress/retry/remove/pin/storage; Now Playing exposes actual playback source and Spotify→YouTube match correction.
+**Status: implemented (2026-09-29), extended 2026-11-11.** Availability is separate from favorite state. Settings → Downloads manages progress/retry/remove/pin/storage; Now Playing exposes actual playback source and Spotify→YouTube match correction. Downloads now keep failure reasons, retry transient errors at 30 s, 2 min and 8 min, let Remove stick until Download, and on Android wait for Wi-Fi by default.
 
-Represent availability separately from favorite state: available locally, cached, downloading, waiting for network, unavailable, and failed. Expose a per-track status where users choose music, plus a Downloads view for progress, retry, removal, and storage use. Keep the existing cache policy: hearted YouTube audio and supported YouTube matches can be cached; local files are playable from their selected folders; Spotify DRM audio remains streaming-only.
+Represent availability separately from favorite state: available locally, cached, downloading, waiting for network, unavailable, and failed. Expose a per-track status where users choose music, plus a Downloads view for progress, retry, removal, and storage use. Keep the existing cache policy: hearted YouTube audio and supported YouTube matches can be cached; local files are playable from their selected folders; Spotify audio is not saved as a playable download.
 
 Expose the actual provider/source used for playback. Add a correction flow for a bad Spotify-to-YouTube match so users can select another candidate or clear it. Preserve the original Spotify identity and favorite even when the fallback changes. Make cache eviction visible and never evict pinned/actively playing items without clear policy.
 
@@ -61,7 +71,7 @@ Expose the actual provider/source used for playback. Add a correction flow for a
 
 ### Phase 5: Personalize Home
 
-**Status: implemented (2026-09-29).** Pins persist in `user-library.json` (`homePins`). Home-sync: Kainos + Spotify playlist pins eligible; albums/folders device-local. Wire pins endpoint deferred.
+**Status: implemented (2026-09-29), sync shipped 2026-11-04.** Pins persist in `kainos.db` (`homePins`, imported from `user-library.json` once). Kainos and Spotify playlist pins sync over `/kainos-sync/v3/pins` with order and unpins; albums and folders stay device-local.
 
 Add explicit pins for Kainos playlists, provider playlists where supported, albums, and local folders. Keep Continue Listening as a separate recent-history area. Allow reorder/remove pins and provide sensible empty/loading/error states. Put high-use actions such as Play favorites and Resume near the top without turning Home into another dense library list.
 
@@ -71,7 +81,7 @@ Use the new Kainos playlist model from Phase 3. Store pin order in the existing 
 
 ### Phase 6: Adapt desktop layout
 
-**Status: implemented (2026-09-29).** Collapsible/resizable Now Playing pane; Settings → Appearance compact desktop player; Queue beside content on wide (≥1200dp); narrow (<840dp) single pane + mini bar.
+**Status: implemented (2026-09-29), extended 2026-11-09 to 2026-11-11.** Collapsible/resizable Now Playing pane; Settings → Appearance compact desktop player; Queue beside content on wide (≥1200dp); narrow (<840dp) single pane + mini bar. Since then: a draggable dock for the pane (any window edge, bottom in portrait), the Frost skin, and an ultrawide band from 2000 dp with Queue as a frame column and wide Home, Library, Search and Settings layouts.
 
 Make the Now Playing pane collapsible and resizable, with a compact player option and a queue view that can sit beside Library on wide windows. Preserve keyboard shortcuts, focus behavior, and scroll positions. At small desktop window widths, fall back to a single content pane without obscuring playback.
 
@@ -79,11 +89,15 @@ Make the Now Playing pane collapsible and resizable, with a compact player optio
 
 ### Phase 7: Sleep timer
 
+**Status: done (2026-10-01).** It fades out over its last 30 seconds (2026-11-04) and is not restored after the process exits.
+
 Add a sleep timer with a duration and an “end of current track” mode. Show remaining time in Now Playing and let users cancel or adjust it. The timer pauses through `PlayerSession` so notification and Bluetooth state agree. Use a monotonic time source while the process is alive; define what happens across process death and device reboot. Initial behavior should cancel on process death unless reliable persistence can be added without surprising pauses after reboot.
 
 **Acceptance:** timer pauses once at expiry; end-of-track mode waits for the current item and does not stop on a skip; cancel/reset work; queue continues normally before expiry; Android and desktop transport state reflects the pause.
 
 ### Phase 8: Lyrics investigation and display
+
+**Status, 2026-11-11: dropped.** The owner does not want lyrics. The investigation below stays as the closed record.
 
 First investigate lyric source availability, attribution, caching rights, API stability, and offline terms. Do not choose or ship a source before that check. If an acceptable source exists, add a provider interface that resolves lyrics by track identity and displays timed or plain lyrics in Now Playing. Keep fetching separate from playback resolution and handle no-match, instrumental, rate limit, and unavailable-network cases.
 
@@ -104,15 +118,15 @@ First investigate lyric source availability, attribution, caching rights, API st
 
 - Session restore and queue persistence must follow current `QueueController` semantics, including queue-entry identity and shuffle order.
 - Local paths and SAF URIs are device-specific. Cross-device playlists need portable identities and must remain useful when a file has not arrived yet.
-- Offline availability differs by provider. Keep UI labels honest and never imply Spotify DRM downloads are supported.
+- Offline availability differs by provider. Keep UI labels honest and never imply Spotify downloads are supported.
 - Cross-provider playlist sync needs explicit merge/delete rules before it is added to Home sync.
-- Lyrics may be blocked by source terms or unstable APIs. The investigation can conclude with no lyrics integration.
+- Lyrics: dropped. The investigation found no source with clear terms, and the owner does not want them.
 - The roadmap is intentionally staged: session persistence establishes reliable state before Home pins and richer playlists depend on it; playlists establish the reusable collection model before Home and offline management build on it.
 
 ## Out of scope
 
 - Cloud playback-state or music-library service.
-- Protected Spotify offline audio.
+- Spotify audio as an offline library.
 - Automatic playback on relaunch.
 - Full redesign of Library, Search, or Settings.
 - HyperOS chrome restyling beyond supported MediaSession metadata, artwork, and commands.

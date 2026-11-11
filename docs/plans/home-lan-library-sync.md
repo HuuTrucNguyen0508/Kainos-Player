@@ -1,6 +1,7 @@
 # Plan: Home LAN library + hearts sync
 
-Status: **Phase 0–3 + pinned TLS** — leave firewall 43822 blocked until soak on HTTPS; APK when asked  
+Status: **Phase 0–3 + pinned TLS shipped; extended to v3 routes** (pairing, listening, remote control, pins, cached audio, loudness). Checked against `main` at `9c1fad7` on 2026-11-11. Leave firewall 43822 blocked until soak on HTTPS; APK when asked
+
 Date: 2026-09-16  
 Handoff: Cleartext HTTP removed; hub uses self-signed TLS with SHA-256 pin in `kainos-homesync:2` URI
 
@@ -14,7 +15,7 @@ Handoff: Cleartext HTTP removed; hub uses self-signed TLS with SHA-256 pin in `k
 | Phase 0b vault union / tombstone / conflict pure types + tests | Done |
 | Phase 1 pairing + LAN hearts hub/client + Settings UI | Done |
 | Phase 2 music file transfer (SAF write, FGS, blob copy) | Done |
-| Phase 3 polish (autostart hub, AES-GCM payloads, pairing URI, idle timeout, rematch) | Done |
+| Phase 3 polish (autostart hub, AES-GCM payloads, pairing URI, rematch) | Done; the idle timeout it listed was later removed |
 | Pinned TLS (`kainos-homesync:2` + hub PKCS12 + HTTPS-only client) | Done |
 
 ### Manual soak (before trusting a release / opening the firewall)
@@ -29,7 +30,7 @@ Handoff: Cleartext HTTP removed; hub uses self-signed TLS with SHA-256 pin in `k
 
 | Item | Status |
 |---|---|
-| Hub idle timeout (30 min) | Done |
+| Hub idle timeout (30 min) | Removed: the hub listens until its owning process stops (a systemd user unit or the GUI) |
 | `--hub-only` + login autostart desktop file | Done |
 | Pairing URI `kainos-homesync:2?…` with mandatory `cert=` pin | Done (URI text; no in-app QR) |
 | PIN verified on hub requests | Done |
@@ -93,7 +94,7 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 - Always-on phone sync service
 - Off-home sync (LTE ↔ sleeping PC) without a tunnel
 - Writing app hearts back to Spotify Liked Songs
-- Syncing hearted audio cache binaries (`audio-cache/`) or librespot DRM cache
+- Syncing the librespot audio cache. (Hearted `audio-cache/` copies were a v1 non-goal too; they shipped 2026-11-04 as pending Transfer / Skip items, see below.)
 - Syncing resolved streaming URLs
 - Syncing `recents` or non-favorite `remembered` history
 - Multi-device simultaneous editing / CRDTs
@@ -111,7 +112,7 @@ Sync **app-hearted tracks** and **local music files** between Android and Linux 
 
 | Role | Device | Behavior |
 |---|---|---|
-| Hub | Linux PC | In-process listener inside `:desktopApp` (or `--hub-only`). Port `43822` HTTPS. Idle stop after 30 min. |
+| Hub | Linux PC | In-process listener inside `:desktopApp` (or `--hub-only`, supervised by a systemd user unit). Port `43822` HTTPS. No idle stop: it listens until its process stops. |
 | Client | Android phone | Connect when app open + hub reachable; Sync now; vault transfer under `dataSync` FGS |
 
 ### Channels
@@ -165,6 +166,14 @@ The full JVM test suite passes across the extracted modules. Live loopback HTTPS
 
 ## Cached audio, 2026-11-04
 
-`POST /kainos-sync/v3/cached-audio` exchanges a `CachedAudioSyncDocument`: this device's offers (hearted `audio-cache/` entries named by their immutable cache file, the `fileToken`), the owners it already holds, and its `spotifyAccountId`. The hub remembers the client's offers and replies with its own. The client plans a download for each hub offer it hearts and lacks, and an upload for each of its offers the hub lacks; a `spotify:` owner (a YouTube match) is offered only when both devices carry the same known account. Spotify DRM audio is never cached, so it is never offered. `GET …/cached-audio/blob?owner&token` serves 206 ranges of the file the hub's index names for that owner (never a path), `GET …/cached-audio/hash` its SHA-256, and `PUT …/cached-audio/blob?owner&token&offset&total&sha256` accepts chunks of an offered file only. Both directions stage under `audio-cache/incoming/` (outside the budget), check the destination budget against its pinned and now-playing downloads before a byte moves, publish only when the staged bytes match the SHA-256, and then enter the cache through the normal put, which evicts the oldest unpinned download if needed. Any failure deletes the staged file; Transfer again restarts. Hubs without the route answer 404 and the client skips cached audio.
+`POST /kainos-sync/v3/cached-audio` exchanges a `CachedAudioSyncDocument`: this device's offers (hearted `audio-cache/` entries named by their immutable cache file, the `fileToken`), the owners it already holds, and its `spotifyAccountId`. The hub remembers the client's offers and replies with its own. The client plans a download for each hub offer it hearts and lacks, and an upload for each of its offers the hub lacks; a `spotify:` owner (a YouTube match) is offered only when both devices carry the same known account. Spotify audio is never part of the Downloads cache, so it is never offered. `GET …/cached-audio/blob?owner&token` serves 206 ranges of the file the hub's index names for that owner (never a path), `GET …/cached-audio/hash` its SHA-256, and `PUT …/cached-audio/blob?owner&token&offset&total&sha256` accepts chunks of an offered file only. Both directions stage under `audio-cache/incoming/` (outside the budget), check the destination budget against its pinned and now-playing downloads before a byte moves, publish only when the staged bytes match the SHA-256, and then enter the cache through the normal put, which evicts the oldest unpinned download if needed. Any failure deletes the staged file; Transfer again restarts. Hubs without the route answer 404 and the client skips cached audio.
 
-See [module ownership](../ARCHITECTURE.md) and the root `HANDOVER.md` for build commands, installed APK and current verification.
+## Loudness, 2026-11-11
+
+`POST /kainos-sync/v3/loudness` exchanges the PC's ffmpeg EBU R128 measurements of local files (integrated LUFS, true peak, and the album aggregate) so the phone, which cannot measure, can level files that have no ReplayGain tags. Entries match by content key first and by unique basename only when no known key contradicts it. The exporter computes basename uniqueness over every subject, measured or not. Hubs without the route answer 404 and the client skips loudness.
+
+## Hub process, 2026-11-11
+
+A `--hub-only` process binds no media controls, restores no session and starts no downloads, and it exits 0 only when another process holds the hub's owner lock; a real failure to listen still exits 1. The systemd unit has `StartLimitIntervalSec=600` and `StartLimitBurst=5`. A GUI that stops the enabled unit refreshes a stale unit file before the unit restarts on close.
+
+See [module ownership](../ARCHITECTURE.md) for the units, and the root `HANDOVER.md` for the current state and what remains to test.
