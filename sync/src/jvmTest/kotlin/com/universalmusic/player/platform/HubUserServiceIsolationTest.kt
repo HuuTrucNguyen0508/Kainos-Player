@@ -104,6 +104,8 @@ class HubUserServiceIsolationTest {
             assertTrue(body.contains("Environment=\"KAINOS_HUB_PORT=43822\""))
             assertTrue(body.contains("Environment=\"KAINOS_HUB_UNIT=kainos-hub.service\""))
             assertFalse(body.contains("KAINOS_INSTANCE="))
+            assertTrue(body.contains("Restart=on-failure"))
+            assertTrue(body.contains("StartLimitIntervalSec=600\nStartLimitBurst=5"), "A failing hub stops being restarted")
             assertFalse(Files.exists(f.legacyAutostart))
             val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
             assertTrue(owner.acquire())
@@ -122,6 +124,44 @@ class HubUserServiceIsolationTest {
                 "systemctl --user disable --now kainos-hub.service",
                 "systemctl --user daemon-reload",
             ), f.commands)
+        }
+    }
+
+    @Test
+    fun theDefaultUnitsOwnEnvironmentStillManagesTheDefaultUnit() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-hub-service-default-env-")
+        try {
+            val home = directory.resolve("home")
+            val isolation = DesktopIsolation.parse(mapOf(
+                "KAINOS_DATA_DIR" to home.resolve(".universal-music-player").toString(),
+                "KAINOS_HUB_PORT" to "43822",
+            ), home)
+            val commands = mutableListOf<String>()
+            val service = HubUserService(isolation, directory.resolve("config"), { "/tmp/kainos-player" }) { arguments ->
+                commands += arguments.joinToString(" ")
+                HubSystemctlResult(0, "enabled")
+            }
+            assertEquals(true, service.isEnabled())
+            assertEquals(listOf("systemctl --user is-enabled kainos-hub.service"), commands)
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun guiStartRewritesAnEnabledUnitFromAnOlderBuild() = runBlocking {
+        fixture(emptySet()) { f ->
+            Files.writeString(f.realUnit, "[Service]\nRestart=on-failure\nRestartSec=5\n")
+            val owner = HubOwnership(f.isolation, f.service, HubProcessMode.GUI)
+            assertTrue(owner.acquire())
+            val body = Files.readString(f.realUnit)
+            assertTrue(body.contains("StartLimitBurst=5"), body)
+            assertEquals(listOf(
+                "systemctl --user is-enabled kainos-hub.service",
+                "systemctl --user stop kainos-hub.service",
+                "systemctl --user daemon-reload",
+            ), f.commands)
+            owner.close {}
         }
     }
 

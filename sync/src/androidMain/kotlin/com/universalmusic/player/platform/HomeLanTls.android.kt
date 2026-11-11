@@ -24,7 +24,26 @@ private val androidDeviceIdentity by lazy { AndroidDeviceIdentity() }
 
 actual fun platformDeviceIdentity(): DeviceIdentity = androidDeviceIdentity
 
-actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
+/** The SSL context for one pairing: the hub pin it trusts and this device's identity at the time. */
+private data class PinnedContextKey(val pin: CertFingerprint, val identity: CertFingerprint)
+
+private class PinnedContext(val ssl: SSLContext, val trustManager: X509TrustManager)
+
+/**
+ * Listening delivery, the remote link and every probe each open a client, and building an SSL
+ * context per client cost a key-store read and several trace lines each time. A pairing reuses
+ * one; an identity reset or a new pin makes a new key.
+ */
+private val pinnedContexts = object : LinkedHashMap<PinnedContextKey, PinnedContext>(4, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PinnedContextKey, PinnedContext>?) = size > 4
+}
+
+private fun pinnedContext(pin: CertFingerprint): PinnedContext {
+    val key = PinnedContextKey(pin, androidDeviceIdentity.fingerprint())
+    return synchronized(pinnedContexts) { pinnedContexts.getOrPut(key) { newPinnedContext(pin) } }
+}
+
+private fun newPinnedContext(pin: CertFingerprint): PinnedContext {
     val trustManager = object : X509TrustManager {
         override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) =
             throw CertificateException("Client certs not supported")
@@ -40,15 +59,19 @@ actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
     val started = System.nanoTime()
-    PlaybackTrace.log("HomeSync", "TLS client context start")
     val sslContext = SSLContext.getInstance("TLS").apply {
         init(arrayOf(androidDeviceIdentity.keyManager()), arrayOf(trustManager), SecureRandom())
     }
-    PlaybackTrace.log("HomeSync", "TLS client context ready in ${(System.nanoTime() - started) / 1_000_000} ms provider=${sslContext.provider.name}")
+    PlaybackTrace.log("HomeSync", "TLS client context for pin ${pin.hex.take(8)} ready in ${(System.nanoTime() - started) / 1_000_000} ms provider=${sslContext.provider.name}")
+    return PinnedContext(sslContext, trustManager)
+}
+
+actual fun createPinnedHomeLanHttpClient(pin: CertFingerprint): HttpClient {
+    val context = pinnedContext(pin)
     return HttpClient(OkHttp) {
         engine {
             config {
-                sslSocketFactory(sslContext.socketFactory, trustManager)
+                sslSocketFactory(context.ssl.socketFactory, context.trustManager)
                 hostnameVerifier { _, _ -> true }
                 eventListenerFactory { call -> HomeLanTlsEvents(call) }
             }
@@ -75,16 +98,22 @@ private class HomeLanTlsEvents(call: Call) : EventListener() {
         PlaybackTrace.log("HomeSync", "TLS +${(System.nanoTime() - started) / 1_000_000} ms $message")
     }
 
+    /** Per-connection steps; each sync run and delivery already logs its own outcome. Pairing keeps them. */
+    private fun detail(message: String) {
+        if (traceRequests) trace(message)
+        else PlaybackTrace.debug("HomeSync", "TLS +${(System.nanoTime() - started) / 1_000_000} ms $message")
+    }
+
     override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
-        trace("connect start $inetSocketAddress")
+        detail("connect start $inetSocketAddress")
     }
 
     override fun secureConnectStart(call: Call) {
-        trace("handshake start")
+        detail("handshake start")
     }
 
     override fun secureConnectEnd(call: Call, handshake: Handshake?) {
-        trace("handshake complete protocol=${handshake?.tlsVersion} cipher=${handshake?.cipherSuite}")
+        detail("handshake complete protocol=${handshake?.tlsVersion} cipher=${handshake?.cipherSuite}")
     }
 
     override fun requestHeadersStart(call: Call) {
@@ -96,6 +125,6 @@ private class HomeLanTlsEvents(call: Call) : EventListener() {
     }
 
     override fun callFailed(call: Call, ioe: IOException) {
-        trace("failed ${ioe.javaClass.name}: ${ioe.message}")
+        detail("failed ${ioe.javaClass.name}: ${ioe.message}")
     }
 }

@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.data.spotify.SnapshotFile
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.Track
 
@@ -12,6 +13,9 @@ expect suspend fun fetchLibrespotDiscoverWeekly(playlistId: String? = null): Pla
 expect suspend fun fetchLibrespotTrackRadio(trackId: String, excludeCanonicalIds: Set<String>): List<Track>
 
 expect fun requiresExplicitSpotifyDevice(): Boolean
+
+/** Where the last good Discover Weekly is kept: the metadata cache directory. */
+expect fun discoverWeeklySnapshotFile(): SnapshotFile?
 
 /** Best-effort: open Spotify on this device so it can register with Connect. */
 

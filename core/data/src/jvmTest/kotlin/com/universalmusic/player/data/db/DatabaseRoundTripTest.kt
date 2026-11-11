@@ -311,6 +311,7 @@ class DatabaseRoundTripTest {
                 val tagged = scanned.copy(
                     album = "Kyogen", albumArtist = "Ado", trackNumber = 4, discNumber = 1, year = 2022, genre = "J-Pop",
                     tagsVersion = LOCAL_TAGS_VERSION,
+                    previousAlbumIds = listOf("local-album:ado|downloads|abc"),
                 )
                 db.writeLocalScan("folders", listOf(tagged), 2)
                 assertEquals(listOf(tagged), db.readLocalScan("folders"))

@@ -5,4 +5,5 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:${version("kotlin")}")
     implementation("org.jetbrains.kotlin:kotlin-serialization:${version("kotlin")}")
     implementation("com.android.tools.build:gradle:${version("agp")}")
+    testImplementation(kotlin("test"))
 }

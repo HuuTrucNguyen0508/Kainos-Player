@@ -32,12 +32,13 @@ data class DesktopIsolation(
             fun value(name: String): String? = env[name]?.trim()?.also {
                 require(it.isNotEmpty()) { "$name must not be blank" }
             }
+            val defaultDataDir = userHome.resolve(".universal-music-player").normalize()
             val dataDir = value(DATA_DIR_VAR)?.let { raw ->
                 val path = Path.of(raw)
                 require(path.isAbsolute) { "$DATA_DIR_VAR must be an absolute path, got '$raw'" }
                 path.normalize()
             }
-                ?: userHome.resolve(".universal-music-player")
+                ?: defaultDataDir
             val hubPort = value(HUB_PORT_VAR)?.let { raw ->
                 val port = raw.toIntOrNull()
                 require(port != null && port in 1..65535) {
@@ -56,8 +57,9 @@ data class DesktopIsolation(
                     it.matches(Regex("[A-Za-z_-][A-Za-z0-9_-]*"))
                 }) { "$INSTANCE_VAR must produce a valid D-Bus name of at most 255 characters" }
             }
+            // The hub unit spells out the default values; only a different value isolates.
             return DesktopIsolation(dataDir, hubPort, instance,
-                dataDirOverridden = DATA_DIR_VAR in env, hubPortOverridden = HUB_PORT_VAR in env)
+                dataDirOverridden = dataDir != defaultDataDir, hubPortOverridden = hubPort != HOME_LAN_SYNC_DEFAULT_PORT)
         }
 
         /** [parse], then create the data directory and check that it is writable. */

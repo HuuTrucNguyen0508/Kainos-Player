@@ -42,6 +42,12 @@ class HubOwnership(
         if (mode == HubProcessMode.GUI && serviceEnabledForOwnership()) {
             state = State.ServiceStopRequested
             service.stop()
+            // The service restarts when this GUI closes; give it this build's unit first.
+            try {
+                service.refreshUnit()
+            } catch (error: Exception) {
+                com.universalmusic.player.platform.PlaybackTrace.log("Warning", "Kainos hub unit refresh failed: ${error.message}")
+            }
         }
         val lock = HubOwnerLock.acquire(isolation.dataDir, mode.lockTimeoutMs)
         state = lock?.let(State::Owned) ?: State.Unavailable
@@ -111,3 +117,6 @@ class HubOwnership(
         return true
     }
 }
+
+/** Only contention on our data-directory owner lock is a successful handoff. */
+fun hubOnlyExitStatus(ownerLockAcquired: Boolean): Int = if (ownerLockAcquired) 1 else 0

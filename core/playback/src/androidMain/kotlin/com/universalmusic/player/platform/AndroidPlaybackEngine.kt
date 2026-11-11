@@ -42,19 +42,23 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class AndroidPlaybackEngine(
+class AndroidPlaybackEngine internal constructor(
     context: Context,
     private val spotify: SpotifyPlaybackController,
+    /** Production binds a MediaController to [AndroidPlaybackService]; host tests hand in the player directly. */
+    private val connectPlayer: suspend (Context) -> Player,
 ) : PlaybackEngine {
+    constructor(context: Context, spotify: SpotifyPlaybackController) :
+        this(context, spotify, ::connectMediaController)
+
     private val appContext = context.applicationContext
     /** Default scope for Spotify I/O and service connect. ExoPlayer work uses Main.immediate. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val spotifyFocus = SpotifyAudioFocus(appContext)
     private val spotifyCommands = Channel<SpotifyCommand>(Channel.UNLIMITED)
     private val mediaCommands = Channel<MediaCommand>(Channel.UNLIMITED)
-    private val controller = CompletableDeferred<MediaController>()
-    private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var mediaPlayer: MediaController? = null
+    private val controller = CompletableDeferred<Player>()
+    private var mediaPlayer: Player? = null
     private var pendingSpotifyStop: CompletableDeferred<Result<Unit>>? = null
     private val _state = MutableStateFlow(EngineState())
     override val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -266,7 +270,7 @@ class AndroidPlaybackEngine(
         launchMediaCommand(::syncSuccessor)
     }
 
-    private fun syncSuccessor(player: MediaController) {
+    private fun syncSuccessor(player: Player) {
         if (activeBackend != ActiveBackend.MEDIA3) return
         successor.sync(player, activePlayGeneration, AndroidMediaControls::queuedTrack)
     }
@@ -276,7 +280,7 @@ class AndroidPlaybackEngine(
      * successor and the generation it follows, which is how the session learns the boundary was
      * crossed. The levelling already reflects the new item: its tracks arrive with the transition.
      */
-    private fun crossInto(player: MediaController, prepared: PreparedPlayback) {
+    private fun crossInto(player: Player, prepared: PreparedPlayback) {
         val previous = activePlayGeneration
         activePlayGeneration = previous + 1
         trace("gapless crossing into ${describe(prepared)} from gen=$previous pos=${player.currentPosition}")
@@ -330,6 +334,7 @@ class AndroidPlaybackEngine(
                         forwarding.onLevellingChanged = ::publishMedia3Levelling
                         forwarding.setLevelling(levellingEnabled)
                     }
+                    AndroidMediaControls.forwardingPlayer?.expectTransitionMedia(handle.url)
                     activeBackend = ActiveBackend.MEDIA3
                     AndroidMediaControls.forwardingPlayer?.setSpotifyActive(false)
                     ticker?.cancel()
@@ -578,16 +583,17 @@ class AndroidPlaybackEngine(
      * ExoPlayer to IDLE, which abandons audio focus; the re-request a few ms later can be
      * refused (seen on HyperOS as `playWhenReady=false reason=AUDIO_FOCUS_LOSS`) and the new
      * track starts paused. Pausing keeps focus and the next `setMediaItem` replaces the item.
+     *
+     * The backend is already NONE when the entry before this one never started (a missing
+     * file, a failed Spotify start) or after an earlier transition. That is still a move
+     * between queue entries, so the retained item stays: clearing it takes Exo to IDLE, Media3
+     * drops the foreground service, and HyperOS refuses to promote it again for the next
+     * start ("foreground promotion denied"). Only [stop] may clear it.
      */
     override fun stopForTransition() {
         if (activeBackend == ActiveBackend.SPOTIFY) {
             ticker?.cancel()
             enqueueSpotifyCommand("Spotify Connect transition", spotify.pause)
-            publishState(EngineState(status = EngineStatus.BUFFERING))
-            return
-        }
-        if (activeBackend != ActiveBackend.MEDIA3) {
-            stop()
             publishState(EngineState(status = EngineStatus.BUFFERING))
             return
         }
@@ -597,6 +603,7 @@ class AndroidPlaybackEngine(
         ticker?.cancel()
         publishState(EngineState(status = EngineStatus.BUFFERING))
         launchMediaCommand { player ->
+            AndroidMediaControls.forwardingPlayer?.retainForTransition()
             player.pause()
             // Only the item after the paused one goes; the paused item keeps focus and the island.
             successor.sync(player, activePlayGeneration) { null }
@@ -661,14 +668,8 @@ class AndroidPlaybackEngine(
 
     private fun connectToPlaybackService() {
         scope.launch {
-            val token = SessionToken(
-                appContext,
-                ComponentName(appContext, AndroidPlaybackService::class.java),
-            )
-            val future = MediaController.Builder(appContext, token).buildAsync()
-            controllerFuture = future
             try {
-                val player = future.await()
+                val player = connectPlayer(appContext)
                 withContext(Dispatchers.Main.immediate) {
                     mediaPlayer = player
                     player.addListener(playerListener)
@@ -686,28 +687,8 @@ class AndroidPlaybackEngine(
         }
     }
 
-    private suspend fun <T> ListenableFuture<T>.await(): T =
-        suspendCancellableCoroutine { cont ->
-            addListener(
-                {
-                    if (cont.isCancelled) return@addListener
-                    try {
-                        val value = get() as T
-                        cont.resume(value)
-                    } catch (failure: Throwable) {
-                        val cause = (failure as? ExecutionException)?.cause ?: failure
-                        cont.resumeWithException(cause)
-                    }
-                },
-                Executor { runnable -> runnable.run() },
-            )
-            cont.invokeOnCancellation {
-                runCatching { cancel(true) }
-            }
-        }
-
     /** Fire-and-forget MediaController mutation, executed in FIFO order on Main. */
-    private fun launchMediaCommand(command: (MediaController) -> Unit) {
+    private fun launchMediaCommand(command: (Player) -> Unit) {
         mediaCommands.trySend(MediaCommand(command))
     }
 
@@ -716,7 +697,7 @@ class AndroidPlaybackEngine(
      * failure. If the caller is cancelled while waiting (PlayerSession superseded this play),
      * the queued command is skipped so a dead generation never touches the player.
      */
-    private suspend fun runMediaCommand(command: (MediaController) -> Unit) {
+    private suspend fun runMediaCommand(command: (Player) -> Unit) {
         val queued = MediaCommand(command, CompletableDeferred())
         mediaCommands.send(queued)
         val result = try {
@@ -874,7 +855,7 @@ class AndroidPlaybackEngine(
     )
 
     private class MediaCommand(
-        val action: (MediaController) -> Unit,
+        val action: (Player) -> Unit,
         val completion: CompletableDeferred<Result<Unit>>? = null,
     ) {
         @Volatile var cancelled: Boolean = false
@@ -889,6 +870,31 @@ class AndroidPlaybackEngine(
         const val FOCUS_RETRY_DELAY_MS = 250L
     }
 }
+
+private suspend fun connectMediaController(context: Context): Player {
+    val token = SessionToken(context, ComponentName(context, AndroidPlaybackService::class.java))
+    return MediaController.Builder(context, token).buildAsync().await()
+}
+
+private suspend fun <T> ListenableFuture<T>.await(): T =
+    suspendCancellableCoroutine { cont ->
+        addListener(
+            {
+                if (cont.isCancelled) return@addListener
+                try {
+                    val value = get() as T
+                    cont.resume(value)
+                } catch (failure: Throwable) {
+                    val cause = (failure as? ExecutionException)?.cause ?: failure
+                    cont.resumeWithException(cause)
+                }
+            },
+            Executor { runnable -> runnable.run() },
+        )
+        cont.invokeOnCancellation {
+            runCatching { cancel(true) }
+        }
+    }
 
 /** Stream URLs carry signed tokens; the trace keeps only scheme + host. */
 private fun String.hostForTrace(): String {

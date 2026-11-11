@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.SearchResult
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.playback.ProviderRateLimitedException
 import com.universalmusic.player.domain.playback.SpotifyObservedPlayback
 import com.universalmusic.player.domain.provider.AuthSession
 import com.universalmusic.player.domain.provider.AuthenticatingProvider
@@ -23,6 +24,7 @@ import com.universalmusic.player.platform.UnavailableSpotifyWebPlaybackHost
 import com.universalmusic.player.platform.describeLibrespotConnectionFailure
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.encodeUrl
+import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.ensureSpotifyConnectClientAvailable
 import com.universalmusic.player.platform.fetchLibrespotTrackRadio
 import com.universalmusic.player.platform.secureRandomBytes
@@ -61,6 +63,8 @@ private const val API = "https://api.spotify.com/v1"
 private const val PLAYLIST_PAGE_SIZE = 50
 private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
 private const val OBSERVE_RATE_LIMIT_DEFAULT_MS = 30_000L
+/** A start waits out a 429 at most this long once; a longer Retry-After pauses playback instead. */
+internal const val START_RATE_LIMIT_MAX_WAIT_MS = 5_000L
 private val SCOPES = listOf(
     "user-read-email",
     "user-read-private",
@@ -119,6 +123,13 @@ class SpotifyProvider(
             playbackDeviceId = value
             playbackReceiverGeneration = webPlayback.receiverGeneration
         }
+
+    /**
+     * The in-app receiver's Connect device id once a track started on it, for its receiver
+     * generation. Later starts send play straight to it, skipping the device poll and transfer.
+     */
+    private var knownReceiverDeviceId: String? = null
+    private var knownReceiverGeneration = 0L
 
     /** Receiver generation whose current track [webPlayback] loaded itself; null when Connect started it. */
     private var directPlaybackGeneration: Long? = null
@@ -253,6 +264,8 @@ class SpotifyProvider(
             tokens.clear(ProviderId.SPOTIFY)
         }
         authMutex.withLock { pendingLogin = null }
+        observeCooldownUntilMs = 0
+        knownReceiverDeviceId = null
         premium = false
         userId = null
         activePlaybackDeviceId = null
@@ -488,8 +501,11 @@ class SpotifyProvider(
         directPlaybackGeneration = null
         val token = accessToken()
         ensureWithinConnectDeadline(deadlineMs)
+        if (startOnKnownReceiver(token, spotifyTrackId, positionMs)) return
         val target = resolvePlaybackTarget(token, deadlineMs)
         val targetGeneration = webPlayback.receiverGeneration
+        // Finding the target may have refreshed a rejected token; the rest of the start uses the new one.
+        val playToken = accessToken()
         // #region agent log
         debugSpotifyLog(
             "H1",
@@ -503,10 +519,12 @@ class SpotifyProvider(
         )
         // #endregion
         if (!target.hasActiveDevice) {
-            val transfer = http.put("$API/me/player") {
-                bearerAuth(token)
-                contentType(ContentType.Application.Json)
-                setBody(SpotifyTransferRequest(deviceIds = listOf(target.deviceId), play = false))
+            val transfer = sendStartRequest(playToken) { current ->
+                http.put("$API/me/player") {
+                    bearerAuth(current)
+                    contentType(ContentType.Application.Json)
+                    setBody(SpotifyTransferRequest(deviceIds = listOf(target.deviceId), play = false))
+                }
             }
             // Transfer can 404 briefly after Spotify launches; play with device_id still retries activation.
             if (!transfer.status.isSuccess() && transfer.status.value != 404) {
@@ -515,12 +533,7 @@ class SpotifyProvider(
         }
         var lastError: String? = null
         repeat(3) { attempt ->
-            val response = http.put("$API/me/player/play") {
-                bearerAuth(token)
-                parameter("device_id", target.deviceId)
-                contentType(ContentType.Application.Json)
-                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId"), positionMs = positionMs.coerceAtLeast(0)))
-            }
+            val response = sendPlay(playToken, target.deviceId, spotifyTrackId, positionMs)
             if (response.status.isSuccess()) {
                 // #region agent log
                 debugSpotifyLog(
@@ -531,11 +544,15 @@ class SpotifyProvider(
                 )
                 // #endregion
                 if (requireExplicitPlaybackDevice) {
-                    confirmPlaybackOnTarget(token, target, spotifyTrackId)
+                    confirmPlaybackOnTarget(playToken, target, spotifyTrackId)
                 }
                 playbackTrackId = spotifyTrackId
                 activePlaybackDeviceId = target.deviceId
                 playbackReceiverGeneration = targetGeneration
+                if (target.kainosLocal && targetGeneration == webPlayback.receiverGeneration) {
+                    knownReceiverDeviceId = target.deviceId
+                    knownReceiverGeneration = targetGeneration
+                }
                 return
             }
             lastError = runCatching { response.bodyAsText() }.getOrNull()
@@ -553,6 +570,83 @@ class SpotifyProvider(
             delay(250L * (attempt + 1))
         }
         error("Spotify Connect playback failed${lastError?.let { ": $it" }.orEmpty()}")
+    }
+
+    /**
+     * The in-app receiver keeps its Connect device id while it runs, and a track already started on
+     * it, so play goes straight there: one Web API call per track instead of a device poll, a
+     * transfer and a play. False (after a 404, or with no known receiver) uses the full path.
+     */
+    private suspend fun startOnKnownReceiver(token: String, spotifyTrackId: String, positionMs: Long): Boolean {
+        if (requireExplicitPlaybackDevice) return false
+        val deviceId = knownReceiverDeviceId ?: return false
+        // A receiver that exited is restarted here; a restarted one has a new generation and must be found again.
+        val device = runCatching { webPlayback.ensureDeviceReady() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
+        val generation = webPlayback.receiverGeneration
+        if (device == null || generation != knownReceiverGeneration) {
+            knownReceiverDeviceId = null
+            return false
+        }
+        val response = sendPlay(token, deviceId, spotifyTrackId, positionMs)
+        if (generation != webPlayback.receiverGeneration) {
+            knownReceiverDeviceId = null
+            return false
+        }
+        if (response.status == HttpStatusCode.TooManyRequests) response.requireSuccess("Spotify Connect playback")
+        if (!response.status.isSuccess()) {
+            // 404 once the device is gone; a 5xx while Spotify lost it. The full path finds it again.
+            PlaybackTrace.log("Spotify", "known receiver answered ${response.status.value}; finding it again")
+            knownReceiverDeviceId = null
+            return false
+        }
+        playbackTrackId = spotifyTrackId
+        activePlaybackDeviceId = deviceId
+        return true
+    }
+
+    private suspend fun sendPlay(token: String, deviceId: String, spotifyTrackId: String, positionMs: Long) =
+        sendStartRequest(token) { current ->
+            http.put("$API/me/player/play") {
+                bearerAuth(current)
+                parameter("device_id", deviceId)
+                contentType(ContentType.Application.Json)
+                setBody(SpotifyPlayRequest(uris = listOf("spotify:track:$spotifyTrackId"), positionMs = positionMs.coerceAtLeast(0)))
+            }
+        }
+
+    /**
+     * One Web API call on the way to starting a track. A 401 refreshes the token once and resends.
+     * A 429 waits out a Retry-After of at most [START_RATE_LIMIT_MAX_WAIT_MS] once and resends; a
+     * longer one comes back as is, so the caller fails with [ProviderRateLimitedException].
+     */
+    private suspend fun sendStartRequest(token: String, send: suspend (token: String) -> HttpResponse): HttpResponse {
+        val generation = authGeneration
+        var current = token
+        var response = send(current)
+        check(generation == authGeneration) { "Spotify session changed during start" }
+        if (response.status == HttpStatusCode.Unauthorized) {
+            PlaybackTrace.log("Spotify", "Web API answered 401 while starting; refreshing the token once")
+            current = refreshRejectedToken(current)
+            response = send(current)
+        }
+        if (response.status == HttpStatusCode.TooManyRequests) {
+            val waitMs = response.retryAfterMsOrNull()
+            if (waitMs != null && waitMs <= START_RATE_LIMIT_MAX_WAIT_MS) {
+                PlaybackTrace.log("Spotify", "Web API answered 429 while starting; retrying once after $waitMs ms")
+                delay(waitMs)
+                check(generation == authGeneration) { "Spotify session changed during start" }
+                response = send(current)
+            }
+            check(generation == authGeneration) { "Spotify session changed during start" }
+            if (response.status == HttpStatusCode.TooManyRequests) {
+                // Observers and volume would hit the same limit; hold them until it lifts.
+                val cooldownMs = response.retryAfterMsOrNull() ?: OBSERVE_RATE_LIMIT_DEFAULT_MS
+                observeCooldownUntilMs = maxOf(observeCooldownUntilMs, clock() + cooldownMs)
+            }
+        }
+        return response
     }
 
     /**
@@ -767,7 +861,7 @@ class SpotifyProvider(
             .filter { !it.isRestricted && !it.id.isNullOrBlank() }
 
     private suspend fun fetchConnectDevices(token: String): List<SpotifyDevice> =
-        http.get("$API/me/player/devices") { bearerAuth(token) }
+        sendStartRequest(token) { current -> http.get("$API/me/player/devices") { bearerAuth(current) } }
             .successBody<SpotifyDevicesResponse>("Spotify devices")
             .devices
 
@@ -900,12 +994,31 @@ class SpotifyProvider(
         return scopes.isNotEmpty() && "streaming" !in scopes
     }
 
+    /**
+     * Spotify rejected [rejected] before its expiry (revoked, or a clock off by more than the
+     * margin). Refreshes it once, unless another call already replaced it.
+     */
+    private suspend fun refreshRejectedToken(rejected: String): String = mutex.withLock {
+        val generation = authGeneration
+        val stored = tokens.read(ProviderId.SPOTIFY) ?: error("Spotify is not connected")
+        if (stored.accessToken != rejected) return@withLock refreshIfNeeded(stored, generation).accessToken
+        if (stored.refreshToken.isNullOrBlank()) {
+            error("Spotify needs to be reconnected. Open Settings and connect Spotify again.")
+        }
+        refresh(stored, generation).accessToken
+    }
+
     /** Caller must hold [mutex]; [generation] is the [authGeneration] seen when the transaction began. */
     private suspend fun refreshIfNeeded(stored: AuthTokens, generation: Long): AuthTokens {
-        val refreshToken = stored.refreshToken
-        if (!stored.isExpired(clock()) || refreshToken.isNullOrBlank()) {
+        if (!stored.isExpired(clock()) || stored.refreshToken.isNullOrBlank()) {
             return stored
         }
+        return refresh(stored, generation)
+    }
+
+    /** Caller must hold [mutex]. [stored] must carry a refresh token. */
+    private suspend fun refresh(stored: AuthTokens, generation: Long): AuthTokens {
+        val refreshToken = checkNotNull(stored.refreshToken)
         val clientId = config.spotifyClientId ?: error("Spotify client ID is not configured")
         val tokenResponse = http.submitForm(
             url = TOKEN_URL,
@@ -1041,13 +1154,19 @@ private suspend fun HttpResponse.errorMessage(operation: String): Nothing {
     if (status.value == 429) {
         val retryAfter = headers[HttpHeaders.RetryAfter]
         val retryHint = retryAfter?.let(::spotifyRetryAfterHint).orEmpty()
-        if (detail != null && "QUOTA_EXCEEDED" in detail) {
-            error(SPOTIFY_QUOTA_MESSAGE + retryHint)
+        val message = if (detail != null && "QUOTA_EXCEEDED" in detail) {
+            SPOTIFY_QUOTA_MESSAGE + retryHint
+        } else {
+            "$operation was rate limited by Spotify.$retryHint"
         }
-        error("$operation was rate limited by Spotify.$retryHint")
+        throw ProviderRateLimitedException(message, retryAfterMsOrNull())
     }
     error("$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
 }
+
+/** Retry-After in ms (delta-seconds form); null when absent or not numeric. */
+private fun HttpResponse.retryAfterMsOrNull(): Long? =
+    headers[HttpHeaders.RetryAfter]?.trim()?.toLongOrNull()?.takeIf { it >= 0 }?.times(1_000)
 
 /** Retry-After in ms (delta-seconds form); [defaultMs] when absent or not numeric. */
 private fun HttpResponse.retryAfterMs(defaultMs: Long): Long {
