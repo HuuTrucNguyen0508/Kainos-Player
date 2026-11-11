@@ -63,17 +63,54 @@ object DuplicateTracks {
         val keeperOf = HashMap<String, String>()
         for (bucket in buckets.values) {
             if (bucket.size < 2 || bucket.map { it.second }.distinct().size < 2) continue
-            // Keepers are chosen in keep order so a local file is never hidden behind a stream.
-            val keepers = mutableListOf<Pair<Track, Origin>>()
-            for (candidate in bucket.distinctBy { it.first.canonicalId }.sortedBy { it.second.ordinal }) {
-                val (track, origin) = candidate
-                val keeper = keepers.firstOrNull { (kept, keptOrigin) ->
-                    keptOrigin != origin && durationsAgree(kept.durationMs, track.durationMs)
+            val indexes = Origin.entries.associateWith { DurationIndex() }
+            val candidates = bucket.distinctBy { it.first.canonicalId }
+            // Three source passes preserve preference without sorting or scanning prior keepers.
+            for (origin in Origin.entries) {
+                for ((track, source) in candidates) {
+                    if (source != origin) continue
+                    val keeper = Origin.entries.asSequence()
+                        .filter { it != origin }
+                        .mapNotNull { indexes.getValue(it).find(track.durationMs) }
+                        .firstOrNull()
+                    if (keeper == null) indexes.getValue(origin).add(track)
+                    else keeperOf[track.canonicalId] = keeper.canonicalId
                 }
-                if (keeper == null) keepers += candidate else keeperOf[track.canonicalId] = keeper.first.canonicalId
             }
         }
         return DuplicateGroups(keeperOf)
+    }
+
+    /** Each bucket spans at most the tolerance. Only its extremes can be closest from outside. */
+    private class DurationIndex {
+        private data class Range(var min: Track, var max: Track)
+        private val buckets = HashMap<Long, Range>()
+        private var first: Track? = null
+        private var unknown: Track? = null
+
+        fun add(track: Track) {
+            if (first == null) first = track
+            val duration = track.durationMs
+            if (duration == null || duration <= 0) {
+                if (unknown == null) unknown = track
+                return
+            }
+            val range = buckets.getOrPut(duration / (DURATION_TOLERANCE_MS + 1)) { Range(track, track) }
+            if (duration < range.min.durationMs!!) range.min = track
+            if (duration > range.max.durationMs!!) range.max = track
+        }
+
+        fun find(duration: Long?): Track? {
+            if (duration == null || duration <= 0) return first
+            unknown?.let { return it }
+            val bucket = duration / (DURATION_TOLERANCE_MS + 1)
+            for (key in bucket - 1..bucket + 1) {
+                val range = buckets[key] ?: continue
+                if (durationsAgree(duration, range.min.durationMs)) return range.min
+                if (durationsAgree(duration, range.max.durationMs)) return range.max
+            }
+            return null
+        }
     }
 
     private fun durationsAgree(a: Long?, b: Long?): Boolean {
@@ -86,7 +123,7 @@ object DuplicateTracks {
     private val bracketed = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     /** "Song - Live at Wembley": Spotify and YouTube put version notes after a spaced dash. */
     private val dashSuffix = Regex("""\s+[-–—]\s+""")
-    private val featuringWords = Regex("""^(feat|ft|featuring|with)\b""")
+    private val featuringWords = Regex("""^(feat|ft|featuring)\b""")
     private val trailingFeaturing = Regex("""(?i)\s+(feat\.?|ft\.|featuring)\s+.*$""")
     private val ignorableNotes = listOf(
         // Remasters are the same recording.

@@ -106,6 +106,21 @@ class DuplicateTracksTest {
         assertEquals(0, groups.hiddenCount)
     }
 
+    @Test
+    fun instrumentationWithIsNotAFeaturingCredit() {
+        assertFalse(DuplicateTracks.sameRecording(
+            local("Song (With Strings)", "Band", 200_000),
+            spotify("Song", listOf("Band"), 200_000),
+        ))
+    }
+
+    @Test
+    fun versionWordsMustBeWholeWords() {
+        assertTrue(TrackNormalizer.extractVersionTokens("Deliver Discovery Demolition Mixed", "Olive").isEmpty())
+        assertEquals(setOf("live", "radio edit", "edit"),
+            TrackNormalizer.extractVersionTokens("Song (Live) - Radio Edit"))
+    }
+
     private fun local(title: String, artist: String, durationMs: Long?, id: String = "local:$title") =
         Track(id, title, listOfNotNull(artist.takeIf { it.isNotEmpty() }?.let { ArtistRef("local-artist:$it", it) }), durationMs = durationMs)
 

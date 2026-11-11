@@ -13,7 +13,7 @@ data class NormalizedTrack(
 
 object TrackNormalizer {
     private val featuringPattern = Regex(
-        """(?i)\s*[\(\[]?\s*(feat\.|ft\.|featuring|with)\s+[^)\]]+[)\]]?"""
+        """(?i)\s*[\(\[]?\s*(feat\.|ft\.|featuring)\s+[^)\]]+[)\]]?"""
     )
     private val punctuationPattern = Regex("""[^\p{L}\p{N}\s]""")
     private val whitespacePattern = Regex("""\s+""")
@@ -77,9 +77,9 @@ object TrackNormalizer {
         featuringPattern.replace(value, " ").trim()
 
     fun extractVersionTokens(title: String, albumTitle: String? = null): Set<String> {
-        val haystack = listOfNotNull(title, albumTitle).joinToString(" ").lowercase()
+        val haystack = " ${fold(listOfNotNull(title, albumTitle).joinToString(" "))} "
         return versionPatterns.filter { token ->
-            haystack.contains(token)
+            haystack.contains(" $token ")
         }.toSet()
     }
 
