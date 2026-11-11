@@ -90,6 +90,30 @@ class PlayerSessionGaplessTest {
         assertEquals(1, engine.starts)
     }
 
+    @Test fun cachedYoutubeSuccessorJoinsGaplesslyFromALocalFile() = runTest {
+        val engine = Engine()
+        // Data API search results carry no quality until resolved.
+        val cached = track("Cached", "Artist", provider = ProviderId.YOUTUBE_MUSIC).let { t ->
+            t.copy(sources = t.sources.map { it.copy(quality = null) })
+        }
+        val file = "file:/cache/audio/abc.webm"
+        // The hearted-audio cache attaches its file only when the track is prepared, as in the app.
+        val attachCache: (Track) -> Track = { t ->
+            if (t.canonicalId != cached.canonicalId) t else t.copy(sources = listOf(
+                PlaybackSource(ProviderId.LOCAL, "hearted-yt:abc", file, AudioQuality(QualityTier.STANDARD, "opus", 137),
+                    isPlayable = true, handle = PlaybackHandle.Url(file)),
+            ) + t.sources)
+        }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope, prepareTrack = attachCache)
+        session.play(listOf(local("A"), cached))
+        runCurrent()
+        assertEquals(file, assertNotNull(engine.next).handle.url)
+        engine.switch()
+        runCurrent()
+        assertEquals("Cached", session.nowPlaying.value.track?.title)
+        assertEquals(1, engine.starts)
+    }
+
     @Test fun replacesNextForQueueEditsRepeatAndDisablesForGateAndPreference() = runTest {
         val engine = Engine()
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
