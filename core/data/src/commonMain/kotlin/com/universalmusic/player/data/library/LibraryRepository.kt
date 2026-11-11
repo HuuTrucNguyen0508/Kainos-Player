@@ -34,6 +34,7 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.model.AlbumRef
 import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -211,6 +212,26 @@ class LibraryRepository(
         }
         if (changed) schedulePersist()
         return changed
+    }
+
+    /** A guessed album may split into several real tagged albums. Keep all of them pinned. */
+    fun remapLocalAlbumPins(replacements: Map<String, List<AlbumRef>>) {
+        if (replacements.isEmpty()) return
+        var changed = false
+        updatePins { state ->
+            val pins = state.pins.flatMap { pin ->
+                val albums = if (pin.kind == HomePinKind.ALBUM) replacements[pin.targetId] else null
+                if (albums.isNullOrEmpty()) listOf(pin) else {
+                    albums.mapIndexed { index, album ->
+                        pin.copy(id = if (index == 0) pin.id else newHomePinId(), targetId = album.canonicalId,
+                            title = album.title, artworkUrl = album.artwork?.url ?: pin.artworkUrl)
+                    }
+                }
+            }.migratedHomePins()
+            changed = pins != state.pins
+            state.copy(pins = pins)
+        }
+        if (changed) schedulePersist()
     }
 
     fun toggleFavorite(track: Track): Boolean {

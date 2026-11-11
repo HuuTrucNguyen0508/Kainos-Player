@@ -57,7 +57,8 @@ class JvmLocalTrackSource(
                     fingerprint.sizeBytes != null &&
                     fingerprint.modifiedEpochMs != null &&
                     cached.contentLength == fingerprint.sizeBytes &&
-                    cached.fileModifiedEpochMs == fingerprint.modifiedEpochMs
+                    cached.fileModifiedEpochMs == fingerprint.modifiedEpochMs &&
+                    cached.tagsRead
                 ) {
                     reused++
                     if (cached.contentKey == null) cached.copy(contentKey = file.readLocalContentKey()) else cached
@@ -162,50 +163,25 @@ private fun Path.fingerprintOrNull(): FileFingerprint? {
 
 private fun Path.toLocalTrack(root: Path, fingerprint: FileFingerprint? = fingerprintOrNull()): LocalTrack {
     val relative = runCatching { root.relativize(this) }.getOrElse { fileName }
-    val stem = fileName.toString().substringBeforeLast('.', fileName.toString())
-    val cleanedStem = stem.withoutTrackNumber().humanized()
-    val artistTitleSeparator = cleanedStem.indexOf(" - ")
-    val filenameArtist = cleanedStem
-        .takeIf { artistTitleSeparator > 0 }
-        ?.substring(0, artistTitleSeparator)
-        ?.humanized()
-        ?.takeIf(String::isNotEmpty)
-    val pathTitle = cleanedStem
-        .substring(if (artistTitleSeparator > 0) artistTitleSeparator + 3 else 0)
-        .withoutTrackNumber()
-        .humanized()
-        .ifEmpty { stem.humanized() }
+    val guessed = filenameTags(fileName.toString())
     val directoryArtist = relative.directoryPartFromEnd(2)
     val directoryAlbum = relative.directoryPartFromEnd(1)
     val extension = audioExtension() ?: error("Unsupported local audio file: $this")
-    val fallbackQuality = extension.toQuality()
-    val parent = parent
-    val albumGroupKey = (parent ?: this).toAbsolutePath().normalize().toString()
-    val probed = probeLocalAudioMetadata(this, fallbackQuality)
-    val title = probed.title?.takeIf { it.isNotBlank() } ?: pathTitle
-    val artists = when {
-        !probed.artists.isNullOrEmpty() -> probed.artists
-        filenameArtist != null -> listOf(filenameArtist)
-        directoryArtist != null -> listOf(directoryArtist)
-        else -> emptyList()
-    }
-    val album = probed.album?.takeIf { it.isNotBlank() } ?: directoryAlbum
-    val artworkUri = resolveLocalArtworkUri(this, probed.embeddedArtworkPath)
+    val probed = probeLocalAudioMetadata(this, extension.toQuality())
 
     return LocalTrack(
         id = stableId(this),
-        title = title,
-        artists = artists,
-        album = album,
-        albumGroupKey = albumGroupKey,
+        title = guessed.title,
+        artists = listOfNotNull(guessed.artist ?: directoryArtist),
+        album = directoryAlbum,
+        albumGroupKey = (parent ?: this).toAbsolutePath().normalize().toString(),
         location = fingerprint?.location ?: toUri().toASCIIString(),
         contentLength = fingerprint?.sizeBytes,
         fileModifiedEpochMs = fingerprint?.modifiedEpochMs,
-        artworkUri = artworkUri,
+        artworkUri = resolveLocalArtworkUri(this, probed.embeddedArtworkPath),
         quality = probed.quality,
-        durationMs = probed.durationMs,
         contentKey = readLocalContentKey(),
-    )
+    ).withTags(probed.tags)
 }
 
 private fun Path.directoryPartFromEnd(offset: Int): String? {
@@ -247,13 +223,10 @@ private fun String.toQuality(): AudioQuality = AudioQuality(
     },
 )
 
-private fun String.withoutTrackNumber(): String = replace(TRACK_NUMBER_PREFIX, "")
-
 private fun String.humanized(): String = replace('_', ' ')
     .replace(REPEATED_WHITESPACE, " ")
     .trim()
 
-private val TRACK_NUMBER_PREFIX = Regex("""^\s*(?:(?:\d{1,2}(?:-\d{1,2})?)[\s._-]+)+""")
 private val REPEATED_WHITESPACE = Regex("""\s+""")
 
 private val LOSSLESS_AUDIO_EXTENSIONS = setOf("aif", "aiff", "alac", "flac", "wav", "wave")

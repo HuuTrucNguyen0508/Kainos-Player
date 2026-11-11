@@ -5,6 +5,8 @@ data class AlbumRef(
     val title: String,
     val artwork: Artwork? = null,
     val year: Int? = null,
+    /** Album artist when the source names one; empty means use the tracks' artists. */
+    val artists: List<ArtistRef> = emptyList(),
 )
 
 data class Album(

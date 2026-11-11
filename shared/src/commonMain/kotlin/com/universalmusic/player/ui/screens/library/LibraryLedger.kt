@@ -301,6 +301,10 @@ private fun TrackSort.label(): String = when (this) {
     TrackSort.NAME_DESCENDING -> "Name Z to A"
     TrackSort.DURATION_ASCENDING -> "Duration shortest first"
     TrackSort.DURATION_DESCENDING -> "Duration longest first"
+    TrackSort.ARTIST_ASCENDING -> "Artist A to Z"
+    TrackSort.ALBUM_ASCENDING -> "Album A to Z"
+    TrackSort.YEAR_DESCENDING -> "Year newest first"
+    TrackSort.RECENTLY_ADDED -> "Recently added"
 }
 
 internal fun TrackSort.shortLabel(): String = when (this) {
@@ -308,4 +312,8 @@ internal fun TrackSort.shortLabel(): String = when (this) {
     TrackSort.NAME_DESCENDING -> "Z to A"
     TrackSort.DURATION_ASCENDING -> "Shortest"
     TrackSort.DURATION_DESCENDING -> "Longest"
+    TrackSort.ARTIST_ASCENDING -> "Artist"
+    TrackSort.ALBUM_ASCENDING -> "Album"
+    TrackSort.YEAR_DESCENDING -> "Year"
+    TrackSort.RECENTLY_ADDED -> "Recent"
 }

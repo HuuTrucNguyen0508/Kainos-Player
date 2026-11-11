@@ -11,9 +11,11 @@ import com.universalmusic.player.data.library.PersistedSource
 import com.universalmusic.player.data.library.PersistedTrack
 import com.universalmusic.player.data.library.USER_LIBRARY_FORMAT_VERSION
 import com.universalmusic.player.data.library.UserLibrarySnapshot
+import com.universalmusic.player.data.local.LOCAL_TAGS_VERSION
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.local.StoredLocalTrack
 import com.universalmusic.player.data.local.toLocalTrackOrNull
+import com.universalmusic.player.data.local.toStored
 import com.universalmusic.player.data.playlist.KainosPlaylistsSnapshot
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.playlist.PersistedPlaylistEntry
@@ -280,6 +282,45 @@ class DatabaseRoundTripTest {
             assertEquals(0L, driver.count("listening_delivery"))
             assertEquals(0L, driver.count("listening_refusal"))
             driver.close()
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migrationFromSchemaNineKeepsScanRowsAsUnreadTagsAndThenStoresTags() {
+        val directory = Files.createTempDirectory("kainos-v9-v10-migration")
+        try {
+            val path = directory.resolve("kainos.db")
+            javaClass.getResourceAsStream("/9.db")!!.use { Files.copy(it, path) }
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+                val scanned = LocalTrack(
+                    "saf", "RuLe", artists = listOf("Ado"), album = "Downloads", location = "content://tree/document/rule.flac",
+                    contentLength = 10, fileModifiedEpochMs = 20, contentKey = "lc1:" + "c".repeat(64),
+                )
+                val json = storageJson.encodeToString(scanned.toStored())
+                listOf(
+                    "INSERT INTO local_scan VALUES ('folders', 1)",
+                    "INSERT INTO local_track VALUES (0, 'saf', '${scanned.location}', 10, 20, '${scanned.contentKey}', '$json')",
+                ).forEach { driver.execute(null, it, 0) }
+
+                KainosDatabase.Schema.migrate(driver, 9, KainosDatabase.Schema.version)
+                val db = KainosDatabase(driver)
+                assertEquals(listOf(scanned), db.readLocalScan("folders"))
+
+                val tagged = scanned.copy(
+                    album = "Kyogen", albumArtist = "Ado", trackNumber = 4, discNumber = 1, year = 2022, genre = "J-Pop",
+                    tagsVersion = LOCAL_TAGS_VERSION,
+                    previousAlbumIds = listOf("local-album:ado|downloads|abc"),
+                )
+                db.writeLocalScan("folders", listOf(tagged), 2)
+                assertEquals(listOf(tagged), db.readLocalScan("folders"))
+                assertEquals(
+                    listOf("Ado", 4L, 1L, 2022L, "J-Pop", 1L),
+                    driver.row("SELECT album_artist, track_number, disc_number, release_year, genre, tags_version FROM local_track"),
+                )
+                assertEquals(listOf("ok"), driver.row("SELECT * FROM pragma_integrity_check"))
+            }
         } finally {
             directory.toFile().deleteRecursively()
         }
@@ -858,7 +899,7 @@ private fun SqlDriver.seedPreHs5Data(heartOpColumns: String) {
 
 private fun SqlDriver.assertMigratedPreHs5Data() {
     val db = KainosDatabase(this)
-    assertEquals(9L, KainosDatabase.Schema.version)
+    assertEquals(10L, KainosDatabase.Schema.version)
     assertEquals(listOf("ok"), row("SELECT * FROM pragma_integrity_check"))
     assertEquals(0L, row("SELECT count(*) FROM pragma_foreign_key_check").single())
     assertEquals(

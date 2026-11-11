@@ -778,6 +778,35 @@ class PlayerSession(
         }
     }
 
+    /**
+     * Late-arriving file tags (Android reads a local file's tags on first play). Only touches
+     * the track that is still current, keeps its sources, artwork and duration, and replaces
+     * the title, artists, album and album position the filename had to guess.
+     */
+    fun updateCurrentTrackTags(tagged: Track) = onSession {
+        val current = _nowPlaying.value.track ?: return@onSession
+        if (current.canonicalId != tagged.canonicalId) return@onSession
+        val updated = current.copy(
+            title = tagged.title,
+            artists = tagged.artists,
+            album = tagged.album?.let { album ->
+                album.copy(artwork = current.album?.artwork ?: album.artwork ?: current.artwork)
+            },
+            durationMs = current.durationMs ?: tagged.durationMs,
+            trackNumber = tagged.trackNumber,
+            discNumber = tagged.discNumber,
+            year = tagged.year,
+            genre = tagged.genre,
+        )
+        if (updated == current) return@onSession
+        _nowPlaying.update { state ->
+            if (state.track?.canonicalId == tagged.canonicalId) state.copy(track = updated) else state
+        }
+        if (queue.queue.value.current?.track?.canonicalId == tagged.canonicalId) {
+            queue.replaceCurrentTrack(updated)
+        }
+    }
+
     /** A fresh user play request: drop any restore seek and the failure-skip history. */
     private fun beginUserPlay() {
         pendingResumePositionMs = null

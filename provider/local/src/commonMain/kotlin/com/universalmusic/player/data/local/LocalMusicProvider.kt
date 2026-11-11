@@ -32,6 +32,8 @@ class LocalMusicProvider(
     private val configKey: () -> String = { "" },
     private val embeddedArtwork: LocalEmbeddedArtworkExtractor? = null,
     private val contentKeyReader: LocalContentKeyReader? = null,
+    private val tagReader: LocalTagReader? = null,
+    private val onAlbumsRekeyed: (Map<String, List<AlbumRef>>) -> Unit = {},
 ) : MusicProvider {
     override val providerId: ProviderId = ProviderId.LOCAL
 
@@ -71,6 +73,11 @@ class LocalMusicProvider(
         scanned.value = next
         val tracks = next.map(LocalTrack::toDomain)
         mutableLibraryTracks.value = tracks
+        val liveAlbums = tracks.mapNotNull { it.album }.associateBy { it.canonicalId }
+        val aliases = next.zip(tracks).flatMap { (row, track) ->
+            row.previousAlbumIds.mapNotNull { old -> track.album?.let { old to it } }
+        }.groupBy({ it.first }, { it.second }).mapValues { (old, albums) -> (albums + listOfNotNull(liveAlbums[old])).distinctBy { it.canonicalId } }
+        onAlbumsRekeyed(aliases)
         mutableRecentlyAdded.value = next.indices
             .mapNotNull { i -> next[i].fileModifiedEpochMs?.let { AddedTrack(tracks[i], it) } }
             .sortedByDescending(AddedTrack::addedAtMs)
@@ -170,6 +177,72 @@ class LocalMusicProvider(
         if (pending.isNotEmpty()) PlaybackTrace.log("ContentKey", "complete attempted=$attempted keyed=$keyed finalBatchMs=${currentTimeMillis() - batchStarted}")
     }
 
+    /** True when [track] is a library file whose tags have not been read yet. */
+    fun needsTags(track: Track): Boolean {
+        if (tagReader == null) return false
+        val id = track.sourceFor(ProviderId.LOCAL)?.providerTrackId ?: return false
+        return scanned.value.firstOrNull { it.id == id }?.tagsRead == false
+    }
+
+    /**
+     * Read the tags of the file behind [track] now (first play), update the library list and the
+     * scan cache, and return the track as the library now shows it, including already-read tags.
+     */
+    suspend fun resolveTags(track: Track): Track? {
+        val reader = tagReader ?: return null
+        val id = track.sourceFor(ProviderId.LOCAL)?.providerTrackId ?: return null
+        val pending = scanned.value.firstOrNull { it.id == id } ?: return null
+        if (pending.tagsRead) return mutableLibraryTracks.value.firstOrNull { it.canonicalId == track.canonicalId }
+        val tags = reader.read(pending.location) ?: return null
+        currentCoroutineContext().ensureActive()
+        applyTags(mapOf(pending to tags))
+        persistScanned()
+        return mutableLibraryTracks.value.firstOrNull { it.canonicalId == track.canonicalId }
+    }
+
+    /**
+     * Background pass over files whose tags were never read. Sequential and cancellable, like the
+     * artwork pass; publishes and persists every [PERSIST_EVERY] files so the list does not
+     * rebuild for each one.
+     */
+    suspend fun enrichTags() {
+        val reader = tagReader ?: return
+        val pending = scanned.value.filter { !it.tagsRead }
+        if (pending.isEmpty()) return
+        val batch = linkedMapOf<LocalTrack, LocalTags>()
+        suspend fun flush() {
+            if (batch.isNotEmpty() && applyTags(batch)) persistScanned()
+            batch.clear()
+        }
+        for (track in pending) {
+            currentCoroutineContext().ensureActive()
+            val tags = runCatching { reader.read(track.location) }
+                .getOrElse { if (it is CancellationException) throw it else null }
+                ?: continue
+            currentCoroutineContext().ensureActive()
+            batch[track] = tags
+            if (batch.size >= PERSIST_EVERY) flush()
+        }
+        flush()
+    }
+
+    /** Applies tags only to rows still describing the same unread file the reader opened. */
+    private fun applyTags(read: Map<LocalTrack, LocalTags>): Boolean {
+        val byId = read.entries.associateBy { it.key.id }
+        var changed = false
+        val next = scanned.value.map { current ->
+            val (opened, tags) = byId[current.id] ?: return@map current
+            if (current.tagsRead || current.location != opened.location ||
+                current.contentLength != opened.contentLength ||
+                current.fileModifiedEpochMs != opened.fileModifiedEpochMs
+            ) return@map current
+            changed = true
+            current.withTags(tags)
+        }
+        if (changed) show(next)
+        return changed
+    }
+
     private fun applyEmbeddedArtwork(trackId: String, uri: String): Boolean {
         var changed = false
         val next = scanned.value.map { track ->
@@ -207,10 +280,11 @@ class LocalMusicProvider(
             val previousById = previous.associateBy(LocalTrack::id)
             val raw = result.tracks.map { track ->
                 val old = previousById[track.id]?.takeIf { it.location == track.location }
-                if (track.contentKey == null && old?.contentKey != null &&
+                val keyed = if (track.contentKey == null && old?.contentKey != null &&
                     track.contentLength != null && track.fileModifiedEpochMs != null &&
                     track.contentLength == old.contentLength && track.fileModifiedEpochMs == old.fileModifiedEpochMs
                 ) track.copy(contentKey = old.contentKey) else track
+                keyed.withTagsCarriedFrom(old).withAlbumIdentityFrom(old)
             }
             raw.distinctBy(LocalTrack::id)
                 .let(::publish)
@@ -304,9 +378,13 @@ private fun LocalTrack.toDomain(): Track {
         ?.takeIf(String::isNotBlank)
         ?.let {
             AlbumRef(
-                canonicalId = localAlbumCanonicalId(it, artists, albumGroupKey),
+                canonicalId = localAlbumCanonicalId(it, albumArtists, albumGroupKey),
                 title = it,
                 artwork = artwork,
+                year = year,
+                artists = splitTagArtists(albumArtist).map { name ->
+                    ArtistRef(canonicalId = localArtistCanonicalId(name), name = name)
+                },
             )
         }
     val localSource = PlaybackSource(
@@ -328,6 +406,11 @@ private fun LocalTrack.toDomain(): Track {
         isrc = isrc,
         sources = listOf(localSource),
         localContentKey = contentKey,
+        trackNumber = trackNumber,
+        discNumber = discNumber,
+        year = year,
+        genre = genre,
+        addedAtMs = fileModifiedEpochMs,
     )
 }
 

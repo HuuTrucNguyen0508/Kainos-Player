@@ -29,10 +29,7 @@ private data class ProbeCacheKey(
 
 private data class ProbeCacheEntry(
     val quality: AudioQuality,
-    val title: String?,
-    val artists: List<String>?,
-    val album: String?,
-    val durationMs: Long?,
+    val tags: LocalTags,
     val hasAttachedPicture: Boolean,
 )
 
@@ -40,10 +37,8 @@ private val probeCache = ConcurrentHashMap<ProbeCacheKey, ProbeCacheEntry>()
 
 internal data class LocalAudioProbeResult(
     val quality: AudioQuality,
-    val title: String? = null,
-    val artists: List<String>? = null,
-    val album: String? = null,
-    val durationMs: Long? = null,
+    /** Empty when ffprobe could not read the file. */
+    val tags: LocalTags = LocalTags(),
     val embeddedArtworkPath: Path? = null,
 )
 
@@ -54,42 +49,15 @@ internal fun probeLocalAudioMetadata(path: Path, fallback: AudioQuality): LocalA
     val mtime = runCatching { Files.getLastModifiedTime(absolute).toMillis() }.getOrNull()
         ?: return LocalAudioProbeResult(fallback)
     val key = ProbeCacheKey(absolute.toString(), size, mtime)
-    probeCache[key]?.let { cached ->
-        return LocalAudioProbeResult(
-            quality = cached.quality,
-            title = cached.title,
-            artists = cached.artists,
-            album = cached.album,
-            durationMs = cached.durationMs,
-            embeddedArtworkPath = if (cached.hasAttachedPicture) {
-                extractEmbeddedArtwork(absolute, size, mtime)
-            } else {
-                null
-            },
-        )
+    val entry = probeCache[key] ?: run {
+        val output = runFfprobe(absolute) ?: return LocalAudioProbeResult(fallback)
+        val parsed = parseFfprobeMetadata(output, fallback)
+        ProbeCacheEntry(parsed.quality, parsed.tags, parsed.hasAttachedPicture).also { probeCache[key] = it }
     }
-
-    val output = runFfprobe(absolute) ?: return LocalAudioProbeResult(fallback)
-    val parsed = parseFfprobeMetadata(output, fallback)
-    probeCache[key] = ProbeCacheEntry(
-        quality = parsed.quality,
-        title = parsed.title,
-        artists = parsed.artists,
-        album = parsed.album,
-        durationMs = parsed.durationMs,
-        hasAttachedPicture = parsed.hasAttachedPicture,
-    )
     return LocalAudioProbeResult(
-        quality = parsed.quality,
-        title = parsed.title,
-        artists = parsed.artists,
-        album = parsed.album,
-        durationMs = parsed.durationMs,
-        embeddedArtworkPath = if (parsed.hasAttachedPicture) {
-            extractEmbeddedArtwork(absolute, size, mtime)
-        } else {
-            null
-        },
+        quality = entry.quality,
+        tags = entry.tags,
+        embeddedArtworkPath = if (entry.hasAttachedPicture) extractEmbeddedArtwork(absolute, size, mtime) else null,
     )
 }
 
@@ -101,10 +69,7 @@ internal fun parseFfprobeQuality(rawJson: String, fallback: AudioQuality): Audio
 
 internal data class ParsedFfprobeMetadata(
     val quality: AudioQuality,
-    val title: String? = null,
-    val artists: List<String>? = null,
-    val album: String? = null,
-    val durationMs: Long? = null,
+    val tags: LocalTags = LocalTags(),
     val hasAttachedPicture: Boolean = false,
 )
 
@@ -122,15 +87,6 @@ internal fun parseFfprobeMetadata(rawJson: String, fallback: AudioQuality): Pars
         ?.div(1000)
         ?.toInt()
     val codec = stream?.codecName?.trim()?.takeIf { it.isNotEmpty() } ?: fallback.codec
-    val tags = root.format?.tags
-    val title = tags?.title?.trim()?.takeIf { it.isNotEmpty() }
-    val album = tags?.album?.trim()?.takeIf { it.isNotEmpty() }
-    val artistRaw = tags?.albumArtist?.takeIf { it.isNotBlank() } ?: tags?.artist
-    val artists = artistRaw
-        ?.split(';')
-        ?.map { it.trim() }
-        ?.filter { it.isNotEmpty() }
-        ?.takeIf { it.isNotEmpty() }
     val durationMs = root.format?.duration
         ?.toDoubleOrNull()
         ?.times(1000.0)
@@ -151,11 +107,36 @@ internal fun parseFfprobeMetadata(rawJson: String, fallback: AudioQuality): Pars
             bitDepth = bitDepth ?: fallback.bitDepth,
             confidence = if (measured) QualityConfidence.VERIFIED else fallback.confidence,
         ),
-        title = title,
-        artists = artists,
-        album = album,
-        durationMs = durationMs,
+        tags = ffprobeTags(root, stream).toLocalTags(durationMs),
         hasAttachedPicture = hasPicture,
+    )
+}
+
+/**
+ * Tag keys keep the container's spelling: FLAC/Vorbis come back upper case (`TITLE`, `ALBUM`),
+ * ID3 and MP4 lower case, and Ogg/Opus put them on the audio stream instead of the format.
+ * Keys are folded to lower case; format tags win over stream tags.
+ */
+private fun ffprobeTags(root: FfprobeRoot, stream: FfprobeStream?): Map<String, String> {
+    val merged = linkedMapOf<String, String>()
+    for (source in listOf(stream?.tags, root.format?.tags)) {
+        source?.forEach { (key, value) -> cleanTagText(value)?.let { merged[key.lowercase()] = it } }
+    }
+    return merged
+}
+
+private fun Map<String, String>.toLocalTags(durationMs: Long?): LocalTags {
+    fun first(vararg keys: String) = keys.firstNotNullOfOrNull(::get)
+    return LocalTags(
+        title = first("title"),
+        artists = splitTagArtists(first("artist")),
+        album = first("album"),
+        albumArtist = first("album_artist", "albumartist", "album artist"),
+        trackNumber = parseTagPosition(first("track", "tracknumber")),
+        discNumber = parseTagPosition(first("disc", "discnumber")),
+        year = parseTagYear(first("date", "year", "originaldate")),
+        genre = first("genre"),
+        durationMs = durationMs,
     )
 }
 
@@ -211,7 +192,7 @@ private fun runFfprobe(path: Path): String? {
             "-show_entries",
             "stream=codec_name,codec_type,sample_rate,bits_per_raw_sample,bits_per_sample,bit_rate:" +
                 "stream_disposition=attached_pic:" +
-                "format=duration:format_tags=title,artist,album,album_artist",
+                "format=duration:format_tags=$FFPROBE_TAGS:stream_tags=$FFPROBE_TAGS",
             "-of", "json",
             path.toAbsolutePath().normalize().toString(),
         ).readOutputWithin(3_000)
@@ -268,16 +249,12 @@ private data class FfprobeRoot(
 @Serializable
 private data class FfprobeFormat(
     val duration: String? = null,
-    val tags: FfprobeTags? = null,
+    val tags: Map<String, String>? = null,
 )
 
-@Serializable
-private data class FfprobeTags(
-    val title: String? = null,
-    val artist: String? = null,
-    val album: String? = null,
-    @SerialName("album_artist") val albumArtist: String? = null,
-)
+/** ffprobe matches these case-insensitively. */
+private const val FFPROBE_TAGS =
+    "title,artist,album,album_artist,albumartist,track,tracknumber,disc,discnumber,date,year,originaldate,genre"
 
 @Serializable
 private data class FfprobeStream(
@@ -288,6 +265,7 @@ private data class FfprobeStream(
     @SerialName("bits_per_sample") val bitsPerSample: JsonElement? = null,
     @SerialName("bit_rate") val bitRate: JsonElement? = null,
     val disposition: FfprobeDisposition? = null,
+    val tags: Map<String, String>? = null,
 )
 
 @Serializable
