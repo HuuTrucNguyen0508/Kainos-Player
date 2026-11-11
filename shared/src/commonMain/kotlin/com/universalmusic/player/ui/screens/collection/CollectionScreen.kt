@@ -71,6 +71,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
+import com.universalmusic.player.data.playlist.PlaylistEntryAvailability
+import com.universalmusic.player.data.playlist.playlistEntryAvailability
 import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
@@ -341,6 +343,15 @@ private fun PlaylistEditControls(track: Track, index: () -> Int, rowHeightPx: ()
     var dragDy by remember { mutableFloatStateOf(0f) }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 40.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // A synced entry whose file is not on this device stays listed, and says so.
+            if (playlistEntryAvailability(track) == PlaylistEntryAvailability.MISSING_LOCAL) {
+                Text(
+                    "Missing file",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
             Box(
                 Modifier
                     .size(40.dp)
