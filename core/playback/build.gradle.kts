@@ -4,7 +4,7 @@ plugins {
 
 kotlin {
     androidLibrary {
-        withHostTestBuilder {}.configure { isIncludeAndroidResources = true }
+        withHostTestBuilder {}.configure { isIncludeAndroidResources = true; isReturnDefaultValues = true }
     }
     sourceSets {
         getByName("androidHostTest").dependencies {

@@ -118,24 +118,5 @@ class HubOwnership(
     }
 }
 
-/**
- * Exit status of a `--hub-only` process that is not serving. Zero means another process already
- * serves this hub (the GUI holds the owner lock, or something else holds the port), so systemd's
- * `Restart=on-failure` must leave it alone: restarting cannot help until that process quits, and
- * the GUI restarts the service itself when it closes. Anything else is a real failure.
- */
-fun hubOnlyExitStatus(ownerLockAcquired: Boolean, port: Int): Int = when {
-    !ownerLockAcquired -> 0
-    tcpPortHeld(port) -> 0
-    else -> 1
-}
-
-private fun tcpPortHeld(port: Int): Boolean = try {
-    java.net.ServerSocket().use { socket ->
-        socket.reuseAddress = true
-        socket.bind(java.net.InetSocketAddress(port))
-    }
-    false
-} catch (_: java.net.BindException) {
-    true
-}
+/** Only contention on our data-directory owner lock is a successful handoff. */
+fun hubOnlyExitStatus(ownerLockAcquired: Boolean): Int = if (ownerLockAcquired) 1 else 0

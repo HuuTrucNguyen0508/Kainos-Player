@@ -99,6 +99,20 @@ class AndroidPlaybackEngineTransitionTest {
         assertNotEquals(Player.STATE_IDLE, exo.playbackState)
     }
 
+    @Test fun controllerPlayCannotReviveAnItemRetainedAcrossFailedEntries() {
+        playUrl("first", 1)
+        transition()
+        transition()
+        forwarding.playWhenReady = false
+        assertEquals(false, exo.playWhenReady)
+        forwarding.play()
+        assertEquals(false, exo.playWhenReady)
+        forwarding.playWhenReady = true
+        assertEquals(false, exo.playWhenReady)
+        playUrl("third", 3)
+        assertTrue(exo.playWhenReady)
+    }
+
     @Test fun anExplicitStopStillReleasesTheItem() {
         playUrl("first", 1)
         engine.stop()

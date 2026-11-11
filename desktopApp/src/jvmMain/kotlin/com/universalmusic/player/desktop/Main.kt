@@ -93,7 +93,7 @@ fun main(args: Array<String>) {
         val acquired = runBlocking { ownership.acquire() }
         if (!acquired) System.err.println(HUB_OWNED_BY_ANOTHER_INSTANCE)
         if (!acquired && mode != HubProcessMode.GUI) {
-            hubOnlyExitStatus(ownerLockAcquired = false, port = isolation.hubPort)
+            hubOnlyExitStatus(ownerLockAcquired = false)
         } else if (mode != HubProcessMode.GUI) {
             runHubOnly(ensureAppContainer(hubOnly = true).also(container::set), ownership)
         } else {
@@ -244,8 +244,8 @@ private fun runHubOnly(
     }
     container.homeLanSync.startHubIfNeeded()
     if (!container.homeLanSync.status.value.hubListening) {
-        val status = hubOnlyExitStatus(ownerLockAcquired = true, port = DesktopIsolation.current.hubPort)
-        val outcome = if (status == 0) "another process holds the port; exiting without a restart" else "exiting"
+        val status = hubOnlyExitStatus(ownerLockAcquired = true)
+        val outcome = "exiting"
         System.err.println("Kainos home sync hub failed to listen: ${container.homeLanSync.status.value.lastError}; $outcome")
         return@runBlocking status
     }

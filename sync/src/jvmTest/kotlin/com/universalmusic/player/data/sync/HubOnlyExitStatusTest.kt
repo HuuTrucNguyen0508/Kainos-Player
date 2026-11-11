@@ -7,20 +7,20 @@ import kotlin.test.assertEquals
 
 /** `kainos-hub.service` restarted 98 times on 2026-11-10 because these cases exited 1. */
 class HubOnlyExitStatusTest {
-    @Test fun aPortHeldByAnotherProcessIsNotAFailureToRetry() {
+    @Test fun anUnrelatedPortHolderMustNotHideAHubFailure() {
         ServerSocket().use { holder ->
             holder.reuseAddress = true
             holder.bind(InetSocketAddress(0))
-            assertEquals(0, hubOnlyExitStatus(ownerLockAcquired = true, port = holder.localPort))
+            assertEquals(1, hubOnlyExitStatus(ownerLockAcquired = true))
         }
     }
 
     @Test fun anotherInstanceHoldingTheOwnerLockIsNotAFailure() {
-        assertEquals(0, hubOnlyExitStatus(ownerLockAcquired = false, port = freePort()))
+        assertEquals(0, hubOnlyExitStatus(ownerLockAcquired = false))
     }
 
     @Test fun aHubThatCouldNotListenOnAFreePortIsAFailure() {
-        assertEquals(1, hubOnlyExitStatus(ownerLockAcquired = true, port = freePort()))
+        assertEquals(1, hubOnlyExitStatus(ownerLockAcquired = true))
     }
 
     private fun freePort() = ServerSocket(0).use { it.localPort }
