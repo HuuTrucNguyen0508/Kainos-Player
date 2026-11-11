@@ -2,6 +2,7 @@ package com.universalmusic.player.platform
 
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
     if (System.getProperty("os.name", "").contains("Linux", ignoreCase = true)) {
+        logLibrespotHelperStatus()
         JvmLibrespotPlaybackHost()
     } else {
         JvmSpotifyWebPlaybackHost(tokenSupplier)

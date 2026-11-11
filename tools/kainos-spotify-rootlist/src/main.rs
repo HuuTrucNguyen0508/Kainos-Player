@@ -48,11 +48,10 @@ async fn main() {
         exit(1);
     });
 
-    let session = Session::new(SessionConfig::default(), None);
-    if let Err(e) = session.connect(credentials, false).await {
+    let session = connect_with_retry(credentials).await.unwrap_or_else(|e| {
         eprintln!("session connect failed: {e}");
         exit(1);
-    }
+    });
 
     let playlist_id = match mode {
         "discover-weekly" => match find_discover_weekly(&session).await {
@@ -89,6 +88,25 @@ async fn main() {
             eprintln!("fetch failed: {e}");
             println!("{{\"ok\":false,\"error\":{}}}", serde_json::to_string(&e).unwrap());
             exit(1);
+        }
+    }
+}
+
+/// Spotify access points sometimes refuse or reset one connect and accept the next a few seconds
+/// later (phone traces of 2026-11-03 to 11-09), so a refused connect is retried on a fresh session.
+async fn connect_with_retry(credentials: Credentials) -> Result<Session, String> {
+    const BACKOFF_SECS: [u64; 3] = [1, 3, 8];
+    let mut attempt = 0;
+    loop {
+        let session = Session::new(SessionConfig::default(), None);
+        match session.connect(credentials.clone(), false).await {
+            Ok(()) => return Ok(session),
+            Err(e) if attempt < BACKOFF_SECS.len() => {
+                eprintln!("session connect attempt {} failed: {e}", attempt + 1);
+                tokio::time::sleep(std::time::Duration::from_secs(BACKOFF_SECS[attempt])).await;
+                attempt += 1;
+            }
+            Err(e) => return Err(e.to_string()),
         }
     }
 }
