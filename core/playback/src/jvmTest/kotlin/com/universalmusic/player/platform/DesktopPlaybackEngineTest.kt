@@ -87,6 +87,24 @@ class DesktopPlaybackEngineTest {
     }
 
     @Test
+    fun aStreamWithAKnownDurationStartsWithoutAnyProbe() = runBlocking {
+        val runtime = FakeDesktopPlaybackRuntime()
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        val stream = "https://rr1---sn.googlevideo.com/videoplayback?id=1"
+        try {
+            engine.play(PlaybackHandle.Url(stream, durationMs = 213_000), null, 1)
+            assertEquals(stream, runtime.commands.single().last())
+            assertEquals(emptyList(), runtime.durationProbes, "ffprobe on a stream URL held mpv back up to 5 s")
+            assertEquals(emptyList(), runtime.replayGainProbes)
+            assertEquals(213_000, engine.state.value.durationMs)
+
+            engine.play(PlaybackHandle.Url("/music/a.flac", durationMs = 61_000), null, 2)
+            assertEquals(listOf("/music/a.flac"), runtime.durationProbes, "A local file's own duration still wins")
+            assertEquals(listOf("/music/a.flac"), runtime.replayGainProbes)
+        } finally { engine.stop(); runtime.destroyAll() }
+    }
+
+    @Test
     fun outgoingFailureCancelsPendingSuccessorPublication() = runBlocking {
         val runtime = FakeDesktopPlaybackRuntime().apply { supportsEvents = true; sendIpcResult.set(true) }
         val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
@@ -1175,7 +1193,15 @@ private class FakeDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     override fun canPrepare(current: String, next: String): Boolean = compatibility(current, next)
     override fun findOnPath(name: String): String? = "/test/mpv"
 
+    val durationProbes = CopyOnWriteArrayList<String>()
+    val replayGainProbes = CopyOnWriteArrayList<String>()
+    override fun probeReplayGain(url: String): com.universalmusic.player.domain.playback.ReplayGain? {
+        replayGainProbes += url
+        return null
+    }
+
     override fun probeDurationMs(url: String): Long? {
+        durationProbes += url
         probes[url]?.let { probe ->
             probe.entered.countDown()
             assertTrue(probe.release.await(2, TimeUnit.SECONDS), "timed out releasing $url probe")

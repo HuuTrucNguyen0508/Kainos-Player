@@ -354,14 +354,18 @@ class DesktopPlaybackEngine internal constructor(
             if (token != transport.requestToken) return
             (transport.handle as? PlaybackHandle.Url)?.takeIf { it.url == url }?.durationMs
         }
+        // A local file's own duration beats the scanned one and its tags carry ReplayGain. A stream
+        // has neither to offer: ffprobe on it is a network fetch that held mpv back up to 5 s.
+        val local = isLocalMediaUrl(url)
         val (durationMs, replayGain) = coroutineScope {
-            val replayGain = async(Dispatchers.IO) { runInterruptible { runtime.probeReplayGain(url) } }
-            val durationMs = runInterruptible(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
-            durationMs to replayGain.await()
+            val replayGain = if (local) async(Dispatchers.IO) { runInterruptible { runtime.probeReplayGain(url) } } else null
+            val durationMs = if (!local && suppliedDuration != null) suppliedDuration
+                else runInterruptible(Dispatchers.IO) { runtime.probeDurationMs(url) } ?: suppliedDuration
+            durationMs to replayGain?.await()
         }
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         // Only local files get the filter, so levelling never claims gain on a stream.
-        val levelled = isLocalMediaUrl(url)
+        val levelled = local
         val levelledAtLaunch = synchronized(transport.lock) { transport.levellingEnabled }
         val active = synchronized(transport.lock) {
             if (token != transport.requestToken) return
