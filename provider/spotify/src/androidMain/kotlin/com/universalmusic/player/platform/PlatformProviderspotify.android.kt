@@ -1,6 +1,7 @@
 package com.universalmusic.player.platform
 
 import android.content.Intent
+import com.universalmusic.player.data.spotify.SnapshotFile
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -13,9 +14,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
-    AndroidLibrespotPlaybackHost()
+    AndroidLibrespotPlaybackHost().also { receiverHost = it }
+
+/** The app's in-process receiver. Metadata reads borrow its connected session instead of opening one. */
+@Volatile internal var receiverHost: AndroidLibrespotPlaybackHost? = null
 
 actual fun requiresExplicitSpotifyDevice(): Boolean = false
+
+actual fun discoverWeeklySnapshotFile(): SnapshotFile? =
+    FileSnapshotFile(java.io.File(androidContext.filesDir, "meta-cache/discover-weekly.json"))
 
 actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = withContext(Dispatchers.Main) {
     val intent = androidContext.packageManager.getLaunchIntentForPackage("com.spotify.music")

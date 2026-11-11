@@ -21,6 +21,21 @@ import kotlin.test.assertNotNull
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionFallbackTest {
     @Test
+    fun aRateLimitDuringResolutionHoldsTheCurrentEntry() = runTest {
+        val resolver = object : SourceResolver {
+            override suspend fun resolve(track: Track, preferences: PlaybackPreferences): ResolvedPlayback {
+                throw ProviderRateLimitedException("Spotify rate limited", 120_000)
+            }
+        }
+        val session = PlayerSession(RecordingEngine {}, resolver, backgroundScope)
+        session.play(listOf(track("One", "Artist", provider = ProviderId.SPOTIFY), track("Two", "Artist", provider = ProviderId.SPOTIFY)))
+        runCurrent()
+        assertEquals("One", session.nowPlaying.value.track?.title)
+        assertFalse(session.nowPlaying.value.isPlaying)
+        assertTrue(session.nowPlaying.value.error.orEmpty().contains("paused"))
+    }
+
+    @Test
     fun truncatedStreamResolvesAgainAtItsPositionOnlyOnce() = runTest {
         var calls = 0
         val engine = RecordingEngine { calls++ }
@@ -47,6 +62,59 @@ class PlayerSessionFallbackTest {
         runCurrent()
         assertEquals(2, calls)
         assertTrue(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun rateLimitedStartPausesOnThatTrackInsteadOfSkippingOnward() = runTest {
+        val started = mutableListOf<String>()
+        var limited = true
+        val engine = RecordingEngine { handle ->
+            val id = (handle as PlaybackHandle.ProviderPlayback).trackId
+            started += id
+            if (limited) {
+                // Engines may wrap the provider's failure.
+                throw IllegalStateException(
+                    "Spotify Connect playback failed",
+                    ProviderRateLimitedException("Spotify Connect playback was rate limited by Spotify.", 120_000),
+                )
+            }
+        }
+        val queue = listOf("One", "Two", "Three").map { track(it, "Artist", provider = ProviderId.SPOTIFY) }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(queue)
+        runCurrent()
+
+        val first = (queue.first().sources.single().handle as PlaybackHandle.ProviderPlayback).trackId
+        assertEquals(listOf(first), started, "a rate limit must not move on and hit the API for the next track")
+        val now = session.nowPlaying.value
+        assertEquals(queue.first().canonicalId, now.track?.canonicalId)
+        assertFalse(now.isPlaying)
+        assertFalse(now.buffering)
+        assertTrue(now.error.orEmpty().contains("rate limited"), now.error)
+        assertTrue(now.error.orEmpty().contains("paused"), now.error)
+
+        limited = false
+        session.playTransport()
+        runCurrent()
+        assertEquals(listOf(first, first), started)
+        assertTrue(session.nowPlaying.value.isPlaying)
+    }
+
+    @Test
+    fun otherStartFailuresStillSkipToTheNextTrack() = runTest {
+        val started = mutableListOf<String>()
+        val engine = RecordingEngine { handle ->
+            val id = (handle as PlaybackHandle.ProviderPlayback).trackId
+            started += id
+            if (started.size == 1) error("Spotify Connect playback failed (500)")
+        }
+        val queue = listOf("One", "Two").map { track(it, "Artist", provider = ProviderId.SPOTIFY) }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
+        session.play(queue)
+        runCurrent()
+
+        assertEquals(2, started.size)
+        assertEquals(queue.last().canonicalId, session.nowPlaying.value.track?.canonicalId)
     }
 
     @Test

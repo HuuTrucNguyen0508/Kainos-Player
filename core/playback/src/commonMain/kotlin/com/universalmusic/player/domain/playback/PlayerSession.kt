@@ -109,6 +109,7 @@ class PlayerSession(
             startCurrent(ListeningChange.AUTOMATIC, applyResumePosition = true)
         },
         onTerminalFailure = { generation -> advanceAfterTerminalFailure(generation) },
+        onRateLimited = { generation, target -> pauseAfterRateLimit(generation, target) },
     )
     private val remoteLoader = RemoteSessionLoader(
         engine, persistence, ledger, nowPlaying, confineTo, clock,
@@ -929,6 +930,21 @@ class PlayerSession(
                 if (startupTarget === target) startupTarget = null
             }
         }
+    }
+
+    /**
+     * The provider asked to wait. The next track would hit the same API and extend the limit, so
+     * this entry stays current and paused; Play starts it again at the same position.
+     */
+    private fun pauseAfterRateLimit(generation: Long, target: StartupTarget?) {
+        if (generation != turn.generation) return
+        trace("rate limited starting ${_nowPlaying.value.track.traceLabel()}; pausing instead of skipping")
+        failedItemIds.clear()
+        pendingResumePositionMs = target?.positionMs
+        beginTransition()
+        engine.stop()
+        _nowPlaying.update { it.copy(isPlaying = false, buffering = false) }
+        ledger.record(ListeningChange.AUTOMATIC, playing = false)
     }
 
     /** Skip a dead track when the queue still has something after it. */

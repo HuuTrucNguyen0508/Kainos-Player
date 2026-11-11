@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.model.Track
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.exists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,6 +52,8 @@ actual suspend fun fetchLibrespotDiscoverWeekly(playlistId: String?): Playlist? 
 
 actual suspend fun fetchLibrespotTrackRadio(trackId: String, excludeCanonicalIds: Set<String>): List<Track> {
     require(trackId.isNotBlank() && trackId.all { it.isLetterOrDigit() }) { "bad Spotify track id" }
+    val helper = withContext(Dispatchers.IO) { installedHelper }
+    check(helper?.support != HelperRadioSupport.MISSING) { staleHelperMessage(helper!!.path) }
     val out = runLibrespotHelper("radio:$trackId")
     check(out.ok && !out.id.isNullOrBlank()) { "librespot radio: ${out.error ?: "no playlist"}" }
     return out.toPlaylist().tracks.filter { it.canonicalId !in excludeCanonicalIds }
@@ -104,6 +107,51 @@ private fun LibrespotDiscoverOut.toPlaylist(): Playlist {
         tracks = tracks,
         source = ProviderEntityRef(ProviderId.SPOTIFY, playlistId),
     )
+}
+
+internal enum class HelperRadioSupport { PRESENT, MISSING, UNKNOWN }
+
+internal class InstalledHelper(val path: Path, val support: HelperRadioSupport)
+
+/** With no arguments the helper prints a usage line naming every mode it has, and exits 2. */
+internal fun helperRadioSupport(usage: String?): HelperRadioSupport = when {
+    usage.isNullOrBlank() || "Usage:" !in usage -> HelperRadioSupport.UNKNOWN
+    "radio:" in usage -> HelperRadioSupport.PRESENT
+    else -> HelperRadioSupport.MISSING
+}
+
+internal fun staleHelperMessage(path: Path) =
+    "The installed Spotify helper $path predates radio mode, so Spotify Search radio cannot work. " +
+        "Run scripts/install-librespot.sh to rebuild it."
+
+/** Probed once per process: a helper installed before radio mode silently broke Spotify Search radio. */
+private val installedHelper: InstalledHelper? by lazy {
+    val binary = findDiscoverWeeklyBinary() ?: return@lazy null
+    val usage = runCatching {
+        val process = ProcessBuilder(binary.toAbsolutePath().toString()).redirectErrorStream(true).start()
+        process.outputStream.close()
+        if (!process.waitFor(5, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            null
+        } else {
+            process.inputStream.use { it.readNBytes(4_096).toString(Charsets.UTF_8) }
+        }
+    }.getOrNull()
+    InstalledHelper(binary, helperRadioSupport(usage))
+}
+
+/** Logs at startup whether Search radio and Discover Weekly can work, without contacting Spotify. */
+internal fun logLibrespotHelperStatus() {
+    Thread({
+        val helper = installedHelper
+        val message = when (helper?.support) {
+            null -> "kainos-discover-weekly not found; Discover Weekly and Spotify Search radio are off. Run scripts/install-librespot.sh."
+            HelperRadioSupport.MISSING -> staleHelperMessage(helper.path)
+            HelperRadioSupport.UNKNOWN -> "could not read the usage of ${helper.path}; Spotify Search radio may fail."
+            HelperRadioSupport.PRESENT -> "Spotify helper ${helper.path} has radio mode"
+        }
+        PlaybackTrace.log("Spotify", message)
+    }, "kainos-helper-check").apply { isDaemon = true }.start()
 }
 
 private fun findDiscoverWeeklyBinary(): Path? {
