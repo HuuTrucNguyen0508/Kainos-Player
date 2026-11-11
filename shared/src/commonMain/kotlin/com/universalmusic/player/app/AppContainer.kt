@@ -29,6 +29,7 @@ import com.universalmusic.player.data.local.LocalMusicProvider
 import com.universalmusic.player.data.local.cacheKey
 import com.universalmusic.player.data.local.createLocalContentKeyReader
 import com.universalmusic.player.data.local.createLocalEmbeddedArtworkExtractor
+import com.universalmusic.player.data.local.createLocalTagReader
 import com.universalmusic.player.data.local.isLocationInFolder
 import com.universalmusic.player.domain.playback.ListeningNotReady
 import kotlinx.coroutines.CoroutineDispatcher
@@ -73,6 +74,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.universalmusic.player.domain.model.ProviderId
+import com.universalmusic.player.domain.model.inAlbumOrder
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.playback.DefaultSourceResolver
 import com.universalmusic.player.domain.playback.PlayerSession
@@ -194,6 +196,7 @@ class AppContainer(
         configKey = { localLibraryScanConfig().cacheKey() },
         embeddedArtwork = createLocalEmbeddedArtworkExtractor(),
         contentKeyReader = createLocalContentKeyReader(),
+        tagReader = createLocalTagReader(),
     )
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
@@ -472,6 +475,19 @@ class AppContainer(
                         .getOrElse { if (it is CancellationException) throw it else null }
                         ?: return@collectLatest
                     player.updateCurrentTrackArtwork(track.canonicalId, artwork)
+                }
+        }
+        // Same for tags: a SAF file played before the background pass reached it.
+        scope.launch {
+            player.nowPlaying
+                .map { it.track }
+                .distinctUntilChangedBy { it?.canonicalId }
+                .collectLatest { track ->
+                    if (track == null || !local.needsTags(track)) return@collectLatest
+                    val tagged = runCatching { local.resolveTags(track) }
+                        .getOrElse { if (it is CancellationException) throw it else null }
+                        ?: return@collectLatest
+                    player.updateCurrentTrackTags(tagged)
                 }
         }
         scope.launch {
@@ -826,6 +842,7 @@ class AppContainer(
                 _localLibraryMessage.value = failure.message ?: "Local library scan failed"
             }
         runCatching { local.enrichContentKeys() }.logged("Local", "content key pass failed")
+        runCatching { local.enrichTags() }.logged("Local", "tag pass failed")
         runCatching { local.enrichEmbeddedArtwork() }.logged("Local", "embedded artwork pass failed")
     }
 
@@ -892,7 +909,7 @@ class AppContainer(
     }
 
     fun playAlbumById(albumCanonicalId: String): Boolean {
-        val tracks = local.libraryTracks.value.filter { it.album?.canonicalId == albumCanonicalId }
+        val tracks = local.libraryTracks.value.filter { it.album?.canonicalId == albumCanonicalId }.inAlbumOrder()
         if (tracks.isEmpty()) return false
         playTracks(tracks, startIndex = 0)
         return true

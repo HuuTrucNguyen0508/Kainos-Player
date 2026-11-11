@@ -15,7 +15,14 @@ CREATE TABLE local_track (
     file_modified_ms INTEGER,
     -- Size + hash of the file tail; filled in by the content-key pass, null until then.
     content_key TEXT,
-    track_json TEXT NOT NULL
+    track_json TEXT NOT NULL,
+    -- File tags (migration 9). tags_version 0 means title/artist/album are filename guesses.
+    album_artist TEXT,
+    track_number INTEGER,
+    disc_number INTEGER,
+    release_year INTEGER,
+    genre TEXT,
+    tags_version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX local_track_location ON local_track(location);
@@ -31,8 +38,11 @@ insertScan:
 INSERT INTO local_scan (config_key, written_at_ms) VALUES (?, ?);
 
 insertTrack:
-INSERT INTO local_track (position, id, location, content_length, file_modified_ms, content_key, track_json)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO local_track (
+    position, id, location, content_length, file_modified_ms, content_key, track_json,
+    album_artist, track_number, disc_number, release_year, genre, tags_version
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clearScans:
 DELETE FROM local_scan;

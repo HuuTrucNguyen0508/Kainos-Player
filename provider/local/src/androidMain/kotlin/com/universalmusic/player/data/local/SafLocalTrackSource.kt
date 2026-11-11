@@ -174,25 +174,15 @@ internal class SafLocalTrackSource(
         sidecarArt: String?,
         extension: String,
     ): LocalTrack? {
-        val stem = displayName.substringBeforeLast('.', displayName)
-        val cleanedStem = stem.withoutTrackNumber().humanized()
-        val artistTitleSeparator = cleanedStem.indexOf(" - ")
-        val filenameArtist = cleanedStem
-            .takeIf { artistTitleSeparator > 0 }
-            ?.substring(0, artistTitleSeparator)
-            ?.humanized()
-            ?.takeIf(String::isNotEmpty)
-        val title = cleanedStem
-            .substring(if (artistTitleSeparator > 0) artistTitleSeparator + 3 else 0)
-            .withoutTrackNumber()
-            .humanized()
-            .ifEmpty { stem.humanized() }
+        // Tags are read later by the lazy tag pass (LocalTagReader); the scan never opens files.
+        val guessed = filenameTags(displayName)
+        val title = guessed.title
         if (title.isBlank()) return null
         val location = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId).toString()
         return LocalTrack(
             id = UUID.nameUUIDFromBytes(location.toByteArray()).toString(),
             title = title,
-            artists = listOfNotNull(filenameArtist),
+            artists = listOfNotNull(guessed.artist),
             album = directoryAlbum,
             albumGroupKey = albumGroupKey,
             durationMs = null,
@@ -218,8 +208,6 @@ internal class SafLocalTrackSource(
         },
     )
 
-    private fun String.withoutTrackNumber(): String = replace(TRACK_NUMBER_PREFIX, "")
-
     private fun String.humanized(): String = replace('_', ' ')
         .replace(REPEATED_WHITESPACE, " ")
         .trim()
@@ -239,7 +227,6 @@ internal class SafLocalTrackSource(
     }
 
     private companion object {
-        val TRACK_NUMBER_PREFIX = Regex("""^\s*(?:(?:\d{1,2}(?:-\d{1,2})?)[\s._-]+)+""")
         val REPEATED_WHITESPACE = Regex("""\s+""")
         val LOSSLESS_AUDIO_EXTENSIONS = setOf("aif", "aiff", "alac", "flac", "wav", "wave")
         val SUPPORTED_AUDIO_EXTENSIONS = LOSSLESS_AUDIO_EXTENSIONS +

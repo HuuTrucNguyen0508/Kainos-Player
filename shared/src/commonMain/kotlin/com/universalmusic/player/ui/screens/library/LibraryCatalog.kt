@@ -16,6 +16,7 @@ import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
+import com.universalmusic.player.domain.model.inAlbumOrder
 
 internal data class LibraryArtistEntry(
     val artist: Artist,
@@ -62,14 +63,15 @@ internal fun libraryLocalAlbums(
     .filter { it.album != null }
     .filter { !favoritesOnly || it.canonicalId in favorites }
     .groupBy { it.album!!.canonicalId }
-    .map { (id, tracks) ->
+    .map { (id, grouped) ->
+        val tracks = grouped.inAlbumOrder()
         val ref = tracks.first().album!!
         Album(
             canonicalId = id,
             title = ref.title,
-            artists = tracks.flatMap(Track::artists).distinctBy { it.canonicalId },
+            artists = ref.artists.ifEmpty { tracks.flatMap(Track::artists).distinctBy { it.canonicalId } },
             artwork = ref.artwork,
-            year = ref.year,
+            year = tracks.firstNotNullOfOrNull { it.album?.year },
             tracks = tracks,
             sources = listOf(ProviderEntityRef(ProviderId.LOCAL, id)),
         )

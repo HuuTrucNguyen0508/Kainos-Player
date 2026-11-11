@@ -5,6 +5,8 @@ import com.universalmusic.player.data.cache.offlineQueue
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.domain.matching.TrackNormalizer
 import com.universalmusic.player.domain.matching.track
+import com.universalmusic.player.domain.model.AlbumRef
+import com.universalmusic.player.domain.model.ArtistRef
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -141,6 +143,26 @@ class LibraryCatalogTest {
         )
         assertEquals(listOf("Ada"), artists.map { it.artist.name })
         assertEquals(listOf("heart"), artists.single().tracks.map { it.canonicalId })
+    }
+
+    @Test
+    fun localAlbumsListTracksInDiscAndTrackOrderUnderTheAlbumArtist() {
+        val album = AlbumRef("local-album:ado|kyogen|1", "Kyogen", year = 2022, artists = listOf(ArtistRef("local-artist:ado", "Ado")))
+        fun song(title: String, artist: String, disc: Int?, number: Int?) =
+            track(title, artist, "Kyogen", provider = ProviderId.LOCAL, canonicalId = "local:$title")
+                .copy(album = album, discNumber = disc, trackNumber = number)
+        val scanOrder = listOf(
+            song("Outro", "Ado", 2, 1),
+            song("Odo", "Ado feat. Giga", 1, 2),
+            song("Bonus", "Ado", null, null),
+            song("Usseewa", "Ado", 1, 1),
+        )
+
+        val kyogen = libraryLocalAlbums(scanOrder, favoritesOnly = false, favorites = emptySet()).single()
+
+        assertEquals(listOf("Usseewa", "Odo", "Outro", "Bonus"), kyogen.tracks.map { it.title })
+        assertEquals(listOf("Ado"), kyogen.artists.map { it.name })
+        assertEquals(2022, kyogen.year)
     }
 
     @Test

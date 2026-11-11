@@ -222,6 +222,67 @@ class JvmLocalTrackSourceTest {
         assertEquals(1, third.probed)
         assertEquals(0, third.reused)
     }
+
+    @Test
+    fun rowsCachedBeforeTagsWereReadAreProbedAgainOnce() = withTempDirectory { root ->
+        Files.write(root.resolve("01 - Blue_Hour.mp3"), byteArrayOf(1, 2, 3))
+        val source = JvmLocalTrackSource(listOf(root))
+        val first = source.scanReusing(emptyList())
+        assertTrue(first.tracks.single().tagsRead)
+        val olderBuild = first.tracks.map { it.copy(tagsVersion = 0) }
+
+        val second = source.scanReusing(olderBuild)
+
+        assertEquals(1, second.probed)
+        assertTrue(second.tracks.single().tagsRead)
+        assertEquals(1, source.scanReusing(second.tracks).reused)
+    }
+
+    /** A real FLAC tagged the way Qobuz downloads are, read through the desktop scan and provider. */
+    @Test
+    fun flacTagsFillAlbumArtistPositionAndYear() = withTempDirectory { root ->
+        if (!commandExists("ffmpeg") || !commandExists("ffprobe")) return@withTempDirectory
+        val folder = Files.createDirectories(root.resolve("Playlist"))
+        val first = folder.resolve("HOYO-MiX - TruE.flac")
+        val second = folder.resolve("y2mate.com - zzz_dldnT46oCrs_320kbps.flac")
+        writeTaggedFlac(first, "TITLE=TruE", "ARTIST=HOYO-MiX", "ALBUMARTIST=HOYO-MiX;黄龄", "ALBUM=TruE (Single)",
+            "TRACKNUMBER=2", "DISCNUMBER=1", "DATE=2022-08-13", "GENRE=Électronique")
+        writeTaggedFlac(second, "ALBUM=TruE (Single)", "ALBUMARTIST=HOYO-MiX;黄龄", "TRACKNUMBER=1", "DISCNUMBER=1")
+
+        val provider = LocalMusicProvider(JvmLocalTrackSource(listOf(root)))
+        val tracks = provider.refresh().associateBy { it.title }
+
+        val tagged = tracks.getValue("TruE")
+        assertEquals(listOf("HOYO-MiX"), tagged.artists.map { it.name })
+        assertEquals("TruE (Single)", tagged.album?.title)
+        assertEquals(listOf("HOYO-MiX", "黄龄"), tagged.album?.artists?.map { it.name })
+        assertEquals(2, tagged.trackNumber)
+        assertEquals(1, tagged.discNumber)
+        assertEquals(2022, tagged.year)
+        assertEquals("Électronique", tagged.genre)
+        assertTrue((tagged.durationMs ?: 0) > 0)
+        // No title tag: the cleaned filename; no artist tag: the album artist.
+        val untitled = tracks.getValue("zzz")
+        assertEquals(listOf("HOYO-MiX", "黄龄"), untitled.artists.map { it.name })
+        assertEquals(tagged.album?.canonicalId, untitled.album?.canonicalId)
+        assertEquals(
+            listOf("zzz", "TruE"),
+            tracks.values.toList().let(com.universalmusic.player.domain.model.TrackSort.ALBUM_ASCENDING::sort).map { it.title },
+        )
+    }
+}
+
+private fun commandExists(name: String): Boolean =
+    runCatching { ProcessBuilder(name, "-version").redirectErrorStream(true).start().apply { inputStream.readBytes() }.waitFor() == 0 }
+        .getOrDefault(false)
+
+private fun writeTaggedFlac(target: Path, vararg tags: String) {
+    val command = mutableListOf("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0.2")
+    tags.forEach { command += listOf("-metadata", it.substringBefore('=') + "=" + it.substringAfter('=')) }
+    command += target.toString()
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    val output = process.inputStream.readBytes().decodeToString()
+    check(process.waitFor() == 0) { "ffmpeg failed: $output" }
 }
 
 private fun withTempDirectory(test: suspend (Path) -> Unit) = runTest {

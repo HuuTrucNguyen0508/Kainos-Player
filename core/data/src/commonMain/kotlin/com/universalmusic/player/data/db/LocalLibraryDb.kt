@@ -13,9 +13,20 @@ import kotlinx.serialization.encodeToString
 internal fun KainosDatabase.readLocalScan(configKey: String, strict: Boolean = false): List<LocalTrack>? {
     if (!localLibraryQueries.hasScan(configKey).executeAsOne()) return null
     return localLibraryQueries.selectTracks().executeAsList().mapNotNull { row ->
-        readStorageRow(strict) { storageJson.decodeFromString<StoredLocalTrack>(row.track_json).toLocalTrackOrNull() }
+        readStorageRow(strict) { row.toLocalTrackOrNull() }
     }
 }
+
+/** track_json holds the scan fields; the file's tags live in their own columns (migration 9). */
+private fun Local_track.toLocalTrackOrNull(): LocalTrack? =
+    storageJson.decodeFromString<StoredLocalTrack>(track_json).toLocalTrackOrNull()?.copy(
+        albumArtist = album_artist,
+        trackNumber = track_number?.toInt(),
+        discNumber = disc_number?.toInt(),
+        year = release_year?.toInt(),
+        genre = genre,
+        tagsVersion = tags_version.toInt(),
+    )
 
 internal fun KainosDatabase.writeLocalScan(configKey: String, tracks: List<LocalTrack>, nowMs: Long) {
     val previous = readLocalScan(configKey, strict = true)
@@ -31,6 +42,12 @@ internal fun KainosDatabase.writeLocalScan(configKey: String, tracks: List<Local
             track.fileModifiedEpochMs,
             track.contentKey,
             storageJson.encodeToString(track.toStored()),
+            track.albumArtist,
+            track.trackNumber?.toLong(),
+            track.discNumber?.toLong(),
+            track.year?.toLong(),
+            track.genre,
+            track.tagsVersion.toLong(),
         )
     }
 }
@@ -49,9 +66,7 @@ class DbLocalLibraryScanCache(
 
     override suspend fun findByContentKey(configKey: String, contentKey: String): List<LocalTrack> = storage.read { db ->
         if (!db.localLibraryQueries.hasScan(configKey).executeAsOne()) emptyList()
-        else db.localLibraryQueries.selectTracksByContentKey(contentKey).executeAsList().mapNotNull {
-            storageJson.decodeFromString<StoredLocalTrack>(it.track_json).toLocalTrackOrNull()
-        }
+        else db.localLibraryQueries.selectTracksByContentKey(contentKey).executeAsList().mapNotNull { it.toLocalTrackOrNull() }
     }
 
     suspend fun clear() {

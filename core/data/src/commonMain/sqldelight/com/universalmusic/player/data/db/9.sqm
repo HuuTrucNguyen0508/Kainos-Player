@@ -1,0 +1,12 @@
+-- Schema 9 -> 10. Later lanes on feat/next-data append their own sections below.
+
+-- ── Local file tags (lane L2a) ──────────────────────────────────────────────
+-- Tags read from the file itself, beside the scan row's track_json. tags_version is 0 for
+-- rows whose title/artist/album are still filename and folder guesses; a reader bumps it
+-- once it has opened the file, so unchanged files are not reopened on the next scan.
+ALTER TABLE local_track ADD COLUMN album_artist TEXT;
+ALTER TABLE local_track ADD COLUMN track_number INTEGER;
+ALTER TABLE local_track ADD COLUMN disc_number INTEGER;
+ALTER TABLE local_track ADD COLUMN release_year INTEGER;
+ALTER TABLE local_track ADD COLUMN genre TEXT;
+ALTER TABLE local_track ADD COLUMN tags_version INTEGER NOT NULL DEFAULT 0;

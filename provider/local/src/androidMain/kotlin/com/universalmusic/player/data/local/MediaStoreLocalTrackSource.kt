@@ -45,8 +45,13 @@ internal class MediaStoreLocalTrackSource(
         add(MediaStore.Audio.Media.MIME_TYPE)
         add(MediaStore.Audio.Media.SIZE)
         add(MediaStore.Audio.Media.DATE_MODIFIED)
+        add(MediaStore.Audio.Media.TRACK)
+        add(MediaStore.Audio.Media.YEAR)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             add(BITRATE_COLUMN)
+            add(MediaStore.Audio.Media.ALBUM_ARTIST)
+            add(MediaStore.Audio.Media.DISC_NUMBER)
+            add(MediaStore.Audio.Media.GENRE)
         }
     }.toTypedArray()
 
@@ -65,6 +70,8 @@ internal class MediaStoreLocalTrackSource(
             ?.coerceAtMost(Int.MAX_VALUE.toLong())
             ?.toInt()
 
+        // TRACK packs the disc into the thousands (1003 = disc 1, track 3) when DISC_NUMBER is absent.
+        val packedTrack = positiveLongOrNull(MediaStore.Audio.Media.TRACK)?.toInt()
         return LocalTrack(
             id = mediaId.toString(),
             title = title,
@@ -77,6 +84,14 @@ internal class MediaStoreLocalTrackSource(
             contentLength = positiveLongOrNull(MediaStore.Audio.Media.SIZE),
             fileModifiedEpochMs = positiveLongOrNull(MediaStore.Audio.Media.DATE_MODIFIED)?.times(1_000),
             quality = audioQuality(mimeType, bitrateKbps),
+            albumArtist = textOrNull(MediaStore.Audio.Media.ALBUM_ARTIST),
+            trackNumber = packedTrack?.rem(1000)?.takeIf { it > 0 },
+            discNumber = parseTagPosition(textOrNull(MediaStore.Audio.Media.DISC_NUMBER))
+                ?: packedTrack?.div(1000)?.takeIf { it > 0 },
+            year = positiveLongOrNull(MediaStore.Audio.Media.YEAR)?.toInt()?.takeIf { it in 1000..2999 },
+            genre = textOrNull(MediaStore.Audio.Media.GENRE),
+            // MediaStore already parsed the file's tags; the lazy tag pass need not reopen it.
+            tagsVersion = LOCAL_TAGS_VERSION,
         )
     }
 
