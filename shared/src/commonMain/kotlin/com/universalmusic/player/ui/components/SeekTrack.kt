@@ -89,7 +89,7 @@ fun SeekTrack(
         SeekKind.Progress -> when (tokens.seek) {
             SeekStyle.RULED -> 36.dp
             SeekStyle.WAVY -> 40.dp
-            SeekStyle.LINE -> 24.dp
+            SeekStyle.LINE -> 40.dp
         }
     }
     Canvas(modifier.fillMaxWidth().height(height)) {
@@ -114,13 +114,13 @@ fun SeekTrack(
             SeekStyle.LINE -> {
                 // Frost: a hairline track with an ink run, as on the shell's Media page.
                 val y = size.height / 2
-                val stroke = (if (kind == SeekKind.Compact) 2f else 3f).dp.toPx()
+                val stroke = (if (kind == SeekKind.Compact) 3f else 4f).dp.toPx()
                 drawLine(palette.rule, Offset(stroke / 2, y), Offset(size.width - stroke / 2, y), stroke, StrokeCap.Round)
                 if (!known) return@Canvas
                 val ink = scheme.onBackground.copy(alpha = alpha)
                 val x = (f * size.width).coerceIn(stroke / 2, size.width - stroke / 2)
                 drawLine(ink, Offset(stroke / 2, y), Offset(x, y), stroke, StrokeCap.Round)
-                val radius = (if (scrubbing) 6.5f else if (kind == SeekKind.Compact) 3f else 4.5f).dp.toPx()
+                val radius = (if (scrubbing) 8f else if (kind == SeekKind.Compact) 4f else 6f).dp.toPx()
                 drawCircle(ink, radius, Offset(x, y))
             }
             SeekStyle.WAVY -> {
@@ -219,11 +219,7 @@ fun SkinSlider(
     } else Modifier
     val wavy = LocalSkinTokens.current.seek == SeekStyle.WAVY
     val thumb: Dp = if (wavy) 4.dp else 12.dp
-    val trackHeight = when {
-        kind == SeekKind.Level -> 24.dp
-        LocalSkinTokens.current.seek == SeekStyle.LINE -> 24.dp
-        else -> 36.dp
-    }
+    val trackHeight = if (kind == SeekKind.Level) 24.dp else 36.dp
     Slider(
         value = value,
         onValueChange = onValueChange,

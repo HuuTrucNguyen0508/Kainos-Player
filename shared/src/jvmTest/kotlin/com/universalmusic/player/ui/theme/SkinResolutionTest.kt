@@ -73,6 +73,17 @@ class SkinResolutionTest {
         assertEquals(SeekStyle.RULED, folio.seek)
     }
 
+    @Test fun frostTextIsCaelestiaSized() {
+        fun sizes(skin: Skin) = with(skinTokens(skin).typography) {
+            listOf(
+                displayLarge, displayMedium, displaySmall, headlineLarge, headlineMedium, headlineSmall,
+                titleLarge, titleMedium, titleSmall, bodyLarge, bodyMedium, bodySmall,
+                labelLarge, labelMedium, labelSmall,
+            ).map { it.fontSize }
+        }
+        assertEquals(sizes(Skin.CAELESTIA), sizes(Skin.FROST))
+    }
+
     @Test fun validShellSchemeOwnsModeWhileFollowing() {
         val settings = AppSettings(themeMode = ThemeMode.LIGHT)
         val dark = assertNotNull(parseCaelestiaScheme(schemeFixture()))
