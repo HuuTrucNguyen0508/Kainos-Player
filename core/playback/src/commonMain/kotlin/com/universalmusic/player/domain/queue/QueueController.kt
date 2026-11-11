@@ -70,20 +70,25 @@ class QueueController(
     /** Append tracks at the tail without changing the current index (autoplay continuation). */
     fun appendTracks(tracks: List<Track>) {
         if (tracks.isEmpty()) return
-        _queue.update { current ->
-            val newItems = tracks.map { QueueItem(idFactory(), it) }
-            val items = current.items + newItems
-            current.copy(
-                items = items,
-                shuffleOrder = preserveShuffleOrder(
-                    previous = current,
-                    newItems = items,
-                    newCurrentIndex = current.currentIndex.coerceIn(0, items.lastIndex.coerceAtLeast(0)),
-                    playNextId = null,
-                    appendNewIds = newItems.map { it.id },
-                ),
-            )
-        }
+        val newItems = tracks.map { QueueItem(idFactory(), it) }
+        _queue.value = withAppendedTracks(_queue.value, newItems)
+        // A radio response is not a user edit. Undo must keep the returned entries, since the
+        // continuation has already consumed them and will not return them again.
+        undoSnapshot = undoSnapshot?.let { withAppendedTracks(it, newItems) }
+    }
+
+    private fun withAppendedTracks(current: PlaybackQueue, newItems: List<QueueItem>): PlaybackQueue {
+        val items = current.items + newItems
+        return current.copy(
+            items = items,
+            shuffleOrder = preserveShuffleOrder(
+                previous = current,
+                newItems = items,
+                newCurrentIndex = current.currentIndex.coerceIn(0, items.lastIndex),
+                playNextId = null,
+                appendNewIds = newItems.map { it.id },
+            ),
+        )
     }
 
     fun playNext(track: Track) {
@@ -201,6 +206,34 @@ class QueueController(
             order.add(toOrderPos, moved)
             current.copy(shuffleOrder = order)
         }
+    }
+
+    /**
+     * Drop every entry after the current one in playback order, keeping history and the current
+     * entry. Undo puts them back. False when nothing follows the current entry.
+     */
+    fun clearUpcoming(): Boolean {
+        val current = _queue.value
+        if (current.upcoming.isEmpty()) return false
+        val order = current.playbackOrder()
+        val currentPos = order.indexOf(current.currentIndex.coerceIn(0, current.items.lastIndex))
+        val keep = order.take(currentPos + 1).toSet()
+        undoSnapshot = current
+        val items = current.items.filterIndexed { index, _ -> index in keep }
+        val currentId = current.items[current.currentIndex.coerceIn(0, current.items.lastIndex)].id
+        val newIndex = items.indexOfFirst { it.id == currentId }
+        _queue.value = current.copy(
+            items = items,
+            currentIndex = newIndex,
+            shuffleOrder = preserveShuffleOrder(
+                previous = current,
+                newItems = items,
+                newCurrentIndex = newIndex,
+                playNextId = null,
+                appendNewIds = emptyList(),
+            ),
+        )
+        return true
     }
 
     fun clear() {

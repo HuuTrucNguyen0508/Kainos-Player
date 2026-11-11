@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.domain.matching.DuplicateGroups
+
 import com.universalmusic.player.data.history.HOME_SHELF_LIMIT
 import com.universalmusic.player.data.history.PlayHistory
 import com.universalmusic.player.data.history.REDISCOVER_AFTER_MS
@@ -560,14 +562,23 @@ internal fun homeShelves(
     catalog: List<Track>,
     recentlyAdded: List<AddedTrack>,
     nowMs: Long,
+    /** Streamed copies Hide duplicates leaves out; their plays and hearts count for the copy shown. */
+    duplicates: DuplicateGroups = DuplicateGroups.NONE,
 ): List<HomeShelf> {
     val byId = HashMap<String, Track>()
     catalog.forEach { byId.putIfAbsent(it.canonicalId, it) }
-    val onRepeat = history.onRepeat.map { count ->
-        ShelfRow(byId[count.track.canonicalId] ?: count.track, if (count.plays == 1) "1 play" else "${count.plays} plays")
+    val onRepeat = history.onRepeat
+        .groupBy { duplicates.keeper(it.track.canonicalId) }
+        .map { (keeperId, counts) -> (byId[keeperId] ?: counts.first().track) to counts.sumOf { it.plays } }
+        .sortedByDescending { it.second }
+        .map { (track, plays) -> ShelfRow(track, if (plays == 1) "1 play" else "${plays} plays") }
+    val shownFavorites = duplicates.effectiveFavorites(favorites)
+    val lastPlayed = HashMap<String, Long>()
+    history.lastPlayedAtMs.forEach { (id, last) ->
+        lastPlayed.merge(duplicates.keeper(id), last, ::maxOf)
     }
-    val rediscover = history.lastPlayedAtMs.entries
-        .filter { (id, last) -> id in favorites && nowMs - last >= REDISCOVER_AFTER_MS }
+    val rediscover = lastPlayed.entries
+        .filter { (id, last) -> id in shownFavorites && nowMs - last >= REDISCOVER_AFTER_MS }
         .sortedBy { it.value }
         .mapNotNull { (id, last) -> byId[id]?.let { ShelfRow(it, ageLabel(nowMs, last)) } }
         .take(HOME_SHELF_LIMIT)
@@ -577,6 +588,19 @@ internal fun homeShelves(
         HomeShelf(ShelfKind.REDISCOVER, rediscover),
         HomeShelf(ShelfKind.RECENTLY_ADDED, added),
     ).filter { it.rows.isNotEmpty() }
+}
+
+/** Recents with each hidden copy swapped for the copy Library shows, listed once at its newest play. */
+internal fun homeRecentWithoutDuplicates(
+    recent: List<Track>,
+    catalog: List<Track>,
+    duplicates: DuplicateGroups,
+): List<Track> {
+    if (duplicates.hiddenCount == 0 || recent.none { duplicates.isHidden(it.canonicalId) }) return recent
+    val byId = catalog.associateBy { it.canonicalId }
+    return recent
+        .map { track -> if (duplicates.isHidden(track.canonicalId)) byId[duplicates.keeper(track.canonicalId)] ?: track else track }
+        .distinctBy { it.canonicalId }
 }
 
 /** Phones show four rows per shelf; wide windows fill each column to the same depth. */

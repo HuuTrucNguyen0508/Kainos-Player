@@ -51,6 +51,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlin.coroutines.EmptyCoroutineContext
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
@@ -66,6 +68,8 @@ import com.universalmusic.player.domain.continuation.radioProvider
 import com.universalmusic.player.domain.echo.EchoStatusSource
 import com.universalmusic.player.domain.continuation.planSearchPlayback
 import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.matching.DuplicateGroups
+import com.universalmusic.player.domain.matching.DuplicateTracks
 import com.universalmusic.player.domain.matching.TrackMatcher
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
@@ -358,6 +362,19 @@ class AppContainer(
     val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
     private val _spotifyLibraryLoading = MutableStateFlow(false)
     val spotifyLibraryLoading = _spotifyLibraryLoading.asStateFlow()
+
+    /**
+     * Spotify and YouTube copies of songs listed from another source, which Library, Home and
+     * favorites playback leave out while Settings → Library → Hide duplicates is on.
+     */
+    val duplicateGroups: StateFlow<DuplicateGroups> = combine(
+        settings.map { it.libraryHideDuplicates }.distinctUntilChanged(),
+        local.libraryTracks,
+        library.savedTracks,
+        spotifyTracks,
+    ) { hide, localTracks, saved, liked ->
+        if (hide) DuplicateTracks.group(localTracks + saved + liked) else DuplicateGroups.NONE
+    }.stateIn(scope, SharingStarted.Eagerly, DuplicateGroups.NONE)
     private val libraryMutex = Mutex()
 
     val player = PlayerSession(
@@ -1010,6 +1027,12 @@ class AppContainer(
         return true
     }
 
+    /** A song Library lists (local file, remembered or Spotify Liked) by its canonical id. */
+    fun catalogTrack(canonicalId: String): Track? =
+        local.libraryTracks.value.firstOrNull { it.canonicalId == canonicalId }
+            ?: library.savedTracks.value.firstOrNull { it.canonicalId == canonicalId }
+            ?: spotifyTracks.value.firstOrNull { it.canonicalId == canonicalId }
+
     /** App-hearted tracks from remembered + local + Spotify liked, ordered for Play favorites. */
     fun resolveFavoriteTracks(): List<Track> {
         val favoriteIds = library.favoriteIds.value
@@ -1020,7 +1043,9 @@ class AppContainer(
                 spotifyTracks.value
             ).distinctBy { it.canonicalId }
         val byId = catalog.associateBy { it.canonicalId }
-        return favoriteIds.mapNotNull { byId[it] }
+        // A heart on a hidden copy plays the copy Library shows, once.
+        val duplicates = duplicateGroups.value
+        return favoriteIds.map(duplicates::keeper).distinct().mapNotNull { byId[it] }
     }
 
     /** [shuffle] turns shuffle on before the queue builds, so the fresh order starts with the first heart. */

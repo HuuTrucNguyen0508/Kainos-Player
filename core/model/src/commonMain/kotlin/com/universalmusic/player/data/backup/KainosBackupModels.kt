@@ -60,6 +60,7 @@ data class BackupPreferences(
     val libraryLocalOnly: Boolean? = null,
     val libraryFavoritesOnly: Boolean? = null,
     val libraryReadyOffline: Boolean? = null,
+    val libraryHideDuplicates: Boolean? = null,
     val searchRadioEnabled: Boolean? = null,
 )
 
@@ -76,6 +77,7 @@ fun AppSettings.backupPreferences(): BackupPreferences = BackupPreferences(
     libraryLocalOnly = libraryLocalOnly,
     libraryFavoritesOnly = libraryFavoritesOnly,
     libraryReadyOffline = libraryReadyOffline,
+    libraryHideDuplicates = libraryHideDuplicates,
     searchRadioEnabled = searchRadioEnabled,
 )
 
@@ -92,6 +94,7 @@ fun AppSettings.withBackupPreferences(preferences: BackupPreferences): AppSettin
     libraryLocalOnly = preferences.libraryLocalOnly ?: libraryLocalOnly,
     libraryFavoritesOnly = preferences.libraryFavoritesOnly ?: libraryFavoritesOnly,
     libraryReadyOffline = preferences.libraryReadyOffline ?: libraryReadyOffline,
+    libraryHideDuplicates = preferences.libraryHideDuplicates ?: libraryHideDuplicates,
     searchRadioEnabled = preferences.searchRadioEnabled ?: searchRadioEnabled,
 )
 
@@ -112,6 +115,7 @@ fun AppSettings.backupPreferenceChanges(preferences: BackupPreferences): Int {
         current.libraryLocalOnly != next.libraryLocalOnly,
         current.libraryFavoritesOnly != next.libraryFavoritesOnly,
         current.libraryReadyOffline != next.libraryReadyOffline,
+        current.libraryHideDuplicates != next.libraryHideDuplicates,
         current.searchRadioEnabled != next.searchRadioEnabled,
     ).count { it }
 }

@@ -39,6 +39,7 @@ class PlayerSessionRadioRestoreTest {
             SourceRadio(provider, fetch = { _, _ -> listOf(yt("mix2")) })
         }
         after.session.initializePersistence()
+        assertEquals(ProviderId.YOUTUBE_MUSIC, after.session.radio.value)
         assertEquals(listOf(ProviderId.YOUTUBE_MUSIC), requested)
         after.session.playTransport()
         runCurrent()
@@ -66,6 +67,7 @@ class PlayerSessionRadioRestoreTest {
         assertEquals(listOf("yt:saved"), rig.session.queueIds())
         settle(rig.session)
         assertEquals(null, store.restore.snapshot.radio)
+        assertEquals(null, rig.session.radio.value)
     }
 
     @Test

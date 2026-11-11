@@ -361,10 +361,10 @@ private fun AppScaffold(
     }
 
     /** Turns shuffle on first, so the fresh order starts from a random song of [tracks]. */
-    fun shuffleTracks(tracks: List<Track>) {
+    fun shuffleTracks(tracks: List<Track>, offlineOnly: Boolean = false) {
         if (tracks.isEmpty()) return
         if (!container.player.queueState.value.shuffle) container.player.toggleShuffle()
-        playTracks(tracks, Random.nextInt(tracks.size))
+        playTracks(tracks, Random.nextInt(tracks.size), offlineOnly = offlineOnly)
     }
 
     fun playSearchTracks(tracks: List<Track>, startIndex: Int = 0) {
@@ -505,7 +505,7 @@ private fun AppScaffold(
                 }
             },
             sidePane = when {
-                queueReplacesSidePane -> { { QueueScreen(container) { showQueue = false } } }
+                queueReplacesSidePane -> { { QueueScreen(container, dense = desktop) { showQueue = false } } }
                 showSideNowPlaying -> {
                     {
                         Column(Modifier.fillMaxSize()) {
@@ -569,7 +569,7 @@ private fun AppScaffold(
                 HandoffNoticeBar(container)
             },
             queueColumn = if (!desktop || !queueColumnOpen) null else {
-                { QueueScreen(container) { queueColumnChoice = false } }
+                { QueueScreen(container, dense = desktop) { queueColumnChoice = false } }
             },
             footer = {
                 // Rises from the bottom edge as the pane folds away, and sinks back when it returns.
@@ -595,7 +595,7 @@ private fun AppScaffold(
             // Main content: tabs stay composed across resize and dock moves so Library scroll survives.
             SheetOrPlain(frost, Modifier.weight(1f).fillMaxSize()) {
                 when {
-                    showQueue && (!desktop || queueInContent) -> QueueScreen(container) { showQueue = false }
+                    showQueue && (!desktop || queueInContent) -> QueueScreen(container, dense = desktop) { showQueue = false }
                     showNowPlaying && !desktop -> NowPlayingScreen(
                         container,
                         onOpenQueue = { showQueue = true },
@@ -642,7 +642,8 @@ private fun AppScaffold(
                                 ::playTracks,
                                 trackActions,
                                 onPlayOffline = { tracks, index -> playTracks(tracks, index, offlineOnly = true) },
-                                onShuffleTracks = ::shuffleTracks,
+                                onShuffleTracks = { shuffleTracks(it) },
+                                onShuffleOffline = { shuffleTracks(it, offlineOnly = true) },
                                 onInnerBack = { screenBack = it },
                                 onOpenCollection = ::openCollection,
                             )
@@ -661,7 +662,7 @@ private fun AppScaffold(
                         .width(DesktopQueueBesideWidth)
                         .fillMaxHeight(),
                 ) {
-                    QueueScreen(container) { showQueue = false }
+                    QueueScreen(container, dense = desktop) { showQueue = false }
                 }
             }
         }

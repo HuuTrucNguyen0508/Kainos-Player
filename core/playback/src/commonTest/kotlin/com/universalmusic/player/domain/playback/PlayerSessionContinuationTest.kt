@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerSessionContinuationTest {
@@ -170,6 +171,73 @@ class PlayerSessionContinuationTest {
         assertEquals("one", session.nowPlaying.value.track?.title)
     }
 
+    @Test
+    fun radioStateFollowsTheContinuationAndStopRadioKeepsTheQueue() = runTest {
+        val (engine, session) = rig()
+        val radio = RadioContinuation(ProviderId.SPOTIFY)
+        assertEquals(null, session.radio.value)
+
+        session.play(listOf(t("one"), t("two"), t("three"), t("four")), continuation = radio)
+        runCurrent()
+        assertEquals(ProviderId.SPOTIFY, session.radio.value)
+
+        session.stopRadio()
+        runCurrent()
+        assertEquals(null, session.radio.value)
+        assertEquals(listOf("one", "two", "three", "four"), session.titles(), "stopping the radio keeps what is queued")
+        assertEquals("one", session.nowPlaying.value.track?.title)
+        repeat(3) {
+            engine.emitEnded()
+            runCurrent()
+        }
+        assertEquals(0, radio.requests, "a stopped radio is never asked for more")
+
+        session.play(listOf(t("five"), t("five b"), t("five c")), continuation = radio)
+        runCurrent()
+        assertEquals(ProviderId.SPOTIFY, session.radio.value)
+        session.play(listOf(t("six")))
+        runCurrent()
+        assertEquals(null, session.radio.value, "other playback drops the radio")
+    }
+
+    @Test
+    fun clearUpcomingKeepsTheCurrentTrackPlayingAndUndoRestoresTheTail() = runTest {
+        val (engine, session) = rig()
+        session.play(listOf(t("one"), t("two"), t("three")))
+        runCurrent()
+        val playing = engine.state.value.status
+
+        session.clearUpcoming()
+        runCurrent()
+        assertEquals(listOf("one"), session.titles())
+        assertEquals("one", session.nowPlaying.value.track?.title)
+        assertEquals(playing, engine.state.value.status)
+
+        assertTrue(session.undoQueueEdit())
+        runCurrent()
+        assertEquals(listOf("one", "two", "three"), session.titles())
+        assertEquals("one", session.nowPlaying.value.track?.title)
+    }
+
+    @Test
+    fun undoClearUpcomingPreservesAnAlreadyCompletedRadioRefill() = runTest {
+        val (_, session) = rig()
+        val gate = CompletableDeferred<Unit>()
+        val radio = ScriptedContinuation(2, listOf(t("fresh")), gate = gate)
+        session.play(listOf(t("seed"), t("old")), continuation = radio)
+        runCurrent()
+        val before = session.queueState.value
+        session.clearUpcoming()
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("seed", "fresh"), session.titles())
+        val fresh = session.queueState.value.items.last()
+        assertTrue(session.undoQueueEdit())
+        runCurrent()
+        assertEquals(before.items + fresh, session.queueState.value.items)
+    }
+
     private fun TestScope.rig(): Pair<ControllableEngine, PlayerSession> {
         val engine = ControllableEngine()
         return engine to PlayerSession(engine, DefaultSourceResolver(), backgroundScope)
@@ -192,5 +260,15 @@ private class ScriptedContinuation(
         requests += queue
         gate?.await()
         return pending.removeFirstOrNull().orEmpty()
+    }
+}
+
+private class RadioContinuation(override val radio: ProviderId) : QueueContinuation {
+    override val lowWater: Int = 1
+    var requests = 0
+
+    override suspend fun nextBatch(queue: PlaybackQueue): List<Track> {
+        requests++
+        return emptyList()
     }
 }

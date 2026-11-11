@@ -79,6 +79,7 @@ internal fun LibraryScreen(
     trackActions: TrackActionsPresenter,
     onPlayOffline: (List<Track>, Int) -> Unit = onPlayTracks,
     onShuffleTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
+    onShuffleOffline: (List<Track>) -> Unit = { tracks -> onPlayOffline(tracks.shuffled(), 0) },
     /** Library hands the app what system back / Escape should do inside it, or null when nothing. */
     onInnerBack: ((() -> Unit)?) -> Unit = {},
     /** Opens an album, artist or Kainos playlist page over Library; back returns here, scroll kept. */
@@ -120,6 +121,7 @@ internal fun LibraryScreen(
     SideEffect { presenter.setQuery(query) }
     // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
     val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
+    val shuffleSongs = if (state.readyOffline) onShuffleOffline else onShuffleTracks
     /** A tab the listener picked. */
     fun selectTab(item: LibraryTab) {
         tabName = item.name
@@ -234,6 +236,7 @@ internal fun LibraryScreen(
                     presenter.setSort(sort)
                 },
                 onPlayTracks = playSongs,
+                onShuffleTracks = shuffleSongs,
                 trackActions = trackActions,
                 onRefreshSpotify = refreshSpotify,
                 trackAvailability = presenter::trackAvailability,
@@ -248,7 +251,7 @@ internal fun LibraryScreen(
                 sortMenuOpen = false
                 presenter.setSort(sort)
             },
-            playSongs, refreshSpotify, modifier,
+            playSongs, shuffleSongs, refreshSpotify, modifier,
         )
     }
     val otherTabContent = @Composable { column: ColumnScope, which: LibraryTab ->

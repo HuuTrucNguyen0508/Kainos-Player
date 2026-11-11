@@ -95,6 +95,9 @@ class PlayerSession(
         ledger.record(ListeningChange.AUTOMATIC)
     }
     private val turn = PlaybackTurn()
+
+    /** The source whose radio continues the queue after its last entry; null when none does. */
+    val radio: StateFlow<ProviderId?> get() = refiller.radio
     private val sources = TrackSources(resolver, enrichSource, prepareTrack, workContext)
     private val prefetcher = SuccessorPrefetcher(
         engine, queue, sources, preferences, nowPlaying, turn,
@@ -497,6 +500,17 @@ class PlayerSession(
         engine.stop()
         _nowPlaying.value = NowPlayingState()
         if (recorded) ledger.record(ListeningChange.LOCAL_INTENT)
+    }
+
+    /** Remove everything after the current track; the track keeps playing and undo restores the rest. */
+    fun clearUpcoming() = onSession { editQueue { clearUpcoming() } }
+
+    /** Stop the radio continuing the queue; the queued tracks stay and play out. */
+    fun stopRadio() = onSession {
+        if (refiller.continuation == null) return@onSession
+        trace("stopRadio")
+        refiller.drop()
+        ledger.record(ListeningChange.LOCAL_INTENT)
     }
 
     fun undoQueueEdit(): Boolean {
