@@ -37,6 +37,8 @@ data class HomeLanSyncStatus(
     val pendingTransfers: List<PendingVaultTransfer> = emptyList(),
     /** Hearted YouTube audio cached on one side and missing on the other, waiting for Transfer or Skip. */
     val pendingCachedAudio: List<PendingCachedAudioTransfer> = emptyList(),
+    /** Copies the user skipped for the current peer; they are not offered again until the file changes. */
+    val skippedCopies: List<SkippedCopy> = emptyList(),
     val bytesTransferred: Long = 0,
     val bytesTotal: Long = 0,
 )

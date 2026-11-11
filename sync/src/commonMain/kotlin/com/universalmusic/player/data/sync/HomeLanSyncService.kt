@@ -90,6 +90,14 @@ class HomeLanSyncService(
     private val scheduleListeningDelivery: suspend () -> Unit = ::scheduleBackgroundListeningDelivery,
     private val isAppForeground: () -> Boolean = { true },
     private val onForegroundListeningCompleted: () -> Unit = {},
+    /** Where skipped copies are kept; the default forgets them when the process ends. */
+    skipStore: HomeSyncSkipStore = MemoryHomeSyncSkipStore(),
+    /** When the local library was last scanned to completion; null when unknown. */
+    private val lastLocalScanAtMs: () -> Long? = { null },
+    /** A Sync now rescans the local library only when the last scan is older than this. */
+    private val localScanFreshMs: Long = LOCAL_SCAN_FRESH_MS,
+    /** A resume syncs again only after this long, unless hearts, playlists or pins changed here. */
+    private val foregroundSyncIntervalMs: Long = FOREGROUND_SYNC_INTERVAL_MS,
 ) : HomeLanSyncController {
     private val _status = MutableStateFlow(HomeLanSyncStatus())
     override val status: StateFlow<HomeLanSyncStatus> = _status.asStateFlow()
@@ -131,6 +139,17 @@ class HomeLanSyncService(
     private val resolutionLock = Any()
     private var resolutionGeneration = 0L
 
+    private val skips = CopySkips(skipStore, clock)
+
+    /** When the last sync finished and what hearts, playlists and pins looked like then. */
+    private class SyncMark(val atMs: Long, val local: Any)
+
+    @kotlin.concurrent.Volatile
+    private var lastSyncMark: SyncMark? = null
+
+    private fun localSyncState(): Any =
+        Triple(library.favoriteIds.value, playlists.playlists.value, library.homePins.value)
+
     private data class ResolutionSource(
         val target: PairedPeer,
         val generation: Long,
@@ -151,6 +170,8 @@ class HomeLanSyncService(
 
     private fun invalidateResolution() = synchronized(resolutionLock) {
         resolutionGeneration++
+        // A new pairing or role syncs on the next resume.
+        lastSyncMark = null
     }
 
     fun hydrateFromSettings(current: AppSettings) = synchronized(resolutionLock) {
@@ -477,26 +498,19 @@ class HomeLanSyncService(
                         playlists.mergeAndPersistSyncState(remotePlaylists)
                         val remotePins = client.syncHomePins().getOrThrow()
                         remotePins?.let { library.mergeAndPersistHomePins(it, livePlaylistIds()) }
-                        var pendingAudio = emptyList<PendingCachedAudioTransfer>()
-                        val cachedAudioDetail = cachedAudio?.let { copies ->
+                        // Null when this side or the peer does not sync cached audio.
+                        val plannedAudio = cachedAudio?.let { copies ->
                             val local = cachedAudioDocument(deviceId, library, copies)
-                            val remote = client.syncCachedAudio(local).getOrThrow()
-                                ?: return@let "cached audio skipped (peer too old)"
-                            pendingAudio = planCachedAudioTransfers(local, remote, library.favoriteIds.value)
-                            "cached audio pending ↓${pendingAudio.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
-                                "↑${pendingAudio.count { it.direction == VaultCopyDirection.TO_REMOTE }}"
+                            client.syncCachedAudio(local).getOrThrow()
+                                ?.let { remote -> planCachedAudioTransfers(local, remote, library.favoriteIds.value) }
                         }
                         val rematchedPortable = rematchLocalHearts()
                         val rematchedPlaylistLocals = rematchPlaylistLocals()
-                        refreshLocalLibrary()
-                        val rematchedAgain = rematchLocalHearts()
-                        val rematchedPlaylistAgain = rematchPlaylistLocals()
-                        // After the rescan, so files that just arrived get their measurements too.
-                        val loudnessDetail = loudness?.let { port -> exchangeLoudness(client, port, deviceId) }
 
                         var vaultDetail = "vault skipped (not configured)"
                         var conflicts = emptyList<VaultConflict>()
-                        var pending = emptyList<PendingVaultTransfer>()
+                        var plannedVault: List<PendingVaultTransfer>? = null
+                        var tombstonesApplied = 0
                         if (vaultStore.isConfigured()) {
                             val heartsOnly = settings().homeLanSyncVaultHeartsOnly
                             val heartedNames = heartedLocalAudioFileNames(library)
@@ -508,13 +522,46 @@ class HomeLanSyncService(
                                 heartedBasenamesLower = heartedNames,
                             )
                             conflicts = result.conflicts
-                            pending = result.pendingTransfers
-                            vaultDetail =
-                                "vault pending ↓${pending.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
-                                    "↑${pending.count { it.direction == VaultCopyDirection.TO_REMOTE }} " +
-                                    "tombs=${result.tombstonesApplied}" +
-                                    if (heartsOnly) " (hearted only, ${heartedNames.size} names)" else ""
+                            plannedVault = result.pendingTransfers
+                            tombstonesApplied = result.tombstonesApplied
+                            vaultDetail = "tombs=${result.tombstonesApplied}" +
+                                if (heartsOnly) " (hearted only, ${heartedNames.size} names)" else ""
                         }
+                        // Sync now copies no files; rescan only when the vault deleted some or the last scan is old.
+                        val scannedAt = lastLocalScanAtMs()
+                        val rescan = tombstonesApplied > 0 || scannedAt == null || clock() - scannedAt >= localScanFreshMs
+                        var rematchedAgain = 0
+                        var rematchedPlaylistAgain = 0
+                        if (rescan) {
+                            refreshLocalLibrary()
+                            rematchedAgain = rematchLocalHearts()
+                            rematchedPlaylistAgain = rematchPlaylistLocals()
+                        }
+                        // After the rescan, so files that just arrived get their measurements too.
+                        val loudnessDetail = loudness?.let { port -> exchangeLoudness(client, port, deviceId) }
+
+                        // Unreadable skips offer everything again rather than failing the sync.
+                        val kept = try {
+                            skips.apply(target.deviceId, plannedVault, plannedAudio)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (err: Exception) {
+                            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "skips not read: ${err.message ?: err}")
+                            CopySkips.Planned(plannedVault.orEmpty(), plannedAudio.orEmpty(), emptyList())
+                        }
+                        val pending = kept.vault
+                        val pendingAudio = kept.audio
+                        val cachedAudioDetail = when {
+                            cachedAudio == null -> null
+                            plannedAudio == null -> "cached audio skipped (peer too old)"
+                            else -> "cached audio pending ↓${pendingAudio.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
+                                "↑${pendingAudio.count { it.direction == VaultCopyDirection.TO_REMOTE }}"
+                        }
+                        if (plannedVault != null) {
+                            vaultDetail = "vault pending ↓${pending.count { it.direction == VaultCopyDirection.TO_LOCAL }} " +
+                                "↑${pending.count { it.direction == VaultCopyDirection.TO_REMOTE }} " + vaultDetail
+                        }
+                        val skippedCount = kept.skipped.size
                         val rematched = rematchedPortable + rematchedAgain
                         val rematchedPl = rematchedPlaylistLocals + rematchedPlaylistAgain
                         val detail = buildString {
@@ -529,6 +576,8 @@ class HomeLanSyncService(
                             if (pending.isNotEmpty() || pendingAudio.isNotEmpty()) {
                                 append("; confirm ${pending.size + pendingAudio.size} file transfer(s)")
                             }
+                            if (skippedCount > 0) append("; $skippedCount skipped")
+                            if (!rescan) append("; library scan fresh")
                         }
                         val now = clock()
                         updateSettings {
@@ -547,10 +596,12 @@ class HomeLanSyncService(
                                 pendingConflicts = conflicts,
                                 pendingTransfers = pending,
                                 pendingCachedAudio = pendingAudio,
+                                skippedCopies = kept.skipped,
                                 bytesTransferred = 0,
                                 bytesTotal = 0,
                             )
                         }
+                        lastSyncMark = SyncMark(now, localSyncState())
                         detail
                     }
                 }
@@ -620,13 +671,8 @@ class HomeLanSyncService(
         direction: VaultCopyDirection,
     ): Result<String> = mutex.withLock {
         val path = relPath.normalizeVaultRelPath()
-        _status.update {
-            it.copy(
-                pendingTransfers = it.pendingTransfers.filterNot { t ->
-                    t.relPath == path && t.direction == direction
-                },
-            )
-        }
+        val skipped = _status.value.pendingTransfers.filter { it.relPath == path && it.direction == direction }
+        rememberSkips(skipped, emptyList())
         Result.success("Skipped $path")
     }
 
@@ -668,7 +714,7 @@ class HomeLanSyncService(
         val skipped = _status.value.pendingCachedAudio.filter {
             it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
         }
-        _status.update { it.copy(pendingCachedAudio = it.pendingCachedAudio - skipped.toSet()) }
+        rememberSkips(emptyList(), skipped)
         Result.success("Skipped ${skipped.firstOrNull()?.offer?.title?.ifBlank { null } ?: ownerCanonicalId}")
     }
 
@@ -764,9 +810,50 @@ class HomeLanSyncService(
     }
 
     override suspend fun dismissAllVaultTransfers(): Result<String> = mutex.withLock {
-        val count = _status.value.pendingTransfers.size + _status.value.pendingCachedAudio.size
-        _status.update { it.copy(pendingTransfers = emptyList(), pendingCachedAudio = emptyList()) }
-        Result.success("Skipped $count transfers")
+        val vault = _status.value.pendingTransfers
+        val audio = _status.value.pendingCachedAudio
+        rememberSkips(vault, audio)
+        Result.success("Skipped ${vault.size + audio.size} transfers")
+    }
+
+    override suspend fun unskipCopy(
+        kind: SkippedCopyKind,
+        subject: String,
+        direction: VaultCopyDirection,
+    ): Result<String> = mutex.withLock {
+        val peer = syncTarget()?.deviceId ?: return Result.failure(IllegalStateException("Not paired"))
+        runCatching {
+            val restored = skips.unskip(peer, kind, subject, direction)
+            _status.update { status ->
+                status.copy(
+                    pendingTransfers = status.pendingTransfers + listOfNotNull(restored.vault),
+                    pendingCachedAudio = status.pendingCachedAudio + listOfNotNull(restored.audio),
+                    skippedCopies = restored.skipped,
+                )
+            }
+            if (restored.vault != null || restored.audio != null) "Offered again" else "Offered again at the next sync"
+        }
+    }
+
+    /**
+     * Drops [vault] and [audio] from the pending list and remembers them for the current peer, so
+     * the next Sync now does not offer them again. Without a peer they are dropped for this run only.
+     */
+    private suspend fun rememberSkips(vault: List<PendingVaultTransfer>, audio: List<PendingCachedAudioTransfer>) {
+        _status.update {
+            it.copy(pendingTransfers = it.pendingTransfers - vault.toSet(), pendingCachedAudio = it.pendingCachedAudio - audio.toSet())
+        }
+        if (vault.isEmpty() && audio.isEmpty()) return
+        val peer = syncTarget()?.deviceId ?: return
+        try {
+            val skipped = skips.skip(peer, vault, audio)
+            _status.update { it.copy(skippedCopies = skipped) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (err: Exception) {
+            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "skip not saved: ${err.message ?: err}")
+            _status.update { it.copy(lastError = "Skip not saved; it may be offered again at the next sync") }
+        }
     }
 
     override suspend fun tombstoneVaultPath(relPath: String): Result<String> = mutex.withLock {
@@ -974,6 +1061,10 @@ class HomeLanSyncService(
                 if (!_status.value.enabled) return@runCatching
                 startHubIfNeeded()
                 if (!shouldRunClient()) return@runCatching
+                foregroundSyncHold()?.let { reason ->
+                    PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "foreground sync skipped: $reason")
+                    return@runCatching
+                }
                 if (!mutex.tryLock()) return@runCatching
                 val captured = try {
                     if (resetBlocked() || !_status.value.enabled || !shouldRunClient()) return@runCatching
@@ -1007,6 +1098,19 @@ class HomeLanSyncService(
                 }
             }
         }
+    }
+
+    /**
+     * Why a resume should not sync now, or null when it should: the last sync in this process was
+     * under [foregroundSyncIntervalMs] ago and nothing it would send changed here since. Sync now is
+     * never held. A process that has not synced yet always syncs on its first resume.
+     */
+    private fun foregroundSyncHold(): String? {
+        val mark = lastSyncMark ?: return null
+        val age = clock() - mark.atMs
+        if (age < 0 || age >= foregroundSyncIntervalMs) return null
+        if (localSyncState() != mark.local) return null
+        return "synced ${age / 1_000} s ago, nothing changed here"
     }
 
     private fun resetBlocked(): Boolean = identityResetMutex.isLocked || settings().homeLanSyncIdentityResetPending
@@ -1183,6 +1287,12 @@ internal fun trustFailureOf(err: Throwable): String? {
 }
 
 private const val VAULT_BATCH_MAX_CONSECUTIVE_FAILURES = 3
+
+/** A resume within this long of the last sync, with nothing changed here, does not sync again. */
+const val FOREGROUND_SYNC_INTERVAL_MS = 10 * 60_000L
+
+/** Sync now rescans the local library only when its last scan is older than this. */
+const val LOCAL_SCAN_FRESH_MS = 10 * 60_000L
 
 fun ByteArray.toHex(): String =
     joinToString("") { b -> ((b.toInt() and 0xff) + 0x100).toString(16).substring(1) }

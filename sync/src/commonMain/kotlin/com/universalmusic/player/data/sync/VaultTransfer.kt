@@ -57,7 +57,8 @@ suspend fun planVaultTransfers(
         }
     }
 
-    val after = store.buildIndex(deviceId)
+    // Planning copies nothing; only applied tombstones change what is on disk.
+    val after = if (plan.applyTombstones.isEmpty()) local else store.buildIndex(deviceId)
         .applyHeartsOnlyVaultFilter(heartsOnly, heartedBasenamesLower)
     return VaultExecuteResult(
         downloaded = 0,

@@ -9,6 +9,7 @@ import com.universalmusic.player.data.sync.LoudnessSyncDocument
 import com.universalmusic.player.data.sync.LoudnessSyncPort
 import com.universalmusic.player.platform.createLoudnessStore
 import com.universalmusic.player.platform.createSpotifyLibraryStore
+import com.universalmusic.player.platform.createHomeSyncSkipStore
 import kotlinx.coroutines.async
 import com.universalmusic.player.data.backup.BackupRestoreCounts
 import com.universalmusic.player.data.backup.KainosBackupFile
@@ -339,6 +340,8 @@ class AppContainer(
         retryListeningInProcess = { foreground.isVisible || player.nowPlaying.value.isPlaying },
         isAppForeground = { foreground.isVisible },
         onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
+        skipStore = createHomeSyncSkipStore(),
+        lastLocalScanAtMs = { lastLocalScanAtMs },
     )
     init { startupMark("providers_end") }
     /** What the Echo gateway is playing; null on platforms with no source. Polls only while collected. */
@@ -982,11 +985,16 @@ class AppContainer(
         }
     }
 
+    /** When a local library scan last finished; Home sync skips its rescan while this is recent. */
+    @kotlin.concurrent.Volatile
+    private var lastLocalScanAtMs: Long? = null
+
     suspend fun refreshLocalLibraryAndAwait() {
         loudnessJob?.cancel()
         _localLibraryMessage.value = null
         runCatching { local.refresh() }
             .onSuccess {
+                lastLocalScanAtMs = currentTimeMillis()
                 local.lastScanStats?.let { stats ->
                     _localLibraryMessage.value =
                         "Library updated · ${stats.trackCount} tracks · ${stats.probed} read · " +
