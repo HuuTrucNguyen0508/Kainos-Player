@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.map
 import kotlin.coroutines.EmptyCoroutineContext
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
+import com.universalmusic.player.data.spotify.LastGoodDiscoverWeekly
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
 import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
@@ -59,6 +60,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderEntityRef
+import com.universalmusic.player.platform.discoverWeeklySnapshotFile
 import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
@@ -307,6 +309,11 @@ class AppContainer(
     val spotifyPlaylists = _spotifyPlaylists.asStateFlow()
     private val _spotifyDiscoverWeekly = MutableStateFlow<Playlist?>(null)
     val spotifyDiscoverWeekly = _spotifyDiscoverWeekly.asStateFlow()
+    private val lastGoodDiscoverWeekly = LastGoodDiscoverWeekly(discoverWeeklySnapshotFile(), ::currentTimeMillis)
+    init {
+        // The shelf shows the last good list at once; a successful refresh replaces it.
+        scope.launch { lastGoodDiscoverWeekly.fallback(null)?.let { _spotifyDiscoverWeekly.compareAndSet(null, it) } }
+    }
     private val _spotifyLibraryError = MutableStateFlow<String?>(null)
     val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
     private val _spotifyLibraryLoading = MutableStateFlow(false)
@@ -585,6 +592,7 @@ class AppContainer(
         spotify.logout()
         updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
+        lastGoodDiscoverWeekly.clear()
         library.setSpotifyAccountId(null)
     }
 
@@ -701,16 +709,20 @@ class AppContainer(
     }
 
     /**
-     * Resolve Discover Weekly via desktop librespot (algorithmic ids) first, then a
-     * user-library playlist named Discover Weekly. Never use Web API search copies.
+     * Resolve Discover Weekly via librespot (algorithmic ids) first, then the last list that
+     * loaded (so a failed refresh keeps the shelf), then a user-library playlist named Discover
+     * Weekly. Never use Web API search copies.
      */
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
             .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
-        if (fromLibrespot != null) return fromLibrespot
-        return findDiscoverWeekly(playlists)
+        val accountId = spotify.currentUserId()
+        if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
+            return lastGoodDiscoverWeekly.remember(fromLibrespot, accountId)
+        }
+        return lastGoodDiscoverWeekly.fallback(accountId) ?: fromLibrespot ?: findDiscoverWeekly(playlists)
     }
 
     /** Load full track list for a Spotify playlist and return playable tracks. */
@@ -728,7 +740,7 @@ class AppContainer(
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
             if (cached?.source?.providerEntityId == id || configured == id) {
-                _spotifyDiscoverWeekly.value = fromLibrespot
+                _spotifyDiscoverWeekly.value = lastGoodDiscoverWeekly.remember(fromLibrespot, spotify.currentUserId())
             }
             return fromLibrespot.tracks
         }

@@ -1,5 +1,7 @@
 package com.universalmusic.player.platform
 
+import com.universalmusic.player.data.spotify.SnapshotFile
+
 actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): SpotifyWebPlaybackHost =
     if (System.getProperty("os.name", "").contains("Linux", ignoreCase = true)) {
         logLibrespotHelperStatus()
@@ -11,6 +13,9 @@ actual fun createSpotifyWebPlaybackHost(tokenSupplier: SpotifyTokenSupplier): Sp
 actual suspend fun ensureSpotifyConnectClientAvailable(): Boolean = ensureSpotifyDesktopClientRunning()
 
 actual fun requiresExplicitSpotifyDevice(): Boolean = false
+
+actual fun discoverWeeklySnapshotFile(): SnapshotFile? =
+    FileSnapshotFile(DesktopIsolation.current.dataDir.resolve("meta-cache/discover-weekly.json").toFile())
 
 actual fun listenForOAuthRedirect(port: Int, path: String): String = awaitOAuthRedirect(port, path)
 
