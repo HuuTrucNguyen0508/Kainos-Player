@@ -1159,8 +1159,11 @@ private suspend inline fun <reified T> HttpResponse.successBody(operation: Strin
  * Spotify answered but will not give this app [operation]: development-mode Client IDs are refused
  * some catalogue endpoints. Callers show that plainly instead of a generic failure.
  */
-class SpotifyRefusedException(val operation: String, val status: Int) :
-    IllegalStateException("Spotify does not share $operation with this app (HTTP $status).")
+class SpotifyRefusedException(val operation: String, status: Int) :
+    SpotifyHttpException(status, "Spotify does not share $operation with this app (HTTP $status).")
+
+/** Spotify answered with HTTP error [status] (a rate limit is [ProviderRateLimitedException] instead). */
+open class SpotifyHttpException(val status: Int, message: String) : IllegalStateException(message)
 
 /** Like [successBody], but a 403 becomes [SpotifyRefusedException]. */
 private suspend inline fun <reified T> HttpResponse.refusableBody(operation: String): T {
@@ -1184,7 +1187,7 @@ private suspend fun HttpResponse.errorMessage(operation: String): Nothing {
         }
         throw ProviderRateLimitedException(message, retryAfterMsOrNull())
     }
-    error("$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
+    throw SpotifyHttpException(status.value, "$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
 }
 
 /** Retry-After in ms (delta-seconds form); null when absent or not numeric. */

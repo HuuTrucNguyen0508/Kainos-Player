@@ -36,6 +36,17 @@ import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
     @Test
+    fun aRefusedPlaylistReadCarriesItsHttpStatus() = runTest {
+        val provider = provider(TokenStoreFake(AuthTokens("access"))) {
+            respond("""{"error":{"status":404,"message":"Resource not found"}}""", HttpStatusCode.NotFound)
+        }
+
+        val failure = assertFailsWith<SpotifyHttpException> { provider.getPlaylistTracks("editorial") }
+
+        assertEquals(404, failure.status)
+    }
+
+    @Test
     fun volumeRespects429RetryAfterAndSliderLevel() = runTest {
         var now = 1000L
         val levels = mutableListOf<String?>()

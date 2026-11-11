@@ -149,8 +149,9 @@ class SpotifyLibraryRepository(
 
     /**
      * Reads and stores the songs of each library playlist that changed since its songs were stored,
-     * one at a time. Stops at the first failure (a 429 also starts the wait), so an offline pass
-     * costs one call. Runs once at a time; a second call while one runs returns.
+     * one at a time. A playlist Spotify refuses (its own editorial lists answer 404) is set aside for
+     * this run and the pass goes on; any other failure stops it (a 429 also starts the wait), so an
+     * offline pass costs one call. Runs once at a time; a second call while one runs returns.
      */
     suspend fun syncPlaylistSongs() {
         if (!songReads.tryLock()) return
@@ -167,11 +168,18 @@ class SpotifyLibraryRepository(
                     throw cancelled
                 } catch (failure: Exception) {
                     val limit = failure.rateLimitCause()
+                    val refused = limit == null && failure.refusesOnlyThisPlaylist()
                     writes.withLock {
-                        if (limit != null) noteRateLimit(limit) else failedReads[target.id] = (failedReads[target.id] ?: 0) + 1
+                        when {
+                            limit != null -> noteRateLimit(limit)
+                            refused -> failedReads[target.id] = MAX_FAILED_READS
+                            else -> failedReads[target.id] = (failedReads[target.id] ?: 0) + 1
+                        }
                     }
                     PlaybackTrace.log(TRACE_TAG, "playlist ${target.id} songs not read: ${failure.message ?: failure}")
-                    return
+                    if (!refused) return
+                    delay(playlistPauseMs)
+                    continue
                 }
                 // Spotify answers its own editorial playlists with no songs; those stay unread.
                 if (songs.isEmpty() && (target.playlist.trackCount ?: 0) > 0) {
@@ -339,6 +347,12 @@ class SpotifyLibraryRepository(
     }
 
     private fun likedKey(trackId: String, addedAt: String?) = "$trackId@${addedAt.orEmpty()}"
+
+    /** Spotify answered for this playlist alone: a client error other than sign-in or rate limit. */
+    private fun Exception.refusesOnlyThisPlaylist(): Boolean {
+        val status = (this as? SpotifyHttpException)?.status ?: return false
+        return status in 400..499 && status != 401 && status != 429
+    }
 
     private companion object {
         const val TRACE_TAG = "SpotifyLibrary"

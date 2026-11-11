@@ -255,6 +255,52 @@ class SpotifyLibraryRepositoryTest {
     }
 
     @Test
+    fun aPlaylistSpotifyRefusesDoesNotHoldBackTheOthers() = runTest {
+        val reads = mutableListOf<String>()
+        val remote = object : SpotifyLibraryRemote {
+            override suspend fun likedSongsPage(offset: Int) = LikedSongsPage(emptyList(), 0, false)
+            override suspend fun libraryPlaylistHeads() =
+                listOf("editorial", "private", "mine").map { SpotifyPlaylistHead(list(it, count = 30), "s$it") }
+            override suspend fun playlistSongs(playlistId: String): List<Track> {
+                reads += playlistId
+                when (playlistId) {
+                    "editorial" -> throw SpotifyHttpException(404, "Spotify playlist items failed (404)")
+                    "private" -> throw SpotifyRefusedException("playlist items", 403)
+                }
+                return listOf(song(playlistId))
+            }
+        }
+        val repository = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), remote, clock = { now }, playlistPauseMs = 0)
+        repository.refresh("me")
+
+        repository.syncPlaylistSongs()
+        assertEquals(listOf("editorial", "private", "mine"), reads)
+        assertEquals(SavedPlaylistSongs(listOf(song("mine")), current = true), repository.savedPlaylistSongs("mine"))
+
+        repository.syncPlaylistSongs()
+        assertEquals(listOf("editorial", "private", "mine"), reads, "refused playlists are not asked again this run")
+    }
+
+    @Test
+    fun aSignedOutPassStopsAtTheFirstPlaylist() = runTest {
+        val reads = mutableListOf<String>()
+        val remote = object : SpotifyLibraryRemote {
+            override suspend fun likedSongsPage(offset: Int) = LikedSongsPage(emptyList(), 0, false)
+            override suspend fun libraryPlaylistHeads() = listOf("a", "b").map { SpotifyPlaylistHead(list(it), "s$it") }
+            override suspend fun playlistSongs(playlistId: String): List<Track> {
+                reads += playlistId
+                throw SpotifyHttpException(401, "Spotify playlist items failed (401)")
+            }
+        }
+        val repository = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), remote, clock = { now }, playlistPauseMs = 0)
+        repository.refresh("me")
+
+        repository.syncPlaylistSongs()
+
+        assertEquals(listOf("a"), reads)
+    }
+
+    @Test
     fun anOfflinePassCostsOneCallAndSetsNothingAside() = runTest {
         var offline = true
         val reads = mutableListOf<String>()
