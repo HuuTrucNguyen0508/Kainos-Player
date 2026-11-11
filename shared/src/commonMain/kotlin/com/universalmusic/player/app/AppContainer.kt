@@ -173,7 +173,7 @@ class AppContainer(
     private var currentPlayingCanonicalId: () -> String? = { null }
     private fun protectedCacheOwners(): Set<String> =
         setOfNotNull(currentPlayingCanonicalId())
-    val library = LibraryRepository(
+    val library: LibraryRepository = LibraryRepository(
         scope = scope,
         store = userLibraryStore,
         metadataCache = metadataCache,
@@ -197,6 +197,7 @@ class AppContainer(
         embeddedArtwork = createLocalEmbeddedArtworkExtractor(),
         contentKeyReader = createLocalContentKeyReader(),
         tagReader = createLocalTagReader(),
+        onAlbumsRekeyed = library::remapLocalAlbumPins,
     )
     private val _localLibraryMessage = MutableStateFlow<String?>(null)
     val localLibraryMessage: StateFlow<String?> = _localLibraryMessage.asStateFlow()
@@ -479,15 +480,23 @@ class AppContainer(
         }
         // Same for tags: a SAF file played before the background pass reached it.
         scope.launch {
-            player.nowPlaying
-                .map { it.track }
-                .distinctUntilChangedBy { it?.canonicalId }
+            player.nowPlaying.map { it.track }.distinctUntilChangedBy { it?.canonicalId }
                 .collectLatest { track ->
-                    if (track == null || !local.needsTags(track)) return@collectLatest
+                    if (track == null) return@collectLatest
                     val tagged = runCatching { local.resolveTags(track) }
                         .getOrElse { if (it is CancellationException) throw it else null }
                         ?: return@collectLatest
                     player.updateCurrentTrackTags(tagged)
+                }
+        }
+        scope.launch {
+            combine(
+                player.nowPlaying.map { it.track?.canonicalId }.distinctUntilChanged(),
+                local.libraryTracks,
+            ) { id, tracks -> tracks.firstOrNull { it.canonicalId == id } }
+                .distinctUntilChanged()
+                .collect { track ->
+                    if (track != null && !local.needsTags(track)) player.updateCurrentTrackTags(track)
                 }
         }
         scope.launch {

@@ -62,6 +62,7 @@ data class LocalTrack(
      * title, artists and album are still filename and folder guesses.
      */
     val tagsVersion: Int = 0,
+    val previousAlbumIds: List<String> = emptyList(),
 ) {
     init {
         require(id.isNotBlank()) { "Local track id must not be blank" }
@@ -107,7 +108,7 @@ fun LocalTrack.withTags(tags: LocalTags): LocalTrack {
         genre = tags.genre?.takeIf(String::isNotBlank),
         durationMs = tags.durationMs?.takeIf { it > 0 } ?: durationMs,
         tagsVersion = LOCAL_TAGS_VERSION,
-    )
+    ).withAlbumIdentityFrom(this)
 }
 
 /** Keep tags already read for the same unchanged file across a rescan that only saw its name. */
@@ -142,3 +143,11 @@ fun splitTagArtists(raw: String?): List<String> = raw
 /** The album's artists for grouping: album artist when tagged, else the track artists. */
 val LocalTrack.albumArtists: List<String>
     get() = splitTagArtists(albumArtist).ifEmpty { artists }
+
+/** Retain aliases so persisted Home pins can follow tag corrections after a restart. */
+fun LocalTrack.withAlbumIdentityFrom(previous: LocalTrack?): LocalTrack {
+    if (previous == null) return this
+    val oldId = previous.album?.let { localAlbumCanonicalId(it, previous.albumArtists, previous.albumGroupKey) }
+    val currentId = album?.let { localAlbumCanonicalId(it, albumArtists, albumGroupKey) }
+    return copy(previousAlbumIds = (previousAlbumIds + previous.previousAlbumIds + listOfNotNull(oldId)).distinct().filter { it != currentId })
+}

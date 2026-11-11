@@ -69,6 +69,32 @@ class PlayerSessionOwnershipTest {
     }
 
     @Test
+    fun lateTagsUpdateMetadataAndQueueWithoutChangingTrackIdentityOrTransport() = runTest {
+        val engine = ControllableEngine()
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope,
+            confineTo = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler))
+        val first = track("Guess", "Artist", provider = ProviderId.SAMPLE).copy(artwork = Artwork("file:/cover.jpg"))
+        val second = track("Other", "Artist", provider = ProviderId.SAMPLE)
+        session.play(listOf(first, second), startIndex = 0)
+        runCurrent()
+        val before = session.nowPlaying.value
+        session.updateCurrentTrackTags(first.copy(title = "Tagged", trackNumber = 2))
+        runCurrent()
+        val updated = session.nowPlaying.value
+        assertEquals("Tagged", updated.track?.title)
+        assertEquals(first.canonicalId, updated.track?.canonicalId)
+        assertEquals(first.sources, updated.track?.sources)
+        assertEquals(first.artwork, updated.track?.artwork)
+        assertEquals(before.isPlaying, updated.isPlaying)
+        assertEquals("Tagged", session.queueState.value.current?.track?.title)
+        session.skipToNext()
+        runCurrent()
+        session.updateCurrentTrackTags(first.copy(title = "Too late"))
+        runCurrent()
+        assertEquals(second.canonicalId, session.nowPlaying.value.track?.canonicalId)
+    }
+
+    @Test
     fun rapidNextDoesNotReviveStaleCompletion() = runTest {
         val engine = ControllableEngine()
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)

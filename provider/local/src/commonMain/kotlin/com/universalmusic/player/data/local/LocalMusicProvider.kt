@@ -33,6 +33,7 @@ class LocalMusicProvider(
     private val embeddedArtwork: LocalEmbeddedArtworkExtractor? = null,
     private val contentKeyReader: LocalContentKeyReader? = null,
     private val tagReader: LocalTagReader? = null,
+    private val onAlbumsRekeyed: (Map<String, List<AlbumRef>>) -> Unit = {},
 ) : MusicProvider {
     override val providerId: ProviderId = ProviderId.LOCAL
 
@@ -72,6 +73,11 @@ class LocalMusicProvider(
         scanned.value = next
         val tracks = next.map(LocalTrack::toDomain)
         mutableLibraryTracks.value = tracks
+        val liveAlbums = tracks.mapNotNull { it.album }.associateBy { it.canonicalId }
+        val aliases = next.zip(tracks).flatMap { (row, track) ->
+            row.previousAlbumIds.mapNotNull { old -> track.album?.let { old to it } }
+        }.groupBy({ it.first }, { it.second }).mapValues { (old, albums) -> (albums + listOfNotNull(liveAlbums[old])).distinctBy { it.canonicalId } }
+        onAlbumsRekeyed(aliases)
         mutableRecentlyAdded.value = next.indices
             .mapNotNull { i -> next[i].fileModifiedEpochMs?.let { AddedTrack(tracks[i], it) } }
             .sortedByDescending(AddedTrack::addedAtMs)
@@ -180,14 +186,16 @@ class LocalMusicProvider(
 
     /**
      * Read the tags of the file behind [track] now (first play), update the library list and the
-     * scan cache, and return the track as the library now shows it. Null when nothing changed.
+     * scan cache, and return the track as the library now shows it, including already-read tags.
      */
     suspend fun resolveTags(track: Track): Track? {
         val reader = tagReader ?: return null
         val id = track.sourceFor(ProviderId.LOCAL)?.providerTrackId ?: return null
-        val pending = scanned.value.firstOrNull { it.id == id }?.takeIf { !it.tagsRead } ?: return null
+        val pending = scanned.value.firstOrNull { it.id == id } ?: return null
+        if (pending.tagsRead) return mutableLibraryTracks.value.firstOrNull { it.canonicalId == track.canonicalId }
         val tags = reader.read(pending.location) ?: return null
-        if (!applyTags(mapOf(pending to tags))) return null
+        currentCoroutineContext().ensureActive()
+        applyTags(mapOf(pending to tags))
         persistScanned()
         return mutableLibraryTracks.value.firstOrNull { it.canonicalId == track.canonicalId }
     }
@@ -211,6 +219,7 @@ class LocalMusicProvider(
             val tags = runCatching { reader.read(track.location) }
                 .getOrElse { if (it is CancellationException) throw it else null }
                 ?: continue
+            currentCoroutineContext().ensureActive()
             batch[track] = tags
             if (batch.size >= PERSIST_EVERY) flush()
         }
@@ -275,7 +284,7 @@ class LocalMusicProvider(
                     track.contentLength != null && track.fileModifiedEpochMs != null &&
                     track.contentLength == old.contentLength && track.fileModifiedEpochMs == old.fileModifiedEpochMs
                 ) track.copy(contentKey = old.contentKey) else track
-                keyed.withTagsCarriedFrom(old)
+                keyed.withTagsCarriedFrom(old).withAlbumIdentityFrom(old)
             }
             raw.distinctBy(LocalTrack::id)
                 .let(::publish)
