@@ -90,6 +90,57 @@ class PlayerSessionGaplessTest {
         assertEquals(1, engine.starts)
     }
 
+    @Test fun cachedYoutubeSuccessorJoinsGaplesslyFromALocalFile() = runTest {
+        val engine = Engine()
+        // Data API search results carry no quality until resolved.
+        val cached = track("Cached", "Artist", provider = ProviderId.YOUTUBE_MUSIC).let { t ->
+            t.copy(sources = t.sources.map { it.copy(quality = null) })
+        }
+        val file = "file:/cache/audio/abc.webm"
+        // The hearted-audio cache attaches its file only when the track is prepared, as in the app.
+        val attachCache: (Track) -> Track = { t ->
+            if (t.canonicalId != cached.canonicalId) t else t.copy(sources = listOf(
+                PlaybackSource(ProviderId.LOCAL, "hearted-yt:abc", file, AudioQuality(QualityTier.STANDARD, "opus", 137),
+                    isPlayable = true, handle = PlaybackHandle.Url(file)),
+            ) + t.sources)
+        }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope, prepareTrack = attachCache)
+        session.play(listOf(local("A"), cached))
+        runCurrent()
+        assertEquals(file, assertNotNull(engine.next).handle.url)
+        engine.switch()
+        runCurrent()
+        assertEquals("Cached", session.nowPlaying.value.track?.title)
+        assertEquals(1, engine.starts)
+    }
+
+
+    @Test fun evictedCachedSuccessorResolvesOnlineAtTheBoundary() = runTest {
+        val engine = Engine()
+        val cached = track("Cached", "Artist", provider = ProviderId.YOUTUBE_MUSIC).let { t ->
+            t.copy(sources = t.sources.map { it.copy(quality = null) })
+        }
+        var exists = true
+        val prepare: (Track) -> Track = { t ->
+            if (t.canonicalId != cached.canonicalId || !exists) t else t.copy(sources = listOf(
+                PlaybackSource(ProviderId.LOCAL, "hearted-yt:abc", "file:/cache.webm",
+                    AudioQuality(QualityTier.STANDARD, "opus", 137), isPlayable = true,
+                    handle = PlaybackHandle.Url("file:/cache.webm")),
+            ) + t.sources)
+        }
+        val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope, prepareTrack = prepare)
+        session.play(listOf(local("A"), cached))
+        runCurrent()
+        assertNotNull(engine.next)
+        exists = false
+        // A missing successor cannot cross; the engine finishes the outgoing file normally.
+        engine.state.value = engine.state.value.copy(status = EngineStatus.ENDED)
+        runCurrent()
+        assertEquals("Cached", session.nowPlaying.value.track?.title)
+        assertEquals(ProviderId.YOUTUBE_MUSIC, session.nowPlaying.value.resolved?.source?.provider)
+        assertEquals(2, engine.starts)
+    }
+
     @Test fun replacesNextForQueueEditsRepeatAndDisablesForGateAndPreference() = runTest {
         val engine = Engine()
         val session = PlayerSession(engine, DefaultSourceResolver(), backgroundScope)

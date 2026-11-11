@@ -117,9 +117,10 @@ internal class SuccessorPrefetcher(
         this.target = target
         val next = target?.let { key -> queue.queue.value.items.firstOrNull { it.id == key.itemId } } ?: return
         val preferences = currentPreferences.value
+        // A hearted YouTube track whose audio is cached gains its LOCAL file source only here.
         if (engine.supportsGapless && preferences.gapless && !heldAtTrackEnd() && turn.completionArmed &&
             nowPlaying.value.resolved?.source?.provider == ProviderId.LOCAL &&
-            next.track.sources.any { it.provider == ProviderId.LOCAL }) {
+            hasLocalAudio(next.track)) {
             job = scope.launch(sessionContext) {
                 try {
                     val resolved = withContext(sources.workContext) {
@@ -164,6 +165,9 @@ internal class SuccessorPrefetcher(
             }
         }
     }
+
+    private fun hasLocalAudio(track: Track): Boolean =
+        runCatching { sources.prepareTrack(track) }.getOrNull()?.sources.orEmpty().any { it.provider == ProviderId.LOCAL }
 
     private fun trace(message: String) = PlaybackTrace.log("Session", message)
 }

@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
 import com.universalmusic.player.data.cache.CachedAudioCopies
 import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
@@ -171,6 +173,21 @@ class CachedAudioSyncTest {
 
         phone.execute(client, pending)
         assertContentEquals(hubFile.readBytes(), File(java.net.URI(assertNotNull(phone.cache.get("yt:ddd")).localUri)).readBytes())
+    }
+
+    @Test
+    fun anExcludedHeartRejectsAReceivedCopyWithoutResurrectingAudio() = scenario { pc, phone, client ->
+        val track = ytTrack("excluded")
+        pc.heart(track); phone.heart(track)
+        pc.seed(track, bytes(4096, 2))
+        // The exclusion persisted by Downloads → Remove must survive even a confirmed peer copy.
+        phone.cache.setUserExcluded(track.canonicalId, true)
+        val outcome = phone.execute(client, phone.plan(client).single())
+        assertContains(outcome, "Skipped Song excluded")
+        assertNull(phone.cache.get(track.canonicalId))
+        assertTrue(phone.cache.isUserExcluded(track.canonicalId))
+        assertTrue(phone.audioFiles().isEmpty())
+        assertTrue(phone.incoming().isEmpty())
     }
 
     @Test
@@ -407,7 +424,7 @@ class CachedAudioSyncTest {
     private object NoDownloader : YouTubeAudioDownloader {
         override fun isAvailable() = false
         override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
-            onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio? = null
+            onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult = YouTubeDownloadResult.Failed(YouTubeFailureKind.PERMANENT, "no downloader")
     }
 
     private fun bytes(count: Int, seed: Int) = ByteArray(count) { ((it * 31 + seed) % 251).toByte() }
