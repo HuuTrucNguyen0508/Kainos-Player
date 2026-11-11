@@ -29,7 +29,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -205,7 +205,7 @@ internal fun LibraryLedgerBar(
             }
             Spacer(Modifier.width(4.dp))
             if (onShuffle != null) {
-                OutlinedIconButton(onClick = onShuffle, modifier = Modifier.size(36.dp)) {
+                FilledTonalIconButton(onClick = onShuffle, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.width(6.dp))
