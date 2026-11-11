@@ -94,7 +94,7 @@ fun main(args: Array<String>) {
         if (!acquired && mode != HubProcessMode.GUI) {
             hubOnlyExitStatus(ownerLockAcquired = false, port = isolation.hubPort)
         } else if (mode != HubProcessMode.GUI) {
-            runHubOnly(ensureAppContainer().also(container::set), ownership)
+            runHubOnly(ensureAppContainer(hubOnly = true).also(container::set), ownership)
         } else {
             runGui(container::set, httpClient)
             0
