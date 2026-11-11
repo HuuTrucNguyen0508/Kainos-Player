@@ -164,11 +164,30 @@ class HubUserService(
             removeLegacyAutostart()
             return
         }
+        writeUnit()
+        check(command(listOf("systemctl", "--user", "enable", unitName)).status == 0) { "Could not enable $unitName" }
+        removeLegacyAutostart()
+    }
+
+    /**
+     * Rewrites an existing unit written by an older build, so the running GUI moves the
+     * enabled service onto the current body (restart limits, environment) without the user
+     * toggling autostart. Leaves enablement alone.
+     */
+    fun refreshUnit() {
+        if (skipUnnamedIsolatedService() || !Files.exists(unitFile)) return
+        if (writeUnit()) PlaybackTrace.log("HomeSync", "rewrote $unitName from an older build")
+    }
+
+    /** Writes the unit body; true when the file changed. */
+    private fun writeUnit(): Boolean {
         val executable = checkNotNull(launcher()) { "Cannot find the Kainos launcher" }
         val body = """
             |[Unit]
             |Description=Kainos home sync hub
             |PartOf=graphical-session.target
+            |StartLimitIntervalSec=600
+            |StartLimitBurst=5
             |
             |[Service]
             |Type=simple
@@ -186,12 +205,10 @@ class HubUserService(
             |
         """.trimMargin()
         Files.createDirectories(unitFile.parent)
-        if (!Files.exists(unitFile) || Files.readString(unitFile) != body) {
-            Files.writeString(unitFile, body)
-            reload()
-        }
-        check(command(listOf("systemctl", "--user", "enable", unitName)).status == 0) { "Could not enable $unitName" }
-        removeLegacyAutostart()
+        if (Files.exists(unitFile) && Files.readString(unitFile) == body) return false
+        Files.writeString(unitFile, body)
+        reload()
+        return true
     }
 
     private fun skipUnnamedIsolatedService(): Boolean {

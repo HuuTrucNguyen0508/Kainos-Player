@@ -5,6 +5,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopIsolationTest {
@@ -16,6 +17,16 @@ class DesktopIsolationTest {
             DesktopIsolation(Path.of("/home/u/.universal-music-player"), 43822, null),
             DesktopIsolation.parse(emptyMap(), home),
         )
+    }
+
+    @Test
+    fun variablesSetToTheirDefaultValuesDoNotIsolate() {
+        // kainos-hub.service spells the defaults out; the hub must still see itself as the default instance.
+        val parsed = DesktopIsolation.parse(
+            mapOf("KAINOS_DATA_DIR" to "/home/u/.universal-music-player/", "KAINOS_HUB_PORT" to "43822"), home,
+        )
+        assertEquals(DesktopIsolation(Path.of("/home/u/.universal-music-player"), 43822, null), parsed)
+        assertFalse(parsed.isIsolated)
     }
 
     @Test

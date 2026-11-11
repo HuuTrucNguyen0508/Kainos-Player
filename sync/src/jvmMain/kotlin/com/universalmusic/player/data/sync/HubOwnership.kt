@@ -42,6 +42,12 @@ class HubOwnership(
         if (mode == HubProcessMode.GUI && serviceEnabledForOwnership()) {
             state = State.ServiceStopRequested
             service.stop()
+            // The service restarts when this GUI closes; give it this build's unit first.
+            try {
+                service.refreshUnit()
+            } catch (error: Exception) {
+                com.universalmusic.player.platform.PlaybackTrace.log("Warning", "Kainos hub unit refresh failed: ${error.message}")
+            }
         }
         val lock = HubOwnerLock.acquire(isolation.dataDir, mode.lockTimeoutMs)
         state = lock?.let(State::Owned) ?: State.Unavailable
@@ -110,4 +116,26 @@ class HubOwnership(
         probe.close()
         return true
     }
+}
+
+/**
+ * Exit status of a `--hub-only` process that is not serving. Zero means another process already
+ * serves this hub (the GUI holds the owner lock, or something else holds the port), so systemd's
+ * `Restart=on-failure` must leave it alone: restarting cannot help until that process quits, and
+ * the GUI restarts the service itself when it closes. Anything else is a real failure.
+ */
+fun hubOnlyExitStatus(ownerLockAcquired: Boolean, port: Int): Int = when {
+    !ownerLockAcquired -> 0
+    tcpPortHeld(port) -> 0
+    else -> 1
+}
+
+private fun tcpPortHeld(port: Int): Boolean = try {
+    java.net.ServerSocket().use { socket ->
+        socket.reuseAddress = true
+        socket.bind(java.net.InetSocketAddress(port))
+    }
+    false
+} catch (_: java.net.BindException) {
+    true
 }
