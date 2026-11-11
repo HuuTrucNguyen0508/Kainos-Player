@@ -12,6 +12,8 @@ actual fun isNetworkAvailable(): Boolean = runCatching {
     hasDefaultRoute(java.io.File("/proc/net/route").readText())
 }.getOrDefault(true)
 
+actual fun isNetworkMetered(): Boolean = false
+
 /** A default route, unlike an interface list, is not faked by Docker bridges or Tailscale. */
 internal fun hasDefaultRoute(routeTable: String): Boolean =
     routeTable.lineSequence().drop(1).any { it.trim().split(Regex("\\s+")).getOrNull(1) == "00000000" }

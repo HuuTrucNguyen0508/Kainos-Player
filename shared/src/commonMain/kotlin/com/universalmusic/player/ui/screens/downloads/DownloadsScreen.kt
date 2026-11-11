@@ -32,13 +32,48 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.cache.DownloadPhase
 import com.universalmusic.player.data.cache.DownloadItemState
+import com.universalmusic.player.data.cache.DownloadsSnapshot
+import com.universalmusic.player.platform.currentTimeMillis
+import com.universalmusic.player.platform.platformLabel
 
 @Composable
 fun DownloadsSection(container: AppContainer) {
     val presenter = remember(container) { DownloadsPresenter.from(container) }
     val snapshot by presenter.state.collectAsState()
+    val settings by container.settings.collectAsState()
+    DownloadsContent(
+        snapshot = snapshot,
+        platform = platformLabel(),
+        wifiOnly = settings.downloadOnWifiOnly,
+        actions = DownloadActions(
+            retry = presenter::retry,
+            remove = presenter::remove,
+            download = presenter::download,
+            togglePin = presenter::togglePin,
+            setWifiOnly = presenter::setWifiOnly,
+        ),
+    )
+}
+
+internal class DownloadActions(
+    val retry: (String) -> Unit = {},
+    val remove: (String) -> Unit = {},
+    val download: (String) -> Unit = {},
+    val togglePin: (String) -> Unit = {},
+    val setWifiOnly: (Boolean) -> Unit = {},
+)
+
+@Composable
+internal fun DownloadsContent(
+    snapshot: DownloadsSnapshot,
+    platform: String,
+    wifiOnly: Boolean,
+    actions: DownloadActions,
+    now: Long = currentTimeMillis(),
+) {
     val usedMiB = snapshot.bytesUsed / (1024 * 1024)
     val maxMiB = snapshot.maxBytes / (1024 * 1024)
+    val android = platform == "Android"
     SectionRule("Downloads")
     Text(
         "Hearted YouTube audio and YouTube matches for Spotify hearts can be cached. " +
@@ -46,8 +81,21 @@ fun DownloadsSection(container: AppContainer) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (android) {
+        SettingToggle("Download on Wi-Fi only", wifiOnly, actions.setWifiOnly)
+        Text(
+            if (wifiOnly) {
+                "On mobile data, downloads wait for Wi-Fi. Playback still streams."
+            } else {
+                "Downloads also run on mobile data."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    snapshot.extractorIssue?.let { ExtractorNotice(it, android) }
     Text(
-        "Storage: $usedMiB / $maxMiB MiB · ${snapshot.entryCount} cached",
+        "Storage: $usedMiB / $maxMiB MiB, ${snapshot.entryCount} cached",
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(top = 8.dp),
     )
@@ -66,16 +114,7 @@ fun DownloadsSection(container: AppContainer) {
             modifier = Modifier.padding(top = 8.dp),
         )
     } else {
-        snapshot.items.forEach { item ->
-            DownloadRow(
-                item = item,
-                onRetry = { presenter.retry(item.ownerCanonicalId) },
-                onRemove = { presenter.remove(item.ownerCanonicalId) },
-                onPinToggle = {
-                    presenter.togglePin(item.ownerCanonicalId)
-                },
-            )
-        }
+        snapshot.items.forEach { item -> DownloadRow(item, actions, now) }
     }
     if (snapshot.recentEvictions.isNotEmpty()) {
         SectionRule("Recent cache removals", Modifier.padding(top = 16.dp))
@@ -86,7 +125,7 @@ fun DownloadsSection(container: AppContainer) {
         )
         snapshot.recentEvictions.take(8).forEach { eviction ->
             Text(
-                "${eviction.ownerCanonicalId} · ${eviction.reason} · ${eviction.sizeBytes / 1024} KiB",
+                "${eviction.ownerCanonicalId}, ${eviction.reason}, ${eviction.sizeBytes / 1024} KiB",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -94,14 +133,39 @@ fun DownloadsSection(container: AppContainer) {
     }
 }
 
+/** Shown once for the whole list, not per row: the fix is the same for every failed download. */
 @Composable
-private fun DownloadRow(
-    item: DownloadItemState,
-    onRetry: () -> Unit,
-    onRemove: () -> Unit,
-    onPinToggle: () -> Unit,
-) {
+private fun ExtractorNotice(reason: String, android: Boolean) {
+    val rule = LocalKainosPalette.current.accent(Accents.failed, AccentUse.Mark)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .drawBehind { drawLine(rule, Offset(0f, 0f), Offset(0f, size.height), 3.dp.toPx()) }
+            .padding(start = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(extractorFix(android), style = MaterialTheme.typography.titleSmall)
+        Text(
+            "YouTube is refusing downloads in a way that usually means the extractor is out of date. " +
+                "Failed downloads try again on the next launch.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+internal fun extractorFix(android: Boolean): String = if (android) {
+    "Update Kainos Player to get a newer YouTube extractor."
+} else {
+    "Update yt-dlp: run scripts/install-yt-dlp.sh, then restart."
+}
+
+@Composable
+private fun DownloadRow(item: DownloadItemState, actions: DownloadActions, now: Long) {
     val hair = LocalKainosPalette.current.hair
+    val id = item.ownerCanonicalId
     Column(
         Modifier
             .fillMaxWidth()
@@ -119,12 +183,18 @@ private fun DownloadRow(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            AvailabilityMark(item.phase.availability, phaseLabel(item))
+            AvailabilityMark(item.phase.availability, phaseLabel(item, now))
             if (item.isSpotifyViaYouTubeMatch) SourceMark(SourceKind.YouTube, "YouTube match")
             if (item.pinned) AccentBadge("Pinned", AccentSlot.Orange)
         }
         item.errorMessage?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            // A retry is expected to recover, so only a final failure reads as an error.
+            val color = if (item.phase == DownloadPhase.FAILED) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(it, style = MaterialTheme.typography.bodySmall, color = color)
         }
         if (item.phase == DownloadPhase.DOWNLOADING) {
             val progress = item.progress
@@ -142,29 +212,42 @@ private fun DownloadRow(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (item.phase == DownloadPhase.FAILED || item.phase == DownloadPhase.WAITING_FOR_NETWORK) {
-                TextButton(onClick = onRetry) { Text("Retry") }
+            if (item.phase == DownloadPhase.NOT_DOWNLOADED) {
+                OutlinedButton(onClick = { actions.download(id) }) { Text("Download") }
+                return@Row
             }
-            TextButton(onClick = onPinToggle) {
+            if (item.phase == DownloadPhase.FAILED || item.retryAtMs != null) {
+                TextButton(onClick = { actions.retry(id) }) { Text(if (item.retryAtMs != null) "Retry now" else "Retry") }
+            }
+            TextButton(onClick = { actions.togglePin(id) }) {
                 Text(if (item.pinned) "Unpin" else "Pin")
             }
-            OutlinedButton(onClick = onRemove) { Text("Remove") }
+            OutlinedButton(onClick = { actions.remove(id) }) { Text("Remove") }
         }
     }
 }
 
 private val DownloadPhase.availability: TrackAvailability
     get() = when (this) {
-        DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK -> TrackAvailability.WAITING_FOR_NETWORK
+        DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK, DownloadPhase.WAITING_FOR_WIFI ->
+            TrackAvailability.WAITING_FOR_NETWORK
         DownloadPhase.DOWNLOADING -> TrackAvailability.DOWNLOADING
         DownloadPhase.FAILED -> TrackAvailability.FAILED
         DownloadPhase.CACHED -> TrackAvailability.CACHED
+        DownloadPhase.NOT_DOWNLOADED -> TrackAvailability.UNAVAILABLE
     }
 
-private fun phaseLabel(item: DownloadItemState): String = when (item.phase) {
-    DownloadPhase.QUEUED -> "Queued"
+internal fun phaseLabel(item: DownloadItemState, now: Long): String = when (item.phase) {
+    DownloadPhase.QUEUED -> item.retryAtMs?.let { retryLabel(it - now) } ?: "Queued"
     DownloadPhase.WAITING_FOR_NETWORK -> "Waiting for network"
+    DownloadPhase.WAITING_FOR_WIFI -> "Waiting for Wi-Fi"
     DownloadPhase.DOWNLOADING -> "Downloading"
     DownloadPhase.FAILED -> "Failed"
     DownloadPhase.CACHED -> "Cached"
+    DownloadPhase.NOT_DOWNLOADED -> "Removed from this device"
+}
+
+private fun retryLabel(remainingMs: Long): String {
+    val minutes = (remainingMs + 59_999) / 60_000
+    return if (minutes <= 1) "Retrying in under a minute" else "Retrying in about $minutes min"
 }

@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.sync
 
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
 import com.universalmusic.player.data.cache.CachedAudioCopies
 import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
@@ -407,7 +409,7 @@ class CachedAudioSyncTest {
     private object NoDownloader : YouTubeAudioDownloader {
         override fun isAvailable() = false
         override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
-            onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio? = null
+            onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult = YouTubeDownloadResult.Failed(YouTubeFailureKind.PERMANENT, "no downloader")
     }
 
     private fun bytes(count: Int, seed: Int) = ByteArray(count) { ((it * 31 + seed) % 251).toByte() }

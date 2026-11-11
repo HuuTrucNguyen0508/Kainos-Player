@@ -61,6 +61,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderEntityRef
+import com.universalmusic.player.platform.isNetworkMetered
 import com.universalmusic.player.platform.discoverWeeklySnapshotFile
 import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
@@ -232,6 +233,8 @@ class AppContainer(
         downloader = createYouTubeAudioDownloader(youtubeStreams),
         youtubeSearch = { query -> youtube.search(query).tracks },
         matcher = matcher,
+        meteredNetwork = ::isNetworkMetered,
+        wifiOnly = { _settings.value.downloadOnWifiOnly },
         protectedOwners = { protectedCacheOwners() },
         onCached = { canonicalId, entry ->
             library.attachHeartedCacheSource(canonicalId, entry.toLocalPlaybackSource())
@@ -646,7 +649,7 @@ class AppContainer(
 
     suspend fun clearHeartedAudioCache(): HeartedAudioCacheStats {
         val before = heartedAudio.stats()
-        heartedAudio.clear()
+        heartedAudio.clear(hearted = library.favoriteIds.value)
         library.favoriteIds.value.forEach { library.stripHeartedCacheSource(it) }
         return before
     }
@@ -668,7 +671,17 @@ class AppContainer(
 
     fun retryHeartedDownload(canonicalId: String) = heartedAudio.retry(canonicalId)
 
-    fun removeHeartedDownload(canonicalId: String) = heartedAudio.cancelAndRemove(canonicalId)
+    /** Downloads → Remove: the heart stays and the audio stays off until [downloadHeartedTrack]. */
+    fun removeHeartedDownload(canonicalId: String) = heartedAudio.removeAndKeepOff(canonicalId)
+
+    fun downloadHeartedTrack(canonicalId: String) = heartedAudio.download(canonicalId)
+
+    fun setDownloadOnWifiOnly(enabled: Boolean) {
+        scope.launch {
+            updateSettings { it.copy(downloadOnWifiOnly = enabled) }
+            heartedAudio.notifyNetworkChanged()
+        }
+    }
 
     fun setHeartedDownloadPinned(canonicalId: String, pinned: Boolean) =
         heartedAudio.setPinned(canonicalId, pinned)
