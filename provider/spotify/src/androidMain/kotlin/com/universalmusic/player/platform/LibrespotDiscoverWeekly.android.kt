@@ -14,7 +14,6 @@ import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QualityTier
 import com.universalmusic.player.domain.model.Track
 import java.io.File
-import java.io.IOException
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -105,14 +104,7 @@ private suspend fun <T> withMetadataSession(label: String, block: suspend (Sessi
             withFreshSession(label, block)
         } else {
             PlaybackTrace.log("Librespot", "$label: reading through the receiver's session")
-            try {
-                block(shared)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                if (receiverHost?.metadataSession() !== shared) throw ReceiverSessionReplaced(failure)
-                throw failure
-            }
+            readBorrowedMetadata(shared, { receiverHost?.metadataSession() }, block)
         }
     }
 
@@ -135,10 +127,6 @@ private suspend fun <T> withFreshSession(label: String, block: suspend (Session)
         runCatching { session.close() }
     }
 }
-
-/** The receiver closed the session a call was using; its successor (or a fresh one) gets the retry. */
-private class ReceiverSessionReplaced(cause: Throwable) :
-    IOException("the playback receiver was rebuilt during the call", cause)
 
 private fun isTransientMetadataFailure(failure: Throwable): Boolean =
     failure is ReceiverSessionReplaced ||
@@ -171,9 +159,9 @@ private suspend fun Session.tracksFor(uris: List<String>): List<Track> = corouti
             }
         }
     }.awaitAll()
-    val tracks = results.mapNotNull { it.getOrNull() }
-    if (tracks.isEmpty()) results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
-    tracks
+    metadataBatchResults(results) {
+        isTransientMetadataFailure(it) || (it is ApiClient.StatusCodeException && it.code == 429)
+    }
 }
 
 private fun Session.trackFor(uri: String): Track? {
