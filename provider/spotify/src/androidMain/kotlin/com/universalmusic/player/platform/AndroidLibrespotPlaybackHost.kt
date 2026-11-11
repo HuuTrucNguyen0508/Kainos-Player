@@ -1,5 +1,6 @@
 package com.universalmusic.player.platform
 
+import android.net.ConnectivityManager
 import android.util.Log
 import com.spotify.Authentication
 import com.spotify.connectstate.Connect
@@ -69,6 +70,16 @@ internal class AndroidLibrespotPlaybackHost(
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
     private val warmer = LibrespotTrackWarmer(recoveryScope)
+    private val networkWatch = DefaultNetworkWatch(
+        androidContext.getSystemService(ConnectivityManager::class.java), recoveryScope, ::onNetworkSwitched,
+    )
+    /** Set when the default network changed under a receiver that held a track. */
+    @Volatile private var rebuildBeforeLoad = false
+    /**
+     * A fresh player loads only after Spotify registers it. Once registered it can load again even
+     * after another device took over, which clears its ready flag until the dealer reconnects.
+     */
+    @Volatile private var registeredReceiver: Player? = null
 
     override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = mutex.withLock {
         Log.i(TAG, "ensureDeviceReady interactive=false hasCredentials=${hasCachedCredentials()}")
@@ -132,6 +143,9 @@ internal class AndroidLibrespotPlaybackHost(
                     .setCacheEnabled(true)
                     .setCacheDir(File(filesDir, "librespot-cache"))
                     .setDoCacheCleanUp(true)
+                    // librespot replaces the AP connection when no ping arrives within 120 s plus
+                    // this, and Spotify pings every 120 s, so 0 replaced it whenever a ping ran late.
+                    .setConnectionTimeout(AP_PING_GRACE_S)
                     .build()
                 val playerConf = PlayerConfiguration.Builder()
                     .setOutput(PlayerConfiguration.AudioOutput.CUSTOM)
@@ -153,6 +167,7 @@ internal class AndroidLibrespotPlaybackHost(
                 ) ?: return@withContext null
                 session = createdSession
                 player = createdPlayer
+                networkWatch.start()
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
                 Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_ANDROID_DEVICE_NAME")
                 namedDevice()
@@ -212,8 +227,13 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private suspend fun receiverForLoad(replacing: Player?): Player? = mutex.withLock {
-        if (player != null && (audioSinkDied || player === replacing)) {
-            PlaybackTrace.log("Librespot", "rebuilding the receiver${if (audioSinkDied) " (its audio thread died)" else ""}")
+        if (player != null && (audioSinkDied || rebuildBeforeLoad || player === replacing)) {
+            val reason = when {
+                audioSinkDied -> " (its audio thread died)"
+                rebuildBeforeLoad -> " (the network changed)"
+                else -> ""
+            }
+            PlaybackTrace.log("Librespot", "rebuilding the receiver$reason")
             shutdownLocked()
         }
         ensureStarted(interactive = false, oauthCredentials = null) ?: return@withLock null
@@ -221,8 +241,10 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     private fun load(receiver: Player, uri: String) {
-        // A fresh player must finish registering with Spotify before it can load.
-        receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
+        if (receiver !== registeredReceiver) {
+            receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
+            registeredReceiver = receiver
+        }
         // Synchronous: resolves the one-track context and starts loading its audio. On failure
         // librespot logs it, enters its PANIC state and leaves the previous track current.
         receiver.load(uri, true, false)
@@ -232,7 +254,9 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
-    override fun warmTrack(trackId: String?) = warmer.warm(trackId, session.takeIf { player != null })
+    /** A receiver marked for rebuild still talks to the old network's dead connection. */
+    override fun warmTrack(trackId: String?) =
+        warmer.warm(trackId, session.takeIf { player != null && !rebuildBeforeLoad })
 
     override suspend fun pause() = onReceiver("pause") { it.pause() }
 
@@ -273,6 +297,9 @@ internal class AndroidLibrespotPlaybackHost(
     private fun shutdownLocked() {
         haltFilter.reset()
         warmer.cancelAll()
+        networkWatch.stop()
+        rebuildBeforeLoad = false
+        registeredReceiver = null
         if (player != null || session != null) {
             Log.i(TAG, "shutdown session")
         }
@@ -283,6 +310,31 @@ internal class AndroidLibrespotPlaybackHost(
         audioSinkDied = false
         runCatching { oldPlayer?.close() }
         runCatching { oldSession?.close() }
+    }
+
+    /** The new receiver has a new device id and holds no track; the engine sees the old one pause. */
+    private suspend fun replaceReceiverLocked() {
+        receiverGeneration++
+        receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
+        shutdownLocked()
+        ensureStarted(interactive = false, oauthCredentials = null)
+    }
+
+    /**
+     * librespot notices a dead AP connection only on a failed read or a missed ping, minutes after
+     * the network changed, and a load meanwhile panics before recovery starts. An idle receiver is
+     * replaced now. Replacing one that holds a track would stop it or lose its paused position, so
+     * that one is replaced before the next load instead.
+     */
+    private suspend fun onNetworkSwitched() = mutex.withLock {
+        val receiver = player ?: return@withLock
+        if (receiver.stateWrapper.state.isPlaying || loadingDirectly || directCommands.isLocked) {
+            rebuildBeforeLoad = true
+            PlaybackTrace.log("Librespot", "default network changed; rebuilding the receiver before its next load")
+            return@withLock
+        }
+        PlaybackTrace.log("Librespot", "default network changed; rebuilding the idle receiver")
+        replaceReceiverLocked()
     }
 
     private fun namedDevice() = SpotifyWebPlaybackDevice(deviceName = KAINOS_SPOTIFY_ANDROID_DEVICE_NAME)
@@ -300,6 +352,7 @@ internal class AndroidLibrespotPlaybackHost(
             if (attempt > 0) {
                 Thread.sleep(RETRY_DELAY_MS * attempt)
             }
+            val attemptStarted = System.nanoTime()
             try {
                 val builder = Session.Builder(conf)
                     .setPreferredLocale(Locale.getDefault().language)
@@ -315,31 +368,34 @@ internal class AndroidLibrespotPlaybackHost(
                         return null
                     }
                 }
-                Log.i(TAG, "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS")
                 val createdSession = builder.create()
-                Log.i(TAG, "AP connected")
+                val sessionMs = elapsedMs(attemptStarted)
                 createdSession.addReconnectionListener(object : Session.ReconnectionListener {
                     override fun onConnectionDropped() {
+                        PlaybackTrace.log("Librespot", "AP connection dropped; librespot is reconnecting")
                         installLibrespotReconnectGuard(Thread.currentThread()) { error ->
                             Log.w(TAG, "interrupted AP reconnect; recreating receiver", error)
                             recoveryScope.launch {
                                 mutex.withLock {
                                     // A shutdown or a replacement wins over recovery of the old session.
                                     if (session !== createdSession) return@withLock
-                                    receiverGeneration++
-                                    receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
-                                    shutdownLocked()
-                                    ensureStarted(interactive = false, oauthCredentials = null)
+                                    replaceReceiverLocked()
                                 }
                             }
                         }
                     }
-                    override fun onConnectionEstablished() = Unit
+                    override fun onConnectionEstablished() =
+                        PlaybackTrace.log("Librespot", "AP connection re-established")
                 })
                 // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
                 installLibrespotStaleTaskGuard(onAudioSinkDied = { audioSinkDied = true })
+                val playerStarted = System.nanoTime()
                 val createdPlayer = Player(playerConf, createdSession)
                 createdPlayer.addEventsListener(LibrespotEventsTrace())
+                PlaybackTrace.log(
+                    "Librespot",
+                    "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS: session ${sessionMs} ms, player ${elapsedMs(playerStarted)} ms",
+                )
                 return createdSession to createdPlayer
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -347,7 +403,10 @@ internal class AndroidLibrespotPlaybackHost(
                 throw auth
             } catch (failure: Throwable) {
                 lastFailure = failure
-                Log.w(TAG, "AP connect attempt ${attempt + 1} failed: ${failure.message}")
+                PlaybackTrace.log(
+                    "Librespot",
+                    "AP connect attempt ${attempt + 1}/$CONNECT_ATTEMPTS failed after ${elapsedMs(attemptStarted)} ms: ${failure.message}",
+                )
                 if (!isRetryableLibrespotConnectFailure(failure) || attempt == CONNECT_ATTEMPTS - 1) {
                     throw failure
                 }
@@ -355,6 +414,8 @@ internal class AndroidLibrespotPlaybackHost(
         }
         throw lastFailure ?: IllegalStateException("librespot session creation failed")
     }
+
+    private fun elapsedMs(startedNanos: Long) = (System.nanoTime() - startedNanos) / 1_000_000
 
     /**
      * What the in-process Spotify receiver actually did. Kainos drives transport through the
@@ -451,6 +512,7 @@ internal class AndroidLibrespotPlaybackHost(
         private const val CONNECT_ATTEMPTS = 4
         private const val RETRY_DELAY_MS = 750L
         private const val RECEIVER_READY_TIMEOUT_S = 10L
+        private const val AP_PING_GRACE_S = 30
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
         /** librespot-java Connect volume scale; 65536 is unity / max. */
