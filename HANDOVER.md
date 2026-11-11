@@ -4,7 +4,7 @@ Written 2026-11-11 for local `main` at `9c1fad7` (before this docs commit). Read
 
 ## Where things stand
 
-- Local `main` holds the whole 2026-11-11 program. `origin/main` (as last fetched) is at `a5c9498`, 91 commits behind, so none of it is pushed. No release or PR has been made from it. Pushing, merging into a remote and publishing a release need the owner's word.
+- `main` holds the whole 2026-11-11 program and is pushed to `origin`. The owner asked for a release: `linux-android-2026-11-11` (Latest) is built from `88524e9` (versionCode 1000639) with the Linux tarball and the debug APK. GitHub CI for `88524e9` stuck in its queue, so the CI check set ran locally: 2,492 tests, 0 failures, plus the migration check, the optimized build and lint.
 - Schema is 10 (migrations `1.sqm` to `9.sqm`). The Android version code is schema × 100,000 plus the commit count, so an older-schema APK is refused as a downgrade.
 - Merged, in order (`git log --first-parent main -13`): `aae92f0` Frost size fix, `7ef57dc` Frost polish, `4cd2486` dock motion, `f126234` ultrawide layouts, `c4833ff` Android Spotify streaming and the librespot cache, `39707e6` Spotify on mobile data round 2, `0c2742e` playback and platform fixes, `2cdbba4` local file tags, `669c36f` collection pages, `505f025` loudness levelling, `d5620cc` YouTube download fixes, `9c1fad7` queue, Shuffle and Hide duplicates. Each "reviewed" merge was reviewed and fixed on its own branch. Reports for two of them are in `docs/reviews/`.
 - The combined head has no recorded full test run. Run the commands below first.
