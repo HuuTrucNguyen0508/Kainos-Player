@@ -39,6 +39,8 @@ internal class TrackStarter(
     /** The engine refused a speculative URL; the entry must start again from this position. */
     private val onSpeculativeUrlRejected: (resumeAtMs: Long?) -> Unit,
     private val onTerminalFailure: (generation: Long) -> Unit,
+    /** The last source failed on a provider rate limit: hold the entry instead of moving on. */
+    private val onRateLimited: (generation: Long, target: StartupTarget?) -> Unit,
 ) {
     suspend fun start(
         track: Track,
@@ -146,7 +148,7 @@ internal class TrackStarter(
             if (generation != turn.generation) return
             currentCoroutineContext().ensureActive()
             trace("engine.play failed gen=$generation: ${error.message}")
-            tryFallback(playable, error.message, generation, target)
+            tryFallback(playable, error.message, generation, target, rateLimit = error.rateLimitCause())
             return
         }
         if (generation != turn.generation) {
@@ -163,6 +165,7 @@ internal class TrackStarter(
         reason: String?,
         generation: Long,
         target: StartupTarget?,
+        rateLimit: ProviderRateLimitedException? = null,
     ) {
         if (generation != turn.generation) return
         if (prefetcher.consumeRejectedStart(generation)) {
@@ -179,10 +182,13 @@ internal class TrackStarter(
                 it.copy(
                     buffering = false,
                     isPlaying = false,
-                    error = reason ?: "Playback failed and no fallback is available",
+                    error = when {
+                        rateLimit != null -> "${rateLimit.message} Playback paused; press Play to try again."
+                        else -> reason ?: "Playback failed and no fallback is available"
+                    },
                 )
             }
-            onTerminalFailure(generation)
+            if (rateLimit != null) onRateLimited(generation, target) else onTerminalFailure(generation)
             return
         }
         val remaining = current.fallbacks.drop(1)
