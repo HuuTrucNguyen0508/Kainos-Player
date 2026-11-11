@@ -6,6 +6,7 @@ import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.spotify.SpotifyRefusedException
 import com.universalmusic.player.domain.model.Album
+import com.universalmusic.player.domain.model.AlbumRef
 import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
@@ -21,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -42,6 +44,7 @@ internal class CollectionCatalog(
     private val spotifyArtistTopTracks: suspend (String) -> List<Track>,
     private val spotifyArtistAlbums: suspend (String) -> List<Album>,
     private val providerPlaylistPage: suspend (ProviderEntityRef, String?) -> PlaylistTracksPage,
+    private val albumAliases: StateFlow<Map<String, List<AlbumRef>>> = MutableStateFlow(emptyMap()),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : CollectionPages {
@@ -105,28 +108,28 @@ internal class CollectionCatalog(
         }
     }
 
-    private fun localAlbum(ref: CollectionRef.LocalAlbum): Flow<CollectionChunk> = localTracks
-        .map { all ->
-            val tracks = all.filter { it.album?.canonicalId == ref.albumId }.inAlbumOrder()
-            val album = tracks.firstOrNull()?.album
-            val artists = album?.artists.orEmpty()
-                .ifEmpty { tracks.flatMap(Track::artists).distinctBy { foldedArtist(it.name) } }
-                .filter { it.name.isNotBlank() }
-            CollectionChunk(
-                tracks = tracks,
-                header = CollectionHeader(
-                    kind = CollectionKind.Album,
-                    title = album?.title ?: ref.title,
-                    source = SourceKind.Local,
-                    sourceLabel = "Local album",
-                    artwork = album?.artwork ?: tracks.firstNotNullOfOrNull { it.artwork },
-                    byline = artists.joinToString(", ") { it.name }.ifBlank { null },
-                    bylineRef = artists.singleOrNull()?.page(),
-                    year = album?.year ?: tracks.firstNotNullOfOrNull { it.year },
-                ),
-                notice = if (tracks.isEmpty()) "This album is no longer in your library." else null,
-            )
-        }
+    private fun localAlbum(ref: CollectionRef.LocalAlbum): Flow<CollectionChunk> = combine(localTracks, albumAliases) { all, aliases ->
+        val albumId = aliases[ref.albumId]?.singleOrNull()?.canonicalId ?: ref.albumId
+        val tracks = all.filter { it.album?.canonicalId == albumId }.inAlbumOrder()
+        val album = tracks.firstOrNull()?.album
+        val artists = album?.artists.orEmpty()
+            .ifEmpty { tracks.flatMap(Track::artists).distinctBy { foldedArtist(it.name) } }
+            .filter { it.name.isNotBlank() }
+        CollectionChunk(
+            tracks = tracks,
+            header = CollectionHeader(
+                kind = CollectionKind.Album,
+                title = album?.title ?: ref.title,
+                source = SourceKind.Local,
+                sourceLabel = "Local album",
+                artwork = album?.artwork ?: tracks.firstNotNullOfOrNull { it.artwork },
+                byline = artists.joinToString(", ") { it.name }.ifBlank { null },
+                bylineRef = artists.singleOrNull()?.page(),
+                year = album?.year ?: tracks.firstNotNullOfOrNull { it.year },
+            ),
+            notice = if (tracks.isEmpty()) "This album is no longer in your library." else null,
+        )
+    }
         .distinctUntilChanged()
         .flowOn(dispatcher)
 
@@ -231,6 +234,7 @@ internal class CollectionCatalog(
     companion object {
         fun from(container: AppContainer): CollectionCatalog = CollectionCatalog(
             localTracks = container.local.libraryTracks,
+            albumAliases = container.local.albumAliases,
             streamedTracks = combine(container.library.savedTracks, container.spotifyTracks) { saved, liked -> saved + liked },
             localOnly = container.settings.map { it.libraryLocalOnly }.distinctUntilChanged(),
             playlists = container.kainosPlaylists.playlists,

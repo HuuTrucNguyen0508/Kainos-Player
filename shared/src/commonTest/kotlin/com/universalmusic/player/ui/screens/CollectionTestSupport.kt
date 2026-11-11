@@ -15,6 +15,7 @@ internal fun testCollectionCatalog(
     dispatcher: CoroutineDispatcher,
     localTracks: StateFlow<List<Track>> = MutableStateFlow(emptyList()),
     streamedTracks: StateFlow<List<Track>> = MutableStateFlow(emptyList()),
+    albumAliases: StateFlow<Map<String, List<com.universalmusic.player.domain.model.AlbumRef>>> = MutableStateFlow(emptyMap()),
     localOnly: StateFlow<Boolean> = MutableStateFlow(false),
     playlists: StateFlow<List<PersistedKainosPlaylist>> = MutableStateFlow(emptyList()),
     playlistEditor: (String) -> PlaylistEditor? = { null },
@@ -24,6 +25,7 @@ internal fun testCollectionCatalog(
     providerPlaylistPage: suspend (ProviderEntityRef, String?) -> PlaylistTracksPage = { _, _ -> error("no playlist in this test") },
 ) = CollectionCatalog(
     localTracks = localTracks,
+    albumAliases = albumAliases,
     streamedTracks = streamedTracks,
     localOnly = localOnly,
     playlists = playlists,

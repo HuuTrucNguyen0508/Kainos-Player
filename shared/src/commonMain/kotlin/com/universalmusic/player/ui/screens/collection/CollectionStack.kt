@@ -73,5 +73,11 @@ internal class CollectionNavigator(scope: CoroutineScope, pages: CollectionPages
         CollectionStack(scope, pages) { ++lastId }
     }
 
+    /** Type-to-search always reveals Library's search, even if that tab was left on a page. */
+    fun focusLibrarySearch(navigate: (AppDestination) -> Unit) {
+        stack(AppDestination.Library).clear()
+        navigate(AppDestination.Library)
+    }
+
     fun stack(destination: AppDestination): CollectionStack = stacks.getValue(destination)
 }

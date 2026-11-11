@@ -54,6 +54,32 @@ class CollectionPresenterTest {
             testCollectionCatalog(StandardTestDispatcher(testScheduler), providerPlaylistPage = load),
         )
 
+    @Test fun typingFromAnotherTabRevealsLibrarySearchInsteadOfItsRetainedPage() = runTest {
+        val pages = CollectionNavigator(backgroundScope, testCollectionCatalog(StandardTestDispatcher(testScheduler)))
+        val library = com.universalmusic.player.ui.navigation.AppDestination.Library
+        val search = com.universalmusic.player.ui.navigation.AppDestination.Search
+        pages.stack(library).push(CollectionRef.LibraryArtist("Saved artist"))
+        pages.stack(search).push(CollectionRef.LibraryArtist("Search artist"))
+        var destination = search
+        pages.focusLibrarySearch { destination = it }
+        assertEquals(library, destination)
+        assertNull(pages.stack(library).top, "The typed query must be visible")
+        assertEquals("Search artist", pages.stack(search).top!!.ref.title, "Other tabs keep their pages")
+    }
+
+    @Test fun aMoveAfterTheLastEntryWasRemovedDoesNothing() = runTest {
+        val repository = com.universalmusic.player.data.playlist.KainosPlaylistRepository()
+        val playlist = repository.create("Editable", songs("One"))
+        val catalog = testCollectionCatalog(StandardTestDispatcher(testScheduler), playlists = repository.playlists,
+            playlistEditor = { repository.editor(it) { emptyList() } })
+        val page = catalog.open(CollectionRef.KainosPlaylist(playlist.id, playlist.title), backgroundScope)
+        runCurrent()
+        page.remove(0)
+        runCurrent()
+        assertFalse(page.move(0, 1))
+        assertTrue(repository.get(playlist.id)!!.entries.isEmpty())
+    }
+
     @Test
     fun openingLoadsTheFirstPageAndLoadMoreAppendsTheNext() = runTest {
         val pages = FakePages(

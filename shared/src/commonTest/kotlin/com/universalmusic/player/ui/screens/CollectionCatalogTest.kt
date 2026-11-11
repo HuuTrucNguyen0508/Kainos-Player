@@ -44,6 +44,21 @@ class CollectionCatalogTest {
     )
 
     @Test
+    fun anOpenAlbumFollowsItsTracksWhenTheTagPassRekeysIt() = runTest {
+        val original = track("Song", "Artist", album = "Folder", provider = ProviderId.LOCAL, canonicalId = "local:1")
+        val local = MutableStateFlow(listOf(original))
+        val aliases = MutableStateFlow<Map<String, List<AlbumRef>>>(emptyMap())
+        val page = open(testCollectionCatalog(StandardTestDispatcher(testScheduler), localTracks = local, albumAliases = aliases),
+            CollectionRef.LocalAlbum(original.album!!.canonicalId, "Folder"))
+        val tagged = original.copy(album = AlbumRef("local-album:tagged", "Tagged album"))
+        aliases.value = mapOf(original.album!!.canonicalId to listOf(tagged.album!!))
+        local.value = listOf(tagged)
+        runCurrent()
+        assertEquals(listOf(tagged), page.state.value.tracks)
+        assertEquals("Tagged album", page.state.value.header.title)
+    }
+
+    @Test
     fun aSpotifyArtistThatRefusesTopSongsStillShowsItsAlbumsWithTheReason() = runTest {
         val album = Album("spotify-album:a", "Low Tide", listOf(ArtistRef("spotify-artist:x", "Tide")), year = 2018)
         val page = open(

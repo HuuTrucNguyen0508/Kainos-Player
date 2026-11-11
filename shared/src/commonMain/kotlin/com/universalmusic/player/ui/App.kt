@@ -428,7 +428,7 @@ private fun AppScaffold(
             UiRequest.OPEN_NOW_PLAYING -> openNowPlaying()
             UiRequest.FOCUS_LIBRARY_SEARCH -> {
                 showQueue = false
-                navigateToTab(AppDestination.Library)
+                collections.focusLibrarySearch(::navigateToTab)
             }
         }
     }

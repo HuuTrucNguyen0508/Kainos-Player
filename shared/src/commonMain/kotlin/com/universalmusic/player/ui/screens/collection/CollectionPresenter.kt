@@ -203,8 +203,9 @@ internal class CollectionPresenter(
     fun move(index: Int, steps: Int): Boolean {
         val editor = editor ?: return false
         val ids = state.value.entryIds ?: return false
+        if (index !in ids.indices) return false
         val target = (index + steps).coerceIn(0, ids.lastIndex)
-        if (index !in ids.indices || target == index) return false
+        if (target == index) return false
         val reordered = ids.toMutableList().apply { add(target, removeAt(index)) }
         // Shown at once so a drag in progress follows the row; the playlist's own update agrees.
         mutableState.update { state ->
