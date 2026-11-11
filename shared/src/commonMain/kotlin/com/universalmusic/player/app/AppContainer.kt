@@ -691,10 +691,11 @@ class AppContainer(
             spotifyClientId = settings.spotifyClientId?.takeIf { it.isNotBlank() } ?: defaults.spotifyClientId,
             youtubeDataApiKey = settings.youtubeDataApiKey?.takeIf { it.isNotBlank() } ?: defaults.youtubeDataApiKey,
         )
-        if (next.spotifyClientId != config.spotifyClientId) clearSpotifyLibrary()
         config = next
         youtube.updateConfig(next)
-        spotify.updateConfig(next, clearSessionOnChange)
+        // The saved library goes with the session. A launch keeps both, even though its saved
+        // Client ID differs from the built-in default it starts from.
+        if (spotify.updateConfig(next, clearSessionOnChange)) clearSpotifyLibrary()
     }
 
     suspend fun disconnectSpotify() {

@@ -898,7 +898,7 @@ class SpotifyProviderTest {
             respondJson("""{"id":"user"}""")
         }
 
-        provider.updateConfig(
+        val signedOut = provider.updateConfig(
             AppConfig(
                 spotifyClientId = "saved-client-id",
                 spotifyRedirectUri = "http://127.0.0.1:43821/callback",
@@ -908,6 +908,25 @@ class SpotifyProviderTest {
 
         assertEquals(saved, store.value)
         assertTrue(provider.isAuthenticated())
+        // The account's saved library is kept with the session: only a sign-out clears it.
+        assertEquals(false, signedOut)
+    }
+
+    @Test
+    fun aNewClientIdFromSettingsSignsOut() = runTest {
+        val store = TokenStoreFake(AuthTokens("saved-access", refreshToken = "saved-refresh"))
+        val provider = provider(store) { respond("", HttpStatusCode.Unauthorized) }
+
+        val signedOut = provider.updateConfig(
+            AppConfig(spotifyClientId = "new-client-id", spotifyRedirectUri = "http://127.0.0.1:43821/callback"),
+        )
+
+        assertEquals(true, signedOut)
+        assertEquals(null, store.value)
+        val unchanged = provider.updateConfig(
+            AppConfig(spotifyClientId = "new-client-id", spotifyRedirectUri = "http://127.0.0.1:43821/callback"),
+        )
+        assertEquals(false, unchanged)
     }
 
     @Test

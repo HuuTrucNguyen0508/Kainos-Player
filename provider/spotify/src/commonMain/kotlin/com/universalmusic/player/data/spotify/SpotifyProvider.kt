@@ -990,7 +990,11 @@ class SpotifyProvider(
         response.requireSuccess("Spotify Connect seek")
     }
 
-    suspend fun updateConfig(next: AppConfig, clearSessionOnChange: Boolean = true) {
+    /**
+     * Applies [next]. A new Client ID or redirect signs out unless [clearSessionOnChange] is false
+     * (a launch reading its saved settings keeps the saved session). Returns true when it signed out.
+     */
+    suspend fun updateConfig(next: AppConfig, clearSessionOnChange: Boolean = true): Boolean {
         val credentialsChanged = config.spotifyClientId != next.spotifyClientId ||
             config.spotifyRedirectUri != next.spotifyRedirectUri
         if (credentialsChanged) {
@@ -998,9 +1002,11 @@ class SpotifyProvider(
             authGeneration++
             observeCooldownUntilMs = 0
         }
-        if (credentialsChanged && clearSessionOnChange) logout()
+        val signsOut = credentialsChanged && clearSessionOnChange
+        if (signsOut) logout()
         config = next
         restore()
+        return signsOut
     }
 
     private suspend fun accessToken(): String = mutex.withLock {
