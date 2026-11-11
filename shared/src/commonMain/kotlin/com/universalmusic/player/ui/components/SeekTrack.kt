@@ -112,12 +112,14 @@ fun SeekTrack(
                 drawCircle(dot, radius, Offset(x, baseY))
             }
             SeekStyle.LINE -> {
-                // Frost: a hairline track with an ink run, as on the shell's Media page.
+                // Frost: a hairline track with an ink run, as on the shell's Media page. The run
+                // keeps full ink while seeking is unavailable (a restored track not yet loaded):
+                // where playback stands is still news, and the volume bar beside it is never dimmed.
                 val y = size.height / 2
                 val stroke = (if (kind == SeekKind.Compact) 3f else 4f).dp.toPx()
                 drawLine(palette.rule, Offset(stroke / 2, y), Offset(size.width - stroke / 2, y), stroke, StrokeCap.Round)
                 if (!known) return@Canvas
-                val ink = scheme.onBackground.copy(alpha = alpha)
+                val ink = scheme.onBackground
                 val x = (f * size.width).coerceIn(stroke / 2, size.width - stroke / 2)
                 drawLine(ink, Offset(stroke / 2, y), Offset(x, y), stroke, StrokeCap.Round)
                 val radius = (if (scrubbing) 8f else if (kind == SeekKind.Compact) 4f else 6f).dp.toPx()

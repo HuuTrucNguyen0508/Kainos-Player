@@ -62,6 +62,12 @@ private class FrostBackdrop(val painter: Painter?, val size: IntSize)
 
 private val LocalFrostBackdrop = staticCompositionLocalOf<FrostBackdrop?> { null }
 
+/** True inside a [FrostSheet], where a card is a lift on the glass rather than a second sheet. */
+private val LocalInsideFrostSheet = staticCompositionLocalOf { false }
+
+@Composable
+fun insideFrostSheet(): Boolean = LocalInsideFrostSheet.current
+
 @Composable
 fun isFrost(): Boolean = LocalSkinTokens.current.skin == Skin.FROST
 
@@ -137,6 +143,30 @@ fun FrostSheet(
                 drawSpecular(glass.specularAlpha)
             },
         )
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+            LocalInsideFrostSheet provides true,
+        ) { content() }
+    }
+}
+
+/**
+ * A card on a Frost sheet: the shell's lift, a faint white wash over the glass with the same bright
+ * top rim, so it reads one step lighter than the sheet (dark: raised #252629 over surface #1a1b1e).
+ */
+@Composable
+fun FrostLift(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(18.dp),
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val glass = glass()
+    Box(
+        modifier
+            .clip(shape)
+            .drawBehind { drawRect(Brush.verticalGradient(listOf(glass.liftTop, glass.liftBottom))) }
+            .border(1.dp, Brush.verticalGradient(0f to glass.rim.copy(alpha = glass.rim.alpha * .6f), .4f to glass.edge, 1f to glass.edge), shape),
+    ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { content() }
     }
 }

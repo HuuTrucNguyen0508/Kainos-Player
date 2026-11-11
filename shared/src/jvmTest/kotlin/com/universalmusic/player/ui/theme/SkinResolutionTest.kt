@@ -45,6 +45,26 @@ class SkinResolutionTest {
                 assertTrue(contrastRatio(scheme.onSurfaceVariant, ground) >= 4.5, "variant on $ground dark=$isDark")
             }
             assertTrue(contrastRatio(scheme.onPrimary, scheme.primary) >= 4.5)
+            assertTrue(contrastRatio(scheme.outline, scheme.surfaceContainerHighest) >= 3.0, "outline dark=$isDark")
+        }
+    }
+
+    @Test fun frostTakesItsModeFromALightShellSchemeToo() {
+        val light = CaelestiaScheme(isDark = false, palette = folioPalette(FolioTint.CATPPUCCIN, false))
+        val settings = AppSettings(skin = SkinChoice.FROST, themeMode = ThemeMode.DARK)
+        val resolved = resolveTheme(settings, true, light, "Linux")
+        assertPaletteEquals(frostPalette(false), resolved.palette)
+        assertTrue(resolved.followsCaelestia)
+    }
+
+    @Test fun frostHasNoHueOutsideFailure() {
+        for (isDark in listOf(false, true)) {
+            val palette = frostPalette(isDark)
+            for (slot in AccentSlot.entries) {
+                val color = palette.accents[slot]
+                assertTrue(maxOf(color.red, color.green, color.blue) - minOf(color.red, color.green, color.blue) < .04f, "$slot dark=$isDark")
+                assertEquals(palette.accents.gray, color, "$slot dark=$isDark")
+            }
         }
     }
 

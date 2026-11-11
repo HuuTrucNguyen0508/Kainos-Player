@@ -108,7 +108,7 @@ fun skinTokens(skin: Skin): SkinTokens {
 
 /**
  * Frost follows the shell's Frost tokens: Fira Sans at Caelestia's sizes, ExtraLight figures, slab
- * radius 22 down to row 14, quick standard motion, a thin seek line and the wallpaper as ground.
+ * radius 22 down to detail 6, quick standard motion, a thin seek line and the wallpaper as ground.
  */
 private fun frostTokens(): SkinTokens {
     val body = frostFontFamily()
@@ -128,7 +128,8 @@ private fun frostTokens(): SkinTokens {
         labelLarge = style(18f, weight = FontWeight.Medium), labelMedium = style(16f, weight = FontWeight.Medium),
         labelSmall = style(14f),
     )
-    val rounding = Rounding(6.dp, 9.dp, 14.dp, 16.dp, 18.dp, 22.dp, 26.dp, 28.dp)
+    // The shell's one scale: 22 slabs, 18 cards, 14 rows and fields, 12 and under for small details.
+    val rounding = Rounding(6.dp, 10.dp, 14.dp, 18.dp, 18.dp, 22.dp, 22.dp, 22.dp)
     val standard = CubicBezierEasing(.2f, 0f, 0f, 1f)
     val motion = Motion(
         MotionSpec(200, standard), MotionSpec(260, standard), MotionSpec(160, standard),

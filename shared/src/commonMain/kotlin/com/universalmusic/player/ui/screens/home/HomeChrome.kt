@@ -54,6 +54,7 @@ import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.Skin
 
 @Composable
 internal fun FavoritesHero(
@@ -213,7 +214,9 @@ internal fun LibraryCard(
             SectionRule("Your library", accent = Accents.library)
             lines.forEach { line ->
                 val fill = palette.accentContainer(line.mark.slot)
-                val mark = palette.accent(line.mark.slot, AccentUse.Mark, fill)
+                // Frost's slots are one grey: the icon takes the muted ink, which holds on the glass.
+                val mark = if (LocalSkinTokens.current.skin == Skin.FROST) MaterialTheme.colorScheme.onSurfaceVariant
+                    else palette.accent(line.mark.slot, AccentUse.Mark, fill)
                 Row(
                     Modifier
                         .fillMaxWidth()

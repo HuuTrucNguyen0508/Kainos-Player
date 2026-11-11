@@ -35,6 +35,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.ArtworkImage
 import com.universalmusic.player.ui.components.SectionRule
 import com.universalmusic.player.ui.components.SourceKind
+import com.universalmusic.player.ui.components.isFrost
 import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
@@ -106,7 +107,8 @@ private fun LedgerShelf(
 ) {
     if (rows.isEmpty()) return
     val tracks = rows.map { it.track }
-    val noteColor = LocalKainosPalette.current.accent(accent, AccentUse.Mark)
+    // Frost's emphasis is the ink itself.
+    val noteColor = if (isFrost()) MaterialTheme.colorScheme.onSurface else LocalKainosPalette.current.accent(accent, AccentUse.Mark)
     Column(modifier) {
         SectionRule(title, Modifier.padding(bottom = 4.dp), accent = accent) {
             Text(
@@ -148,6 +150,7 @@ private fun LedgerRow(
     val railColor = playable?.provider?.let { LocalKainosPalette.current.accent(SourceKind.of(it).slot, AccentUse.Mark) }
         ?: MaterialTheme.colorScheme.outlineVariant
     val rounding = LocalSkinTokens.current.rounding
+    val frost = isFrost()
     val sourceLabel = ledgerSourceLabel(track)
     val artistLine = ledgerArtistLine(track)
 
@@ -158,13 +161,16 @@ private fun LedgerRow(
                 contentDescription = listOfNotNull(track.title, artistLine, note, sourceLabel).joinToString(". ")
             },
     ) {
-        Box(
-            Modifier
-                .width(3.dp)
-                .fillMaxHeight()
-                .background(railColor),
-        )
-        Spacer(Modifier.width(14.dp))
+        // Frost has no source hue, so it drops the rail rather than draw a grey one.
+        if (!frost) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .background(railColor),
+            )
+            Spacer(Modifier.width(14.dp))
+        }
         Surface(
             color = Color.Transparent,
             shape = RoundedCornerShape(rounding.normal),
