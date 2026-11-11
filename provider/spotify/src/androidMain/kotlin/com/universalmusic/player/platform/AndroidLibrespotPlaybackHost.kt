@@ -134,13 +134,21 @@ internal class AndroidLibrespotPlaybackHost(
             try {
                 registerDecodersOnce()
                 credentialsDir.mkdirs()
+                val cacheDir = File(filesDir, "librespot-cache")
+                val cacheEnabled = runCatching {
+                    resetOversizedLibrespotCache(cacheDir)?.let { bytes ->
+                        PlaybackTrace.log("Librespot", "reset cache $cacheDir: removed $bytes bytes, including journal")
+                    }
+                }.onFailure {
+                    PlaybackTrace.log("Librespot", "cache limit check failed; disabling cache for this receiver: $it")
+                }.isSuccess
                 val conf = Session.Configuration.Builder()
                     .setStoreCredentials(true)
                     .setStoredCredentialsFile(credentialsFile)
-                    // Raw encrypted CDN chunks, so a warmed or replayed track starts from disk.
+                    // Raw encrypted CDN chunks, so a replayed track starts from disk.
                     // librespot drops entries unused for 7 days when a session starts.
-                    .setCacheEnabled(true)
-                    .setCacheDir(File(filesDir, "librespot-cache"))
+                    .setCacheEnabled(cacheEnabled)
+                    .setCacheDir(cacheDir)
                     .setDoCacheCleanUp(true)
                     // librespot replaces the AP connection when no ping arrives within 120 s plus
                     // this, and Spotify pings every 120 s, so 0 replaced it whenever a ping ran late.
