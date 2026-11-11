@@ -69,7 +69,6 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile private var loadingDirectly = false
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
-    private val warmer = LibrespotTrackWarmer(recoveryScope)
     private val networkWatch = DefaultNetworkWatch(
         androidContext.getSystemService(ConnectivityManager::class.java), recoveryScope, ::onNetworkSwitched,
     )
@@ -216,7 +215,6 @@ internal class AndroidLibrespotPlaybackHost(
         val uri = "spotify:track:$trackId"
         loadingDirectly = true
         try {
-            warmer.beforeLoad(trackId)
             val receiver = receiverForLoad(replacing = null) ?: return false
             if (runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) }) return true
             val rebuilt = receiverForLoad(replacing = receiver) ?: return false
@@ -253,10 +251,6 @@ internal class AndroidLibrespotPlaybackHost(
             "player did not take $uri"
         }
     }
-
-    /** A receiver marked for rebuild still talks to the old network's dead connection. */
-    override fun warmTrack(trackId: String?) =
-        warmer.warm(trackId, session.takeIf { player != null && !rebuildBeforeLoad })
 
     override suspend fun pause() = onReceiver("pause") { it.pause() }
 
@@ -296,7 +290,6 @@ internal class AndroidLibrespotPlaybackHost(
 
     private fun shutdownLocked() {
         haltFilter.reset()
-        warmer.cancelAll()
         networkWatch.stop()
         rebuildBeforeLoad = false
         registeredReceiver = null

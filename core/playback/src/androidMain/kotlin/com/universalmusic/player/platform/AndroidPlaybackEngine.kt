@@ -266,8 +266,6 @@ class AndroidPlaybackEngine(
         launchMediaCommand(::syncSuccessor)
     }
 
-    override fun warmSpotify(trackId: String?) = spotify.warm(trackId)
-
     private fun syncSuccessor(player: MediaController) {
         if (activeBackend != ActiveBackend.MEDIA3) return
         successor.sync(player, activePlayGeneration, AndroidMediaControls::queuedTrack)
