@@ -129,6 +129,9 @@ private fun downloadArtworkBytes(url: String): ByteArray? = runCatching {
 
 actual fun createLocalLibraryScanCache(): LocalLibraryScanCache? = DbLocalLibraryScanCache(kainosStorage)
 
+actual fun createLoudnessStore(): com.universalmusic.player.data.loudness.LoudnessStore? =
+    com.universalmusic.player.data.db.DbLoudnessStore(kainosStorage)
+
 actual fun loadAppConfig(): AppConfig {
     val env = System.getenv()
     val props = Properties()

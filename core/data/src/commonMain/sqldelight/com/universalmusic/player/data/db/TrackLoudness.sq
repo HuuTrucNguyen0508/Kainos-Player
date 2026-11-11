@@ -1,0 +1,28 @@
+-- Loudness of local and hearted-cache files (lane L2b), for files without ReplayGain tags.
+-- Keyed by playback location. content_length and file_modified_ms describe the file when it was
+-- measured, so an unchanged file is not measured again. integrated_lufs and true_peak_dbtp are
+-- null when ffmpeg could not measure the file. album_* hold the aggregate over the files sharing
+-- album_key. origin is 'measured' (this device ran ffmpeg) or 'synced' (from the Home sync hub).
+
+CREATE TABLE track_loudness (
+    location TEXT NOT NULL PRIMARY KEY,
+    content_length INTEGER,
+    file_modified_ms INTEGER,
+    integrated_lufs REAL,
+    true_peak_dbtp REAL,
+    duration_ms INTEGER,
+    album_key TEXT,
+    album_lufs REAL,
+    album_peak_dbtp REAL,
+    origin TEXT NOT NULL
+);
+
+selectAll:
+SELECT * FROM track_loudness;
+
+upsert:
+INSERT OR REPLACE INTO track_loudness (
+    location, content_length, file_modified_ms, integrated_lufs, true_peak_dbtp, duration_ms,
+    album_key, album_lufs, album_peak_dbtp, origin
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

@@ -4,7 +4,9 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
 import com.universalmusic.player.domain.playback.PreparedPlayback
+import com.universalmusic.player.domain.playback.LoudnessLookup
 import com.universalmusic.player.domain.playback.ReplayGain
+import com.universalmusic.player.domain.playback.VolumeLevelling
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +26,7 @@ internal class GaplessPlaylist {
     val entries: MutableMap<Long, ProbedSuccessor> = mutableMapOf()
     var nextDuration: Long? = null
     var nextReplayGain: ReplayGain? = null
+    var nextAlbumKey: String? = null
     var crossing: PreparedPlayback? = null
     var crossingRunning: Boolean = false
     var outputDrained: Boolean = false
@@ -32,8 +35,16 @@ internal class GaplessPlaylist {
     var awaitingSuccessor: Boolean = false
 }
 
-/** A successor appended to mpv's playlist, with what was probed from its file beforehand. */
-internal class ProbedSuccessor(val prepared: PreparedPlayback, val durationMs: Long?, val replayGain: ReplayGain?)
+/**
+ * A successor appended to mpv's playlist, with what was probed from its file beforehand. Its
+ * [replayGain] is already in mpv as the entry's own level filter.
+ */
+internal class ProbedSuccessor(
+    val prepared: PreparedPlayback,
+    val durationMs: Long?,
+    val replayGain: ReplayGain?,
+    val albumKey: String?,
+)
 
 /**
  * Joins the next local file onto the running mpv process. Owns the single prepared successor,
@@ -47,6 +58,7 @@ internal class GaplessBoundary(
     private val ticker: PositionTicker,
     private val runtime: DesktopPlaybackRuntime,
     private val scope: CoroutineScope,
+    private val loudness: LoudnessLookup,
     /** Drops mpv's lookahead by restarting the outgoing file at the published position. */
     private val restartOwningFileLocked: () -> Unit,
 ) {
@@ -80,6 +92,16 @@ internal class GaplessBoundary(
         prepared?.takeIf { enabled && it.generation == transport.activeGeneration }?.let(::prepareNext)
     }
 
+    /**
+     * Levelling was turned on or off. The successor already in mpv's playlist carries the old
+     * setting in its own filter, so it is appended again; a successor already decoding took the
+     * change with the playing file's filter.
+     */
+    fun refreshSuccessorLocked() {
+        val active = slot.active ?: return
+        if (active.gapless && active.playlist.crossing == null) prepared?.let(::prepareNext)
+    }
+
     fun configure(enabled: Boolean) {
         synchronized(transport.lock) { this.enabled = enabled }
         if (!enabled) prepareNext(null)
@@ -102,12 +124,15 @@ internal class GaplessBoundary(
                 if (!slot.isActive(active)) return@enqueueLocked
                 // Remove the old successor before probing a potentially incompatible replacement.
                 runtime.sendIpc("""["playlist-clear"]""", active.socket)
-                val currentUrl = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url }
+                val (currentUrl, currentAlbum) = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url to transport.albumKey }
                 // File probes must not hold up pause, seek, or other socket commands.
                 scope.launch(Dispatchers.IO) {
                     val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
                     val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
-                    val replayGain = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
+                    val tags = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
+                    val analysed = if (candidate != null && compatible) loudness.loudnessOf(candidate.handle.url) else null
+                    // Inside an album played in order the album gain applies, so the level holds across the join.
+                    val replayGain = VolumeLevelling.choose(tags, analysed, previousAlbumKey = currentAlbum)
                     synchronized(transport.lock) {
                         if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@launch
                         slot.enqueueLocked apply@{
@@ -135,9 +160,15 @@ internal class GaplessBoundary(
                                     if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@apply
                                     playlist.nextDuration = duration
                                 }
-                                val id = runtime.loadEntry("""["loadfile",${Json.encodeToString(mpvMediaArgument(candidate.handle.url))},"append-play"]""", active.socket)
+                                val filter = levellingFilter(synchronized(transport.lock) { transport.levellingEnabled }, replayGain)
+                                // Named: mpv 0.38 put an index before the options, and older mpv rejects it positionally.
+                                val id = runtime.loadEntry(
+                                    """{"name":"loadfile","url":${Json.encodeToString(mpvMediaArgument(candidate.handle.url))},""" +
+                                        """"flags":"append-play","options":{"af-add":${Json.encodeToString(filter)}}}""",
+                                    active.socket,
+                                )
                                 synchronized(transport.lock) {
-                                    if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain)
+                                    if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain, analysed?.albumKey)
                                     else if (prepared === candidate) prepared = null
                                 }
                             }
@@ -218,6 +249,7 @@ internal class GaplessBoundary(
                     playlist.crossingEntryId = playlist.decodingEntryId
                     playlist.nextDuration = binding.durationMs
                     playlist.nextReplayGain = binding.replayGain
+                    playlist.nextAlbumKey = binding.albumKey
                 }
                 "playback-restart" -> {
                     val next = playlist.crossing ?: return
@@ -301,6 +333,7 @@ internal class GaplessBoundary(
                 transport.handle = next.handle
                 transport.quality = next.quality
                 transport.replayGain = playlist.nextReplayGain
+                transport.albumKey = playlist.nextAlbumKey
                 ticker.anchor(0)
                 slot.epoch++
                 transport.publish(EngineState(status = if (playlist.crossingFailed) EngineStatus.FAILED else if (playlist.endedAfterCrossing) EngineStatus.ENDED else

@@ -2,21 +2,53 @@ package com.universalmusic.player.domain.playback
 
 import kotlin.math.log10
 import kotlin.math.min
+import kotlin.math.pow
 
 /** What volume levelling does to the track that is audible now, as the engine playing it reports. */
 sealed interface Levelling {
     /** The setting is off. */
     data object Off : Levelling
 
-    /** The setting is on, but the player found no ReplayGain it can apply, so the track plays at its own level. */
+    /**
+     * The setting is on, but the file has neither ReplayGain tags nor a loudness measurement, so
+     * the track plays at its own level.
+     */
     data object Untagged : Levelling
 
-    /** The player applies this gain in dB, preamp and peak limit included. */
-    data class Applied(val gainDb: Double) : Levelling
+    /** The player applies this gain in dB, preamp and peak limit included, taken from [source]. */
+    data class Applied(val gainDb: Double, val source: GainSource = GainSource.TAGS) : Levelling
 }
 
-/** ReplayGain from a file's tags: gain in dB against the -18 LUFS reference, peak in linear full scale. */
-data class ReplayGain(val gainDb: Double, val peak: Double?)
+/** Where a file's gain came from. Tags always win over an analysis of the audio. */
+enum class GainSource { TAGS, ANALYSED }
+
+/**
+ * Gain in dB against the -18 LUFS ReplayGain reference, and a linear full-scale peak: the sample
+ * peak a tagger wrote for [GainSource.TAGS], the true peak ffmpeg measured for [GainSource.ANALYSED].
+ */
+data class ReplayGain(val gainDb: Double, val peak: Double?, val source: GainSource = GainSource.TAGS)
+
+/** An EBU R128 measurement of one file, or the aggregate of an album's files. */
+data class MeasuredLoudness(val integratedLufs: Double, val truePeakDbtp: Double)
+
+/**
+ * What analysis knows about one file: its own loudness, and its album's once the album's files
+ * were measured. [albumKey] is opaque; it only says whether two files belong to the same album.
+ */
+data class TrackLoudness(
+    val track: MeasuredLoudness,
+    val album: MeasuredLoudness? = null,
+    val albumKey: String? = null,
+)
+
+/** Analysed loudness by playback location (a path, `file:` URI or content URI); null when unmeasured. */
+fun interface LoudnessLookup {
+    fun loudnessOf(location: String): TrackLoudness?
+
+    companion object {
+        val None = LoudnessLookup { null }
+    }
+}
 
 object VolumeLevelling {
     /**
@@ -24,6 +56,15 @@ object VolumeLevelling {
      * 7 dB more puts levelled local files near it, before the peak limit.
      */
     const val PREAMP_DB = 7.0
+
+    /** The loudness ReplayGain gains are relative to. */
+    const val REFERENCE_LUFS = -18.0
+
+    /**
+     * Analysed files keep their measured true peak this far below full scale, as the Echo
+     * gateway does: a boosted file never clips, even after a lossy re-encode or resampling.
+     */
+    const val TRUE_PEAK_CEILING_DBTP = -1.0
 
     /**
      * Track gain, falling back to album gain as ffmpeg's `volume=replaygain=track` does.
@@ -37,9 +78,32 @@ object VolumeLevelling {
         return null
     }
 
-    /** Gain plus [PREAMP_DB], never above what the peak allows or [ceilingDb]. */
+    /** A measurement expressed as the ReplayGain a tagger would have written for it. */
+    fun analysed(loudness: MeasuredLoudness): ReplayGain = ReplayGain(
+        gainDb = REFERENCE_LUFS - loudness.integratedLufs,
+        peak = 10.0.pow(loudness.truePeakDbtp / 20),
+        source = GainSource.ANALYSED,
+    )
+
+    /**
+     * The gain for one file: its tags when it has them, otherwise its analysed track gain. When the
+     * file follows [previousAlbumKey]'s file gaplessly and is on the same album, the album gain
+     * applies instead, so the level does not change between the tracks of an album played in order.
+     */
+    fun choose(tags: ReplayGain?, analysed: TrackLoudness?, previousAlbumKey: String? = null): ReplayGain? {
+        if (tags != null) return tags
+        val loudness = analysed ?: return null
+        val album = loudness.album?.takeIf { loudness.albumKey != null && loudness.albumKey == previousAlbumKey }
+        return analysed(album ?: loudness.track)
+    }
+
+    /**
+     * Gain plus [PREAMP_DB], never above what the peak allows or [ceilingDb]. A tagged sample peak
+     * may reach full scale; an analysed true peak stops at [TRUE_PEAK_CEILING_DBTP].
+     */
     fun appliedGainDb(replayGain: ReplayGain, ceilingDb: Double = Double.POSITIVE_INFINITY): Double {
-        val peakLimitDb = replayGain.peak?.let { -20 * log10(it) } ?: Double.POSITIVE_INFINITY
+        val headroomDb = if (replayGain.source == GainSource.ANALYSED) TRUE_PEAK_CEILING_DBTP else 0.0
+        val peakLimitDb = replayGain.peak?.let { headroomDb - 20 * log10(it) } ?: Double.POSITIVE_INFINITY
         return min(min(replayGain.gainDb + PREAMP_DB, peakLimitDb), ceilingDb)
     }
 

@@ -171,6 +171,10 @@ class LocalMusicProvider(
         if (pending.isNotEmpty()) PlaybackTrace.log("ContentKey", "complete attempted=$attempted keyed=$keyed finalBatchMs=${currentTimeMillis() - batchStarted}")
     }
 
+    /** Every library file as loudness analysis and its Home sync see it. */
+    fun loudnessSubjects(): List<com.universalmusic.player.data.loudness.LoudnessSubject> =
+        scanned.value.map { it.loudnessSubject() }
+
     /** True when [track] is a library file whose tags have not been read yet. */
     fun needsTags(track: Track): Boolean {
         if (tagReader == null) return false

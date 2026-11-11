@@ -13,6 +13,7 @@ import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.playback.EngineState
 import com.universalmusic.player.domain.playback.EngineStatus
+import com.universalmusic.player.domain.playback.LoudnessLookup
 import com.universalmusic.player.domain.playback.PlaybackEngine
 import com.universalmusic.player.domain.playback.PreparedPlayback
 import com.universalmusic.player.domain.playback.SPOTIFY_START_POLL_MS
@@ -45,6 +46,8 @@ import kotlin.coroutines.resumeWithException
 class AndroidPlaybackEngine(
     context: Context,
     private val spotify: SpotifyPlaybackController,
+    /** Analysed loudness of local files without ReplayGain tags, as Home sync brought it from the PC. */
+    private val loudness: LoudnessLookup = LoudnessLookup.None,
 ) : PlaybackEngine {
     private val appContext = context.applicationContext
     /** Default scope for Spotify I/O and service connect. ExoPlayer work uses Main.immediate. */
@@ -268,7 +271,12 @@ class AndroidPlaybackEngine(
 
     private fun syncSuccessor(player: MediaController) {
         if (activeBackend != ActiveBackend.MEDIA3) return
-        successor.sync(player, activePlayGeneration, AndroidMediaControls::queuedTrack)
+        successor.sync(
+            player,
+            activePlayGeneration,
+            decorate = { item, url -> item.withAnalysedGain(loudness, url, previous = player.currentMediaItem) },
+            track = AndroidMediaControls::queuedTrack,
+        )
     }
 
     /**
@@ -344,7 +352,7 @@ class AndroidPlaybackEngine(
                             url = handle.url,
                             track = track,
                             durationMs = track?.durationMs,
-                        ),
+                        ).withAnalysedGain(loudness, handle.url),
                     )
                     player.prepare()
                     player.play()

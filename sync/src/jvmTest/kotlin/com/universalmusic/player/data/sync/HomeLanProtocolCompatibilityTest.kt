@@ -2,6 +2,14 @@ package com.universalmusic.player.data.sync
 
 import com.universalmusic.player.data.library.HomePinKind
 import com.universalmusic.player.data.library.HomePinsSyncDocument
+import com.universalmusic.player.data.loudness.LoudnessOrigin
+import com.universalmusic.player.data.loudness.LoudnessRepository
+import com.universalmusic.player.data.loudness.LoudnessSubject
+import com.universalmusic.player.data.loudness.StoredLoudness
+import com.universalmusic.player.data.loudness.albumLoudness
+import com.universalmusic.player.data.loudness.withAlbumAggregates
+import com.universalmusic.player.domain.playback.MeasuredLoudness
+import com.universalmusic.player.domain.playback.TrackLoudness
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PlaylistsSyncDocument
@@ -185,6 +193,78 @@ class HomeLanProtocolCompatibilityTest {
                 assertTrue(client.syncHearts().isSuccess)
             }
             assertEquals(listOf("kainos:playlist:phone"), library.homePins.value.map { it.targetId })
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun thePcsLoudnessReachesThePhoneByContentKeyAndUniqueBasename() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-loudness-sync-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            val keyed = "lc1:" + "b".repeat(64)
+            val pcFiles = listOf(
+                LoudnessSubject("/music/Album/01 Keyed.flac", 10, 1, 200_000, "album", keyed, "01 Keyed.flac"),
+                LoudnessSubject("/music/Album/02 Named.flac", 20, 2, 100_000, "album", null, "02 Named.flac"),
+                LoudnessSubject("/music/Twice.flac", 30, 3, 100_000, null, null, "Twice.flac"),
+                LoudnessSubject("/music/Unmeasured.flac", 40, 4, 100_000, null, null, "Unmeasured.flac"),
+            )
+            val pcLoudness = LoudnessRepository(null)
+            pcLoudness.record(withAlbumAggregates(pcFiles.take(3).mapIndexed { index, file ->
+                StoredLoudness(file.location, file.contentLength, file.fileModifiedMs,
+                    MeasuredLoudness(-10.0 - index, -1.0 - index), file.durationMs, file.albumKey)
+            }))
+            hub = hub(pc, phone, port, { it }, { it }, vault = null, bindHost = "127.0.0.1", onLoudness = { remote ->
+                pcLoudness.import(remote, pcFiles)
+                pcLoudness.export("pc", pcFiles)
+            })
+            hub.start()
+            val phoneFiles = listOf(
+                // Renamed on the phone: only the content key can match it.
+                LoudnessSubject("content://tree/primary%3AMusic%2Frenamed.flac", 10, 9, null, null, keyed, "renamed.flac"),
+                LoudnessSubject("content://tree/primary%3AMusic%2F02%20Named.flac", 20, 9, null, null, null, "02 Named.flac"),
+                // Two phone files share this name, so neither may take the PC's value.
+                LoudnessSubject("content://a/Twice.flac", 30, 9, null, null, null, "Twice.flac"),
+                LoudnessSubject("content://b/Twice.flac", 30, 9, null, null, null, "Twice.flac"),
+                LoudnessSubject("content://c/Unmeasured.flac", 40, 9, null, null, null, "Unmeasured.flac"),
+            )
+            val phoneLoudness = LoudnessRepository(null)
+            val reply = HttpHomeLanSyncClient(hubPeer(pc, port), LibraryRepository(), KainosPlaylistRepository(), client(pc, phone))
+                .use { it.syncLoudness(phoneLoudness.export("phone", phoneFiles)).getOrThrow() }
+            assertEquals(2, phoneLoudness.import(assertNotNull(reply), phoneFiles))
+            val album = albumLoudness(listOf(MeasuredLoudness(-10.0, -1.0) to 200_000L, MeasuredLoudness(-11.0, -2.0) to 100_000L))
+            assertEquals(TrackLoudness(MeasuredLoudness(-10.0, -1.0), album, "album"), phoneLoudness.loudnessOf(phoneFiles[0].location))
+            assertEquals(TrackLoudness(MeasuredLoudness(-11.0, -2.0), album, "album"), phoneLoudness.loudnessOf(phoneFiles[1].location))
+            assertNull(phoneLoudness.loudnessOf(phoneFiles[2].location))
+            assertNull(phoneLoudness.loudnessOf(phoneFiles[4].location))
+            assertEquals(LoudnessOrigin.SYNCED, phoneLoudness.stored(phoneFiles[0].location)?.origin)
+            assertTrue(assertNotNull(reply).entries.none { it.fileName == "Unmeasured.flac" })
+            // The phone measured nothing, so the PC keeps its own values and stores none of the phone's.
+            assertEquals(LoudnessOrigin.MEASURED, pcLoudness.stored(pcFiles[0].location)?.origin)
+            assertNull(pcLoudness.stored(pcFiles[3].location))
+        } finally {
+            hub?.stop()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aHubFromBeforeLoudnessSyncAnswers404AndTheClientSkipsIt() = runBlocking {
+        val directory = Files.createTempDirectory("kainos-old-hub-loudness-").toFile()
+        var hub: DesktopHomeLanSyncHub? = null
+        try {
+            val (pc, phone, port) = devices(directory)
+            hub = hub(pc, phone, port, { it }, { it }, vault = null, bindHost = "127.0.0.1",
+                onHomePins = { it })
+            hub.start()
+            HttpHomeLanSyncClient(hubPeer(pc, port), LibraryRepository(), KainosPlaylistRepository(), client(pc, phone)).use { client ->
+                assertNull(client.syncLoudness(LoudnessSyncDocument("phone")).getOrThrow())
+                assertNotNull(client.syncHomePins().getOrThrow(), "a v3 hub still answers its other routes")
+                assertTrue(client.syncHearts().isSuccess)
+            }
         } finally {
             hub?.stop()
             directory.deleteRecursively()
@@ -408,6 +488,7 @@ class HomeLanProtocolCompatibilityTest {
         vault: HomeLanVaultStore?,
         bindHost: String,
         onHomePins: (suspend (HomePinsSyncDocument) -> HomePinsSyncDocument)? = null,
+        onLoudness: (suspend (LoudnessSyncDocument) -> LoudnessSyncDocument)? = null,
     ) = DesktopHomeLanSyncHub(
         HomeLanHubConfig(
             deviceId = "pc",
@@ -417,6 +498,7 @@ class HomeLanProtocolCompatibilityTest {
             onHearts = onHearts,
             onPlaylists = onPlaylists,
             onHomePins = onHomePins,
+            onLoudness = onLoudness,
             vault = vault,
             heartedVaultFileNames = { null },
         ),

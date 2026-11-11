@@ -7,7 +7,12 @@ import androidx.media3.common.Format
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import android.os.Handler
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
@@ -17,11 +22,17 @@ import java.nio.ByteBuffer
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/** Android levelling only turns tracks down, as it did when it set the player volume, which stops at unity. */
-internal fun androidLevellingGainDb(replayGain: ReplayGain): Double = VolumeLevelling.appliedGainDb(replayGain, ceilingDb = 0.0)
+/**
+ * The gain is a PCM multiply, so a quiet track can be boosted as far as its peak allows: an
+ * analysed true peak stops at -1 dBTP, a tagged sample peak at full scale. A tag without a peak
+ * gives no such bound, so that track is only ever turned down.
+ */
+internal fun androidLevellingGainDb(replayGain: ReplayGain): Double =
+    VolumeLevelling.appliedGainDb(replayGain, ceilingDb = if (replayGain.peak == null) 0.0 else Double.POSITIVE_INFINITY)
 
 /**
- * Applies each item's ReplayGain to its PCM inside Exo's audio sink. The sink is configured with
+ * Applies each item's ReplayGain to its PCM inside Exo's audio sink: its tags, or else the analysed
+ * gain [ItemGainAudioRenderer] staged when it reached the item's stream. The sink is configured with
  * every item's format, tags included, before that item's first sample, and it flushes its
  * processors only once the previous item has fully drained into the output. Taking the tags at
  * [stage] and switching at that flush puts the change on the boundary sample, where a player
@@ -32,10 +43,16 @@ internal fun androidLevellingGainDb(replayGain: ReplayGain): Double = VolumeLeve
 internal class LevellingAudioProcessor : BaseAudioProcessor() {
     @Volatile var enabled = true
     @Volatile private var staged: ReplayGain? = null
+    @Volatile private var itemGain: ReplayGain? = null
     private var playing: ReplayGain? = null
 
+    /** The analysed gain of the item whose stream the renderer just reached; tags in its format still win. */
+    fun stageItem(gain: ReplayGain?) {
+        itemGain = gain
+    }
+
     fun stage(format: Format) {
-        staged = replayGainOf(format.metadata)
+        staged = replayGainOf(format.metadata) ?: itemGain
     }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
@@ -50,6 +67,7 @@ internal class LevellingAudioProcessor : BaseAudioProcessor() {
 
     override fun onReset() {
         staged = null
+        itemGain = null
         playing = null
     }
 
@@ -77,6 +95,25 @@ internal class LevellingRenderersFactory(
     context: Context,
     private val levelling: LevellingAudioProcessor,
 ) : DefaultRenderersFactory(context) {
+    /** Swaps Exo's MediaCodec audio renderer for one that stages each item's analysed gain. */
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: Handler,
+        eventListener: AudioRendererEventListener,
+        out: ArrayList<Renderer>,
+    ) {
+        super.buildAudioRenderers(context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback, audioSink, eventHandler, eventListener, out)
+        val index = out.indexOfFirst { it.javaClass == MediaCodecAudioRenderer::class.java }
+        if (index >= 0) {
+            out[index] = ItemGainAudioRenderer(context, codecAdapterFactory, mediaCodecSelector, enableDecoderFallback,
+                eventHandler, eventListener, audioSink, levelling)
+        }
+    }
+
     override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink {
         val sink = DefaultAudioSink.Builder(context)
             .setEnableFloatOutput(enableFloatOutput)
