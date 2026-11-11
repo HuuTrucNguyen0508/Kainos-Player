@@ -6,6 +6,7 @@ import com.universalmusic.player.data.library.UserLibrarySnapshot
 import com.universalmusic.player.data.local.LocalTrack
 import com.universalmusic.player.data.playlist.KainosPlaylistsSnapshot
 import com.universalmusic.player.data.session.SessionSnapshot
+import com.universalmusic.player.domain.failure.DatabaseFromNewerBuild
 import com.universalmusic.player.domain.failure.StorageArea
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -78,7 +79,7 @@ class KainosStorage(
         // Only Android's helper refuses this itself; an older build must not write over newer data.
         if (version != null && version > KainosDatabase.Schema.version) {
             driver.close()
-            error("kainos.db is from a newer build (version $version)")
+            throw DatabaseFromNewerBuild(found = version, supported = KainosDatabase.Schema.version)
         }
         val db = KainosDatabase(driver)
         if (!db.storageMetaQueries.isDone(LEGACY_JSON_IMPORT_STEP).executeAsOne()) {
