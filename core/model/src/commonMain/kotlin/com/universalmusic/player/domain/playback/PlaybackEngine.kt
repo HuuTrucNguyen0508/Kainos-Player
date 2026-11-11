@@ -43,6 +43,12 @@ interface PlaybackEngine {
     /** Replace or cancel the single local successor. Generation identifies its owning track. */
     fun prepareNext(next: PreparedPlayback?) = Unit
 
+    /**
+     * Fetch the opening seconds of Spotify track [trackId] ahead of its turn, replacing any earlier
+     * request; null cancels. Best effort: it never starts a receiver and never fails playback.
+     */
+    fun warmSpotify(trackId: String?) = Unit
+
     fun pause()
     fun resume()
     fun seekTo(positionMs: Long)

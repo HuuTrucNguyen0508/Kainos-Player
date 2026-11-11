@@ -60,7 +60,7 @@ internal class AndroidLibrespotPlaybackHost(
     }
     @Volatile override var receiverGeneration: Long = 0L
         private set
-    private var session: Session? = null
+    @Volatile private var session: Session? = null
     @Volatile private var player: Player? = null
     /** Set by [installLibrespotStaleTaskGuard] when the current player's audio thread died. */
     @Volatile private var audioSinkDied = false
@@ -68,6 +68,7 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile private var loadingDirectly = false
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
+    private val warmer = LibrespotTrackWarmer(recoveryScope)
 
     override suspend fun ensureDeviceReady(): SpotifyWebPlaybackDevice? = mutex.withLock {
         Log.i(TAG, "ensureDeviceReady interactive=false hasCredentials=${hasCachedCredentials()}")
@@ -126,7 +127,11 @@ internal class AndroidLibrespotPlaybackHost(
                 val conf = Session.Configuration.Builder()
                     .setStoreCredentials(true)
                     .setStoredCredentialsFile(credentialsFile)
-                    .setCacheEnabled(false)
+                    // Raw encrypted CDN chunks, so a warmed or replayed track starts from disk.
+                    // librespot drops entries unused for 7 days when a session starts.
+                    .setCacheEnabled(true)
+                    .setCacheDir(File(filesDir, "librespot-cache"))
+                    .setDoCacheCleanUp(true)
                     .build()
                 val playerConf = PlayerConfiguration.Builder()
                     .setOutput(PlayerConfiguration.AudioOutput.CUSTOM)
@@ -196,6 +201,7 @@ internal class AndroidLibrespotPlaybackHost(
         val uri = "spotify:track:$trackId"
         loadingDirectly = true
         try {
+            warmer.beforeLoad(trackId)
             val receiver = receiverForLoad(replacing = null) ?: return false
             if (runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) }) return true
             val rebuilt = receiverForLoad(replacing = receiver) ?: return false
@@ -225,6 +231,8 @@ internal class AndroidLibrespotPlaybackHost(
             "player did not take $uri"
         }
     }
+
+    override fun warmTrack(trackId: String?) = warmer.warm(trackId, session.takeIf { player != null })
 
     override suspend fun pause() = onReceiver("pause") { it.pause() }
 
@@ -264,6 +272,7 @@ internal class AndroidLibrespotPlaybackHost(
 
     private fun shutdownLocked() {
         haltFilter.reset()
+        warmer.cancelAll()
         if (player != null || session != null) {
             Log.i(TAG, "shutdown session")
         }

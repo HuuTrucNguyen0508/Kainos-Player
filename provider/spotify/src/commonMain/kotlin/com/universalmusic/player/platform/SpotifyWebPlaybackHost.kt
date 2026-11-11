@@ -108,6 +108,8 @@ interface SpotifyWebPlaybackHost {
     suspend fun pause(): Boolean = false
     suspend fun resume(): Boolean = false
     suspend fun seek(positionMs: Long): Boolean = false
+    /** Caches the opening seconds of [trackId] on a receiver that is already running; null cancels. */
+    fun warmTrack(trackId: String?) = Unit
     suspend fun shutdown()
 }
 
