@@ -31,6 +31,8 @@ internal data class SpotifyTrack(
     val external_ids: SpotifyExternalIds? = null,
     val uri: String? = null,
     val is_playable: Boolean? = null,
+    val track_number: Int? = null,
+    val disc_number: Int? = null,
 )
 
 @Serializable
@@ -46,6 +48,13 @@ internal data class SpotifyAlbum(
     val images: List<SpotifyImage> = emptyList(),
     val release_date: String? = null,
     val tracks: SpotifyPaging<SpotifyTrack>? = null,
+    val total_tracks: Int? = null,
+    val album_type: String? = null,
+)
+
+@Serializable
+internal data class SpotifyTopTracksResponse(
+    val tracks: List<SpotifyTrack> = emptyList(),
 )
 
 @Serializable

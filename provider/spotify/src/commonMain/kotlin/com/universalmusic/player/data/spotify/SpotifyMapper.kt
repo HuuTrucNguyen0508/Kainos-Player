@@ -27,6 +27,9 @@ internal fun SpotifyTrack.toDomain(premium: Boolean): Track {
         explicit = explicit,
         isrc = external_ids?.isrc,
         sources = listOf(toSource(premium)),
+        trackNumber = track_number?.takeIf { it > 0 },
+        discNumber = disc_number?.takeIf { it > 0 },
+        year = album?.release_date?.take(4)?.toIntOrNull(),
     )
 }
 
@@ -64,6 +67,7 @@ internal fun SpotifyAlbum.toRef(): AlbumRef = AlbumRef(
     title = name,
     artwork = images.toArtwork(),
     year = release_date?.take(4)?.toIntOrNull(),
+    artists = artists.map { it.toRef() }.filter { it.name.isNotBlank() },
 )
 
 internal fun SpotifyArtist.toDomain(): Artist = Artist(

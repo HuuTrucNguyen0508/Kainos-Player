@@ -63,6 +63,8 @@ internal fun SearchScreen(
     onPlayTrackInList: (List<Track>, Int) -> Unit,
     onPlayPlaylist: (List<Track>, Int, Boolean) -> Unit,
     trackActions: TrackActionsPresenter,
+    /** Album, artist and playlist pages opened from Search, over the results or beside them. */
+    pages: CollectionStack,
     requestFocus: Boolean = false,
     onOpenSettings: (SettingsTarget) -> Unit = {},
     openLink: (String) -> Unit = ::openUrl,
@@ -77,7 +79,7 @@ internal fun SearchScreen(
     val spotify = state.spotify
     val youtube = state.youtube
     val downloads = state.downloads
-    val openPlaylist by presenter.playlist.collectAsState()
+    val openPages by pages.stack.collectAsState()
 
     LaunchedEffect(requestFocus) {
         if (requestFocus) {
@@ -86,31 +88,33 @@ internal fun SearchScreen(
     }
 
     val playlists = state.playlists
+    val albums = state.albums
+    val artists = state.artists
     val tracks = state.tracks
     val showingResults = state.searchable.isNotEmpty() && error == null && query.isNotBlank() &&
-        !(loading && tracks == null) && !(tracks.isNullOrEmpty() && playlists.isEmpty())
+        !(loading && tracks == null) && !(tracks.isNullOrEmpty() && !state.hasCollections)
     val playlistsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val showAlbums = remember(tracks) { tracks.orEmpty().namesAlbums() }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val width = maxWidth
-        val split = searchSplit(width, showingResults, !tracks.isNullOrEmpty(), playlists.isNotEmpty(), openPlaylist != null)
-        val playlistPage = @Composable { page: SearchPlaylistPresenter, pageWidth: Dp ->
-            SearchPlaylistScreen(
-                presenter = page,
+        val open = openPages.isNotEmpty()
+        val split = searchSplit(width, showingResults, !tracks.isNullOrEmpty(), state.hasCollections, open)
+        val collectionPage = @Composable { pageWidth: Dp ->
+            CollectionHost(
+                stack = pages,
+                rootBackLabel = "Back to search results",
                 trackActions = trackActions,
                 availability = presenter::trackAvailability,
                 downloads = downloads,
-                onBack = { presenter.closePlaylist() },
                 onPlay = onPlayPlaylist,
                 openLink = openLink,
                 listWidth = pageWidth,
             )
         }
-        val open = openPlaylist
-        // The results keep their scroll while a playlist is open: their list state is held above this branch.
-        if (open != null && !split) {
-            playlistPage(open, width)
+        // The results keep their scroll while a page is open: their list state is held above this branch.
+        if (open && !split) {
+            collectionPage(width)
         } else Column(Modifier.fillMaxSize()) {
             val statuses = result?.providerStatuses?.mapValues { it.value.state }
                 ?: mapOf(
@@ -123,8 +127,8 @@ internal fun SearchScreen(
                     value = query,
                     onValueChange = { value ->
                         presenter.setQuery(value)
-                        // Beside the results, an open playlist belongs to the old search; a new one closes it.
-                        if (split && value != query) presenter.closePlaylist()
+                        // Beside the results, an open page belongs to the old search; a new one closes it.
+                        if (split && value != query) pages.clear()
                     },
                     modifier = modifier
                         .focusRequester(focusRequester)
@@ -187,19 +191,31 @@ internal fun SearchScreen(
                 }
                 searchTrackRows(trackList, presenter, downloads, trackActions, onPlayTrackInList, openLink)
             }
-            val playlistItems: LazyListScope.(Boolean) -> Unit = { first ->
-                if (playlists.isNotEmpty()) {
-                    item(key = "playlists-heading") {
+            val collectionItems: LazyListScope.(Boolean) -> Unit = { first ->
+                var firstSection = first
+                fun LazyListScope.heading(key: String, title: String) {
+                    val top = !firstSection
+                    firstSection = false
+                    item(key = key) {
                         SectionRule(
-                            "Playlists",
-                            Modifier.padding(horizontal = 20.dp).then(if (first) Modifier else Modifier.padding(top = 12.dp)),
+                            title,
+                            Modifier.padding(horizontal = 20.dp).then(if (top) Modifier.padding(top = 12.dp) else Modifier),
                         )
                     }
                 }
+                if (artists.isNotEmpty()) heading("artists-heading", "Artists")
+                itemsIndexed(artists, key = { index, artist -> "artist:${artist.canonicalId}:$index" }) { _, artist ->
+                    ArtistResultRow(artist, onClick = { pages.openFresh(artist.page()) }, modifier = Modifier.padding(horizontal = 8.dp))
+                }
+                if (albums.isNotEmpty()) heading("albums-heading", "Albums")
+                itemsIndexed(albums, key = { index, album -> "album:${album.canonicalId}:$index" }) { _, album ->
+                    AlbumResultRow(album, onClick = { pages.openFresh(album.page()) }, modifier = Modifier.padding(horizontal = 8.dp))
+                }
+                if (playlists.isNotEmpty()) heading("playlists-heading", "Playlists")
                 itemsIndexed(playlists, key = { index, playlist -> "playlist:${playlist.canonicalId}:$index" }) { _, playlist ->
                     PlaylistResultRow(
                         playlist = playlist,
-                        onClick = { presenter.openPlaylist(playlist) },
+                        onClick = { pages.openFresh(CollectionRef.ProviderPlaylist(playlist)) },
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
@@ -233,7 +249,7 @@ internal fun SearchScreen(
                         state.searchHint,
                         "Your local files are not included here. Library has its own search for those.",
                     )
-                    tracks.isNullOrEmpty() && playlists.isEmpty() -> if (loading) {
+                    tracks.isNullOrEmpty() && !state.hasCollections -> if (loading) {
                         CircularProgressIndicator(Modifier.padding(24.dp))
                     } else {
                         EmptyState(
@@ -260,11 +276,11 @@ internal fun SearchScreen(
                     }
                     ContentPaneSeam()
                     Box(Modifier.weight(1f - SearchTracksShare).fillMaxHeight()) {
-                        if (open != null) {
-                            playlistPage(open, otherWidth)
+                        if (open) {
+                            collectionPage(otherWidth)
                         } else {
                             LazyColumn(state = playlistsListState, modifier = Modifier.fillMaxSize()) {
-                                playlistItems(true)
+                                collectionItems(true)
                             }
                         }
                     }
@@ -272,7 +288,7 @@ internal fun SearchScreen(
                 else -> CompositionLocalProvider(LocalTrackTable provides searchTable(minOf(width, SingleTrackTableMaxWidth), showAlbums)) {
                     LazyColumn(state = listState, modifier = Modifier.widthIn(max = SingleTrackTableMaxWidth)) {
                         trackItems()
-                        playlistItems(false)
+                        collectionItems(false)
                     }
                 }
             }

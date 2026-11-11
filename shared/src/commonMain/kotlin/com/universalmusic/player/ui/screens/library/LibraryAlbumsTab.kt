@@ -16,7 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.data.library.HomePinKind
-import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.domain.model.Album
 import com.universalmusic.player.ui.components.AlbumRow
 import com.universalmusic.player.ui.components.EmptyState
 
@@ -25,7 +25,7 @@ internal fun ColumnScope.LibraryAlbumsTab(
     state: LibraryUiState,
     listState: LazyListState,
     presenter: LibraryPresenter,
-    onPlayTracks: (List<Track>, Int) -> Unit,
+    onOpenAlbum: (Album) -> Unit,
 ) {
     val albums = state.albums
     if (albums.isEmpty()) {
@@ -70,7 +70,7 @@ internal fun ColumnScope.LibraryAlbumsTab(
                 val albumPinned = "${HomePinKind.ALBUM.name}|${album.canonicalId}" in state.pinnedKeys
                 AlbumRow(
                     album = album,
-                    onClick = { if (album.tracks.isNotEmpty()) onPlayTracks(album.tracks, 0) },
+                    onClick = { onOpenAlbum(album) },
                     modifier = Modifier.padding(horizontal = 8.dp),
                     trailing = {
                         IconButton(

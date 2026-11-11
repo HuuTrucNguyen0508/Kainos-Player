@@ -62,6 +62,7 @@ import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
 import com.universalmusic.player.data.youtube.YouTubeMusicProvider
 import com.universalmusic.player.domain.continuation.SourceRadio
+import com.universalmusic.player.domain.continuation.radioProvider
 import com.universalmusic.player.domain.echo.EchoStatusSource
 import com.universalmusic.player.domain.continuation.planSearchPlayback
 import com.universalmusic.player.domain.failure.AppFailures
@@ -468,6 +469,16 @@ class AppContainer(
     fun playSearchResults(tracks: List<Track>, startIndex: Int) {
         val plan = planSearchPlayback(tracks, startIndex, radioEnabled = _settings.value.searchRadioEnabled)
         player.play(plan.tracks, startIndex = plan.startIndex, continuation = plan.radio?.let(::sourceRadio))
+    }
+
+    /**
+     * Start radio from a song's menu: the song, then its own source's radio (Spotify radio or a
+     * YouTube Mix). Local files have no radio; false when [track] has no source that does.
+     */
+    fun startRadio(track: Track): Boolean {
+        val provider = track.radioProvider() ?: return false
+        player.play(listOf(track), startIndex = 0, continuation = sourceRadio(provider))
+        return true
     }
 
     private fun sourceRadio(provider: ProviderId) = SourceRadio(provider, fetch = { seed, exclude ->

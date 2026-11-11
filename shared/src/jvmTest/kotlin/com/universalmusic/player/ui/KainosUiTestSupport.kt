@@ -19,9 +19,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /** A fixed theme, so tests read neither the host's desktop environment nor its Caelestia scheme. */
 @Composable
-internal fun TestTheme(content: @Composable () -> Unit) {
-    KainosTheme(folioPalette(FolioTint.FOLIO, false), skinTokens(Skin.FOLIO)) {
-        Box(Modifier.fillMaxSize().skinGround()) { content() }
+internal fun TestTheme(skin: Skin = Skin.FOLIO, content: @Composable () -> Unit) {
+    KainosTheme(if (skin == Skin.FROST) com.universalmusic.player.ui.theme.frostPalette(false) else folioPalette(FolioTint.FOLIO, false), skinTokens(skin)) {
+        if (skin == Skin.FROST) {
+            com.universalmusic.player.ui.components.FrostGround(Modifier.fillMaxSize()) { content() }
+        } else {
+            Box(Modifier.fillMaxSize().skinGround()) { content() }
+        }
     }
 }
 
@@ -31,7 +35,10 @@ internal fun localTracks(count: Int): List<Track> = List(count) { index ->
 }
 
 /** Track menu actions that only record what they were asked to do. */
-internal class RecordedTrackActions {
+internal class RecordedTrackActions(
+    openCollection: ((com.universalmusic.player.ui.screens.CollectionRef) -> Unit)? = null,
+    startRadio: ((Track) -> Unit)? = null,
+) {
     val calls = mutableListOf<String>()
     val favorites = MutableStateFlow<Set<String>>(emptySet())
     val playlists = MutableStateFlow<List<PersistedKainosPlaylist>>(emptyList())
@@ -55,5 +62,14 @@ internal class RecordedTrackActions {
             calls += "create:$name:${tracks.joinToString { it.canonicalId }}"
             PersistedKainosPlaylist(id = "new", title = name).also { playlists.value = playlists.value + it }
         },
+        openCollection = openCollection,
+        startRadioAction = startRadio,
     )
 }
+
+/** A page stack for screens that never open a page in the test. */
+internal fun emptyPages(scope: kotlinx.coroutines.CoroutineScope): com.universalmusic.player.ui.screens.CollectionStack =
+    com.universalmusic.player.ui.screens.testCollectionStack(
+        scope,
+        com.universalmusic.player.ui.screens.testCollectionCatalog(kotlinx.coroutines.Dispatchers.Unconfined),
+    )

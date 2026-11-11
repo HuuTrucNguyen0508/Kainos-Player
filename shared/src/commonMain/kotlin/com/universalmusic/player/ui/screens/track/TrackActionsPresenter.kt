@@ -4,6 +4,7 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.library.LibraryRepository
 import com.universalmusic.player.data.playlist.KainosPlaylistRepository
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
+import com.universalmusic.player.domain.continuation.radioProvider
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.playback.PlayerSession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,10 @@ internal class TrackActionsPresenter(
     private val syncNowPlayingFavorite: (canonicalId: String, favorite: Boolean) -> Unit,
     private val addTracksToPlaylist: (String, List<Track>) -> PersistedKainosPlaylist?,
     private val createPlaylistWith: (String, List<Track>) -> PersistedKainosPlaylist,
+    /** Opens an album or artist page; null where no page can open (the menu then hides Go to). */
+    private val openCollection: ((CollectionRef) -> Unit)? = null,
+    /** Plays the track with its own source's radio after it; null hides Start radio. */
+    private val startRadioAction: ((Track) -> Unit)? = null,
 ) {
     private var nextNoticeId = 0L
     private val _notice = MutableStateFlow<TrackActionNotice?>(null)
@@ -71,6 +76,25 @@ internal class TrackActionsPresenter(
         announce("Added to ${created.title}")
     }
 
+    /** The album page Go to album opens, or null to hide it. */
+    fun albumPage(track: Track): CollectionRef? = if (openCollection == null) null else track.albumPage()
+
+    /** One page per credited artist; empty hides Go to artist. */
+    fun artistPages(track: Track): List<CollectionRef> = if (openCollection == null) emptyList() else track.artistPages()
+
+    fun goTo(ref: CollectionRef) {
+        openCollection?.invoke(ref)
+    }
+
+    /** Only Spotify and YouTube have a radio, and it never crosses sources, so local files have none. */
+    fun canStartRadio(track: Track): Boolean = startRadioAction != null && track.radioProvider() != null
+
+    fun startRadio(track: Track) {
+        if (!canStartRadio(track)) return
+        startRadioAction?.invoke(track)
+        announce("Radio from ${track.title}")
+    }
+
     fun dismissNotice(id: Long) {
         _notice.update { if (it?.id == id) null else it }
     }
@@ -80,13 +104,19 @@ internal class TrackActionsPresenter(
     }
 
     companion object {
-        fun from(container: AppContainer): TrackActionsPresenter =
-            from(container.library, container.player, container.kainosPlaylists)
+        fun from(
+            container: AppContainer,
+            openCollection: ((CollectionRef) -> Unit)? = null,
+            startRadio: ((Track) -> Unit)? = null,
+        ): TrackActionsPresenter =
+            from(container.library, container.player, container.kainosPlaylists, openCollection, startRadio)
 
         fun from(
             library: LibraryRepository,
             player: PlayerSession,
             playlists: KainosPlaylistRepository,
+            openCollection: ((CollectionRef) -> Unit)? = null,
+            startRadio: ((Track) -> Unit)? = null,
         ): TrackActionsPresenter = TrackActionsPresenter(
             favorites = library.favoriteIds,
             playlists = playlists.playlists,
@@ -96,6 +126,8 @@ internal class TrackActionsPresenter(
             syncNowPlayingFavorite = player::syncFavorite,
             addTracksToPlaylist = { id, tracks -> playlists.addTracks(id, tracks) },
             createPlaylistWith = { name, tracks -> playlists.create(name, tracks) },
+            openCollection = openCollection,
+            startRadioAction = startRadio,
         )
     }
 }
