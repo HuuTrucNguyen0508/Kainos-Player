@@ -3,6 +3,8 @@ package com.universalmusic.player.platform
 import android.content.Context
 import android.os.Bundle
 import android.os.Handler
+import androidx.media3.exoplayer.FormatHolder
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.annotation.OptIn
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -21,21 +23,14 @@ import com.universalmusic.player.domain.playback.VolumeLevelling
 
 private const val GAIN_DB = "kainos.level.gainDb"
 private const val PEAK = "kainos.level.peak"
-private const val ALBUM_KEY = "kainos.level.albumKey"
 
-/**
- * [item] carrying the analysed gain of the file at [url], kept in its metadata extras, which
- * survive the trip through the MediaController. With [previous] on the same album the album gain
- * applies, so a gapless join inside an album keeps one level. Files without a measurement, and
- * files whose tags the sink will read, are left as they are.
- */
-internal fun MediaItem.withAnalysedGain(loudness: LoudnessLookup, url: String, previous: MediaItem? = null): MediaItem {
+/** Carries analysed gain through the MediaController; file tags still win in the sink. */
+internal fun MediaItem.withAnalysedGain(loudness: LoudnessLookup, url: String): MediaItem {
     val analysed = loudness.loudnessOf(url) ?: return this
-    val gain = VolumeLevelling.choose(tags = null, analysed, previousAlbumKey = previous?.analysedAlbumKey()) ?: return this
+    val gain = VolumeLevelling.choose(tags = null, analysed) ?: return this
     val extras = Bundle(mediaMetadata.extras ?: Bundle.EMPTY).apply {
         putDouble(GAIN_DB, gain.gainDb)
         gain.peak?.let { putDouble(PEAK, it) }
-        analysed.albumKey?.let { putString(ALBUM_KEY, it) }
     }
     return buildUpon().setMediaMetadata(mediaMetadata.buildUpon().setExtras(extras).build()).build()
 }
@@ -46,13 +41,7 @@ internal fun MediaItem.analysedGain(): ReplayGain? {
     return ReplayGain(extras.getDouble(GAIN_DB), extras.getDouble(PEAK).takeIf { extras.containsKey(PEAK) }, GainSource.ANALYSED)
 }
 
-private fun MediaItem.analysedAlbumKey(): String? = mediaMetadata.extras?.getString(ALBUM_KEY)
-
-/**
- * Exo's audio renderer, telling [levelling] the analysed gain of each item as the renderer moves
- * onto that item's stream. That happens on the playback thread before the item's format reaches
- * the sink, so [LevellingAudioProcessor.stage] can fall back to it for a file without tags.
- */
+/** Carries each input item's gain with its decoded output format, through codec lookahead. */
 @OptIn(UnstableApi::class)
 internal class ItemGainAudioRenderer(
     context: Context,
@@ -62,16 +51,24 @@ internal class ItemGainAudioRenderer(
     eventHandler: Handler?,
     eventListener: AudioRendererEventListener?,
     audioSink: AudioSink,
-    private val levelling: LevellingAudioProcessor,
 ) : MediaCodecAudioRenderer(context, codecAdapterFactory, mediaCodecSelector, enableDecoderFallback, eventHandler, eventListener, audioSink) {
+    private var inputGain: ReplayGain? = null
+
     override fun onStreamChanged(
         formats: Array<Format>,
         startPositionUs: Long,
         offsetUs: Long,
         mediaPeriodId: MediaSource.MediaPeriodId,
     ) {
+        inputGain = itemOf(mediaPeriodId)?.analysedGain()
         super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
-        levelling.stageItem(itemOf(mediaPeriodId)?.analysedGain())
+    }
+
+    override fun onInputFormatChanged(formatHolder: FormatHolder): DecoderReuseEvaluation? {
+        // The decoder queues this Format with its samples. MediaCodecAudioRenderer copies
+        // customData into the sink format only when those samples reach the output.
+        formatHolder.format = formatHolder.format?.buildUpon()?.setCustomData(inputGain)?.build()
+        return super.onInputFormatChanged(formatHolder)
     }
 
     private fun itemOf(id: MediaSource.MediaPeriodId): MediaItem? = runCatching {

@@ -63,7 +63,7 @@ object VolumeLevelling {
 
     /**
      * Analysed files keep their measured true peak this far below full scale, as the Echo
-     * gateway does: a boosted file never clips, even after a lossy re-encode or resampling.
+     * gateway does: boosts leave headroom for resampling. Existing source overs are preserved.
      */
     const val TRUE_PEAK_CEILING_DBTP = -1.0
 
@@ -87,14 +87,14 @@ object VolumeLevelling {
     )
 
     /**
-     * The gain for one file: its tags when it has them, otherwise its analysed track gain. When the
-     * file follows [previousAlbumKey]'s file gaplessly and is on the same album, the album gain
-     * applies instead, so the level does not change between the tracks of an album played in order.
+     * Tags win, then a complete tagged album's aggregate, then the track measurement.
+     * Use the album gain from the first track, including when starting mid-album, so the
+     * next gapless boundary does not change the album's level.
      */
-    fun choose(tags: ReplayGain?, analysed: TrackLoudness?, previousAlbumKey: String? = null): ReplayGain? {
+    fun choose(tags: ReplayGain?, analysed: TrackLoudness?): ReplayGain? {
         if (tags != null) return tags
         val loudness = analysed ?: return null
-        val album = loudness.album?.takeIf { loudness.albumKey != null && loudness.albumKey == previousAlbumKey }
+        val album = loudness.album?.takeIf { loudness.albumKey != null }
         return analysed(album ?: loudness.track)
     }
 

@@ -37,20 +37,15 @@ class VolumeLevellingTest {
     @Test fun tagsWinOverAnalysisWhichWinsOverNothing() {
         val tags = ReplayGain(-6.0, 0.5)
         assertEquals(tags, VolumeLevelling.choose(tags, analysed))
-        assertEquals(ReplayGain(-9.0, 10.0.pow(-3.0 / 20), GainSource.ANALYSED), VolumeLevelling.choose(null, analysed))
+        assertEquals(ReplayGain(-9.0, 10.0.pow(-3.0 / 20), GainSource.ANALYSED), VolumeLevelling.choose(null, analysed.copy(album = null)))
         assertNull(VolumeLevelling.choose(null, null))
     }
 
-    @Test fun albumGainOnlyAfterAFileOfTheSameAlbum() {
-        val track = VolumeLevelling.choose(null, analysed, previousAlbumKey = null)!!
-        val other = VolumeLevelling.choose(null, analysed, previousAlbumKey = "album-2")!!
-        val inAlbum = VolumeLevelling.choose(null, analysed, previousAlbumKey = "album-1")!!
-        assertEquals(-9.0, track.gainDb, 1e-9)
-        assertEquals(-9.0, other.gainDb, 1e-9)
+    @Test fun albumGainFallsBackToTrackWhenTheAggregateIsMissing() {
+        val inAlbum = VolumeLevelling.choose(null, analysed)!!
         assertEquals(-4.0, inAlbum.gainDb, 1e-9)
-        assertEquals(-2.0, 20 * log10(inAlbum.peak!!), 1e-9, "the album's peak bounds the album gain")
-        assertEquals(-9.0, VolumeLevelling.choose(null, analysed.copy(album = null), "album-1")!!.gainDb, 1e-9,
-            "an album without an aggregate falls back to the track gain")
+        assertEquals(-2.0, 20 * log10(inAlbum.peak!!), 1e-9)
+        assertEquals(-9.0, VolumeLevelling.choose(null, analysed.copy(album = null))!!.gainDb, 1e-9)
     }
 
     @Test fun analysedBoostStopsOneDecibelUnderTheTruePeak() {
@@ -64,4 +59,8 @@ class VolumeLevellingTest {
         // Unbounded by the peak, the target is Spotify Loud: -11 LUFS.
         assertEquals(3.0, VolumeLevelling.appliedGainDb(VolumeLevelling.analysed(MeasuredLoudness(-14.0, -10.0))), 1e-9)
     }
+    @Test fun albumPlaybackUsesOneGainStartingWithItsFirstTrack() {
+        assertEquals(VolumeLevelling.analysed(albumLevel), VolumeLevelling.choose(null, analysed))
+    }
+
 }

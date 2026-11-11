@@ -279,7 +279,7 @@ class AndroidPlaybackEngine internal constructor(
         successor.sync(
             player,
             activePlayGeneration,
-            decorate = { item, url -> item.withAnalysedGain(loudness, url, previous = player.currentMediaItem) },
+            decorate = { item, url -> item.withAnalysedGain(loudness, url) },
             track = AndroidMediaControls::queuedTrack,
         )
     }

@@ -898,6 +898,7 @@ class AppContainer(
     }
 
     suspend fun refreshLocalLibraryAndAwait() {
+        loudnessJob?.cancel()
         _localLibraryMessage.value = null
         runCatching { local.refresh() }
             .onSuccess {
@@ -925,7 +926,12 @@ class AppContainer(
         loudnessJob?.cancel()
         loudnessJob = scope.launch(Dispatchers.Default) {
             loudnessLoaded.await()
-            runCatching { loudnessPass.run(local.loudnessSubjects()) }.logged("Loudness", "loudness pass failed")
+            runCatching {
+                val cached = heartedAudioCache.allEntries().map { entry ->
+                    LoudnessSubject(entry.localUri, entry.sizeBytes.takeIf { it > 0 }, entry.downloadedAtMs.takeIf { it > 0 })
+                }
+                loudnessPass.run(local.loudnessSubjects() + cached)
+            }.logged("Loudness", "loudness pass failed")
         }
     }
 

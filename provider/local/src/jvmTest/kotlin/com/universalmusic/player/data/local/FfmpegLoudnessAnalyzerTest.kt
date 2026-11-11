@@ -1,6 +1,8 @@
 package com.universalmusic.player.data.local
 
+import com.universalmusic.player.domain.playback.MeasuredLoudness
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import org.junit.Assume.assumeTrue
 import java.io.File
 import java.nio.file.Files
@@ -45,6 +47,63 @@ class FfmpegLoudnessAnalyzerTest {
     @Test fun runsAtTheLowestPriorityOnOneThread() {
         val command = FfmpegLoudnessAnalyzer("/usr/bin/ffmpeg", "/usr/bin/nice").command("/m/a.flac")
         assertEquals(listOf("/usr/bin/nice", "-n", "19", "/usr/bin/ffmpeg"), command.take(4))
-        assertTrue(command.containsAll(listOf("-threads", "1", "ebur128=peak=true:framelog=quiet")))
+        assertTrue(command.containsAll(listOf("-threads", "-filter_threads", "1", "ebur128=peak=true:framelog=quiet")))
+        val idleIo = FfmpegLoudnessAnalyzer("/usr/bin/ffmpeg", "/usr/bin/nice", "/usr/bin/ionice").command("/m/a.flac")
+        assertEquals(listOf("/usr/bin/ionice", "-c", "3"), idleIo.take(3))
+    }
+    @Test fun cancellationKillsAProcessWhosePipeReaderIsBlocked() = runBlocking<Unit> {
+        val dir = Files.createTempDirectory("kainos-cancel-").toFile()
+        val pid = File(dir, "pid")
+        val script = File(dir, "analyzer").apply {
+            writeText("#!/bin/sh\necho $$ > '${pid.absolutePath}'\nexec sleep 4\n")
+            setExecutable(true)
+        }
+        val input = File(dir, "input").apply { writeText("audio") }
+        try {
+            val job = launch(kotlinx.coroutines.Dispatchers.IO) {
+                FfmpegLoudnessAnalyzer(script.absolutePath, null).measure(input.absolutePath)
+            }
+            while (!pid.exists()) kotlinx.coroutines.delay(10)
+            val started = System.nanoTime()
+            job.cancel()
+            job.join()
+            assertTrue((System.nanoTime() - started) / 1_000_000 < 1500, "cancellation must kill ffmpeg before waiting for its reader")
+            assertTrue(!ProcessHandle.of(pid.readText().trim().toLong()).map { it.isAlive }.orElse(false))
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun quittingTheJvmDoesNotOrphanFfmpeg() {
+        val dir = Files.createTempDirectory("kainos-quit-").toFile()
+        val pid = File(dir, "pid")
+        val script = File(dir, "analyzer").apply {
+            writeText("#!/bin/sh\necho $$ > '${pid.absolutePath}'\nexec sleep 30\n")
+            setExecutable(true)
+        }
+        val input = File(dir, "input").apply { writeText("audio") }
+        try {
+            val classpath = listOf(javaClass, FfmpegLoudnessAnalyzer::class.java,
+                LocalLoudnessAnalyzer::class.java, MeasuredLoudness::class.java,
+                kotlin.Unit::class.java, kotlinx.coroutines.Job::class.java)
+                .map { File(it.protectionDomain.codeSource.location.toURI()).absolutePath }
+                .distinct().joinToString(File.pathSeparator)
+            val fixture = ProcessBuilder(File(System.getProperty("java.home"), "bin/java").absolutePath,
+                "-cp", classpath, "com.universalmusic.player.data.local.LoudnessShutdownFixture",
+                script.absolutePath, input.absolutePath, pid.absolutePath).inheritIO().start()
+            assertTrue(fixture.waitFor(15, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(0, fixture.exitValue())
+            val process = ProcessHandle.of(pid.readText().trim().toLong())
+            try { assertTrue(!process.map { it.isAlive }.orElse(false), "quit must kill the analyzer child") }
+            finally { process.ifPresent { it.destroyForcibly() } }
+        } finally { dir.deleteRecursively() }
+    }
+
+}
+
+
+object LoudnessShutdownFixture {
+    @JvmStatic fun main(args: Array<String>) = runBlocking<Unit> {
+        launch(kotlinx.coroutines.Dispatchers.IO) { FfmpegLoudnessAnalyzer(args[0], null).measure(args[1]) }
+        while (!File(args[2]).exists()) kotlinx.coroutines.delay(10)
+        kotlin.system.exitProcess(0)
     }
 }

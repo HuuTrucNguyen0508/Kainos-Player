@@ -38,11 +38,14 @@ data class LoudnessSyncEntry(
     val albumKey: String? = null,
     val albumLufs: Double? = null,
     val albumPeakDbtp: Double? = null,
+    /** Includes unmeasured files in the sender's collision check. */
+    val basenameUnique: Boolean = true,
 )
 
 /** This device's own measurements of the library files in [subjects]; relayed values are not passed on. */
-fun exportLoudness(deviceId: String, rows: (String) -> StoredLoudness?, subjects: List<LoudnessSubject>): LoudnessSyncDocument =
-    LoudnessSyncDocument(
+fun exportLoudness(deviceId: String, rows: (String) -> StoredLoudness?, subjects: List<LoudnessSubject>): LoudnessSyncDocument {
+    val nameCounts = subjects.mapNotNull { it.fileName }.groupingBy { it }.eachCount()
+    return LoudnessSyncDocument(
         deviceId = deviceId,
         entries = subjects.mapNotNull { subject ->
             val row = rows(subject.location)?.takeIf { it.origin == LoudnessOrigin.MEASURED && it.describes(subject) }
@@ -57,9 +60,11 @@ fun exportLoudness(deviceId: String, rows: (String) -> StoredLoudness?, subjects
                 albumKey = row.albumKey,
                 albumLufs = row.album?.integratedLufs,
                 albumPeakDbtp = row.album?.truePeakDbtp,
+                basenameUnique = nameCounts[fileName] == 1,
             )
         },
     )
+}
 
 /**
  * Rows for this device's files that [remote] measured: by content key first, then by a basename
@@ -77,7 +82,9 @@ fun importLoudness(
         val existing = rows(subject.location)
         if (existing?.origin == LoudnessOrigin.MEASURED && existing.describes(subject)) return@mapNotNull null
         val entry = subject.contentKey?.let { byKey[it]?.singleOrNull() }
-            ?: subject.fileName?.takeIf { localNameCounts[it] == 1 }?.let { remoteByName[it]?.singleOrNull() }
+            ?: subject.fileName?.takeIf { localNameCounts[it] == 1 }?.let { remoteByName[it]?.singleOrNull()?.takeUnless { entry ->
+                !entry.basenameUnique || (subject.contentKey != null && entry.contentKey != null && subject.contentKey != entry.contentKey)
+            } }
             ?: return@mapNotNull null
         StoredLoudness(
             location = subject.location,

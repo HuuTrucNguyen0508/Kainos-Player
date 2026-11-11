@@ -221,13 +221,13 @@ class DesktopLevellingPcmTest {
         val third = tone("third.flac")
         val album = MeasuredLoudness(-15.0, -6.0) // +4 dB
         val run = render(listOf(first, second, third), levelling = true, loudness = measured(
-            first to TrackLoudness(MeasuredLoudness(-9.0, -6.0), album, "album"), // -2 dB on its own
+            first to TrackLoudness(MeasuredLoudness(-9.0, -6.0), album, "album"), // album gain from the first track
             second to TrackLoudness(MeasuredLoudness(-21.0, -6.0), album, "album"), // album, not +5 dB (capped)
-            third to TrackLoudness(MeasuredLoudness(-11.0, -6.0), album, "other"), // another album: its own 0 dB
+            third to TrackLoudness(MeasuredLoudness(-11.0, -6.0), null, "other"), // another album: its own 0 dB
         ))
         assertEquals(1, run.spawns)
-        assertLevels(run.pcm, UNITY * 0.794328, UNITY * 1.584893, UNITY)
-        assertEquals(listOf(-2.0, 4.0, 0.0), run.levelling.map { (it as Levelling.Applied).gainDb })
+        assertLevels(run.pcm, UNITY * 1.584893, UNITY * 1.584893, UNITY)
+        assertEquals(listOf(4.0, 0.0), run.levelling.map { (it as Levelling.Applied).gainDb })
     }
 
     @Test fun ffprobeReportsOnlyGainFfmpegApplies() {

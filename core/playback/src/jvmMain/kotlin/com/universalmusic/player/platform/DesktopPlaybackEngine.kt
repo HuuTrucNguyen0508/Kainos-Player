@@ -383,7 +383,6 @@ class DesktopPlaybackEngine internal constructor(
             if (token != transport.requestToken) return
             if (!restart || transport.replayGain == null) {
                 transport.replayGain = VolumeLevelling.choose(replayGain, analysed)
-                transport.albumKey = analysed?.albumKey
             }
             val seamless = gapless.canJoin(url)
             val warm = if (seamless && runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.take() else null

@@ -32,7 +32,7 @@ data class StoredLoudness(
     val origin: LoudnessOrigin = LoudnessOrigin.MEASURED,
 ) {
     fun describes(subject: LoudnessSubject): Boolean =
-        location == subject.location && contentLength == subject.contentLength && fileModifiedMs == subject.fileModifiedMs
+        loudnessLocationKey(location) == loudnessLocationKey(subject.location) && contentLength == subject.contentLength && fileModifiedMs == subject.fileModifiedMs
 }
 
 /** A file levelling may need a measurement for, as this device sees it now. */

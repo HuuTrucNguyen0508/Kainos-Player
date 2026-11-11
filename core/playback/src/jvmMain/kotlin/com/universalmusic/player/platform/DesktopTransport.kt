@@ -30,8 +30,6 @@ internal class DesktopTransport {
     var quality: AudioQuality? = null
     /** Gain the level filter applies to [handle]'s file, from tags or analysis; null when it has neither, and for streams. */
     var replayGain: ReplayGain? = null
-    /** Album of [handle]'s file as analysis knows it, so a gapless successor on the same album keeps the album gain. */
-    var albumKey: String? = null
     var levellingEnabled = false
 
     /** What levelling does to [handle] now. Only local files get mpv's levelling filter. */

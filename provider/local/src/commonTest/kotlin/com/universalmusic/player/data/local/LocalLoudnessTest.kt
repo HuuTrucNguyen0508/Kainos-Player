@@ -6,6 +6,8 @@ import com.universalmusic.player.data.loudness.StoredLoudness
 import com.universalmusic.player.domain.playback.MeasuredLoudness
 import com.universalmusic.player.domain.playback.TrackLoudness
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -81,4 +83,21 @@ class LocalLoudnessTest {
         assertNull(track.copy(tagsVersion = LOCAL_TAGS_VERSION).loudnessSubject().albumKey, "no track number: a single, not an album track")
         assertEquals("song.flac", track.loudnessSubject().fileName, "the sync basename, as hearts match it")
     }
+    @Test fun downloadsAndLibrarySweepsRunOnlyOneAnalyzerAtATime() = runTest {
+        var active = 0
+        var peak = 0
+        val pass = LocalLoudnessPass({
+            active++
+            peak = maxOf(peak, active)
+            delay(50)
+            active--
+            MeasuredLoudness(-20.0, -6.0)
+        }, MemoryCatalog())
+        val library = launch { pass.run(listOf(LoudnessSubject("library", 1, 1))) }
+        val download = launch { pass.measure(LoudnessSubject("cached", 1, 1)) }
+        library.join()
+        download.join()
+        assertEquals(1, peak)
+    }
+
 }

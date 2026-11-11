@@ -75,11 +75,10 @@ internal const val PLAYBACK_BEHAVIOUR_NOTE =
         "Spotify uses its Loud volume normalization."
 
 internal fun levellingNote(platform: String): String {
-    val reach = if (platform == "Android") {
-        "Android can only turn loud tracks down, not quiet ones up."
-    } else {
-        "Quiet tracks are raised only as far as their peaks allow."
-    }
-    return "Uses each file's ReplayGain tags so local tracks play near Spotify's level. $reach " +
-        "Files without tags and YouTube play at their own level. Details in Now Playing show what was applied."
+    val analysis = if (platform == "Android") "Home sync brings loudness measurements from your desktop." else
+        "Local files and downloaded YouTube audio are measured in the background."
+    return "Uses ReplayGain tags first, then measured loudness, to play near Spotify's level. " +
+        "Quiet tracks are raised only as far as their peaks allow. $analysis " +
+        "Files without tags or measurements and streamed YouTube audio play at their own level. " +
+        "Now Playing shows the gain applied."
 }

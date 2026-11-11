@@ -12,6 +12,8 @@ import com.universalmusic.player.platform.currentTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Measures one file's EBU R128 loudness; null when it cannot (unreadable, silent). */
 fun interface LocalLoudnessAnalyzer {
@@ -63,9 +65,11 @@ class LocalLoudnessPass(
     private val analyzer: LocalLoudnessAnalyzer?,
     private val catalog: LoudnessCatalog,
 ) {
+    private val measurementLock = Mutex()
+
     /** Returns how many files it measured. */
-    suspend fun run(subjects: List<LoudnessSubject>): Int {
-        val analyzer = analyzer ?: return 0
+    suspend fun run(subjects: List<LoudnessSubject>): Int = measurementLock.withLock {
+        val analyzer = analyzer ?: return@withLock 0
         val pending = subjects.filter { subject -> current(subject) == null }
         val started = currentTimeMillis()
         val batch = mutableListOf<StoredLoudness>()
@@ -73,6 +77,7 @@ class LocalLoudnessPass(
             currentCoroutineContext().ensureActive()
             val measured = runCatching { analyzer.measure(subject.location) }
                 .getOrElse { if (it is CancellationException) throw it else null }
+            currentCoroutineContext().ensureActive()
             batch += StoredLoudness(
                 location = subject.location,
                 contentLength = subject.contentLength,
@@ -91,14 +96,15 @@ class LocalLoudnessPass(
         if (pending.isNotEmpty()) {
             PlaybackTrace.log("Loudness", "measured=${pending.size} of ${subjects.size} in ${currentTimeMillis() - started} ms")
         }
-        return pending.size
+        pending.size
     }
 
     /** Measures one file now unless an up-to-date measurement exists, as after a download. */
-    suspend fun measure(subject: LoudnessSubject) {
-        val analyzer = analyzer ?: return
-        if (current(subject) != null) return
+    suspend fun measure(subject: LoudnessSubject) = measurementLock.withLock {
+        val analyzer = analyzer ?: return@withLock
+        if (current(subject) != null) return@withLock
         val measured = analyzer.measure(subject.location)
+        currentCoroutineContext().ensureActive()
         catalog.record(listOf(StoredLoudness(subject.location, subject.contentLength, subject.fileModifiedMs, measured, subject.durationMs, subject.albumKey)))
     }
 

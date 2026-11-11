@@ -59,4 +59,23 @@ class LoudnessModelsTest {
         assertEquals(LoudnessOrigin.SYNCED, importLoudness(remote, listOf(changed), mapOf(here.location to own)::get).single().origin,
             "a file changed since this device measured it takes the peer's value until it is measured again")
     }
+    @Test fun aKnownContentMismatchCannotFallBackToTheSameBasename() {
+        val remote = LoudnessSyncDocument("pc", listOf(LoudnessSyncEntry("lc1:other", "a.flac", -9.0, -1.0)))
+        assertEquals(emptyList(), importLoudness(remote, listOf(pcFile)) { null })
+    }
+
+    @Test fun aCachedFileUriStillDescribesItsNormalizedStoredMeasurement() {
+        val row = StoredLoudness("/cache/a b.m4a", 10, 1, MeasuredLoudness(-20.0, -3.0))
+        assertEquals(true, row.describes(LoudnessSubject("file:/cache/a%20b.m4a", 10, 1)))
+    }
+
+    @Test fun anUnmeasuredDuplicateOnTheSenderStillPreventsBasenameFallback() {
+        val measured = StoredLoudness(pcFile.location, 10, 1, MeasuredLoudness(-20.0, -3.0))
+        val duplicate = pcFile.copy(location = "/other/a.flac", contentKey = "lc1:other")
+        val remote = exportLoudness("pc", { if (it == measured.location) measured else null }, listOf(pcFile, duplicate))
+        val phone = pcFile.copy(location = "content://phone/a.flac", contentKey = null)
+        assertEquals(emptyList(), importLoudness(remote, listOf(phone)) { null })
+        assertEquals(1, importLoudness(remote, listOf(phone.copy(contentKey = pcFile.contentKey))) { null }.size)
+    }
+
 }

@@ -26,7 +26,6 @@ internal class GaplessPlaylist {
     val entries: MutableMap<Long, ProbedSuccessor> = mutableMapOf()
     var nextDuration: Long? = null
     var nextReplayGain: ReplayGain? = null
-    var nextAlbumKey: String? = null
     var crossing: PreparedPlayback? = null
     var crossingRunning: Boolean = false
     var outputDrained: Boolean = false
@@ -43,7 +42,6 @@ internal class ProbedSuccessor(
     val prepared: PreparedPlayback,
     val durationMs: Long?,
     val replayGain: ReplayGain?,
-    val albumKey: String?,
 )
 
 /**
@@ -124,15 +122,15 @@ internal class GaplessBoundary(
                 if (!slot.isActive(active)) return@enqueueLocked
                 // Remove the old successor before probing a potentially incompatible replacement.
                 runtime.sendIpc("""["playlist-clear"]""", active.socket)
-                val (currentUrl, currentAlbum) = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url to transport.albumKey }
+                val currentUrl = synchronized(transport.lock) { (transport.handle as? PlaybackHandle.Url)?.url }
                 // File probes must not hold up pause, seek, or other socket commands.
                 scope.launch(Dispatchers.IO) {
                     val compatible = runInterruptible { candidate == null || (currentUrl != null && runtime.canPrepare(currentUrl, candidate.handle.url)) }
                     val duration = if (candidate != null && compatible) runInterruptible { runtime.probeDurationMs(candidate.handle.url) } else null
                     val tags = if (candidate != null && compatible) runInterruptible { runtime.probeReplayGain(candidate.handle.url) } else null
                     val analysed = if (candidate != null && compatible) loudness.loudnessOf(candidate.handle.url) else null
-                    // Inside an album played in order the album gain applies, so the level holds across the join.
-                    val replayGain = VolumeLevelling.choose(tags, analysed, previousAlbumKey = currentAlbum)
+                    // Use the same album aggregate as the outgoing file, starting at the first sample.
+                    val replayGain = VolumeLevelling.choose(tags, analysed)
                     synchronized(transport.lock) {
                         if (preparationRevision != revision || prepared !== candidate || slot.active !== active) return@launch
                         slot.enqueueLocked apply@{
@@ -168,7 +166,7 @@ internal class GaplessBoundary(
                                     active.socket,
                                 )
                                 synchronized(transport.lock) {
-                                    if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain, analysed?.albumKey)
+                                    if (id != null) playlist.entries[id] = ProbedSuccessor(candidate, duration, replayGain)
                                     else if (prepared === candidate) prepared = null
                                 }
                             }
@@ -249,7 +247,6 @@ internal class GaplessBoundary(
                     playlist.crossingEntryId = playlist.decodingEntryId
                     playlist.nextDuration = binding.durationMs
                     playlist.nextReplayGain = binding.replayGain
-                    playlist.nextAlbumKey = binding.albumKey
                 }
                 "playback-restart" -> {
                     val next = playlist.crossing ?: return
@@ -333,7 +330,6 @@ internal class GaplessBoundary(
                 transport.handle = next.handle
                 transport.quality = next.quality
                 transport.replayGain = playlist.nextReplayGain
-                transport.albumKey = playlist.nextAlbumKey
                 ticker.anchor(0)
                 slot.epoch++
                 transport.publish(EngineState(status = if (playlist.crossingFailed) EngineStatus.FAILED else if (playlist.endedAfterCrossing) EngineStatus.ENDED else

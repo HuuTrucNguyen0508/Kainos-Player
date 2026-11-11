@@ -98,8 +98,8 @@ class KainosForwardingPlayerLevellingTest {
             return processor.output.order(ByteOrder.nativeOrder()).float
         }
         assertEquals(0.1f, render(), 1e-6f)
-        processor.stageItem(measuredItem(-21.0, -12.0).analysedGain()) // +3 + 7 = +10 dB, peak allows +11
-        processor.stage(Format.Builder().setSampleMimeType(MimeTypes.AUDIO_FLAC).build())
+        processor.stage(Format.Builder().setSampleMimeType(MimeTypes.AUDIO_FLAC)
+            .setCustomData(measuredItem(-21.0, -12.0).analysedGain()).build())
         assertEquals("the previous item keeps its gain until its audio has drained", 0.1f, render(), 1e-6f)
         processor.flush()
         assertEquals(0.31623f, render(), 1e-4f)

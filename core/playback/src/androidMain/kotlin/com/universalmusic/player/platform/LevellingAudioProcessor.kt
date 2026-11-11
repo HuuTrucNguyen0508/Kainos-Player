@@ -32,7 +32,7 @@ internal fun androidLevellingGainDb(replayGain: ReplayGain): Double =
 
 /**
  * Applies each item's ReplayGain to its PCM inside Exo's audio sink: its tags, or else the analysed
- * gain [ItemGainAudioRenderer] staged when it reached the item's stream. The sink is configured with
+ * gain [ItemGainAudioRenderer] attached to the decoded format. The sink is configured with
  * every item's format, tags included, before that item's first sample, and it flushes its
  * processors only once the previous item has fully drained into the output. Taking the tags at
  * [stage] and switching at that flush puts the change on the boundary sample, where a player
@@ -43,16 +43,10 @@ internal fun androidLevellingGainDb(replayGain: ReplayGain): Double =
 internal class LevellingAudioProcessor : BaseAudioProcessor() {
     @Volatile var enabled = true
     @Volatile private var staged: ReplayGain? = null
-    @Volatile private var itemGain: ReplayGain? = null
     private var playing: ReplayGain? = null
 
-    /** The analysed gain of the item whose stream the renderer just reached; tags in its format still win. */
-    fun stageItem(gain: ReplayGain?) {
-        itemGain = gain
-    }
-
     fun stage(format: Format) {
-        staged = replayGainOf(format.metadata) ?: itemGain
+        staged = replayGainOf(format.metadata) ?: (format.customData as? ReplayGain)
     }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
@@ -67,7 +61,6 @@ internal class LevellingAudioProcessor : BaseAudioProcessor() {
 
     override fun onReset() {
         staged = null
-        itemGain = null
         playing = null
     }
 
@@ -110,7 +103,7 @@ internal class LevellingRenderersFactory(
         val index = out.indexOfFirst { it.javaClass == MediaCodecAudioRenderer::class.java }
         if (index >= 0) {
             out[index] = ItemGainAudioRenderer(context, codecAdapterFactory, mediaCodecSelector, enableDecoderFallback,
-                eventHandler, eventListener, audioSink, levelling)
+                eventHandler, eventListener, audioSink)
         }
     }
 
