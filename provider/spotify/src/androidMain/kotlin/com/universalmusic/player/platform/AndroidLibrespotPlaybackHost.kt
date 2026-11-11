@@ -453,7 +453,9 @@ internal class AndroidLibrespotPlaybackHost(
             if (decodersRegistered) return
             synchronized(this) {
                 if (decodersRegistered) return
-                Decoders.registerDecoder(SuperAudioFormat.VORBIS, 0, EndSafeNativeDecoder::class.java)
+                // Vorbis stays on librespot's own decoder. MediaExtractor's Ogg reader scans to the
+                // end of the file before the first sample, so the native decoder waited for the
+                // whole download: about 8 s on good mobile data and minutes on a weak signal.
                 Decoders.registerDecoder(SuperAudioFormat.MP3, 0, EndSafeNativeDecoder::class.java)
                 decodersRegistered = true
             }
