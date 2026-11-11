@@ -52,6 +52,24 @@ class LastGoodDiscoverWeeklyTest {
     )
 
     @Test
+    fun aRefreshFinishingAfterDisconnectCannotRecreateTheSnapshot() = runTest {
+        val file = MemoryFile()
+        val store = LastGoodDiscoverWeekly(file) { now }
+        val revision = store.revision
+        store.clear()
+        store.remember(discoverWeekly(spotifyTrack("a", "Song A")), "me", revision)
+        assertNull(store.fallback("me"))
+        assertNull(file.text)
+    }
+
+    @Test
+    fun anUnownedSnapshotIsNotServedToAKnownAccount() = runTest {
+        val store = LastGoodDiscoverWeekly(MemoryFile()) { now }
+        store.remember(discoverWeekly(spotifyTrack("a", "Song A")), null)
+        assertNull(store.fallback("someone-else"))
+    }
+
+    @Test
     fun aFailedRefreshAfterARestartStillShowsThePlayableListWithItsAge() = runTest {
         val file = MemoryFile()
         LastGoodDiscoverWeekly(file) { now }.remember(discoverWeekly(spotifyTrack("a", "Song A"), spotifyTrack("b", "Song B")), "me")
@@ -82,7 +100,7 @@ class LastGoodDiscoverWeeklyTest {
         val store = LastGoodDiscoverWeekly(MemoryFile()) { now }
         store.remember(discoverWeekly(spotifyTrack("a", "Song A")), "me")
         assertNull(store.fallback("someone-else"))
-        assertEquals(1, store.fallback(null)!!.tracks.size, "before the account is known the saved list shows")
+        assertNull(store.fallback(null), "an unknown account cannot establish ownership of the saved list")
     }
 
     @Test

@@ -49,9 +49,11 @@ class LastGoodDiscoverWeekly(
     private val mutex = Mutex()
     @Volatile private var snapshot: DiscoverWeeklySnapshot? = null
     private var loaded = false
+    @Volatile var revision: Long = 0
+        private set
 
     /** Records [playlist] as the last good list when it has tracks. Returns it unchanged. */
-    suspend fun remember(playlist: Playlist, spotifyAccountId: String?): Playlist {
+    suspend fun remember(playlist: Playlist, spotifyAccountId: String?, expectedRevision: Long = revision): Playlist {
         if (playlist.tracks.isEmpty()) return playlist
         val now = clock()
         val next = DiscoverWeeklySnapshot(
@@ -64,6 +66,7 @@ class LastGoodDiscoverWeekly(
             tracks = playlist.tracks.map { it.toPersisted(now) },
         )
         mutex.withLock {
+            if (expectedRevision != revision) return playlist
             loaded = true
             snapshot = next
             file?.let { target -> io("save") { target.write(json.encodeToString(DiscoverWeeklySnapshot.serializer(), next)) } }
@@ -71,8 +74,9 @@ class LastGoodDiscoverWeekly(
         return playlist
     }
 
-    /** The last good list for [spotifyAccountId] (any, when it is not known yet), titled with its age; null when there is none. */
+    /** The last good list for a verified account, titled with its age. */
     suspend fun fallback(spotifyAccountId: String?): Playlist? {
+        if (spotifyAccountId == null) return null
         val saved = mutex.withLock {
             if (!loaded) {
                 loaded = true
@@ -80,12 +84,13 @@ class LastGoodDiscoverWeekly(
             }
             snapshot
         } ?: return null
-        if (spotifyAccountId != null && saved.spotifyAccountId != null && saved.spotifyAccountId != spotifyAccountId) return null
+        if (saved.spotifyAccountId != spotifyAccountId) return null
         return saved.toPlaylist(clock())
     }
 
     /** Forget the list, e.g. when Spotify is disconnected. */
     suspend fun clear() = mutex.withLock {
+        revision++
         loaded = true
         snapshot = null
         file?.let { target -> io("delete") { target.delete() } }

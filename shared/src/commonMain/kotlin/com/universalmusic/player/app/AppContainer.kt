@@ -310,10 +310,6 @@ class AppContainer(
     private val _spotifyDiscoverWeekly = MutableStateFlow<Playlist?>(null)
     val spotifyDiscoverWeekly = _spotifyDiscoverWeekly.asStateFlow()
     private val lastGoodDiscoverWeekly = LastGoodDiscoverWeekly(discoverWeeklySnapshotFile(), ::currentTimeMillis)
-    init {
-        // The shelf shows the last good list at once; a successful refresh replaces it.
-        scope.launch { lastGoodDiscoverWeekly.fallback(null)?.let { _spotifyDiscoverWeekly.compareAndSet(null, it) } }
-    }
     private val _spotifyLibraryError = MutableStateFlow<String?>(null)
     val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
     private val _spotifyLibraryLoading = MutableStateFlow(false)
@@ -495,6 +491,9 @@ class AppContainer(
                 player.setVolume(loaded.playbackVolume)
                 applyProviderSettings(loaded, clearSessionOnChange = false)
             }
+            lastGoodDiscoverWeekly.fallback(spotify.currentUserId())?.let {
+                _spotifyDiscoverWeekly.compareAndSet(null, it)
+            }
             startupMark("library_load_begin")
             AppFailures.reporting { library.load(spotify.currentUserId()) }
             startupMark("library_load_end")
@@ -589,10 +588,10 @@ class AppContainer(
     }
 
     suspend fun disconnectSpotify() {
+        lastGoodDiscoverWeekly.clear()
         spotify.logout()
         updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
-        lastGoodDiscoverWeekly.clear()
         library.setSpotifyAccountId(null)
     }
 
@@ -714,15 +713,19 @@ class AppContainer(
      * Weekly. Never use Web API search copies.
      */
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
+        val revision = lastGoodDiscoverWeekly.revision
+        val accountId = spotify.currentUserId()
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
             .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
-        val accountId = spotify.currentUserId()
+        if (revision != lastGoodDiscoverWeekly.revision || accountId != spotify.currentUserId()) return null
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
-            return lastGoodDiscoverWeekly.remember(fromLibrespot, accountId)
+            val remembered = lastGoodDiscoverWeekly.remember(fromLibrespot, accountId, revision)
+            return remembered.takeIf { revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId() }
         }
-        return lastGoodDiscoverWeekly.fallback(accountId) ?: fromLibrespot ?: findDiscoverWeekly(playlists)
+        val fallback = lastGoodDiscoverWeekly.fallback(accountId) ?: fromLibrespot ?: findDiscoverWeekly(playlists)
+        return fallback.takeIf { revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId() }
     }
 
     /** Load full track list for a Spotify playlist and return playable tracks. */
@@ -735,12 +738,17 @@ class AppContainer(
         }
         val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
         webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val revision = lastGoodDiscoverWeekly.revision
+        val accountId = spotify.currentUserId()
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
             .logged("Spotify", "playlist load through librespot failed").getOrNull()
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
-            if (cached?.source?.providerEntityId == id || configured == id) {
-                _spotifyDiscoverWeekly.value = lastGoodDiscoverWeekly.remember(fromLibrespot, spotify.currentUserId())
+            if ((cached?.source?.providerEntityId == id || configured == id) &&
+                revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId()
+            ) {
+                val remembered = lastGoodDiscoverWeekly.remember(fromLibrespot, accountId, revision)
+                if (revision == lastGoodDiscoverWeekly.revision) _spotifyDiscoverWeekly.value = remembered
             }
             return fromLibrespot.tracks
         }
