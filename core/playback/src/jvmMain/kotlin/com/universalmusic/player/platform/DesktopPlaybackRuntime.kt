@@ -291,6 +291,20 @@ internal object SystemDesktopPlaybackRuntime : DesktopPlaybackRuntime {
     }
 }
 
+/**
+ * Every mpv the app starts. It is the app's player, not the user's: their mpv.conf and scripts
+ * (a user MPRIS script, a different audio device, ytdl options) stay out, and the sound server
+ * names it after the app.
+ */
+internal val MPV_APP_ARGS = listOf(
+    "--no-config",
+    "--audio-client-name=Kainos Player",
+    "--no-video",
+    "--force-window=no",
+    "--really-quiet",
+    "--no-terminal",
+)
+
 internal fun isLocalMediaUrl(url: String): Boolean = url.startsWith("file:") || !url.contains("://")
 
 /**

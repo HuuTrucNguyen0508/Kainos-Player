@@ -19,8 +19,7 @@ object DesktopPlaybackWarmup {
             val socket = runtime.createIpcPath()
             var process: Process? = null
             try {
-                process = runtime.startProcess(listOf(mpv, "--no-video", "--force-window=no",
-                    "--really-quiet", "--no-terminal", "--idle=yes", "--gapless-audio=no",
+                process = runtime.startProcess(listOf(mpv) + MPV_APP_ARGS + listOf("--idle=yes", "--gapless-audio=no",
                     "--prefetch-playlist=yes", "--keep-open=no", "--input-ipc-server=$socket"))
                 runtime.waitForIpc(socket)
                 check(process.isAlive && runtime.sendIpc("""["get_property","idle-active"]""", socket))

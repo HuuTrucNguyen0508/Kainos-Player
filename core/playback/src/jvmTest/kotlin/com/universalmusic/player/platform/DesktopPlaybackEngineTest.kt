@@ -94,6 +94,8 @@ class DesktopPlaybackEngineTest {
         try {
             engine.play(PlaybackHandle.Url(stream, durationMs = 213_000), null, 1)
             assertEquals(stream, runtime.commands.single().last())
+            assertTrue("--audio-client-name=Kainos Player" in runtime.commands.single(), "PipeWire/pavucontrol show the app, not \"mpv\"")
+            assertTrue("--no-config" in runtime.commands.single(), "The user's mpv.conf and scripts stay out of the app's player")
             assertEquals(emptyList(), runtime.durationProbes, "ffprobe on a stream URL held mpv back up to 5 s")
             assertEquals(emptyList(), runtime.replayGainProbes)
             assertEquals(213_000, engine.state.value.durationMs)

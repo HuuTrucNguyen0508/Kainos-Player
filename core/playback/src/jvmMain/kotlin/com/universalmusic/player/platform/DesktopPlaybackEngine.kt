@@ -375,10 +375,7 @@ class DesktopPlaybackEngine internal constructor(
             val socket = warm?.second ?: runtime.createIpcPath()
             val command = buildList {
                 add(mpv)
-                add("--no-video")
-                add("--force-window=no")
-                add("--really-quiet")
-                add("--no-terminal")
+                addAll(MPV_APP_ARGS)
                 add(if (seamless) "--idle=yes" else "--idle=no")
                 if (seamless) {
                     add("--gapless-audio=no")
