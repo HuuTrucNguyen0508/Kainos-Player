@@ -787,7 +787,7 @@ class AppContainer(
 
     /**
      * Refreshes the saved Spotify library: only new Liked Songs and changed playlists are read, then
-     * the songs of changed playlists in the background. A failure while a saved library is shown
+     * the songs of changed playlists in the background, after this returns. A failure while a saved library is shown
      * keeps it, with its age instead of an error; Spotify's Retry-After is waited out.
      */
     private suspend fun refreshSpotifyLibrary(userAsked: Boolean) {
@@ -824,9 +824,13 @@ class AppContainer(
             refreshed
         }
         if (!playlistsRefreshed) return
-        runCatching { spotifyLibrary.syncPlaylistSongs() }
-            .onFailure { if (it is CancellationException) throw it }
-            .logged("Spotify", "playlist songs refresh failed")
+        // In the background: a first pass reads every playlist, and Settings' connect, Android's
+        // sign-in callback and pull-to-refresh must not wait for it.
+        scope.launch {
+            runCatching { spotifyLibrary.syncPlaylistSongs() }
+                .onFailure { if (it is CancellationException) throw it }
+                .logged("Spotify", "playlist songs refresh failed")
+        }
     }
 
     /** A section that failed but has a saved copy shows that copy's age; one with nothing to show is an error. */
