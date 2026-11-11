@@ -88,7 +88,7 @@ The schema is at version 10. SQLDelight numbers it as one more than the highest 
 | `6.sqm` | The `play_event` history table |
 | `7.sqm` | Home pin order revision and the pin tombstone table |
 | `8.sqm` | `session_state.radio_provider`, so a restored queue keeps its radio |
-| `9.sqm` | Local file tags on `local_track` (album artist, track and disc number, year, genre, `tags_version`) and the `track_loudness` table |
+| `9.sqm` | Local file tags on `local_track` (album artist, track and disc number, year, genre, `tags_version`), the `track_loudness` table, the saved Spotify library (`spotify_library_state`, `spotify_liked_track`, `spotify_playlist`, `spotify_playlist_track`) and `home_sync_skip` |
 
 The Android version code is the schema version times 100,000 plus the commit count (`build-logic`, `KainosVersion.kt`), so Android refuses to install a build with an older schema over a newer database. Desktop reports a database written by a newer build with a message that names it.
 
