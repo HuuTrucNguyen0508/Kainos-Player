@@ -18,8 +18,6 @@ internal fun LibraryPlaylistDialogs(
     onRenameDraft: (String) -> Unit,
     onRenamePlaylistId: (String?) -> Unit,
     deletePlaylistId: String?,
-    expandedKainosId: String?,
-    onExpandedKainosId: (String?) -> Unit,
     onDeletePlaylistId: (String?) -> Unit,
     presenter: LibraryPresenter,
 ) {
@@ -87,7 +85,6 @@ internal fun LibraryPlaylistDialogs(
                 TextButton(
                     onClick = {
                         presenter.deletePlaylist(deletePlaylistId)
-                        if (expandedKainosId == deletePlaylistId) onExpandedKainosId(null)
                         onDeletePlaylistId(null)
                     },
                 ) { Text("Delete") }

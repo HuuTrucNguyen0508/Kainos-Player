@@ -12,7 +12,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** Private, per-process journal. No port, credentials, metadata, or shared receiver state. */
-internal class LibrespotEventBridge(deliver: suspend (SpotifyReceiverEvent) -> Unit) : AutoCloseable {
+internal class LibrespotEventBridge(
+    dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    deliver: suspend (SpotifyReceiverEvent) -> Unit,
+) : AutoCloseable {
     // librespot 0.8.0 splits --onevent on whitespace, so keep the executable path space-free.
     private val directory = Files.createTempDirectory(
         java.nio.file.Path.of("/tmp"), "kainos-librespot-events-",
@@ -20,7 +23,7 @@ internal class LibrespotEventBridge(deliver: suspend (SpotifyReceiverEvent) -> U
     )
     private val journal = directory.resolve("events")
     val program = directory.resolve("event.sh")
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val reader: kotlinx.coroutines.Job
     val isOpen: Boolean get() = reader.isActive
 
@@ -36,25 +39,25 @@ internal class LibrespotEventBridge(deliver: suspend (SpotifyReceiverEvent) -> U
             esac
         """.trimIndent() + "\n")
         Files.setPosixFilePermissions(program, PosixFilePermissions.fromString("rwx------"))
+        val file = RandomAccessFile(journal.toFile(), "r")
         reader = scope.launch {
-            RandomAccessFile(journal.toFile(), "r").use { file ->
-                val line = StringBuilder()
-                var overflow = false
-                while (isActive) {
-                    val next = file.read()
-                    when {
-                        next < 0 -> delay(25)
-                        next == '\n'.code -> {
-                            if (!overflow) parseLibrespotEvent(line.toString())?.let { deliver(it) }
-                            line.clear()
-                            overflow = false
-                        }
-                        line.length < 256 && !overflow -> line.append(next.toChar())
-                        else -> overflow = true
+            val line = StringBuilder()
+            var overflow = false
+            while (isActive) {
+                val next = file.read()
+                when {
+                    next < 0 -> delay(25)
+                    next == '\n'.code -> {
+                        if (!overflow) parseLibrespotEvent(line.toString())?.let { deliver(it) }
+                        line.clear()
+                        overflow = false
                     }
+                    line.length < 256 && !overflow -> line.append(next.toChar())
+                    else -> overflow = true
                 }
             }
         }
+        reader.invokeOnCompletion { file.close() }
     }
 
     override fun close() {

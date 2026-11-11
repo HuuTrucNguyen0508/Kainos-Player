@@ -81,6 +81,8 @@ internal fun LibraryScreen(
     onShuffleTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
     /** Library hands the app what system back / Escape should do inside it, or null when nothing. */
     onInnerBack: ((() -> Unit)?) -> Unit = {},
+    /** Opens an album, artist or Kainos playlist page over Library; back returns here, scroll kept. */
+    onOpenCollection: (CollectionRef) -> Unit = {},
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -118,11 +120,8 @@ internal fun LibraryScreen(
     SideEffect { presenter.setQuery(query) }
     // Rows keep the full tracks (hearts, playlists, history); only what reaches the player is cut to disk.
     val playSongs = if (state.readyOffline) onPlayOffline else onPlayTracks
-    var selectedArtistId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedArtist = state.artists.firstOrNull { it.artist.canonicalId == selectedArtistId }
-    /** A tab the listener picked: leaving Artists closes the open artist, as it always has. */
+    /** A tab the listener picked. */
     fun selectTab(item: LibraryTab) {
-        if (item != LibraryTab.Artists) selectedArtistId = null
         tabName = item.name
         if (item != LibraryTab.Songs) lastOtherTabName = item.name
     }
@@ -156,7 +155,6 @@ internal fun LibraryScreen(
     }
     var playlistBusyId by remember { mutableStateOf<String?>(null) }
     var playlistError by remember { mutableStateOf<String?>(null) }
-    var expandedKainosId by rememberSaveable { mutableStateOf<String?>(null) }
     var renamePlaylistId by remember { mutableStateOf<String?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var deletePlaylistId by remember { mutableStateOf<String?>(null) }
@@ -261,16 +259,12 @@ internal fun LibraryScreen(
                     state = state,
                     listState = albumsListState,
                     presenter = presenter,
-                    onPlayTracks = onPlayTracks,
+                    onOpenAlbum = { album -> onOpenCollection(album.page()) },
                 )
                 LibraryTab.Artists -> LibraryArtistsTab(
                     state = state,
                     listState = artistsListState,
-                    selectedArtist = selectedArtist,
-                    onSelectedArtistId = { selectedArtistId = it },
-                    onPlayTracks = onPlayTracks,
-                    trackActions = trackActions,
-                    trackAvailability = presenter::trackAvailability,
+                    onOpenArtist = { entry -> onOpenCollection(CollectionRef.LibraryArtist(entry.artist.name)) },
                 )
                 LibraryTab.Playlists -> LibraryPlaylistsTab(
                     state = state,
@@ -283,8 +277,7 @@ internal fun LibraryScreen(
                     onPlaylistBusyId = { playlistBusyId = it },
                     playlistError = playlistError,
                     onPlaylistError = { playlistError = it },
-                    expandedKainosId = expandedKainosId,
-                    onExpandedKainosId = { expandedKainosId = it },
+                    onOpenPlaylist = { playlist -> onOpenCollection(CollectionRef.KainosPlaylist(playlist.canonicalId, playlist.title)) },
                     renamePlaylistId = renamePlaylistId,
                     onRenamePlaylistId = { renamePlaylistId = it },
                     renameDraft = renameDraft,
