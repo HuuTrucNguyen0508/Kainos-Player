@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.cache
 
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.platform.DownloadedYouTubeAudio
 import com.universalmusic.player.platform.YouTubeAudioDownloader
@@ -20,7 +22,7 @@ class HeartedAudioCacheRegressionTest {
                 object : YouTubeAudioDownloader {
                     override fun isAvailable() = true
                     override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
-                        onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio = error("not used")
+                        onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult = error("not used")
                 },
                 { error("YouTube quota exceeded") },
             )
@@ -47,7 +49,7 @@ class HeartedAudioCacheRegressionTest {
             val downloader = object : YouTubeAudioDownloader {
                 override fun isAvailable() = true
                 override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
-                    onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio {
+                    onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult {
                     attempted += videoId
                     if (attempted.size == 1) {
                         started.complete(Unit)
@@ -56,7 +58,7 @@ class HeartedAudioCacheRegressionTest {
                     }
                     val file = File(destinationDirectory, "$fileBaseName.m4a").apply { parentFile.mkdirs(); writeBytes(ByteArray(8)) }
                     onProgress?.invoke(8, 8)
-                    return DownloadedYouTubeAudio(file.absolutePath, sizeBytes = 8)
+                    return YouTubeDownloadResult.Downloaded(DownloadedYouTubeAudio(file.absolutePath, sizeBytes = 8))
                 }
             }
             val service = HeartedAudioCacheService(backgroundScope, cache, downloader, { emptyList() },
@@ -185,9 +187,9 @@ class HeartedAudioCacheRegressionTest {
             val service = HeartedAudioCacheService(backgroundScope, cache, object : YouTubeAudioDownloader {
                 override fun isAvailable() = true
                 override suspend fun downloadAudio(videoId: String, destinationDirectory: String, fileBaseName: String,
-                    onProgress: ((Long, Long?) -> Unit)?): DownloadedYouTubeAudio {
+                    onProgress: ((Long, Long?) -> Unit)?): YouTubeDownloadResult {
                     val file = File(destinationDirectory, "$fileBaseName.m4a").apply { writeBytes(ByteArray(8)) }
-                    return DownloadedYouTubeAudio(file.path, sizeBytes = 8)
+                    return YouTubeDownloadResult.Downloaded(DownloadedYouTubeAudio(file.path, sizeBytes = 8))
                 }
             }, { emptyList() })
             service.enqueue(Track(canonicalId = "yt:new", title = "New", artists = emptyList()))

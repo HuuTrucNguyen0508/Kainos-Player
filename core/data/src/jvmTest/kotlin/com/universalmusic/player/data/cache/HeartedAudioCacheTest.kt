@@ -1,5 +1,7 @@
 package com.universalmusic.player.data.cache
 
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
 import com.universalmusic.player.domain.model.ArtistRef
 import com.universalmusic.player.domain.model.AudioQuality
 import com.universalmusic.player.domain.model.PlaybackHandle
@@ -84,18 +86,18 @@ class HeartedAudioCacheTest {
                         destinationDirectory: String,
                         fileBaseName: String,
                         onProgress: ((Long, Long?) -> Unit)?,
-                    ): DownloadedYouTubeAudio {
+                    ): YouTubeDownloadResult {
                         gate.await()
                         order += videoId
                         val dir = root.resolve("audio")
                         Files.createDirectories(dir)
                         val file = dir.resolve("$fileBaseName.m4a")
                         Files.write(file, byteArrayOf(1, 2, 3))
-                        return DownloadedYouTubeAudio(
+                        return YouTubeDownloadResult.Downloaded(DownloadedYouTubeAudio(
                             absolutePath = file.toAbsolutePath().toString(),
                             quality = AudioQuality(tier = QualityTier.HIGH, codec = "m4a"),
                             sizeBytes = 3,
-                        )
+                        ))
                     }
                 }
                 val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

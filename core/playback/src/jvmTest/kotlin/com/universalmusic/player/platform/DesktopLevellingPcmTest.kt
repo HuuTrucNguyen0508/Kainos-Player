@@ -14,7 +14,7 @@ import kotlin.math.abs
 import kotlin.test.*
 import org.junit.Assume.assumeTrue
 
-/** Real mpv rendering raw PCM: ReplayGain levelling per file, exact at the gapless boundary. */
+/** Real mpv rendering raw PCM: levelling per file from tags or analysis, exact at the gapless boundary. */
 class DesktopLevellingPcmTest {
     private val root: File = Files.createTempDirectory("kainos-levelling-").toFile()
 
@@ -84,6 +84,7 @@ class DesktopLevellingPcmTest {
         files: List<File>,
         levelling: Boolean,
         asUri: Boolean = false,
+        loudness: LoudnessLookup = LoudnessLookup.None,
         whilePlaying: suspend (PlayerSession, (String) -> String?) -> Unit = { _, _ -> },
     ): Run = runBlocking {
         val output = File(root, "out-${System.nanoTime()}.raw")
@@ -101,7 +102,7 @@ class DesktopLevellingPcmTest {
             }
         }
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
-        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime)
+        val engine = DesktopPlaybackEngine(spotifyStarter = {}, runtime = runtime, loudness = loudness)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         val session = PlayerSession(engine, DefaultSourceResolver(), scope, confineTo = dispatcher,
             initialPreferences = PlaybackPreferences(volumeLevelling = levelling))
@@ -111,7 +112,8 @@ class DesktopLevellingPcmTest {
             session.play(files.mapIndexed { index, file -> track(index, file, asUri) })
             val property = { name: String -> runtime.readProperty(name, socket) }
             withTimeout(5_000) {
-                while (property("playlist-count") != files.size.toString()) delay(10)
+                // The session keeps one successor behind the playing file.
+                while (property("playlist-count") != minOf(files.size, 2).toString()) delay(10)
                 session.nowPlaying.first { it.levelling != null }
             }
             whilePlaying(session, property)
@@ -176,15 +178,56 @@ class DesktopLevellingPcmTest {
 
     @Test fun turningItOffReachesTheTrackAlreadyLoaded() {
         val run = render(listOf(quiet()), levelling = true) { session, property ->
-            assertTrue(property("af").orEmpty().contains("replaygain=track"))
+            assertTrue(property("af").orEmpty().contains("volume=0.501187"))
             withTimeout(5_000) { while ((property("time-pos")?.toDoubleOrNull() ?: 0.0) < 1.0) delay(10) }
             session.updatePreferences(PlaybackPreferences(volumeLevelling = false))
-            withTimeout(5_000) { while (property("af").orEmpty().contains("replaygain=track")) delay(10) }
+            withTimeout(5_000) { while (!property("af").orEmpty().contains("volume=1.000000")) delay(10) }
         }
         assertEquals(FRAMES, run.pcm.size, "Changing the filter mid-track must not skip audio")
         assertEquals(MINUS_6_DB, peak(run.pcm, 0, 44_100 / 2), 0.0005, "Levelled before the switch")
         assertEquals(UNITY, peak(run.pcm, FRAMES - 44_100, FRAMES), 0.0005, "Own level after the switch")
         assertEquals(listOf(Levelling.Applied(-6.0), Levelling.Off), run.levelling)
+    }
+
+    /** Measurements keyed by file name, as the loudness repository keys them by path. */
+    private fun measured(vararg entries: Pair<File, TrackLoudness>) = LoudnessLookup { location ->
+        entries.firstOrNull { (file, _) -> location.endsWith(file.name) }?.second
+    }
+
+    @Test fun analysedLoudnessLevelsUntaggedFilesAndTagsStillWin() {
+        val untagged = untagged()
+        val quiet = quiet()
+        // -12 LUFS wants -18 - (-12) + 7 = +1 dB; the -6 dBTP peak allows it. Rounded to +1 dB below.
+        val measuredLoud = TrackLoudness(MeasuredLoudness(-12.0, -6.0))
+        val run = render(listOf(untagged, quiet), levelling = true,
+            loudness = measured(untagged to measuredLoud, quiet to TrackLoudness(MeasuredLoudness(-30.0, -20.0))))
+        assertEquals(1, run.spawns)
+        assertLevels(run.pcm, UNITY * 1.122018, MINUS_6_DB)
+        assertEquals(listOf(Levelling.Applied(1.0, GainSource.ANALYSED), Levelling.Applied(-6.0)), run.levelling)
+    }
+
+    @Test fun analysedBoostStopsOneDecibelBelowTheTruePeak() {
+        val untagged = untagged()
+        // -30 LUFS wants +19 dB; a -7 dBTP true peak allows only +6 dB.
+        val run = render(listOf(untagged), levelling = true,
+            loudness = measured(untagged to TrackLoudness(MeasuredLoudness(-30.0, -7.0))))
+        assertEquals(UNITY * 1.995262, peak(run.pcm, 0, FRAMES), 0.0005)
+        assertEquals(listOf(Levelling.Applied(6.0, GainSource.ANALYSED)), run.levelling)
+    }
+
+    @Test fun aGaplessJoinInsideAnAlbumUsesTheAlbumGain() {
+        val first = untagged()
+        val second = tone("second.flac")
+        val third = tone("third.flac")
+        val album = MeasuredLoudness(-15.0, -6.0) // +4 dB
+        val run = render(listOf(first, second, third), levelling = true, loudness = measured(
+            first to TrackLoudness(MeasuredLoudness(-9.0, -6.0), album, "album"), // album gain from the first track
+            second to TrackLoudness(MeasuredLoudness(-21.0, -6.0), album, "album"), // album, not +5 dB (capped)
+            third to TrackLoudness(MeasuredLoudness(-11.0, -6.0), null, "other"), // another album: its own 0 dB
+        ))
+        assertEquals(1, run.spawns)
+        assertLevels(run.pcm, UNITY * 1.584893, UNITY * 1.584893, UNITY)
+        assertEquals(listOf(4.0, 0.0), run.levelling.map { (it as Levelling.Applied).gainDb })
     }
 
     @Test fun ffprobeReportsOnlyGainFfmpegApplies() {

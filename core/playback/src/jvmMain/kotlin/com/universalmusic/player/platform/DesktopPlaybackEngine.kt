@@ -11,6 +11,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.universalmusic.player.domain.playback.UnsupportedPlaybackException
 import com.universalmusic.player.domain.playback.VolumeLevelling
+import com.universalmusic.player.domain.playback.LoudnessLookup
+import com.universalmusic.player.domain.playback.ReplayGain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -32,10 +34,13 @@ class DesktopPlaybackEngine internal constructor(
     spotify: SpotifyPlaybackController,
     private val runtime: DesktopPlaybackRuntime = SystemDesktopPlaybackRuntime,
     spotifyObserveIntervalMs: Long = SPOTIFY_OBSERVE_INTERVAL_MS,
+    /** Analysed loudness of files without ReplayGain tags. */
+    private val loudness: LoudnessLookup = LoudnessLookup.None,
 ) : PlaybackEngine {
     internal constructor(
         spotifyStarter: suspend (String) -> Unit,
         runtime: DesktopPlaybackRuntime = SystemDesktopPlaybackRuntime,
+        loudness: LoudnessLookup = LoudnessLookup.None,
     ) : this(
         SpotifyPlaybackController(
             play = spotifyStarter,
@@ -44,6 +49,7 @@ class DesktopPlaybackEngine internal constructor(
             seekTo = {},
         ),
         runtime,
+        loudness = loudness,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -51,7 +57,7 @@ class DesktopPlaybackEngine internal constructor(
     private val slot = MpvSlot(runtime, transport.lock, scope)
     private val ticker = PositionTicker(transport, slot, runtime, scope) { spotifyPath.receiverOwnsPlaybackLocked() }
     private val spotifyPath: SpotifyConnectPath = SpotifyConnectPath(spotify, transport, ticker, scope, spotifyObserveIntervalMs)
-    private val gapless = GaplessBoundary(transport, slot, ticker, runtime, scope) {
+    private val gapless = GaplessBoundary(transport, slot, ticker, runtime, scope, loudness) {
         val handle = transport.handle as? PlaybackHandle.Url ?: return@GaplessBoundary
         ticker.hold(transport.current.positionMs)
         seekRestartLocked(handle, transport.current)?.let(::launchRestart)
@@ -69,8 +75,10 @@ class DesktopPlaybackEngine internal constructor(
             val active = slot.active
             val url = (transport.handle as? PlaybackHandle.Url)?.url
             if (active != null && url != null && isLocalMediaUrl(url)) {
-                slot.enqueueLocked { slot.sendIfActive(active, levellingCommand(enabled)) }
+                val gain = transport.replayGain
+                slot.enqueueLocked { slot.sendIfActive(active, levellingCommand(enabled, gain)) }
             }
+            gapless.refreshSuccessorLocked()
             if (transport.current.levelling != null) {
                 transport.publish(transport.current.copy(levelling = transport.levellingLocked()))
             }
@@ -231,6 +239,7 @@ class DesktopPlaybackEngine internal constructor(
                     startSeconds = restart.startSeconds,
                     token = restart.token,
                     targetStatus = restart.targetStatus,
+                    restart = true,
                 )
                 is PlaybackHandle.ProviderPlayback -> play(handle, restart.quality)
             }
@@ -346,6 +355,8 @@ class DesktopPlaybackEngine internal constructor(
         startSeconds: Double,
         token: Long,
         targetStatus: EngineStatus = EngineStatus.PLAYING,
+        /** The same file again after a seek or resume fallback: it keeps the gain it had, album gain included. */
+        restart: Boolean = false,
     ) {
         if (runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.playbackRequested()
         val mpv = runtime.findOnPath("mpv")
@@ -366,10 +377,13 @@ class DesktopPlaybackEngine internal constructor(
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         // Only local files get the filter, so levelling never claims gain on a stream.
         val levelled = local
+        val analysed = if (levelled) loudness.loudnessOf(url) else null
         val levelledAtLaunch = synchronized(transport.lock) { transport.levellingEnabled }
         val active = synchronized(transport.lock) {
             if (token != transport.requestToken) return
-            transport.replayGain = replayGain
+            if (!restart || transport.replayGain == null) {
+                transport.replayGain = VolumeLevelling.choose(replayGain, analysed)
+            }
             val seamless = gapless.canJoin(url)
             val warm = if (seamless && runtime === SystemDesktopPlaybackRuntime) DesktopPlaybackWarmup.take() else null
             val socket = warm?.second ?: runtime.createIpcPath()
@@ -384,7 +398,7 @@ class DesktopPlaybackEngine internal constructor(
                 add("--keep-open=no")
                 add("--volume=$volumePercent")
                 // A gapless process may be the prewarmed one, so it gets the filter over IPC before loadfile.
-                if (levelled && !seamless) add("--af-append=${levellingFilter(levelledAtLaunch)}")
+                if (levelled && !seamless) add("--af-append=${levellingFilter(levelledAtLaunch, transport.replayGain)}")
                 add("--input-ipc-server=$socket")
                 if (targetStatus == EngineStatus.PAUSED) add("--pause")
                 if (startSeconds > 0 && !seamless) add("--start=$startSeconds")
@@ -413,7 +427,8 @@ class DesktopPlaybackEngine internal constructor(
                     slot.sendIfActive(active, """["set_property","volume",$volumePercent]""")
                     // In the IPC FIFO, so a toggle made meanwhile lands after this, not before.
                     if (levelled) slot.awaitIpc {
-                        slot.sendIfActive(active, levellingCommand(synchronized(transport.lock) { transport.levellingEnabled }))
+                        val (enabled, gain) = synchronized(transport.lock) { transport.levellingEnabled to transport.replayGain }
+                        slot.sendIfActive(active, levellingCommand(enabled, gain))
                     }
                     if (targetStatus == EngineStatus.PAUSED) {
                         check(slot.sendIfActive(active, """["set_property","pause",true]"""))
@@ -470,8 +485,8 @@ class DesktopPlaybackEngine internal constructor(
             }
             if (levelled && !active.gapless) slot.awaitIpc {
                 // A toggle that raced the launch could not reach mpv before its socket existed.
-                val enabled = synchronized(transport.lock) { transport.levellingEnabled }
-                if (enabled != levelledAtLaunch) slot.sendIfActive(active, levellingCommand(enabled))
+                val (enabled, gain) = synchronized(transport.lock) { transport.levellingEnabled to transport.replayGain }
+                if (enabled != levelledAtLaunch) slot.sendIfActive(active, levellingCommand(enabled, gain))
             }
             if (!needsIpc) return@withContext true
             slot.awaitIpc {
@@ -542,17 +557,9 @@ class DesktopPlaybackEngine internal constructor(
     private companion object {
         const val SPOTIFY_OBSERVE_INTERVAL_MS = 4_000L
 
-        /**
-         * ffmpeg's volume filter reads each decoded frame's ReplayGain, so the gain changes on the
-         * first sample of the next gapless file. mpv's own `--replaygain` sets the output gain when
-         * the next file starts decoding, while the last ~0.4 s of the previous one is still buffered.
-         * Off is the same filter at unity: both output float, so a toggle replaces the filter in
-         * place. Removing it changes the output format, and mpv reopens the output and drops its buffer.
-         */
-        fun levellingFilter(enabled: Boolean): String = "@kainos-level:lavfi=[" +
-            (if (enabled) "volume=replaygain=track:replaygain_preamp=${VolumeLevelling.PREAMP_DB}" else "volume=1") + "]"
-
-        fun levellingCommand(enabled: Boolean): String = """["af","add",${Json.encodeToString(levellingFilter(enabled))}]"""
+        /** Replaces the level filter of the file mpv is decoding now. */
+        fun levellingCommand(enabled: Boolean, gain: ReplayGain?): String =
+            """["af","add",${Json.encodeToString(levellingFilter(enabled, gain))}]"""
     }
 
     private fun shutdown() {

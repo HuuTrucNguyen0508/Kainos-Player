@@ -34,6 +34,9 @@ expect fun createHeartedAudioCache(): com.universalmusic.player.data.cache.Heart
 
 expect fun createLocalLibraryScanCache(): LocalLibraryScanCache?
 
+/** Loudness measurements in the app database. */
+expect fun createLoudnessStore(): com.universalmusic.player.data.loudness.LoudnessStore?
+
 expect fun loadAppConfig(): AppConfig
 
 /**

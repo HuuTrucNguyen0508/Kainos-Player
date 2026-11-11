@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
 import com.universalmusic.player.data.cache.DefaultHeartedAudioCache
 import com.universalmusic.player.data.cache.FileHeartedAudioCacheDisk
 import com.universalmusic.player.data.cache.HeartedAudioCacheEntry
@@ -103,7 +105,7 @@ private object NoDownloader : YouTubeAudioDownloader {
         destinationDirectory: String,
         fileBaseName: String,
         onProgress: ((Long, Long?) -> Unit)?,
-    ): DownloadedYouTubeAudio? = null
+    ): YouTubeDownloadResult = YouTubeDownloadResult.Failed(YouTubeFailureKind.PERMANENT, "no downloader")
 }
 
 private class RecordingEngine(private val played: MutableList<String>) : PlaybackEngine {

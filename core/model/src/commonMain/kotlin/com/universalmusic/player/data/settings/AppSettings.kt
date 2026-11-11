@@ -81,6 +81,11 @@ data class AppSettings(
      * Replaces the old opt-in `searchAutoplayEnabled`, which stored settings still carry and is ignored.
      */
     val searchRadioEnabled: Boolean = true,
+    /**
+     * Android: hearted-audio downloads (YouTube hearts and Spotify→YouTube mirrors) wait while the
+     * network is metered. Desktop ignores it.
+     */
+    val downloadOnWifiOnly: Boolean = true,
     /** In-app playback gain 0–1 (desktop mpv / Android ExoPlayer). Default full. */
     val playbackVolume: Float = 1f,
     /** Home LAN hearts sync (phone client ↔ desktop hub). */

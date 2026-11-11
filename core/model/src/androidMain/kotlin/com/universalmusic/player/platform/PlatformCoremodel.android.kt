@@ -31,6 +31,15 @@ actual fun isNetworkAvailable(): Boolean {
     return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
+actual fun isNetworkMetered(): Boolean {
+    val context = runCatching { androidContext }.getOrNull() ?: return false
+    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+        as? android.net.ConnectivityManager
+        ?: return false
+    val caps = cm.activeNetwork?.let(cm::getNetworkCapabilities) ?: return false
+    return !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+}
+
 actual fun monotonicElapsedRealtimeMs(): Long = android.os.SystemClock.elapsedRealtime()
 
 actual fun sha256Bytes(bytes: ByteArray): ByteArray =

@@ -6,9 +6,13 @@ import kotlinx.serialization.Serializable
 enum class DownloadPhase {
     QUEUED,
     WAITING_FOR_NETWORK,
+    /** Online, but only on a metered network while "Download on Wi-Fi only" is on. */
+    WAITING_FOR_WIFI,
     DOWNLOADING,
     FAILED,
     CACHED,
+    /** Still hearted, but the user removed its audio; it stays off until they tap Download. */
+    NOT_DOWNLOADED,
 }
 
 data class DownloadItemState(
@@ -23,6 +27,8 @@ data class DownloadItemState(
     val isSpotifyViaYouTubeMatch: Boolean = false,
     val pinned: Boolean = false,
     val downloadedAtMs: Long? = null,
+    /** Set while a transient failure waits out its backoff; [errorMessage] says what failed. */
+    val retryAtMs: Long? = null,
 )
 
 @Serializable
@@ -31,6 +37,8 @@ data class HeartedCacheFailure(
     val message: String,
     val failedAtMs: Long,
     val youtubeVideoId: String? = null,
+    /** [com.universalmusic.player.platform.YouTubeFailureKind] name; null in indexes written before it. */
+    val kind: String? = null,
 )
 
 @Serializable
@@ -51,4 +59,6 @@ data class DownloadsSnapshot(
     val maxBytes: Long,
     val entryCount: Int,
     val recentEvictions: List<CacheEvictionRecord>,
+    /** The extractor's words when a download failed in a way that looks like an outdated extractor. */
+    val extractorIssue: String? = null,
 )

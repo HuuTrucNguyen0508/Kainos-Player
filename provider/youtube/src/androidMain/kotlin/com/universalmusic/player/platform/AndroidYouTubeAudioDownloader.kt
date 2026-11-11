@@ -27,16 +27,29 @@ class AndroidYouTubeAudioDownloader(
         destinationDirectory: String,
         fileBaseName: String,
         onProgress: ((bytesCopied: Long, totalBytes: Long?) -> Unit)?,
-    ): DownloadedYouTubeAudio? = withContext(Dispatchers.IO) {
+    ): YouTubeDownloadResult = withContext(Dispatchers.IO) {
         val id = videoId.trim()
-        if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) return@withContext null
+        if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) {
+            return@withContext failed(YouTubeFailureKind.PERMANENT, "Invalid YouTube video id.")
+        }
         val base = fileBaseName.trim().takeIf {
             it.isNotEmpty() && it.all { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
-        } ?: return@withContext null
-        val resolved = resolver.resolveAudioUrl(id) ?: return@withContext null
+        } ?: return@withContext failed(YouTubeFailureKind.PERMANENT, "Invalid download file name.")
+        val resolved = try {
+            resolver.resolveAudioUrlOrThrow(id)
+                ?: return@withContext failed(YouTubeFailureKind.PERMANENT, "NewPipe found no audio stream for $id.")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            return@withContext failure.toFailed()
+        }
         val dir = File(destinationDirectory)
-        if (!dir.mkdirs() && !dir.isDirectory) return@withContext null
-        if (dir.listFiles()?.any { it.name.startsWith("$base.") } == true) return@withContext null
+        if (!dir.mkdirs() && !dir.isDirectory) {
+            return@withContext failed(YouTubeFailureKind.PERMANENT, "Cannot create the audio cache folder.")
+        }
+        if (dir.listFiles()?.any { it.name.startsWith("$base.") } == true) {
+            return@withContext failed(YouTubeFailureKind.TRANSIENT, "A previous attempt's file is still in the way.")
+        }
 
         val ext = guessExtension(resolved.url, resolved.quality)
         val target = File(dir, "$base.$ext")
@@ -58,8 +71,13 @@ class AndroidYouTubeAudioDownloader(
             published = true
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
-            return@withContext null
+        } catch (failure: Exception) {
+            val status = (connection as? HttpURLConnection)?.let { runCatching { it.responseCode }.getOrNull() }
+            return@withContext if (status == 403) {
+                failed(YouTubeFailureKind.OUTDATED_EXTRACTOR, "HTTP Error 403: Forbidden while downloading the audio stream.")
+            } else {
+                failure.toFailed()
+            }
         } finally {
             (connection as? HttpURLConnection)?.disconnect()
             tmp.delete()
@@ -67,11 +85,23 @@ class AndroidYouTubeAudioDownloader(
         }
         val size = target.length()
         onProgress?.invoke(size, size)
-        DownloadedYouTubeAudio(
-            absolutePath = target.absolutePath,
-            quality = resolved.quality ?: AudioQuality(tier = QualityTier.HIGH, codec = ext),
-            sizeBytes = size,
+        YouTubeDownloadResult.Downloaded(
+            DownloadedYouTubeAudio(
+                absolutePath = target.absolutePath,
+                quality = resolved.quality ?: AudioQuality(tier = QualityTier.STANDARD, codec = ext),
+                sizeBytes = size,
+            ),
         )
+    }
+
+    private fun failed(kind: YouTubeFailureKind, reason: String) = YouTubeDownloadResult.Failed(kind, reason)
+
+    /** NewPipe names the problem in its exception class (AgeRestrictedContentException, ReCaptchaException…). */
+    private fun Exception.toFailed(): YouTubeDownloadResult.Failed {
+        val reason = listOfNotNull(this::class.simpleName, message?.takeIf { it.isNotBlank() })
+            .joinToString(": ")
+            .take(600)
+        return failed(classifyYouTubeFailure(reason), reason)
     }
 
     private fun guessExtension(url: String, quality: AudioQuality?): String {

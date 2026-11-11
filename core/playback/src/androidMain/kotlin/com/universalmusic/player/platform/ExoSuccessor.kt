@@ -35,7 +35,13 @@ internal class ExoSuccessor {
      * Leaves the playlist as [current, wanted successor] for [generation]. Items after the
      * current one are removed or appended only; the playing item is never touched.
      */
-    fun sync(player: Player, generation: Long, track: (itemId: String) -> Track?) {
+    fun sync(
+        player: Player,
+        generation: Long,
+        /** Adds what the file's item needs beyond its metadata, such as its analysed gain. */
+        decorate: (MediaItem, url: String) -> MediaItem = { item, _ -> item },
+        track: (itemId: String) -> Track?,
+    ) {
         val successor = wanted?.takeIf { it.generation == generation }
         val tail = player.currentMediaItemIndex + 1
         if (tail <= 0) return
@@ -45,9 +51,8 @@ internal class ExoSuccessor {
         if (queued.isNotEmpty()) player.removeMediaItems(tail, player.mediaItemCount)
         if (successor != null) {
             val next = track(successor.itemId)
-            player.addMediaItem(
-                mediaItemForUrl(successor.handle.url, next, next?.durationMs).buildUpon().setMediaId(id!!).build(),
-            )
+            val item = mediaItemForUrl(successor.handle.url, next, next?.durationMs).buildUpon().setMediaId(id!!).build()
+            player.addMediaItem(decorate(item, successor.handle.url))
         }
     }
 

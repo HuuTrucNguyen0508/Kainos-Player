@@ -10,3 +10,19 @@ ALTER TABLE local_track ADD COLUMN disc_number INTEGER;
 ALTER TABLE local_track ADD COLUMN release_year INTEGER;
 ALTER TABLE local_track ADD COLUMN genre TEXT;
 ALTER TABLE local_track ADD COLUMN tags_version INTEGER NOT NULL DEFAULT 0;
+
+-- ── Loudness (lane L2b) ─────────────────────────────────────────────────────
+-- EBU R128 loudness of files without ReplayGain tags, measured by ffmpeg on the desktop or
+-- received from it over Home sync, so volume levelling works on untagged files.
+CREATE TABLE track_loudness (
+    location TEXT NOT NULL PRIMARY KEY,
+    content_length INTEGER,
+    file_modified_ms INTEGER,
+    integrated_lufs REAL,
+    true_peak_dbtp REAL,
+    duration_ms INTEGER,
+    album_key TEXT,
+    album_lufs REAL,
+    album_peak_dbtp REAL,
+    origin TEXT NOT NULL
+);

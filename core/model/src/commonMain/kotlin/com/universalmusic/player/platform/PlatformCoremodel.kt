@@ -9,6 +9,9 @@ expect fun currentTimeMillis(): Long
 
 expect fun isNetworkAvailable(): Boolean
 
+/** True when the active network may cost money (mobile data, a metered hotspot). Desktop: never. */
+expect fun isNetworkMetered(): Boolean
+
 /**
  * Monotonic elapsed time in milliseconds while the process is alive.
  * Prefer this over wall-clock for timers (sleep timer) so NTP/clock skew cannot fire early.
