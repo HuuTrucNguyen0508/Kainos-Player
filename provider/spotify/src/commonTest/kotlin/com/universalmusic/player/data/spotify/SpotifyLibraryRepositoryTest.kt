@@ -164,6 +164,57 @@ class SpotifyLibraryRepositoryTest {
     }
 
     @Test
+    fun anUnlikeIsNotHiddenByANewUnshowableLike() = runTest {
+        val store = MemorySpotifyLibraryStore()
+        val remote = FakeSpotify(pageSize = 2).apply { liked = mutableListOf(entry("a"), entry("b"), entry("c")) }
+        val repository = repository(remote, store)
+        repository.refresh("me")
+
+        // c is unliked, and a song Spotify cannot show is liked: the total stays 3.
+        remote.liked.removeAt(2)
+        remote.liked.add(0, LikedSongsEntry(null, "gone", null))
+        repository.refresh("me")
+
+        assertEquals(listOf("Song a", "Song b"), repository.liked.value.map { it.title })
+        assertEquals(1, store.load("me")!!.liked.unmapped)
+    }
+
+    @Test
+    fun unshowableSongsAboveTheNewestKnownOneAreCountedOnce() = runTest {
+        val store = MemorySpotifyLibraryStore()
+        val remote = FakeSpotify(pageSize = 2).apply {
+            liked = mutableListOf(LikedSongsEntry(null, "gone", null), entry("a"), entry("b"))
+        }
+        val repository = repository(remote, store)
+        repository.refresh("me")
+
+        // A new like lands above the unshowable song; nothing else changed.
+        remote.liked.add(0, entry("n"))
+        remote.likedOffsets.clear()
+        repository.refresh("me")
+        assertEquals(listOf(0, 2), remote.likedOffsets, "no full read")
+        assertEquals(listOf("Song n", "Song a", "Song b"), repository.liked.value.map { it.title })
+
+        // The unshowable song, now below the newest known one, is unliked: only a full read can tell.
+        remote.liked.removeAt(1)
+        remote.likedOffsets.clear()
+        repository.refresh("me")
+        assertEquals(listOf(0, 0, 2), remote.likedOffsets)
+        assertEquals(listOf("Song n", "Song a", "Song b"), repository.liked.value.map { it.title })
+        assertEquals(0, store.load("me")!!.liked.unmapped)
+
+        // A re-like of b moves it to the top; the unshowable count stays right.
+        remote.liked.removeAt(2)
+        remote.liked.add(0, entry("b", addedAt = "later"))
+        remote.liked.add(1, LikedSongsEntry("x", "x-at", null))
+        remote.likedOffsets.clear()
+        repository.refresh("me")
+        assertEquals(listOf(0, 2), remote.likedOffsets, "no full read")
+        assertEquals(listOf("Song b", "Song n", "Song a"), repository.liked.value.map { it.title })
+        assertEquals(1, store.load("me")!!.liked.unmapped)
+    }
+
+    @Test
     fun onlyPlaylistsWithANewSnapshotAreReadAgain() = runTest {
         val store = MemorySpotifyLibraryStore()
         val remote = FakeSpotify().apply {

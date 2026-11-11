@@ -11,6 +11,11 @@ data class SavedLikedTrack(
     val spotifyTrackId: String,
     val addedAt: String?,
     val track: Track,
+    /**
+     * How many entries Spotify could not show sit directly above this one (after the previous shown
+     * entry), so a refresh knows how many of them were above the newest song it already had.
+     */
+    val unshowableBefore: Int = 0,
 )
 
 /** Liked Songs as of the last check, with Spotify's own count of entries at that time. */

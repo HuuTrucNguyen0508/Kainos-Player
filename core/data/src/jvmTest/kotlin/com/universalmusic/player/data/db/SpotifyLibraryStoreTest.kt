@@ -69,6 +69,25 @@ class SpotifyLibraryStoreTest {
     }
 
     @Test
+    fun savedSongsKeepAlbumOrderYearAndPlayability() = runTest {
+        val unplayable = song("u").let { track ->
+            track.copy(
+                trackNumber = 7,
+                discNumber = 2,
+                year = 1999,
+                sources = track.sources.map { it.copy(isPlayable = false) },
+            )
+        }
+        store().saveLiked("me", SavedLikedSongs(listOf(SavedLikedTrack("u", null, unplayable)), 1, 0, 1))
+        store().savePlaylists("me", listOf(SavedSpotifyPlaylist(playlist("p"), "s")), 1)
+        store().savePlaylistTracks("me", "p", "s", listOf(unplayable), 1)
+
+        val reopened = store()
+        assertEquals(unplayable, reopened.load("me")!!.liked.tracks.single().track)
+        assertEquals(listOf(unplayable), reopened.playlistTracks("me", "p"))
+    }
+
+    @Test
     fun aChangedSnapshotKeepsTheOldSongsButNotCurrent() = runTest {
         val store = store()
         store.savePlaylists("me", listOf(SavedSpotifyPlaylist(playlist("p"), "s1")), 1)

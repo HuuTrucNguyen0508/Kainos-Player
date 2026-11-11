@@ -236,7 +236,9 @@ class SpotifyLibraryRepository(
             likedKey(entry.spotifyTrackId, entry.addedAt) to index
         }.orEmpty()
         val fresh = mutableListOf<SavedLikedTrack>()
-        var freshUnmapped = 0
+        var freshUnshowable = 0
+        // Unshowable entries read since the last shown one.
+        var unshowableRun = 0
         var anchor: Int? = null
         var total: Int
         var offset = 0
@@ -251,20 +253,47 @@ class SpotifyLibraryRepository(
                     break@pages
                 }
                 val track = entry.track
-                if (id != null && track != null) fresh += SavedLikedTrack(id, entry.addedAt, track) else freshUnmapped++
+                if (id != null && track != null) {
+                    fresh += SavedLikedTrack(id, entry.addedAt, track, unshowableRun)
+                    unshowableRun = 0
+                } else {
+                    freshUnshowable++
+                    unshowableRun++
+                }
             }
             if (!page.hasMore) break
             offset += page.entries.size
         }
         val now = clock()
-        if (anchor == null || known == null) return SavedLikedSongs(fresh, total, freshUnmapped, now)
-        val merged = (fresh + known.tracks.drop(anchor)).distinctBy { it.spotifyTrackId }
-        // Unshowable entries newer than the anchor may be ones already counted last time.
-        val unmapped = listOf(known.unmapped + freshUnmapped, known.unmapped)
-            .firstOrNull { merged.size + it == total }
-        if (unmapped != null) return SavedLikedSongs(merged, total, unmapped, now)
+        if (anchor == null || known == null) return SavedLikedSongs(fresh, total, freshUnshowable, now)
+        // Unshowable entries that were above the anchor are gone or among those just read; the
+        // rest are still below it.
+        val unshowableAbove = known.tracks.take(anchor + 1).sumOf { it.unshowableBefore }
+        val unshowable = freshUnshowable + known.unmapped - unshowableAbove
+        val below = listOf(known.tracks[anchor].copy(unshowableBefore = unshowableRun)) + known.tracks.drop(anchor + 1)
+        val merged = withoutRelikedCopies(fresh + below)
+        // An unlike below the anchor shows only in Spotify's total.
+        if (unshowable >= 0 && merged.size + unshowable == total) return SavedLikedSongs(merged, total, unshowable, now)
         PlaybackTrace.log(TRACE_TAG, "Liked Songs count changed below the newest songs; reading all")
         return readLiked(null)
+    }
+
+    /**
+     * Drops the older entry of a song liked again (Spotify lists each song once); the unshowable
+     * entries that sat above the dropped one now sit above the next entry.
+     */
+    private fun withoutRelikedCopies(entries: List<SavedLikedTrack>): List<SavedLikedTrack> {
+        val seen = HashSet<String>()
+        var carried = 0
+        return entries.mapNotNull { entry ->
+            if (!seen.add(entry.spotifyTrackId)) {
+                carried += entry.unshowableBefore
+                return@mapNotNull null
+            }
+            val kept = if (carried == 0) entry else entry.copy(unshowableBefore = entry.unshowableBefore + carried)
+            carried = 0
+            kept
+        }
     }
 
     private suspend fun section(name: String, block: suspend () -> Unit): Result<Unit> = try {

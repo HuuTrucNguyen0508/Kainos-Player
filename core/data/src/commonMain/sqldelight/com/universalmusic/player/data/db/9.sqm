@@ -45,6 +45,7 @@ CREATE TABLE spotify_liked_track (
     spotify_track_id TEXT NOT NULL,
     added_at TEXT,
     track_json TEXT NOT NULL,
+    unshowable_before INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (account_id, position)
 );
 

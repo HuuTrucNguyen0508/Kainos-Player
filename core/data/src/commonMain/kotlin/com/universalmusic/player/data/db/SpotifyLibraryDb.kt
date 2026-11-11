@@ -14,6 +14,7 @@ import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
@@ -29,7 +30,7 @@ class DbSpotifyLibraryStore(storage: KainosStorage) : SpotifyLibraryStore {
         val state = q.selectState(accountId).executeAsOneOrNull() ?: return@read null
         val liked = q.selectLiked(accountId).executeAsList().mapNotNull { row ->
             readStorageRow(strict = false) {
-                SavedLikedTrack(row.spotify_track_id, row.added_at, decodeTrack(row.track_json))
+                SavedLikedTrack(row.spotify_track_id, row.added_at, decodeTrack(row.track_json), row.unshowable_before.toInt())
             }
         }
         val playlists = q.selectPlaylists(accountId).executeAsList().map { row ->
@@ -74,7 +75,14 @@ class DbSpotifyLibraryStore(storage: KainosStorage) : SpotifyLibraryStore {
         q.deleteLiked(accountId)
         val savedAt = liked.checkedAtMs ?: 0L
         liked.tracks.forEachIndexed { position, entry ->
-            q.insertLiked(accountId, position.toLong(), entry.spotifyTrackId, entry.addedAt, encodeTrack(entry.track, savedAt))
+            q.insertLiked(
+                accountId,
+                position.toLong(),
+                entry.spotifyTrackId,
+                entry.addedAt,
+                encodeTrack(entry.track, savedAt),
+                entry.unshowableBefore.toLong(),
+            )
         }
     }
 
@@ -157,8 +165,38 @@ class DbSpotifyLibraryStore(storage: KainosStorage) : SpotifyLibraryStore {
         spotifyLibraryQueries.deleteAll()
     }
 
-    private fun encodeTrack(track: Track, savedAtMs: Long): String =
-        storageJson.encodeToString(track.toPersisted(savedAtMs))
+    private fun encodeTrack(track: Track, savedAtMs: Long): String = storageJson.encodeToString(
+        StoredSpotifyTrack(
+            track = track.toPersisted(savedAtMs),
+            trackNumber = track.trackNumber,
+            discNumber = track.discNumber,
+            year = track.year,
+            playable = track.sourceFor(ProviderId.SPOTIFY)?.isPlayable ?: true,
+        ),
+    )
 
-    private fun decodeTrack(json: String): Track = storageJson.decodeFromString<PersistedTrack>(json).toDomain()
+    private fun decodeTrack(json: String): Track {
+        val stored = storageJson.decodeFromString<StoredSpotifyTrack>(json)
+        val track = stored.track.toDomain()
+        return track.copy(
+            trackNumber = stored.trackNumber,
+            discNumber = stored.discNumber,
+            year = stored.year,
+            sources = track.sources.map { if (it.provider == ProviderId.SPOTIFY) it.copy(isPlayable = stored.playable) else it },
+        )
+    }
 }
+
+/**
+ * A saved Spotify song: the shared track record, plus what Spotify lists and that record leaves out
+ * (album position, release year, and whether the song plays in this market), so the Library sorts
+ * and plays a saved song as it does a freshly read one.
+ */
+@Serializable
+private data class StoredSpotifyTrack(
+    val track: PersistedTrack,
+    val trackNumber: Int? = null,
+    val discNumber: Int? = null,
+    val year: Int? = null,
+    val playable: Boolean = true,
+)
