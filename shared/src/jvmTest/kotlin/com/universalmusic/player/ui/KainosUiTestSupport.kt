@@ -19,9 +19,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /** A fixed theme, so tests read neither the host's desktop environment nor its Caelestia scheme. */
 @Composable
-internal fun TestTheme(content: @Composable () -> Unit) {
-    KainosTheme(folioPalette(FolioTint.FOLIO, false), skinTokens(Skin.FOLIO)) {
-        Box(Modifier.fillMaxSize().skinGround()) { content() }
+internal fun TestTheme(skin: Skin = Skin.FOLIO, content: @Composable () -> Unit) {
+    KainosTheme(if (skin == Skin.FROST) com.universalmusic.player.ui.theme.frostPalette(false) else folioPalette(FolioTint.FOLIO, false), skinTokens(skin)) {
+        if (skin == Skin.FROST) {
+            com.universalmusic.player.ui.components.FrostGround(Modifier.fillMaxSize()) { content() }
+        } else {
+            Box(Modifier.fillMaxSize().skinGround()) { content() }
+        }
     }
 }
 

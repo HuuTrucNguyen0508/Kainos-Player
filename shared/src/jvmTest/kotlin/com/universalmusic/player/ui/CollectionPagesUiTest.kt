@@ -111,6 +111,7 @@ class CollectionPagesUiTest {
     private fun ComposeUiTest.showLibrary(
         tracks: List<Track>,
         playlists: KainosPlaylistRepository? = null,
+        skin: com.universalmusic.player.ui.theme.Skin = com.universalmusic.player.ui.theme.Skin.FOLIO,
         catalog: (CoroutineScope) -> CollectionCatalog = {
             testCollectionCatalog(
                 Dispatchers.Unconfined,
@@ -121,7 +122,7 @@ class CollectionPagesUiTest {
         },
     ) {
         setContent {
-            TestTheme {
+            TestTheme(skin) {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { library(tracks, scope, playlists) }
                 val pages = remember { testCollectionStack(scope, catalog(scope)).also { stack = it } }
@@ -378,6 +379,28 @@ class CollectionPagesUiTest {
         onNodeWithContentDescription("Back to search results").performClick()
         waitForIdle()
         text("Tidewater").assertIsDisplayed()
+    }
+
+    @Test fun frostAlbumPageRendersAndReturnsToItsAlbumList() = skinAlbum(com.universalmusic.player.ui.theme.Skin.FROST, 560)
+    @Test fun caelestiaAlbumPageRendersAndReturnsToItsAlbumList() = skinAlbum(com.universalmusic.player.ui.theme.Skin.CAELESTIA, 1100)
+
+    private fun skinAlbum(skin: com.universalmusic.player.ui.theme.Skin, width: Int) = runDesktopComposeUiTest(width = width, height = 900) {
+        val album = AlbumRef("local-album:skin", "Harbour Lights", year = 2019)
+        val songs = List(30) { localSong("skin-$it", "Track $it", "Neon Coast", album, number = it + 1) }
+        showLibrary(songs, skin = skin)
+        text("Albums").performClick()
+        text("Harbour Lights").performClick()
+        waitForIdle()
+        text("Local album").assertIsDisplayed()
+        text("Play").assertIsDisplayed()
+        onNodeWithContentDescription("Back to Library").assertIsDisplayed()
+        savePng("${skin.name.lowercase()}-album-page.png")
+        list().performScrollToIndex(20)
+        text("Track 19").assertIsDisplayed()
+        onNodeWithContentDescription("Back to Library").performClick()
+        waitForIdle()
+        text("Albums").assertIsDisplayed()
+        text("Harbour Lights").assertIsDisplayed()
     }
 
     private fun spotifySong(title: String, number: Int, album: AlbumRef?) = Track(
