@@ -29,6 +29,7 @@ internal fun ColumnScope.LibrarySongsTab(
     onSortMenuDismiss: () -> Unit,
     onSortSelected: (TrackSort) -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    onShuffleTracks: (List<Track>) -> Unit,
     trackActions: TrackActionsPresenter,
     onRefreshSpotify: () -> Unit,
     trackAvailability: (Track) -> TrackAvailabilityInfo,
@@ -68,7 +69,7 @@ internal fun ColumnScope.LibrarySongsTab(
                     if (barInList) {
                         SongsLedgerBar(
                             state, sortMenuOpen, onSortMenuOpen, onSortMenuDismiss, onSortSelected,
-                            onPlayTracks, onRefreshSpotify,
+                            onPlayTracks, onShuffleTracks, onRefreshSpotify,
                         )
                     }
                     LocalTrackTable.current?.let { TrackTableHeader(it, Modifier.padding(horizontal = 8.dp)) }
@@ -109,6 +110,7 @@ internal fun SongsLedgerBar(
     onSortMenuDismiss: () -> Unit,
     onSortSelected: (TrackSort) -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    onShuffleTracks: (List<Track>) -> Unit,
     onRefreshSpotify: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -146,6 +148,8 @@ internal fun SongsLedgerBar(
         },
         onPlay = { onPlayTracks(queueSongs, 0) },
         showActions = true,
+        // The chips' songs, exactly what Play all plays; search text never narrows it.
+        onShuffle = { onShuffleTracks(queueSongs) }.takeIf { queueSongs.isNotEmpty() },
         modifier = modifier,
     )
 }

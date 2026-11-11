@@ -36,6 +36,12 @@ data class HeartedAudioCacheIndex(
     /** Recent budget/manual evictions for the Downloads UI (newest last, capped). */
     val recentEvictions: List<CacheEvictionRecord> = emptyList(),
     val budgetEvictedIds: Set<String> = emptySet(),
+    /**
+     * Hearted owners whose audio the user removed (Downloads → Remove, or Clear hearted audio cache).
+     * Startup does not download them again until the user taps Download. A plain field with a
+     * default, so older index files load unchanged.
+     */
+    val userExcludedIds: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -75,7 +81,9 @@ interface HeartedAudioCache {
         eviction: EvictionRequest = EvictionRequest(),
     ): HeartedAudioCacheEntry
     suspend fun remove(ownerCanonicalId: String, reason: String = "removed")
-    suspend fun clear()
+
+    /** Empties the cache; [userExcluded] become the only owners kept off until the user downloads them. */
+    suspend fun clear(userExcluded: Set<String> = emptySet())
     suspend fun stats(): HeartedAudioCacheStats
     fun fileExists(uri: String): Boolean
     /** Absolute directory path where downloaders should write audio files. */
@@ -98,6 +106,10 @@ interface HeartedAudioCache {
     suspend fun allPinnedIds(): Set<String>
     suspend fun allMatchOverrides(): Map<String, String>
     suspend fun allFailures(): Map<String, HeartedCacheFailure>
+
+    suspend fun isUserExcluded(ownerCanonicalId: String): Boolean
+    suspend fun setUserExcluded(ownerCanonicalId: String, excluded: Boolean)
+    suspend fun allUserExcluded(): Set<String>
 }
 
 interface HeartedAudioCacheDisk {
@@ -160,6 +172,7 @@ class DefaultHeartedAudioCache(
             entries = current.entries + (entry.ownerCanonicalId to entry),
             budgetEvictedIds = current.budgetEvictedIds - entry.ownerCanonicalId,
             failures = current.failures - entry.ownerCanonicalId,
+            userExcludedIds = current.userExcludedIds - entry.ownerCanonicalId,
         )
         commit(next)
         current.entries[entry.ownerCanonicalId]?.let { previous ->
@@ -208,11 +221,22 @@ class DefaultHeartedAudioCache(
         if (!stillReferenced) disk.deleteFile(removed.localUri)
     }
 
-    override suspend fun clear() = mutex.withLock {
+    override suspend fun clear(userExcluded: Set<String>) = mutex.withLock {
         disk.clearAll()
         index = HeartedAudioCacheIndex()
-        commit(HeartedAudioCacheIndex())
+        commit(HeartedAudioCacheIndex(userExcludedIds = userExcluded))
     }
+
+    override suspend fun isUserExcluded(ownerCanonicalId: String): Boolean =
+        mutex.withLock { ownerCanonicalId in ensureIndex().userExcludedIds }
+
+    override suspend fun setUserExcluded(ownerCanonicalId: String, excluded: Boolean) = mutex.withLock {
+        val current = ensureIndex()
+        val next = if (excluded) current.userExcludedIds + ownerCanonicalId else current.userExcludedIds - ownerCanonicalId
+        if (next != current.userExcludedIds) commit(current.copy(userExcludedIds = next))
+    }
+
+    override suspend fun allUserExcluded(): Set<String> = mutex.withLock { ensureIndex().userExcludedIds }
 
     override suspend fun stats(): HeartedAudioCacheStats = mutex.withLock {
         ensureIndex()

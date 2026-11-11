@@ -41,6 +41,7 @@ internal fun SettingsScreen(container: AppContainer, target: SettingsTarget? = n
     SettingsFrame(target) { section, visible ->
         when (section) {
             SettingsSection.Playback -> SettingsPlaybackSection(preferences)
+            SettingsSection.Library -> SettingsLibrarySection(preferences)
             SettingsSection.Appearance -> SettingsAppearanceSection(preferences)
             SettingsSection.Sources -> SettingsSourcesSection(folders, connect, sources, visible)
             SettingsSection.Devices -> SettingsDevicesSection(preferences, sync, visible)

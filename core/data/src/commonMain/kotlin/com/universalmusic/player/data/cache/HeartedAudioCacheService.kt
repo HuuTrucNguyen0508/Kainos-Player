@@ -6,16 +6,22 @@ import com.universalmusic.player.domain.model.MatchReason
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.platform.PlaybackTrace
 import com.universalmusic.player.platform.YouTubeAudioDownloader
+import com.universalmusic.player.platform.YouTubeDownloadResult
+import com.universalmusic.player.platform.YouTubeFailureKind
+import com.universalmusic.player.platform.classifyYouTubeFailure
 import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.platform.isNetworkAvailable
 import java.util.UUID
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -40,7 +46,14 @@ private data class HeartedCacheJob(
     val priority: HeartedCachePriority,
     val ownerGeneration: Long,
     val clearGeneration: Long,
+    /** Transient failures so far; the job is failed for good once this reaches [MAX_TRANSIENT_ATTEMPTS]. */
+    val attempts: Int = 0,
 )
+
+/** A download that failed with a reason the queue can act on. */
+private class JobFailure(val kind: YouTubeFailureKind, reason: String, val videoId: String?) : Exception(reason)
+
+private enum class NetworkGate { OPEN, OFFLINE, METERED }
 
 /**
  * Background queue that downloads YouTube audio for hearted tracks.
@@ -55,6 +68,10 @@ class HeartedAudioCacheService(
     private val matcher: TrackMatcher = TrackMatcher(),
     private val clock: () -> Long = ::currentTimeMillis,
     private val networkAvailable: () -> Boolean = ::isNetworkAvailable,
+    /** True on mobile data or another metered network. */
+    private val meteredNetwork: () -> Boolean = { false },
+    /** "Download on Wi-Fi only": hold downloads while [meteredNetwork]. */
+    private val wifiOnly: () -> Boolean = { false },
     private val protectedOwners: () -> Set<String> = { emptySet() },
     private val maxBytes: Long = HEARTED_AUDIO_CACHE_MAX_BYTES,
     private val onCached: (ownerCanonicalId: String, entry: HeartedAudioCacheEntry) -> Unit = { _, _ -> },
@@ -63,12 +80,16 @@ class HeartedAudioCacheService(
     private val wake = Channel<Unit>(Channel.UNLIMITED)
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val known = ConcurrentHashMap<String, HeartedAudioCacheEntry>()
+    private val extractorAttempted = ConcurrentHashMap.newKeySet<String>()
     private val trackMeta = ConcurrentHashMap<String, Track>()
     private val youtubeQueue = ArrayDeque<HeartedCacheJob>()
     private val spotifyQueue = ArrayDeque<HeartedCacheJob>()
     private val mutationMutex = Mutex()
     private val generations = mutableMapOf<String, Long>()
     private var clearGeneration = 0L
+    private data class Retry(val job: HeartedCacheJob, val deadline: Long, var timer: Job? = null)
+    private val retries = mutableMapOf<String, Retry>()
+    private var foreground = true
     private var active: Pair<HeartedCacheJob, Deferred<Unit>>? = null
 
     private fun current(job: HeartedCacheJob): Boolean = synchronized(youtubeQueue) {
@@ -77,6 +98,7 @@ class HeartedAudioCacheService(
 
     private fun invalidate(canonicalId: String): Pair<Long, Long> = synchronized(youtubeQueue) {
         generations[canonicalId] = (generations[canonicalId] ?: 0L) + 1L
+        retries.remove(canonicalId)?.timer?.cancel()
         pending.remove(canonicalId)
         known.remove(canonicalId)
         youtubeQueue.removeAll { it.track.canonicalId == canonicalId }
@@ -93,6 +115,7 @@ class HeartedAudioCacheService(
         if (current(job)) block()
     }
     @Volatile private var workerStarted = false
+    private val extractorIssue = MutableStateFlow<String?>(null)
 
     private val _downloads = MutableStateFlow<Map<String, DownloadItemState>>(emptyMap())
     val downloads: StateFlow<Map<String, DownloadItemState>> = _downloads.asStateFlow()
@@ -171,7 +194,7 @@ class HeartedAudioCacheService(
         val priority = priorityFor(track) ?: return@synchronized
         trackMeta[track.canonicalId] = track
         if (!pending.add(track.canonicalId)) return@synchronized
-        upsertDownload(track, if (networkAvailable()) DownloadPhase.QUEUED else DownloadPhase.WAITING_FOR_NETWORK)
+        upsertDownload(track, gate().queuedPhase())
         val job = HeartedCacheJob(track, priority, generations[track.canonicalId] ?: 0L, clearGeneration)
         when (priority) {
             HeartedCachePriority.YOUTUBE -> youtubeQueue.addLast(job)
@@ -198,7 +221,14 @@ class HeartedAudioCacheService(
                     )
                 } else {
                     if (cache.isBudgetEvicted(track.canonicalId) && !cache.isPinned(track.canonicalId)) return@forEach
-                    val failure = cache.failure(track.canonicalId)
+                    // The user removed this audio; it stays off until they tap Download.
+                    if (cache.isUserExcluded(track.canonicalId)) return@forEach
+                    var failure = cache.failure(track.canonicalId)
+                    // An outdated extractor is not this video's fault: try again once the app or yt-dlp moved on.
+                    if (failure?.kind == YouTubeFailureKind.OUTDATED_EXTRACTOR.name && extractorAttempted.add(track.canonicalId)) {
+                        cache.clearFailure(track.canonicalId)
+                        failure = null
+                    }
                     if (failure != null) {
                         upsertDownload(
                             track,
@@ -215,14 +245,21 @@ class HeartedAudioCacheService(
         }
     }
 
-    fun retry(canonicalId: String) {
+    /** Retry a failed download now. The same as [download]. */
+    fun retry(canonicalId: String) = download(canonicalId)
+
+    /**
+     * The user asked for this audio: forget any failure or earlier removal and queue it now,
+     * ahead of any backoff.
+     */
+    fun download(canonicalId: String) {
         val track = trackMeta[canonicalId] ?: return
         val token = invalidate(canonicalId)
         scope.launch {
             mutationMutex.withLock {
             if (!current(canonicalId, token)) return@withLock
             cache.clearFailure(canonicalId)
-            notifyNetworkChanged()
+            cache.setUserExcluded(canonicalId, false)
             pending.remove(canonicalId)
             enqueue(track)
             }
@@ -230,12 +267,22 @@ class HeartedAudioCacheService(
         }
     }
 
-    fun cancelAndRemove(canonicalId: String) {
+    /** Unheart: the audio goes and nothing is remembered, so a later heart downloads it again. */
+    fun cancelAndRemove(canonicalId: String) = removeAudio(canonicalId, keepOff = false)
+
+    /**
+     * Downloads → Remove: the audio goes but the heart stays, and startup leaves it alone until
+     * the user taps Download.
+     */
+    fun removeAndKeepOff(canonicalId: String) = removeAudio(canonicalId, keepOff = true)
+
+    private fun removeAudio(canonicalId: String, keepOff: Boolean) {
         val token = invalidate(canonicalId)
         scope.launch {
             mutationMutex.withLock {
                 if (!current(canonicalId, token)) return@withLock
                 cache.remove(canonicalId, reason = "user removed")
+                cache.setUserExcluded(canonicalId, keepOff)
                 synchronized(youtubeQueue) {
                     if (current(canonicalId, token)) {
                         _downloads.update { it - canonicalId }
@@ -307,41 +354,75 @@ class HeartedAudioCacheService(
         return youtubeSearch(q)
     }
 
-    suspend fun clear() {
-        synchronized(youtubeQueue) {
+    /**
+     * Deletes every cached file. [hearted] owners that this service downloads are kept off until the
+     * user taps Download, so a clear is not undone by the next launch.
+     */
+    suspend fun clear(hearted: Collection<String> = emptyList()) {
+        val keptOff = synchronized(youtubeQueue) {
             clearGeneration++
-            waitingForRetry = false
             active?.second?.cancel()
+            retries.values.forEach { it.timer?.cancel() }
+            retries.clear()
             pending.clear()
             known.clear()
-            trackMeta.clear()
             youtubeQueue.clear()
             spotifyQueue.clear()
             _downloads.value = emptyMap()
+            hearted.filter { id ->
+                id.startsWith("yt:") || id.startsWith("spotify:") || trackMeta[id]?.let(::priorityFor) != null
+            }.toSet()
         }
-        mutationMutex.withLock { cache.clear() }
+        mutationMutex.withLock { cache.clear(keptOff) }
+        extractorIssue.value = null
         refreshSnapshot()
     }
 
     suspend fun stats(): HeartedAudioCacheStats = cache.stats()
 
-    @Volatile private var waitingForRetry = false
+    /** Connectivity, metering or the Wi-Fi-only switch changed: re-check what may download. */
+    fun notifyNetworkChanged() = synchronized(youtubeQueue) {
+        if (gate() != NetworkGate.OPEN) active?.second?.cancel()
+        labelQueued(gate().queuedPhase())
+        if (workerStarted) wake.trySend(Unit)
+        Unit
+    }
 
-    fun notifyNetworkChanged() {
-        if (!networkAvailable()) return
-        waitingForRetry = false
-        var promoted = false
-        _downloads.update { map ->
-            map.mapValues { (_, item) ->
-                if (item.phase == DownloadPhase.WAITING_FOR_NETWORK) {
-                    promoted = true
-                    item.copy(phase = DownloadPhase.QUEUED)
-                } else {
-                    item
-                }
+    /** Suspend downloads and retry timers while the app is backgrounded; keep their jobs for return. */
+    fun setForeground(visible: Boolean) = synchronized(youtubeQueue) {
+        foreground = visible
+        if (!visible) {
+            active?.second?.cancel()
+            retries.values.forEach { it.timer?.cancel(); it.timer = null }
+        } else {
+            retries.values.toList().forEach(::armRetry)
+            wake.trySend(Unit)
+        }
+        Unit
+    }
+
+    private fun armRetry(retry: Retry) {
+        if (!foreground || retry.timer != null) return
+        retry.timer = scope.launch {
+            delay((retry.deadline - clock()).coerceAtLeast(0))
+            synchronized(youtubeQueue) {
+                if (retries[retry.job.track.canonicalId] !== retry) return@synchronized
+                retries.remove(retry.job.track.canonicalId)
+                requeue(retry.job)
             }
         }
-        if (promoted) wake.trySend(Unit)
+    }
+
+    private fun gate(): NetworkGate = when {
+        !networkAvailable() -> NetworkGate.OFFLINE
+        wifiOnly() && meteredNetwork() -> NetworkGate.METERED
+        else -> NetworkGate.OPEN
+    }
+
+    private fun NetworkGate.queuedPhase(): DownloadPhase = when (this) {
+        NetworkGate.OPEN -> DownloadPhase.QUEUED
+        NetworkGate.OFFLINE -> DownloadPhase.WAITING_FOR_NETWORK
+        NetworkGate.METERED -> DownloadPhase.WAITING_FOR_WIFI
     }
 
     private fun priorityFor(track: Track): HeartedCachePriority? = when {
@@ -360,14 +441,9 @@ class HeartedAudioCacheService(
         sizeBytes: Long? = null,
         progress: Float? = null,
         pinned: Boolean = false,
+        retryAtMs: Long? = null,
     ) {
-        val spotifyMatch = isSpotifyIdentity(track) && (
-            phase == DownloadPhase.CACHED ||
-                phase == DownloadPhase.DOWNLOADING ||
-                phase == DownloadPhase.QUEUED ||
-                phase == DownloadPhase.WAITING_FOR_NETWORK ||
-                phase == DownloadPhase.FAILED
-            )
+        val spotifyMatch = isSpotifyIdentity(track) && phase != DownloadPhase.NOT_DOWNLOADED
         _downloads.update { map ->
             val previous = map[track.canonicalId]
             map + (
@@ -387,6 +463,7 @@ class HeartedAudioCacheService(
                     } else {
                         previous?.downloadedAtMs
                     },
+                    retryAtMs = retryAtMs,
                 )
                 )
         }
@@ -404,10 +481,9 @@ class HeartedAudioCacheService(
     private suspend fun drain() {
         for (unit in wake) {
             while (true) {
-                if (waitingForRetry || !networkAvailable()) {
-                    requeueAsWaitingForNetwork()
-                    break
-                }
+                val gate = gate()
+                labelQueued(gate.queuedPhase())
+                if (gate != NetworkGate.OPEN || !synchronized(youtubeQueue) { foreground }) break
                 val job = synchronized(youtubeQueue) {
                     youtubeQueue.removeFirstOrNull() ?: spotifyQueue.removeFirstOrNull()
                 } ?: break
@@ -421,6 +497,9 @@ class HeartedAudioCacheService(
                     task.await()
                 } catch (_: CancellationException) {
                     currentCoroutineContext().ensureActive()
+                    synchronized(youtubeQueue) {
+                        if (current(job)) requeue(job)
+                    }
                 } finally {
                     synchronized(youtubeQueue) { if (active?.second === task) active = null }
                 }
@@ -429,17 +508,86 @@ class HeartedAudioCacheService(
         }
     }
 
-    private fun requeueAsWaitingForNetwork() = synchronized(youtubeQueue) {
-        (youtubeQueue + spotifyQueue).filter(::current).forEach { job ->
-            upsertDownload(job.track, DownloadPhase.WAITING_FOR_NETWORK)
+    /** Shows every queued job as [phase]: Queued, Waiting for network or Waiting for Wi-Fi. */
+    private fun labelQueued(phase: DownloadPhase) = synchronized(youtubeQueue) {
+        val queued = (youtubeQueue + spotifyQueue + retries.values.map { it.job }).filter(::current).map { it.track.canonicalId }.toSet()
+        if (queued.isEmpty()) return@synchronized
+        _downloads.update { map ->
+            map.mapValues { (id, item) ->
+                if (id in queued && item.phase in QUEUED_PHASES && item.phase != phase) item.copy(phase = phase) else item
+            }
         }
     }
+
+    /** Puts [job] back at the end of its queue, unless a retry, removal or clear replaced it meanwhile. */
+    private fun requeue(job: HeartedCacheJob) = synchronized(youtubeQueue) {
+        if (!current(job)) return@synchronized
+        pending.add(job.track.canonicalId)
+        when (job.priority) {
+            HeartedCachePriority.YOUTUBE -> youtubeQueue.addLast(job)
+            HeartedCachePriority.SPOTIFY -> spotifyQueue.addLast(job)
+        }
+        upsertDownload(job.track, gate().queuedPhase())
+        wake.trySend(Unit)
+    }
+
+    /**
+     * Decides what a failed job does next. Returns true while it stays queued (parked or waiting),
+     * so its owner stays pending. Never holds up the jobs behind it.
+     */
+    private suspend fun handleFailure(job: HeartedCacheJob, kind: YouTubeFailureKind, reason: String, videoId: String?): Boolean =
+        mutationMutex.withLock {
+            if (!current(job)) return@withLock false
+            val canonicalId = job.track.canonicalId
+            PlaybackTrace.log(LOG_TAG, "$canonicalId${videoId?.let { " ($it)" }.orEmpty()} ${kind.name}: $reason")
+            val gate = gate()
+            when {
+                // The connection went away mid-download: wait for it, without spending an attempt.
+                gate != NetworkGate.OPEN && kind != YouTubeFailureKind.OUTDATED_EXTRACTOR -> {
+                    requeue(job)
+                    true
+                }
+                kind == YouTubeFailureKind.TRANSIENT && job.attempts + 1 < MAX_TRANSIENT_ATTEMPTS -> {
+                    val wait = transientBackoffMs(job.attempts)
+                    publish(job) {
+                        upsertDownload(job.track, DownloadPhase.QUEUED, errorMessage = reason,
+                            youtubeVideoId = videoId, retryAtMs = clock() + wait)
+                    }
+                    val next = job.copy(attempts = job.attempts + 1)
+                    synchronized(youtubeQueue) {
+                        if (current(job)) {
+                            val retry = Retry(next, clock() + wait)
+                            retries[canonicalId] = retry
+                            armRetry(retry)
+                        }
+                    }
+                    true
+                }
+                else -> {
+                    val message = if (kind == YouTubeFailureKind.TRANSIENT) {
+                        "Gave up after $MAX_TRANSIENT_ATTEMPTS tries: $reason"
+                    } else {
+                        reason
+                    }
+                    if (kind == YouTubeFailureKind.OUTDATED_EXTRACTOR) {
+                        extractorAttempted.add(canonicalId)
+                        extractorIssue.value = reason
+                    }
+                    cache.recordFailure(HeartedCacheFailure(canonicalId, message, clock(), videoId, kind.name))
+                    publish(job) {
+                        upsertDownload(job.track, DownloadPhase.FAILED, errorMessage = message, youtubeVideoId = videoId)
+                    }
+                    false
+                }
+            }
+        }
 
     private suspend fun process(job: HeartedCacheJob) {
         val canonicalId = job.track.canonicalId
         val base = UUID.randomUUID().toString().replace("-", "")
         val directory = File(cache.audioDirectoryPath())
         var committed = false
+        var stillQueued = false
         try {
             if (!current(job)) return
             val existing = cache.get(canonicalId)
@@ -453,15 +601,20 @@ class HeartedAudioCacheService(
                 return
             }
             publish(job) { upsertDownload(job.track, DownloadPhase.DOWNLOADING, progress = 0f) }
-            val videoId = resolveYouTubeVideoId(job.track) ?: error("No suitable YouTube match found.")
+            val videoId = resolveYouTubeVideoId(job.track)
+                ?: throw JobFailure(YouTubeFailureKind.PERMANENT, "No suitable YouTube match found.", null)
             currentCoroutineContext().ensureActive()
             if (!current(job)) return
-            val downloaded = downloader.downloadAudio(videoId, directory.absolutePath, base) { bytes, total ->
+            val result = downloader.downloadAudio(videoId, directory.absolutePath, base) { bytes, total ->
                 publish(job) {
                     upsertDownload(job.track, DownloadPhase.DOWNLOADING, youtubeVideoId = videoId,
                         progress = total?.takeIf { it > 0 }?.let { (bytes.toFloat() / it).coerceIn(0f, 0.99f) })
                 }
-            } ?: error("Download failed for YouTube video $videoId.")
+            }
+            val downloaded = when (result) {
+                is YouTubeDownloadResult.Downloaded -> result.audio
+                is YouTubeDownloadResult.Failed -> throw JobFailure(result.kind, result.reason, videoId)
+            }
             currentCoroutineContext().ensureActive()
             val quality = downloaded.quality
             val entry = HeartedAudioCacheEntry(canonicalId, videoId, pathToFileUri(downloaded.absolutePath),
@@ -479,6 +632,7 @@ class HeartedAudioCacheService(
                         return@withLock
                     }
                     committed = true
+                    extractorIssue.value = null
                     val pinned = cache.isPinned(canonicalId)
                     publish(job) {
                         known[canonicalId] = entry
@@ -490,25 +644,11 @@ class HeartedAudioCacheService(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (failure: JobFailure) {
+            stillQueued = handleFailure(job, failure.kind, failure.message.orEmpty(), failure.videoId)
         } catch (failure: Exception) {
-            mutationMutex.withLock {
-                if (current(job)) {
-                    val message = failure.message?.takeIf { it.isNotBlank() } ?: "Download failed."
-                    if (isTransientDownloadFailure(failure, networkAvailable())) {
-                        synchronized(youtubeQueue) {
-                            waitingForRetry = true
-                            when (job.priority) {
-                                HeartedCachePriority.YOUTUBE -> youtubeQueue.addFirst(job)
-                                HeartedCachePriority.SPOTIFY -> spotifyQueue.addFirst(job)
-                            }
-                        }
-                        publish(job) { upsertDownload(job.track, DownloadPhase.WAITING_FOR_NETWORK, errorMessage = message) }
-                    } else {
-                        cache.recordFailure(HeartedCacheFailure(canonicalId, message, clock()))
-                        publish(job) { upsertDownload(job.track, DownloadPhase.FAILED, errorMessage = message) }
-                    }
-                }
-            }
+            val message = failure.message?.takeIf { it.isNotBlank() } ?: (failure::class.simpleName ?: "Download failed.")
+            stillQueued = handleFailure(job, classifyServiceFailure(failure), message, null)
         } finally {
             withContext(NonCancellable) {
                 if (!committed) {
@@ -516,7 +656,7 @@ class HeartedAudioCacheService(
                     directory.listFiles()?.filter { it.name.startsWith("$base.") &&
                         normalizedAudioUri(it.absolutePath) !in referenced }?.forEach { it.delete() }
                 }
-                synchronized(youtubeQueue) { if (current(job) && !waitingForRetry) pending.remove(canonicalId) }
+                synchronized(youtubeQueue) { if (current(job) && !stillQueued) pending.remove(canonicalId) }
             }
         }
     }
@@ -566,7 +706,7 @@ class HeartedAudioCacheService(
         // Nothing after the commit may be cancelled, or the caller would delete a file the index names.
         return withContext(NonCancellable) {
             val adopted = mutationMutex.withLock {
-                if (!current(owner, generation)) return@withLock CopyAdoption.STALE
+                if (!current(owner, generation) || cache.isUserExcluded(owner)) return@withLock CopyAdoption.STALE
                 if (cache.get(owner) != null) return@withLock CopyAdoption.ALREADY_CACHED
                 putReportingEvictions(entry)
                 val pinned = cache.isPinned(owner)
@@ -653,6 +793,8 @@ class HeartedAudioCacheService(
         val failures = runCatching { cache.allFailures() }.logged(LOG_TAG, "failures read failed").getOrDefault(emptyMap())
         val evictions = runCatching { cache.recentEvictions() }.logged(LOG_TAG, "evictions read failed")
             .getOrDefault(emptyList())
+        val keptOff = runCatching { cache.allUserExcluded() }.logged(LOG_TAG, "removals read failed")
+            .getOrDefault(emptySet())
         val active = _downloads.value
         val cachedItems = entries.map { entry ->
             val meta = trackMeta[entry.ownerCanonicalId]
@@ -691,19 +833,27 @@ class HeartedAudioCacheService(
                     isSpotifyViaYouTubeMatch = failure.ownerCanonicalId.startsWith("spotify:"),
                 )
             }
-        val inFlight = active.values.filter {
-            it.phase == DownloadPhase.QUEUED ||
-                it.phase == DownloadPhase.WAITING_FOR_NETWORK ||
-                it.phase == DownloadPhase.DOWNLOADING
-        }
+        val inFlight = active.values.filter { it.phase in QUEUED_PHASES || it.phase == DownloadPhase.DOWNLOADING }
         val byId = LinkedHashMap<String, DownloadItemState>()
         (inFlight + failedItems + cachedItems).forEach { byId[it.ownerCanonicalId] = it }
+        // Removed by the user but still hearted: listed last, with Download instead of Remove.
+        keptOff.filter { it !in byId }.forEach { id ->
+            val meta = trackMeta[id] ?: return@forEach
+            byId[id] = DownloadItemState(
+                ownerCanonicalId = id,
+                title = meta.title,
+                artistLine = meta.artistLine,
+                phase = DownloadPhase.NOT_DOWNLOADED,
+                isSpotifyViaYouTubeMatch = false,
+            )
+        }
         _snapshot.value = DownloadsSnapshot(
             items = byId.values.toList(),
             bytesUsed = stats.bytesUsed,
             maxBytes = maxBytes,
             entryCount = stats.entryCount,
             recentEvictions = evictions.asReversed(),
+            extractorIssue = extractorIssue.value,
         )
     }
 }
@@ -711,11 +861,25 @@ class HeartedAudioCacheService(
 internal fun pathToFileUri(absolutePath: String): String =
     if (absolutePath.startsWith("file:")) absolutePath else File(absolutePath).toURI().toASCIIString()
 
-internal fun isTransientDownloadFailure(failure: Exception, online: Boolean): Boolean {
-    val message = failure.message.orEmpty().lowercase()
-    if (listOf("404", "410", "video unavailable", "private video", "removed", "no suitable", "cache full").any { it in message }) return false
-    return !online || failure is java.io.IOException ||
-        listOf("quota", "429", "500", "502", "503", "504", "timeout", "network", "connection", "download failed").any { it in message }
+/**
+ * A failure outside the extractor (the Data API search, the cache budget). Only the extractor can
+ * be outdated, so this is transient or permanent.
+ */
+internal fun classifyServiceFailure(failure: Exception): YouTubeFailureKind {
+    if (failure is java.io.IOException) return YouTubeFailureKind.TRANSIENT
+    val message = failure.message.orEmpty()
+    if ("cache full" in message.lowercase()) return YouTubeFailureKind.PERMANENT
+    return when (classifyYouTubeFailure(message)) {
+        YouTubeFailureKind.TRANSIENT -> YouTubeFailureKind.TRANSIENT
+        else -> YouTubeFailureKind.PERMANENT
+    }
 }
+
+private val QUEUED_PHASES = setOf(DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK, DownloadPhase.WAITING_FOR_WIFI)
+
+/** One try plus three retries, 30 s, 2 min and 8 min apart. */
+internal const val MAX_TRANSIENT_ATTEMPTS = 4
+
+internal fun transientBackoffMs(attemptsSoFar: Int): Long = 30_000L shl (2 * attemptsSoFar.coerceIn(0, 4))
 
 private const val LOG_TAG = "Downloads"

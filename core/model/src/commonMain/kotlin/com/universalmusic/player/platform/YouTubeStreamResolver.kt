@@ -19,6 +19,12 @@ interface YouTubeStreamResolver {
     fun isAvailable(): Boolean
     suspend fun resolveAudioUrl(videoId: String): ResolvedYouTubeAudio?
 
+    /**
+     * Like [resolveAudioUrl], but a failure throws with the extractor's own reason instead of
+     * returning null, so a download can say why it failed. Null still means "no audio stream".
+     */
+    suspend fun resolveAudioUrlOrThrow(videoId: String): ResolvedYouTubeAudio? = resolveAudioUrl(videoId)
+
     /** YouTube's own Mix (`list=RD<videoId>`) for a video. Throws with the reason when it cannot be read. */
     suspend fun mix(videoId: String): List<YouTubeMixEntry>
 }

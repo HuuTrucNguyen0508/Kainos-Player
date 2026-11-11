@@ -8,6 +8,7 @@ import com.universalmusic.player.data.library.PersistedHomePin
 import com.universalmusic.player.data.playlist.PersistedKainosPlaylist
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.domain.echo.EchoStatus
+import com.universalmusic.player.domain.matching.DuplicateGroups
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
@@ -91,6 +92,7 @@ internal class HomePresenter(
     private val playHistory: StateFlow<PlayHistory> = MutableStateFlow(PlayHistory.EMPTY),
     private val recentlyAdded: StateFlow<List<AddedTrack>> = MutableStateFlow(emptyList()),
     private val clock: () -> Long = ::currentTimeMillis,
+    private val duplicates: StateFlow<DuplicateGroups> = MutableStateFlow(DuplicateGroups.NONE),
     /** Kept out of [state]: the gateway's replies must not rebuild the landing page. */
     val echo: StateFlow<EchoStatus?> = MutableStateFlow(null),
 ) {
@@ -120,8 +122,8 @@ internal class HomePresenter(
         ) { spotify, youtube, local, tracks, discover ->
             ProviderSlice(spotify, youtube, local, tracks, discover)
         },
-        combine(savedTracks, spotifyTracks, playHistory, recentlyAdded) { saved, spotify, history, added ->
-            CatalogSlice(saved, spotify, history, added)
+        combine(savedTracks, spotifyTracks, playHistory, recentlyAdded, duplicates) { saved, spotify, history, added, hidden ->
+            CatalogSlice(saved, spotify, history, added, hidden)
         },
         combine(stableNow, settings, actions, ready, sources) { now, appSettings, action, loaded, readiness ->
             PlaybackSlice(now, appSettings, action, loaded, readiness)
@@ -283,7 +285,7 @@ internal class HomePresenter(
             localTracks.value,
             discoverWeekly.value,
         ),
-        CatalogSlice(savedTracks.value, spotifyTracks.value, playHistory.value, recentlyAdded.value),
+        CatalogSlice(savedTracks.value, spotifyTracks.value, playHistory.value, recentlyAdded.value, duplicates.value),
         PlaybackSlice(
             nowPlaying.value.copy(positionMs = 0),
             settings.value,
@@ -309,14 +311,19 @@ internal class HomePresenter(
         // Folder pins can name a subfolder picked in Library → Folders, not only a configured root.
         val pinnedFolders = library.homePins.filter { it.kind == HomePinKind.LOCAL_FOLDER }.map { it.targetId }
         val counts = folderTrackCounts((folders + pinnedFolders).distinct(), tracksInLocalFolder)
-        val focus = sessionFocusOf(now.track, now.isPlaying, library.recent)
+        val recent = homeRecentWithoutDuplicates(
+            library.recent,
+            providers.localTracks + catalog.saved + catalog.spotify,
+            catalog.duplicates,
+        )
+        val focus = sessionFocusOf(now.track, now.isPlaying, recent)
         val discover = loadedDiscoverPlaylist(providers.discover)
         val favorites = favoritesSummary(
             library.favorites,
             catalog.saved + providers.localTracks + catalog.spotify,
         )
         return HomeUiState(
-            recent = library.recent,
+            recent = recent,
             homePins = library.homePins,
             sessionFocus = focus,
             resolvedPins = resolveHomePins(
@@ -340,7 +347,7 @@ internal class HomePresenter(
             ),
             loadedDiscover = discover,
             empty = homeIsEmpty(
-                library.recent,
+                recent,
                 providers.localTracks,
                 discover,
                 library.homePins,
@@ -350,7 +357,7 @@ internal class HomePresenter(
             ready = playback.ready,
             sources = playback.sources,
             firstSound = playback.sources.firstOrNull { it.source == MusicSource.Local }
-                ?.takeIf { playback.ready && providers.localTracks.isNotEmpty() && library.recent.isEmpty() && now.track == null },
+                ?.takeIf { playback.ready && providers.localTracks.isNotEmpty() && recent.isEmpty() && now.track == null },
             favorites = favorites,
             shelves = homeShelves(
                 history = catalog.history,
@@ -358,6 +365,7 @@ internal class HomePresenter(
                 catalog = providers.localTracks + catalog.saved + catalog.spotify,
                 recentlyAdded = catalog.added,
                 nowMs = clock(),
+                duplicates = catalog.duplicates,
             ),
             libraryLines = libraryLines(playback.sources, favorites, library.kainos.size),
             localTrackCount = providers.localTracks.size,
@@ -389,6 +397,7 @@ internal class HomePresenter(
         val spotify: List<Track>,
         val history: PlayHistory,
         val added: List<AddedTrack>,
+        val duplicates: DuplicateGroups = DuplicateGroups.NONE,
     )
 
     private data class PlaybackSlice(
@@ -442,6 +451,7 @@ internal class HomePresenter(
             scope = scope,
             playHistory = container.listeningHistory.history,
             recentlyAdded = container.local.recentlyAdded,
+            duplicates = container.duplicateGroups,
             echo = container.echoStatus?.status ?: MutableStateFlow(null),
         )
     }

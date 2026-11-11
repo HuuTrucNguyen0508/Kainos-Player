@@ -70,11 +70,22 @@ data class AppSettings(
     /** When true, Library keeps only tracks that play with no network: local files and fully cached audio. */
     val libraryReadyOffline: Boolean = false,
     /**
+     * When true, a Spotify or YouTube copy of a song that is also listed from another source
+     * (same title, primary artist and length) is left out of Library lists, Home shelves and the
+     * queues they play. Display only: hearts and sync identities are unchanged.
+     */
+    val libraryHideDuplicates: Boolean = true,
+    /**
      * When true, tapping a Spotify or YouTube Search result plays that track followed by its own
      * source's radio (Spotify radio / YouTube Mix). When false, only the same-source results follow.
      * Replaces the old opt-in `searchAutoplayEnabled`, which stored settings still carry and is ignored.
      */
     val searchRadioEnabled: Boolean = true,
+    /**
+     * Android: hearted-audio downloads (YouTube hearts and Spotify→YouTube mirrors) wait while the
+     * network is metered. Desktop ignores it.
+     */
+    val downloadOnWifiOnly: Boolean = true,
     /** In-app playback gain 0–1 (desktop mpv / Android ExoPlayer). Default full. */
     val playbackVolume: Float = 1f,
     /** Home LAN hearts sync (phone client ↔ desktop hub). */

@@ -147,13 +147,13 @@ fun resolveTrackAvailability(
                 isSpotifyViaYouTubeMatch = download.isSpotifyViaYouTubeMatch,
             )
         }
-        DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK -> {
+        DownloadPhase.QUEUED, DownloadPhase.WAITING_FOR_NETWORK, DownloadPhase.WAITING_FOR_WIFI -> {
             return TrackAvailabilityInfo(
                 status = TrackAvailability.WAITING_FOR_NETWORK,
-                label = if (download.phase == DownloadPhase.QUEUED && networkAvailable) {
-                    "Waiting to download"
-                } else {
-                    "Waiting for network"
+                label = when {
+                    download.phase == DownloadPhase.WAITING_FOR_WIFI -> "Waiting for Wi-Fi"
+                    download.phase == DownloadPhase.QUEUED && networkAvailable -> "Waiting to download"
+                    else -> "Waiting for network"
                 },
                 playbackSource = streamingKind(track),
                 playbackSourceLabel = streamingLabel(track, networkAvailable),
@@ -172,7 +172,7 @@ fun resolveTrackAvailability(
                 isSpotifyViaYouTubeMatch = download.isSpotifyViaYouTubeMatch,
             )
         }
-        DownloadPhase.CACHED, null -> Unit
+        DownloadPhase.CACHED, DownloadPhase.NOT_DOWNLOADED, null -> Unit
     }
 
     if (!networkAvailable && track.requiresNetworkForStreaming()) {

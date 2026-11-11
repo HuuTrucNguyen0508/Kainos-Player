@@ -1,6 +1,7 @@
 package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.domain.continuation.QueueContinuation
+import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.RepeatMode
 import com.universalmusic.player.domain.queue.QueueController
 import com.universalmusic.player.platform.PlaybackTrace
@@ -8,6 +9,9 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -20,9 +24,17 @@ internal class QueueRefiller(
     /** Records the queue or continuation change; the saved session must not keep a finished radio. */
     private val onChanged: () -> Unit,
 ) {
+    private val _radio = MutableStateFlow<ProviderId?>(null)
+
+    /** The radio continuing the queue, for the Queue screen; null when nothing continues it. */
+    val radio: StateFlow<ProviderId?> = _radio.asStateFlow()
+
     /** Dropped when other playback replaces the queue it was started with. */
     var continuation: QueueContinuation? = null
-        private set
+        private set(value) {
+            field = value
+            _radio.value = value?.radio
+        }
     private var refill: Job? = null
 
     fun attach(continuation: QueueContinuation?) {

@@ -23,15 +23,19 @@ class AndroidYouTubeStreamResolver(
     override fun isAvailable(): Boolean = ensureInitialized()
 
     override suspend fun resolveAudioUrl(videoId: String): ResolvedYouTubeAudio? =
+        runCatching { resolveAudioUrlOrThrow(videoId) }.getOrElse { failure ->
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            null
+        }
+
+    override suspend fun resolveAudioUrlOrThrow(videoId: String): ResolvedYouTubeAudio? =
         withContext(Dispatchers.IO) {
             val id = videoId.trim()
             if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) {
                 return@withContext null
             }
-            if (!ensureInitialized()) return@withContext null
-            runCatching {
-                resolveWatchUrl("https://www.youtube.com/watch?v=$id")
-            }.getOrNull()
+            check(ensureInitialized()) { "NewPipe failed to initialise" }
+            resolveWatchUrl("https://www.youtube.com/watch?v=$id")
         }
 
     override suspend fun mix(videoId: String): List<YouTubeMixEntry> = withContext(Dispatchers.IO) {

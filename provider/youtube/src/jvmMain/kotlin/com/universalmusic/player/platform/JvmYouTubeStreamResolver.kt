@@ -24,7 +24,13 @@ class JvmYouTubeStreamResolver(
 
     override fun isAvailable(): Boolean = binaryLocator() != null
 
-    override suspend fun resolveAudioUrl(videoId: String): ResolvedYouTubeAudio? = withContext(Dispatchers.IO) {
+    override suspend fun resolveAudioUrl(videoId: String): ResolvedYouTubeAudio? =
+        runCatching { resolveAudioUrlOrThrow(videoId) }.getOrElse { failure ->
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            null
+        }
+
+    override suspend fun resolveAudioUrlOrThrow(videoId: String): ResolvedYouTubeAudio? = withContext(Dispatchers.IO) {
         val id = videoId.trim()
         if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) return@withContext null
         val binary = binaryLocator() ?: return@withContext null
@@ -34,18 +40,22 @@ class JvmYouTubeStreamResolver(
             "-f", "ba/bestaudio/best",
             "-j",
             "--no-playlist",
-            "--no-warnings",
             watchUrl,
         )
-        val output = runInterruptible { command.readOutputWithin(90_000) } ?: return@withContext null
-        val payload = output.lineSequence()
+        val run = runInterruptible { command.runWithin(90_000) }
+        if (!run.succeeded) {
+            val reason = run.failureReason("resolving")
+            PlaybackTrace.log("YouTube", "yt-dlp could not resolve $id: $reason")
+            error(reason)
+        }
+        val payload = run.stdout.lineSequence()
             .map { it.trim() }
             .firstOrNull { it.startsWith("{") && it.endsWith("}") }
             ?: return@withContext null
         val info = runCatching { json.decodeFromString(YtDlpInfo.serializer(), payload) }.getOrNull()
             ?: return@withContext null
         val url = info.url?.takeIf { it.startsWith("http") } ?: return@withContext null
-        ResolvedYouTubeAudio(url = url, quality = info.toAudioQuality())
+        ResolvedYouTubeAudio(url = url, quality = ytDlpAudioQuality(info.acodec, info.abr, info.asr))
     }
 
     override suspend fun mix(videoId: String): List<YouTubeMixEntry> = withContext(Dispatchers.IO) {
@@ -59,12 +69,11 @@ class JvmYouTubeStreamResolver(
             "--flat-playlist",
             "-J",
             "--playlist-end", MIX_LENGTH.toString(),
-            "--no-warnings",
             "https://www.youtube.com/watch?v=$id&list=RD$id",
         )
-        val output = runInterruptible { command.readOutputWithin(90_000) }
-            ?: error("yt-dlp failed reading the Mix")
-        parseYtDlpMix(output)
+        val run = runInterruptible { command.runWithin(90_000) }
+        if (!run.succeeded) error("yt-dlp failed reading the Mix: ${run.failureReason("reading the Mix")}")
+        parseYtDlpMix(run.stdout)
     }
 
     @Serializable
@@ -74,28 +83,39 @@ class JvmYouTubeStreamResolver(
         val asr: Int? = null,
         val acodec: String? = null,
     )
+}
 
-    private fun YtDlpInfo.toAudioQuality(): AudioQuality {
-        val bitrate = abr?.toInt()?.takeIf { it > 0 }
-        val sampleRate = asr?.takeIf { it > 0 }
-        val codec = acodec
-            ?.takeIf { it.isNotBlank() && it != "none" }
-            ?.substringBefore('.')
-            ?.lowercase()
-        val tier = when {
-            bitrate != null && bitrate >= 256 -> QualityTier.HIGH
-            bitrate != null && bitrate >= 128 -> QualityTier.STANDARD
-            bitrate != null -> QualityTier.LOW
-            else -> QualityTier.STANDARD
-        }
-        return AudioQuality(
-            tier = tier,
-            codec = codec,
-            bitrateKbps = bitrate,
-            sampleRateHz = sampleRate,
-            bitDepth = null,
-        )
+/** Why a yt-dlp run failed, in its own words when it gave any. */
+internal fun ProcessRun.failureReason(action: String): String {
+    val tail = extractorErrorTail(stderrTail)
+    return when {
+        exitCode == null -> "yt-dlp timed out $action" + if (tail.isNotEmpty()) ": $tail" else ""
+        tail.isNotEmpty() -> tail
+        else -> "yt-dlp exited with code $exitCode while $action"
     }
+}
+
+/** Real codec, bitrate and sample rate from yt-dlp's format fields, tiered like every other source. */
+internal fun ytDlpAudioQuality(acodec: String?, abr: Double?, asr: Int?): AudioQuality {
+    val bitrate = abr?.toInt()?.takeIf { it > 0 }
+    val sampleRate = asr?.takeIf { it > 0 }
+    val codec = acodec
+        ?.takeIf { it.isNotBlank() && it != "none" && it != "NA" }
+        ?.substringBefore('.')
+        ?.lowercase()
+    val tier = when {
+        bitrate != null && bitrate >= 256 -> QualityTier.HIGH
+        bitrate != null && bitrate >= 128 -> QualityTier.STANDARD
+        bitrate != null -> QualityTier.LOW
+        else -> QualityTier.STANDARD
+    }
+    return AudioQuality(
+        tier = tier,
+        codec = codec,
+        bitrateKbps = bitrate,
+        sampleRateHz = sampleRate,
+        bitDepth = null,
+    )
 }
 
 private const val MIX_LENGTH = 50

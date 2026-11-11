@@ -141,6 +141,7 @@ internal fun spotifyPlaybackFailureMessage(failure: SpotifyWebPlaybackFailure): 
 
 internal enum class SettingsSection(val label: String, val accent: AccentSlot) {
     Playback("Playback", AccentSlot.Orange),
+    Library("Library", AccentSlot.Purple),
     Appearance("Appearance", AccentSlot.Pink),
     Sources("Music sources", AccentSlot.Green),
     Devices("Devices and sync", AccentSlot.Blue),

@@ -1,7 +1,5 @@
 package com.universalmusic.player.platform
 
-import com.universalmusic.player.domain.model.AudioQuality
-import com.universalmusic.player.domain.model.QualityTier
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -30,21 +28,28 @@ class JvmYouTubeAudioDownloader(
         destinationDirectory: String,
         fileBaseName: String,
         onProgress: ((bytesCopied: Long, totalBytes: Long?) -> Unit)?,
-    ): DownloadedYouTubeAudio? = withContext(Dispatchers.IO) {
+    ): YouTubeDownloadResult = withContext(Dispatchers.IO) {
         val id = videoId.trim()
-        if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) return@withContext null
+        if (id.isEmpty() || id.any { it.isWhitespace() || it == '"' || it == '\'' }) {
+            return@withContext failed(YouTubeFailureKind.PERMANENT, "Invalid YouTube video id.")
+        }
         val base = fileBaseName.trim().takeIf {
             it.isNotEmpty() && it.all { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
-        } ?: return@withContext null
-        val binary = binaryLocator() ?: return@withContext null
+        } ?: return@withContext failed(YouTubeFailureKind.PERMANENT, "Invalid download file name.")
+        val binary = binaryLocator()
+            ?: return@withContext failed(YouTubeFailureKind.PERMANENT, "yt-dlp is not installed.")
         val dir = Paths.get(destinationDirectory)
         Files.createDirectories(dir)
         // Never overwrite an indexed file or another attempt's partial output.
         val occupied = Files.list(dir).use { stream ->
             stream.anyMatch { it.fileName.toString().startsWith("$base.") }
         }
-        if (occupied) return@withContext null
+        if (occupied) {
+            return@withContext failed(YouTubeFailureKind.TRANSIENT, "A previous attempt's file is still in the way.")
+        }
         val log = Files.createTempFile("kainos-yt-download-", ".log")
+        // Outside the audio directory: every "$base.*" file there counts as this attempt's output.
+        val meta = Files.createTempFile("kainos-yt-meta-", ".tsv")
         var process: Process? = null
         var completed = false
         try {
@@ -54,8 +59,9 @@ class JvmYouTubeAudioDownloader(
             binary.toAbsolutePath().toString(),
             "-f", "ba/bestaudio/best",
             "-o", outputTemplate,
+            // The format yt-dlp actually fetched, for an honest quality label.
+            "--print-to-file", "after_move:%(acodec)s\t%(abr)s\t%(asr)s", meta.toAbsolutePath().toString(),
             "--no-playlist",
-            "--no-warnings",
             "--newline",
             "--progress",
             watchUrl,
@@ -85,31 +91,41 @@ class JvmYouTubeAudioDownloader(
             }
         }
         currentCoroutineContext().ensureActive()
-        if (!finished) return@withContext null
-        if (process.exitValue() != 0) return@withContext null
+        if (!finished) {
+            val tail = extractorErrorTail(readTail(log, LOG_TAIL_BYTES))
+            val minutes = TimeUnit.MILLISECONDS.toSeconds(timeoutMillis).let { if (it >= 60) "${it / 60} min" else "$it s" }
+            return@withContext failed(
+                YouTubeFailureKind.TRANSIENT,
+                "yt-dlp did not finish within $minutes" + if (tail.isNotEmpty()) ": $tail" else ".",
+            )
+        }
+        val exit = process.exitValue()
+        if (exit != 0) {
+            val reason = extractorErrorTail(readTail(log, LOG_TAIL_BYTES))
+                .ifEmpty { "yt-dlp exited with code $exit." }
+            return@withContext failed(classifyYouTubeFailure(reason), reason)
+        }
 
         val file = Files.list(dir).use { stream ->
             stream.filter { it.isRegularFile() && it.fileName.toString().startsWith("$base.") &&
                 !it.fileName.toString().endsWith(".part") && !it.fileName.toString().endsWith(".ytdl") }
                 .findFirst()
                 .orElse(null)
-        } ?: return@withContext null
-        if (!file.exists() || Files.size(file) <= 0L) return@withContext null
+        }
+        if (file == null || !file.exists() || Files.size(file) <= 0L) {
+            return@withContext failed(YouTubeFailureKind.PERMANENT, "yt-dlp finished without writing an audio file.")
+        }
 
         val size = Files.size(file)
         onProgress?.invoke(size, size)
         val ext = file.fileName.toString().substringAfterLast('.', missingDelimiterValue = "")
         completed = true
-        DownloadedYouTubeAudio(
-            absolutePath = file.toAbsolutePath().normalize().toString(),
-            quality = AudioQuality(
-                tier = QualityTier.HIGH,
-                codec = ext.takeIf { it.isNotBlank() }?.lowercase(),
-                bitrateKbps = null,
-                sampleRateHz = null,
-                bitDepth = null,
+        YouTubeDownloadResult.Downloaded(
+            DownloadedYouTubeAudio(
+                absolutePath = file.toAbsolutePath().normalize().toString(),
+                quality = parseDownloadedQuality(readTail(meta, 1_024), ext),
+                sizeBytes = size,
             ),
-            sizeBytes = size,
         )
         } finally {
             process?.let { child ->
@@ -120,6 +136,7 @@ class JvmYouTubeAudioDownloader(
                 }
             }
             Files.deleteIfExists(log)
+            Files.deleteIfExists(meta)
             if (!completed || !currentCoroutineContext().isActive) {
                 Files.list(dir).use { stream ->
                     stream.filter { it.fileName.toString().startsWith("$base.") }
@@ -128,4 +145,27 @@ class JvmYouTubeAudioDownloader(
             }
         }
     }
+
+    private fun failed(kind: YouTubeFailureKind, reason: String) = YouTubeDownloadResult.Failed(kind, reason)
 }
+
+private const val LOG_TAIL_BYTES = 8_192
+
+/**
+ * Quality from yt-dlp's `acodec<TAB>abr<TAB>asr` line. Without it, the container only hints
+ * at the codec and the tier stays STANDARD rather than claiming HIGH.
+ */
+internal fun parseDownloadedQuality(metaLine: String, extension: String) =
+    metaLine.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }?.split('\t')
+        ?.takeIf { it.size >= 3 }
+        ?.let { (codec, abr, asr) -> ytDlpAudioQuality(codec, abr.toDoubleOrNull(), asr.toDoubleOrNull()?.toInt()) }
+        ?.takeIf { it.codec != null || it.bitrateKbps != null }
+        ?: ytDlpAudioQuality(
+            acodec = when (extension.lowercase()) {
+                "webm", "opus" -> "opus"
+                "m4a", "mp4" -> "aac"
+                else -> extension.takeIf { it.isNotBlank() }
+            },
+            abr = null,
+            asr = null,
+        )

@@ -45,15 +45,29 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.ui.components.EmptyState
-import com.universalmusic.player.ui.components.TrackRow
+import com.universalmusic.player.domain.model.QueueItem
+import com.universalmusic.player.ui.theme.AccentSlot
 
 @Composable
 fun QueueScreen(
     container: AppContainer,
+    /** Wide windows: one line per song, with Move up and Move down in the song's menu. */
+    dense: Boolean = false,
     onClose: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { QueuePresenter.from(container, scope) }
+    val trackActions = LocalTrackActions.current ?: remember(container) { TrackActionsPresenter.from(container) }
+    QueueContent(presenter, trackActions, dense, onClose)
+}
+
+@Composable
+internal fun QueueContent(
+    presenter: QueuePresenter,
+    trackActions: TrackActionsPresenter,
+    dense: Boolean,
+    onClose: () -> Unit,
+) {
     val state by presenter.state.collectAsState()
     val queue = state.queue
     val orderedItems = state.orderedItems
@@ -69,7 +83,6 @@ fun QueueScreen(
             listState.scrollToItem(currentOrderPos.coerceAtMost(orderedItems.lastIndex))
         }
     }
-
     Column(Modifier.fillMaxSize().skinGround().padding(16.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -178,69 +191,125 @@ fun QueueScreen(
             LazyColumn(state = listState) {
                 itemsIndexed(orderedItems, key = { _, pair -> pair.second.id }) { orderPos, (_, item) ->
                     val isCurrent = orderPos == currentOrderPos
-                    val sectionLabel = when {
-                        isCurrent -> "Now playing"
-                        orderPos == 0 && currentOrderPos > 0 -> "Played"
-                        orderPos == currentOrderPos + 1 -> "Up next"
-                        else -> null
+                    when {
+                        isCurrent -> SectionRule("Now playing", Modifier.padding(top = 8.dp))
+                        orderPos == 0 && currentOrderPos > 0 -> SectionRule("Played", Modifier.padding(top = 8.dp))
+                        orderPos == currentOrderPos + 1 -> SectionRule("Up next", Modifier.padding(top = 8.dp)) {
+                            TextButton(onClick = {
+                                val removed = presenter.clearUpcoming()
+                                if (removed > 0) undoMessage = "Cleared ${countNoun(removed, "upcoming song", "upcoming songs")}"
+                            }) { Text("Clear upcoming") }
+                        }
                     }
-                    sectionLabel?.let { label ->
-                        SectionRule(label, Modifier.padding(top = 8.dp))
-                    }
-                    val density = LocalDensity.current
-                    var rowHeightPx by remember(item.id) { mutableFloatStateOf(with(density) { 112.dp.toPx() }) }
-                    var dragDy by remember(item.id) { mutableFloatStateOf(0f) }
-                    Column(Modifier.onSizeChanged { rowHeightPx = it.height.toFloat() }) {
-                        TrackRow(
-                            track = item.track,
-                            onClick = { presenter.play(item.id) },
-                            highlighted = isCurrent,
-                        )
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Icon(
-                                Icons.Default.DragHandle,
-                                contentDescription = "Drag to reorder ${item.track.title}",
-                                modifier = Modifier
-                                    .padding(top = 12.dp)
-                                    .pointerInput(item.id) {
-                                        detectDragGesturesAfterLongPress(
-                                            onDragEnd = { dragDy = 0f },
-                                            onDragCancel = { dragDy = 0f },
-                                            onDrag = { change, dragAmount ->
-                                                change.consume()
-                                                dragDy += dragAmount.y
-                                                val steps = (dragDy / rowHeightPx).toInt()
-                                                if (steps == 0) return@detectDragGesturesAfterLongPress
-                                                if (presenter.move(item.id, steps)) dragDy = 0f
-                                            },
-                                        )
-                                    },
-                            )
-                            IconButton(
-                                onClick = {
-                                    presenter.move(item.id, -1)
-                                },
-                                enabled = orderPos > 0,
-                            ) {
-                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
-                            }
-                            IconButton(
-                                onClick = {
-                                    presenter.move(item.id, 1)
-                                },
-                                enabled = orderPos < orderedItems.lastIndex,
-                            ) {
-                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
-                            }
-                            IconButton(onClick = {
-                                presenter.remove(item.id)
-                                undoMessage = "Removed ${item.track.title}"
-                            }) {
-                                Icon(Icons.Default.Close, contentDescription = "Remove ${item.track.title}")
-                            }
+                    QueueEntry(
+                        item = item,
+                        orderPos = orderPos,
+                        lastOrderPos = orderedItems.lastIndex,
+                        isCurrent = isCurrent,
+                        dense = dense,
+                        presenter = presenter,
+                        trackActions = trackActions,
+                        onRemoved = { undoMessage = "Removed ${item.track.title}" },
+                    )
+                }
+                state.radio?.let { radio ->
+                    item(key = "radio-footer") {
+                        SectionRule(
+                            radioFooterLabel(radio, state.upcomingCount),
+                            Modifier.padding(top = 12.dp),
+                            accent = AccentSlot.Purple,
+                        ) {
+                            TextButton(onClick = presenter::stopRadio) { Text("Stop radio") }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** One queued song: the shared song menu, remove, and reordering by drag, arrows or menu. */
+@Composable
+private fun QueueEntry(
+    item: QueueItem,
+    orderPos: Int,
+    lastOrderPos: Int,
+    isCurrent: Boolean,
+    dense: Boolean,
+    presenter: QueuePresenter,
+    trackActions: TrackActionsPresenter,
+    onRemoved: () -> Unit,
+) {
+    val density = LocalDensity.current
+    var rowHeightPx by remember(item.id) { mutableFloatStateOf(with(density) { (if (dense) 56.dp else 112.dp).toPx() }) }
+    var dragDy by remember(item.id) { mutableFloatStateOf(0f) }
+    val title = item.track.title
+    val dragHandle = @Composable {
+        Icon(
+            Icons.Default.DragHandle,
+            contentDescription = "Drag to reorder $title",
+            modifier = Modifier
+                .padding(horizontal = 8.dp)
+                .pointerInput(item.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragEnd = { dragDy = 0f },
+                        onDragCancel = { dragDy = 0f },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            dragDy += dragAmount.y
+                            val steps = (dragDy / rowHeightPx).toInt()
+                            if (steps == 0) return@detectDragGesturesAfterLongPress
+                            if (presenter.move(item.id, steps)) dragDy = 0f
+                        },
+                    )
+                },
+        )
+    }
+    val remove = @Composable {
+        IconButton(onClick = {
+            presenter.remove(item.id)
+            onRemoved()
+        }) {
+            Icon(Icons.Default.Close, contentDescription = "Remove $title")
+        }
+    }
+    Column(Modifier.onSizeChanged { rowHeightPx = it.height.toFloat() }) {
+        ActionTrackRow(
+            track = item.track,
+            actions = trackActions,
+            onClick = { presenter.play(item.id) },
+            compact = dense,
+            highlighted = isCurrent,
+            trailing = if (dense) {
+                {
+                    dragHandle()
+                    remove()
+                }
+            } else {
+                null
+            },
+            // Dense rows have no arrow buttons, so the arrows' moves live in the menu.
+            extras = if (dense) {
+                listOfNotNull(
+                    TrackMenuExtra("Move up", Icons.Default.KeyboardArrowUp) { presenter.move(item.id, -1) }
+                        .takeIf { orderPos > 0 },
+                    TrackMenuExtra("Move down", Icons.Default.KeyboardArrowDown) { presenter.move(item.id, 1) }
+                        .takeIf { orderPos < lastOrderPos },
+                )
+            } else {
+                emptyList()
+            },
+        )
+        if (!dense) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                dragHandle()
+                IconButton(onClick = { presenter.move(item.id, -1) }, enabled = orderPos > 0) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up")
+                }
+                IconButton(onClick = { presenter.move(item.id, 1) }, enabled = orderPos < lastOrderPos) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down")
+                }
+                remove()
             }
         }
     }
