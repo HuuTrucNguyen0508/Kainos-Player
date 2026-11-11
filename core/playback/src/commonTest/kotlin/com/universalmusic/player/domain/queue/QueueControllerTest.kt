@@ -503,4 +503,31 @@ class QueueControllerTest {
         assertEquals(playedAndCurrent.last(), after.current?.track?.title)
         assertEquals(emptyList(), after.upcoming)
     }
+    @Test
+    fun undoClearUpcomingKeepsRefilledEntryIdentityUnderShuffle() {
+        var n = 0
+        val queue = QueueController { "id-${n++}" }
+        val song = track("Same song", "X", provider = ProviderId.SPOTIFY)
+        queue.playNow(List(5) { song })
+        queue.setShuffle(true)
+        queue.jumpTo(queue.nextIndex()!!)
+        queue.playNext(song)
+        queue.setRepeat(RepeatMode.ALL)
+        val before = queue.queue.value
+        val oldOrder = before.playbackOrder().map { before.items[it].id }
+        queue.clearUpcoming()
+        queue.appendTracks(listOf(song))
+        val fresh = queue.queue.value.items.last()
+        assertTrue(queue.undo())
+        val after = queue.queue.value
+        assertEquals(before.items + fresh, after.items)
+        assertEquals(oldOrder + fresh.id, after.playbackOrder().map { after.items[it].id })
+        assertEquals(before.current?.id, after.current?.id)
+        assertEquals(before.upcoming.first().id, after.upcoming.first().id, "Play next keeps its entry identity")
+        queue.jumpTo(after.playbackOrder().last())
+        assertTrue(queue.isWrapToStart(respectRepeatOne = false))
+        queue.jumpTo(queue.nextIndex(false)!!, reshuffle = true)
+        assertEquals(queue.queue.value.currentIndex, queue.queue.value.playbackOrder().first())
+    }
+
 }

@@ -219,6 +219,25 @@ class PlayerSessionContinuationTest {
         assertEquals("one", session.nowPlaying.value.track?.title)
     }
 
+    @Test
+    fun undoClearUpcomingPreservesAnAlreadyCompletedRadioRefill() = runTest {
+        val (_, session) = rig()
+        val gate = CompletableDeferred<Unit>()
+        val radio = ScriptedContinuation(2, listOf(t("fresh")), gate = gate)
+        session.play(listOf(t("seed"), t("old")), continuation = radio)
+        runCurrent()
+        val before = session.queueState.value
+        session.clearUpcoming()
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("seed", "fresh"), session.titles())
+        val fresh = session.queueState.value.items.last()
+        assertTrue(session.undoQueueEdit())
+        runCurrent()
+        assertEquals(before.items + fresh, session.queueState.value.items)
+    }
+
     private fun TestScope.rig(): Pair<ControllableEngine, PlayerSession> {
         val engine = ControllableEngine()
         return engine to PlayerSession(engine, DefaultSourceResolver(), backgroundScope)

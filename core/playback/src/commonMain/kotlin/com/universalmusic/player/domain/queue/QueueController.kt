@@ -70,20 +70,25 @@ class QueueController(
     /** Append tracks at the tail without changing the current index (autoplay continuation). */
     fun appendTracks(tracks: List<Track>) {
         if (tracks.isEmpty()) return
-        _queue.update { current ->
-            val newItems = tracks.map { QueueItem(idFactory(), it) }
-            val items = current.items + newItems
-            current.copy(
-                items = items,
-                shuffleOrder = preserveShuffleOrder(
-                    previous = current,
-                    newItems = items,
-                    newCurrentIndex = current.currentIndex.coerceIn(0, items.lastIndex.coerceAtLeast(0)),
-                    playNextId = null,
-                    appendNewIds = newItems.map { it.id },
-                ),
-            )
-        }
+        val newItems = tracks.map { QueueItem(idFactory(), it) }
+        _queue.value = withAppendedTracks(_queue.value, newItems)
+        // A radio response is not a user edit. Undo must keep the returned entries, since the
+        // continuation has already consumed them and will not return them again.
+        undoSnapshot = undoSnapshot?.let { withAppendedTracks(it, newItems) }
+    }
+
+    private fun withAppendedTracks(current: PlaybackQueue, newItems: List<QueueItem>): PlaybackQueue {
+        val items = current.items + newItems
+        return current.copy(
+            items = items,
+            shuffleOrder = preserveShuffleOrder(
+                previous = current,
+                newItems = items,
+                newCurrentIndex = current.currentIndex.coerceIn(0, items.lastIndex),
+                playNextId = null,
+                appendNewIds = newItems.map { it.id },
+            ),
+        )
     }
 
     fun playNext(track: Track) {
