@@ -49,6 +49,7 @@ import com.universalmusic.player.platform.createHttpClient
 
 fun main(args: Array<String>) {
     installCrashLogging()
+    com.universalmusic.player.platform.PlaybackTrace.debugEnabled = System.getenv("KAINOS_TRACE_DEBUG") == "1"
     if (args.firstOrNull() == "--perf-storage") {
         require(DesktopIsolation.current.isIsolated)
         runStorageProbe()

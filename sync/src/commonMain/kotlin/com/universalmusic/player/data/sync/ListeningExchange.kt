@@ -14,6 +14,7 @@ import com.universalmusic.player.data.session.PublicationRevision
 import com.universalmusic.player.data.session.QueueHash
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.platform.PlaybackTrace
+import com.universalmusic.player.platform.RepeatedFailureTrace
 import com.universalmusic.player.platform.createPinnedHomeLanHttpClient
 import com.universalmusic.player.platform.currentTimeMillis
 import io.ktor.client.HttpClient
@@ -253,7 +254,7 @@ internal suspend fun resolvePairedHub(hub: PairedPeer, http: HttpClient, browser
                     if (err is CancellationException) throw err
                 }
         },
-        log = { PlaybackTrace.log(HOME_SYNC_TRACE_TAG, it) },
+        log = { PlaybackTrace.debug(HOME_SYNC_TRACE_TAG, it) },
     )
     val stored = hub.lastKnownHost?.takeIf { it.isNotBlank() }?.let { HubEndpoint(it, hub.lastKnownPort) }
     return when (val result = resolver.resolve(stored, hub.fingerprint.hex)) {
@@ -300,6 +301,8 @@ class ListeningDelivery(
     private val mutex: Mutex = processDeliveryLock,
     private val onRefused: () -> Unit = {},
 ) {
+    private val deliveryFailures = RepeatedFailureTrace(HOME_SYNC_TRACE_TAG)
+
     suspend fun canDeliverPending(): Boolean {
         val current = target() ?: return false
         return store.refusedPairing() != current.pairingIdentity && pendingRevision(current.hub) != null
@@ -336,6 +339,7 @@ class ListeningDelivery(
             try {
                 if (export == null && !exchangeOnForeground) DeliveryOutcome.IDLE
                 else connect(current.hub).use { client ->
+                    deliveryFailures.succeeded()
                     if (export == null) {
                         receiveReply(client, client.fetchListening(), current)
                         DeliveryOutcome.IDLE
@@ -350,7 +354,7 @@ class ListeningDelivery(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (err: Exception) {
-            PlaybackTrace.log(HOME_SYNC_TRACE_TAG, "listening delivery failed: ${err.message ?: err}")
+            deliveryFailures.failed(err.message ?: err.toString()) { "listening delivery failed: $it" }
             DeliveryOutcome.RETRY
         }
     }
