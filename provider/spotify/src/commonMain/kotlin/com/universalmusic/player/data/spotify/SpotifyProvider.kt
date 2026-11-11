@@ -330,6 +330,52 @@ class SpotifyProvider(
             .toDomain(premium)
     }
 
+    /**
+     * An album with every song in disc and track order. The album's own song list holds the first
+     * 50; longer albums page in through `/albums/{id}/tracks`. Album songs come without their album,
+     * so each gets it back here for artwork and Go to album.
+     */
+    suspend fun getAlbumWithTracks(id: String): Album {
+        val albumId = id.trim()
+        require(albumId.isNotEmpty()) { "Album id is required" }
+        val album = http.get("$API/albums/${encode(albumId)}") { bearerAuth(accessToken()) }
+            .refusableBody<SpotifyAlbum>("Spotify album")
+        val songs = album.tracks?.items.orEmpty().toMutableList()
+        var next = album.tracks?.next
+        while (next != null && songs.size < (album.tracks?.total ?: 0)) {
+            val page = http.get("$API/albums/${encode(albumId)}/tracks") {
+                bearerAuth(accessToken())
+                parameter("limit", PLAYLIST_PAGE_SIZE)
+                parameter("offset", songs.size)
+            }.refusableBody<SpotifyPaging<SpotifyTrack>>("Spotify album songs")
+            if (page.items.isEmpty()) break
+            songs += page.items
+            next = page.next
+        }
+        val bare = album.copy(tracks = null)
+        return album.toDomain(premium).copy(
+            tracks = songs.mapNotNull { it.copy(album = it.album ?: bare).toDomainOrNull(premium) },
+        )
+    }
+
+    /** The artist's most played songs, as Spotify ranks them for this account's country. */
+    suspend fun getArtistTopTracks(id: String): List<Track> =
+        http.get("$API/artists/${encode(id.trim())}/top-tracks") {
+            bearerAuth(accessToken())
+            parameter("market", "from_token")
+        }.refusableBody<SpotifyTopTracksResponse>("Spotify artist top songs")
+            .tracks.mapNotNull { it.toDomainOrNull(premium) }
+
+    /** The artist's albums and singles, newest first as Spotify lists them; songs are not included. */
+    suspend fun getArtistAlbums(id: String): List<Album> =
+        http.get("$API/artists/${encode(id.trim())}/albums") {
+            bearerAuth(accessToken())
+            parameter("include_groups", "album,single")
+            parameter("limit", 50)
+        }.refusableBody<SpotifyPaging<SpotifyAlbum>>("Spotify artist albums")
+            .items.map { it.toDomain(premium) }
+            .distinctBy { it.canonicalId }
+
     override suspend fun getArtist(id: String): Artist? {
         val token = accessToken()
         return http.get("$API/artists/$id") { bearerAuth(token) }
@@ -1084,6 +1130,19 @@ private fun matchesRedirect(actual: String, expected: String): Boolean = runCatc
 private suspend inline fun <reified T> HttpResponse.successBody(operation: String): T {
     if (!status.isSuccess()) errorMessage(operation)
     return body()
+}
+
+/**
+ * Spotify answered but will not give this app [operation]: development-mode Client IDs are refused
+ * some catalogue endpoints. Callers show that plainly instead of a generic failure.
+ */
+class SpotifyRefusedException(val operation: String, val status: Int) :
+    IllegalStateException("Spotify does not share $operation with this app (HTTP $status).")
+
+/** Like [successBody], but a 403 becomes [SpotifyRefusedException]. */
+private suspend inline fun <reified T> HttpResponse.refusableBody(operation: String): T {
+    if (status.value == 403) throw SpotifyRefusedException(operation.removePrefix("Spotify ").lowercase(), status.value)
+    return successBody(operation)
 }
 
 private suspend fun HttpResponse.requireSuccess(operation: String) {

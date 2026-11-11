@@ -4,9 +4,9 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.data.cache.DownloadItemState
 import com.universalmusic.player.data.cache.TrackAvailabilityInfo
 import com.universalmusic.player.data.settings.AppSettings
+import com.universalmusic.player.domain.model.Album
+import com.universalmusic.player.domain.model.Artist
 import com.universalmusic.player.domain.model.Playlist
-import com.universalmusic.player.domain.model.PlaylistTracksPage
-import com.universalmusic.player.domain.model.ProviderEntityRef
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
@@ -15,8 +15,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +58,22 @@ internal data class SearchUiState(
             it.source.provider in listOf(ProviderId.SPOTIFY, ProviderId.YOUTUBE_MUSIC) &&
                 it.canonicalId.isNotBlank() && it.source.providerEntityId.isNotBlank()
         }.distinctBy { it.canonicalId }
+
+    /** Spotify albums; their pages read the album from the Web API. */
+    val albums: List<Album>
+        get() = result?.albums.orEmpty().filter {
+            it.title.isNotBlank() && it.page() is CollectionRef.SpotifyAlbum
+        }.distinctBy { it.canonicalId }
+
+    /** Spotify artists; their pages read top songs and albums from the Web API. */
+    val artists: List<Artist>
+        get() = result?.artists.orEmpty().filter {
+            it.name.isNotBlank() && it.page() is CollectionRef.SpotifyArtist
+        }.distinctBy { it.canonicalId }
+
+    /** Albums, artists or playlists: what Search lists beside the songs. */
+    val hasCollections: Boolean
+        get() = playlists.isNotEmpty() || albums.isNotEmpty() || artists.isNotEmpty()
 }
 
 private val ProviderState.canSearch: Boolean
@@ -73,7 +87,6 @@ internal class SearchPresenter(
     downloads: StateFlow<Map<String, DownloadItemState>>,
     private val search: suspend (String) -> UnifiedSearchResult,
     private val availability: (Track) -> TrackAvailabilityInfo,
-    private val loadPlaylistPage: suspend (ProviderEntityRef, String?) -> PlaylistTracksPage,
     private val scope: CoroutineScope,
     private val searchDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
@@ -82,11 +95,6 @@ internal class SearchPresenter(
         SearchUiState(spotify = spotify.value, youtube = youtube.value, downloads = downloads.value),
     )
     val state: StateFlow<SearchUiState> = mutableState.asStateFlow()
-
-    private val openPlaylist = MutableStateFlow<SearchPlaylistPresenter?>(null)
-    /** The playlist page shown over the results, if any; the results and their scroll stay underneath. */
-    val playlist: StateFlow<SearchPlaylistPresenter?> = openPlaylist.asStateFlow()
-    private var playlistJob: Job? = null
 
     init {
         scope.launch {
@@ -132,27 +140,6 @@ internal class SearchPresenter(
         query.value = value
     }
 
-    fun openPlaylist(playlist: Playlist) {
-        closePlaylist()
-        val job = SupervisorJob(scope.coroutineContext[Job])
-        playlistJob = job
-        openPlaylist.value = SearchPlaylistPresenter(
-            playlist = playlist,
-            loadPage = loadPlaylistPage,
-            scope = CoroutineScope(scope.coroutineContext + job),
-            dispatcher = searchDispatcher,
-        )
-    }
-
-    /** Back from the playlist page; false when none was open. Cancels its loads and a pending Play. */
-    fun closePlaylist(): Boolean {
-        openPlaylist.value ?: return false
-        playlistJob?.cancel()
-        playlistJob = null
-        openPlaylist.value = null
-        return true
-    }
-
     fun trackAvailability(track: Track): TrackAvailabilityInfo = availability(track)
 
     private data class SearchRequest(
@@ -169,7 +156,6 @@ internal class SearchPresenter(
             downloads = container.heartedAudio.downloads,
             search = { container.unifiedSearch().search(it) },
             availability = container::trackAvailability,
-            loadPlaylistPage = container::loadProviderPlaylistPage,
             scope = scope,
         )
     }

@@ -32,6 +32,8 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.UnifiedSearchResult
 import com.universalmusic.player.ui.screens.SearchPresenter
 import com.universalmusic.player.ui.screens.SearchScreen
+import com.universalmusic.player.ui.screens.testCollectionCatalog
+import com.universalmusic.player.ui.screens.testCollectionStack
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.imageio.ImageIO
@@ -75,11 +77,13 @@ class SearchPlaylistUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { presenter(scope, withPlaylists) }
+                val pages = remember { pages(scope) }
                 SearchScreen(
                     presenter = presenter,
                     onPlayTrackInList = { _, _ -> },
                     onPlayPlaylist = { tracks, index, shuffle -> played += "${tracks.size}|$index|$shuffle" },
                     trackActions = RecordedTrackActions().presenter,
+                    pages = pages,
                     // Records links so no test ever starts the host's browser.
                     openLink = { opened += it },
                 )
@@ -96,13 +100,17 @@ class SearchPlaylistUiTest {
         downloads = MutableStateFlow(emptyMap()),
         search = { UnifiedSearchResult(results, emptyList(), emptyList(), if (withPlaylists) listOf(playlist) else emptyList(), emptyMap()) },
         availability = { TrackAvailabilityInfo(TrackAvailability.STREAMABLE, "Spotify", PlaybackSourceKind.SPOTIFY_STREAM, "Spotify") },
-        loadPlaylistPage = { _, cursor ->
+        searchDispatcher = providerDispatcher,
+        scope = scope,
+    )
+
+    private fun pages(scope: CoroutineScope) = testCollectionStack(
+        scope,
+        testCollectionCatalog(providerDispatcher, providerPlaylistPage = { _, cursor ->
             val request = PageRequest(cursor)
             pageRequests += request
             request.response.await()
-        },
-        searchDispatcher = providerDispatcher,
-        scope = scope,
+        }),
     )
 
     private fun ComposeUiTest.text(value: String) = onNodeWithText(value, useUnmergedTree = true)
@@ -163,7 +171,7 @@ class SearchPlaylistUiTest {
             TestTheme {
                 val scope = rememberCoroutineScope()
                 val presenter = remember { presenter(scope) }
-                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter)
+                SearchScreen(presenter, { _, _ -> }, { _, _, _ -> }, RecordedTrackActions().presenter, remember { pages(scope) })
             }
         }
         val text = text("Your local files are not included here. Library has its own search for those.").fetchSemanticsNode().boundsInRoot

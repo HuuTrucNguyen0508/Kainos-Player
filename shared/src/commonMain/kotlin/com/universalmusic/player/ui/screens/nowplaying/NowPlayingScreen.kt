@@ -1,5 +1,13 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
+import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.skinGround
 import com.universalmusic.player.ui.components.skinAlbumLight
 import androidx.compose.foundation.background
@@ -66,6 +74,8 @@ fun NowPlayingScreen(
     /** The band's hide arrow, pointing at the edge it is docked to. */
     closeIcon: ImageVector = Icons.Default.KeyboardArrowDown,
 ) {
+    // The shared song menu, and the album and artist links; without it the title is plain.
+    val trackActions = LocalTrackActions.current
     val scope = rememberCoroutineScope()
     val presenter = remember(container) { NowPlayingPresenter.from(container, scope) }
     val ui by presenter.state.collectAsState()
@@ -126,16 +136,23 @@ fun NowPlayingScreen(
 
             // Each piece is placed once: stacked in the pane, or spread over the zones of a wide band.
             val titleBlock: @Composable ColumnScope.() -> Unit = {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                    Text(
+                        track?.title ?: "Nothing playing",
+                        style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (track != null && trackActions != null) {
+                        var menuOpen by remember(trackIdentity) { mutableStateOf(false) }
+                        TrackActionsMenuButton(track, trackActions, menuOpen, { menuOpen = it })
+                    }
+                }
                 Text(
-                    track?.title ?: "Nothing playing",
-                    style = MaterialTheme.typography.headlineSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    track?.artistLine ?: "Pick a track from Home, Search, or Library",
+                    track?.let { nowPlayingArtistLine(it, trackActions) }
+                        ?: AnnotatedString("Pick a track from Home, Search, or Library"),
                     style = MaterialTheme.typography.bodyLarge,
                     color = scheme.onSurfaceVariant,
                     maxLines = if (track == null) 2 else 1,
@@ -144,6 +161,16 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .padding(top = 2.dp),
                 )
+                track?.album?.title?.takeIf { it.isNotBlank() }?.let { album ->
+                    Text(
+                        nowPlayingAlbumLine(track, album, trackActions),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             val progressBlock: @Composable ColumnScope.() -> Unit = {
                 if (ui.now.buffering) {
@@ -504,4 +531,34 @@ private fun albumLightCenter(screen: Rect?, art: Rect?): Offset {
         (art.center.x - screen.left) / screen.width,
         (art.center.y - screen.top) / screen.height,
     )
+}
+
+private val NowPlayingLinkStyles = TextLinkStyles(
+    hoveredStyle = SpanStyle(textDecoration = TextDecoration.Underline),
+    focusedStyle = SpanStyle(textDecoration = TextDecoration.Underline),
+)
+
+/** The artists, each a link to its page when the menu can open pages. */
+private fun nowPlayingArtistLine(track: Track, actions: TrackActionsPresenter?): AnnotatedString = buildAnnotatedString {
+    val canOpen = actions != null && actions.artistPages(track).isNotEmpty()
+    track.artists.filter { it.name.isNotBlank() }.forEachIndexed { index, artist ->
+        if (index > 0) append(", ")
+        if (canOpen) {
+            withLink(LinkAnnotation.Clickable("artist:$index", NowPlayingLinkStyles) { actions!!.goTo(artist.page()) }) {
+                append(artist.name)
+            }
+        } else {
+            append(artist.name)
+        }
+    }
+}
+
+/** The album's title, a link to its page when it has one. */
+private fun nowPlayingAlbumLine(track: Track, album: String, actions: TrackActionsPresenter?): AnnotatedString = buildAnnotatedString {
+    val page = actions?.albumPage(track)
+    if (page != null) {
+        withLink(LinkAnnotation.Clickable("album", NowPlayingLinkStyles) { actions.goTo(page) }) { append(album) }
+    } else {
+        append(album)
+    }
 }

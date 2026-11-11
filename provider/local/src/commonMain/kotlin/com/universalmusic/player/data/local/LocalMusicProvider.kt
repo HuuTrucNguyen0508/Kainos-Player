@@ -49,6 +49,8 @@ class LocalMusicProvider(
         private set
     private val mutableLibraryTracks = MutableStateFlow<List<Track>>(emptyList())
     val libraryTracks: StateFlow<List<Track>> = mutableLibraryTracks.asStateFlow()
+    private val mutableAlbumAliases = MutableStateFlow<Map<String, List<AlbumRef>>>(emptyMap())
+    val albumAliases: StateFlow<Map<String, List<AlbumRef>>> = mutableAlbumAliases.asStateFlow()
     private val mutableRecentlyAdded = MutableStateFlow<List<AddedTrack>>(emptyList())
 
     /** Files with the newest modification times first; files without one are left out. */
@@ -77,6 +79,7 @@ class LocalMusicProvider(
         val aliases = next.zip(tracks).flatMap { (row, track) ->
             row.previousAlbumIds.mapNotNull { old -> track.album?.let { old to it } }
         }.groupBy({ it.first }, { it.second }).mapValues { (old, albums) -> (albums + listOfNotNull(liveAlbums[old])).distinctBy { it.canonicalId } }
+        mutableAlbumAliases.value = aliases
         onAlbumsRekeyed(aliases)
         mutableRecentlyAdded.value = next.indices
             .mapNotNull { i -> next[i].fileModifiedEpochMs?.let { AddedTrack(tracks[i], it) } }

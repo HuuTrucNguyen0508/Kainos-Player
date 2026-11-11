@@ -25,6 +25,26 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class KainosPlaylistPersistenceTest {
+    @Test fun undoAdvancesTheSyncRevisionPersistsAndDoesNotResurrectADeletedPlaylist() = runTest {
+        val store = InMemoryKainosPlaylistStore()
+        val repo = KainosPlaylistRepository(scope = backgroundScope, store = store, clock = { 100 }, deviceIdProvider = { "pc" })
+        repo.load()
+        val playlist = repo.create("Undo", listOf(youtubeTrack(streamUrl = "https://example.test/audio")))
+        val entry = playlist.entries.single()
+        repo.removeEntry(playlist.id, entry.entryId)
+        val removed = repo.exportSyncDocument()
+        repo.restoreEntry(playlist.id, entry, 0)
+        assertTrue(repo.get(playlist.id)!!.revision > removed.playlists.single().revision)
+        repo.mergeAndPersistSyncState(removed)
+        assertEquals(entry.entryId, repo.get(playlist.id)!!.entries.single().entryId)
+        repo.flush()
+        assertEquals(entry.entryId, store.read().playlists.single().entries.single().entryId)
+        repo.delete(playlist.id)
+        val deleted = repo.toSnapshot()
+        assertNull(repo.restoreEntry(playlist.id, entry, 0))
+        assertEquals(deleted, repo.toSnapshot())
+    }
+
     @Test
     fun keyedPlaylistExportHasV1DowngradeWithoutLocalUris() {
         val key = "lc1:" + "a".repeat(64)
