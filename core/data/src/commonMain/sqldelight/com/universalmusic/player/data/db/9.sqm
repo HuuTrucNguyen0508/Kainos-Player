@@ -26,3 +26,60 @@ CREATE TABLE track_loudness (
     album_peak_dbtp REAL,
     origin TEXT NOT NULL
 );
+
+-- ── Spotify library and sync skips (lane L2c) ───────────────────────────────
+-- The Spotify account's Liked Songs and playlists, saved so the Library shows them without the
+-- network and refreshes fetch only what changed; and Home sync copies the user skipped, so a
+-- skipped file is not offered again until it changes.
+CREATE TABLE spotify_library_state (
+    account_id TEXT NOT NULL PRIMARY KEY,
+    liked_total INTEGER,
+    liked_unmapped INTEGER NOT NULL DEFAULT 0,
+    liked_checked_at_ms INTEGER,
+    playlists_checked_at_ms INTEGER
+);
+
+CREATE TABLE spotify_liked_track (
+    account_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    spotify_track_id TEXT NOT NULL,
+    added_at TEXT,
+    track_json TEXT NOT NULL,
+    unshowable_before INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, position)
+);
+
+CREATE TABLE spotify_playlist (
+    account_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    snapshot_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT,
+    artwork_url TEXT,
+    owner_name TEXT,
+    track_count INTEGER,
+    tracks_snapshot_id TEXT,
+    tracks_saved_at_ms INTEGER,
+    PRIMARY KEY (account_id, playlist_id)
+);
+
+CREATE TABLE spotify_playlist_track (
+    account_id TEXT NOT NULL,
+    playlist_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    track_json TEXT NOT NULL,
+    PRIMARY KEY (account_id, playlist_id, position)
+);
+
+CREATE TABLE home_sync_skip (
+    peer_device_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    file_identity TEXT NOT NULL,
+    label TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    skipped_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (peer_device_id, kind, subject, direction)
+);

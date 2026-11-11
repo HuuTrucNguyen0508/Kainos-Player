@@ -294,6 +294,9 @@ internal fun SettingsDevicesSection(
             )
         }
     }
+    if (syncStatus.skippedCopies.isNotEmpty()) {
+        SkippedCopies(syncStatus.skippedCopies, enabled = !syncBusy, onUnskip = syncPresenter::unskip)
+    }
     if (syncStatus.pendingConflicts.isNotEmpty()) {
         Text(
             "Conflicts (${syncStatus.pendingConflicts.size}) same path, different content",
@@ -328,6 +331,47 @@ internal fun SettingsDevicesSection(
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
+}
+
+/** Skipped copies stay folded away; each can be offered again. */
+@Composable
+private fun SkippedCopies(
+    copies: List<com.universalmusic.player.data.sync.SkippedCopy>,
+    enabled: Boolean,
+    onUnskip: (com.universalmusic.player.data.sync.SkippedCopy) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Skipped (${copies.size})",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
+    }
+    if (!expanded) return
+    Text(
+        "Not offered again until the file changes.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    copies.take(20).forEach { copy ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                copy.label + if (copy.sizeBytes > 0) " (${copy.sizeBytes / 1024} KiB)" else "",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(enabled = enabled, onClick = { onUnskip(copy) }) { Text("Un-skip") }
+        }
+    }
+    if (copies.size > 20) {
+        Text(
+            "${copies.size - 20} more not shown",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 private class PendingCopyRow(val label: String, val sizeBytes: Long, val confirm: () -> Unit, val skip: () -> Unit)

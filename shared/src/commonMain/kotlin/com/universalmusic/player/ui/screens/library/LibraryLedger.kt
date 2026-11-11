@@ -1,5 +1,7 @@
 package com.universalmusic.player.ui.screens
 
+import com.universalmusic.player.data.spotify.spotifyLibrarySavedAgo
+import com.universalmusic.player.platform.currentTimeMillis
 import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.AccentUse
 import com.universalmusic.player.ui.theme.Accents
@@ -38,6 +40,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,12 +92,14 @@ internal fun LibraryLedger(
     playLabel: String,
     onPlay: () -> Unit,
     showActions: Boolean,
+    spotifySavedAtMs: Long? = null,
 ) {
     LibraryLedgerSurface {
         LibraryLedgerBar(
             countLine, localCount, spotifyCount, cachedCount, localOnly, favoritesOnly, localScanning,
             spotifyConnected, spotifyLoading, onRefreshSpotify, sortLabel, sortMenuOpen, onSortMenuOpen,
             onSortMenuDismiss, onSortSelected, currentSort, playLabel, onPlay, showActions,
+            spotifySavedAtMs = spotifySavedAtMs,
         )
     }
 }
@@ -123,6 +129,8 @@ internal fun LibraryLedgerBar(
     /** Plays the same songs as [onPlay] in a fresh shuffle; null leaves the button out. */
     onShuffle: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** Set while the Spotify songs shown are a saved copy Spotify could not confirm just now. */
+    spotifySavedAtMs: Long? = null,
 ) {
     Row(
         modifier
@@ -167,7 +175,11 @@ internal fun LibraryLedgerBar(
                             ) {
                                 SourceDot(sourceMark(Accents.spotify))
                                 Text(
-                                    if (spotifyLoading) "Spotify loading…" else "$spotifyCount Spotify",
+                                    when {
+                                        spotifyLoading -> "Spotify loading…"
+                                        spotifySavedAtMs != null -> "$spotifyCount Spotify · ${savedAgo(spotifySavedAtMs)}"
+                                        else -> "$spotifyCount Spotify"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -326,4 +338,16 @@ internal fun TrackSort.shortLabel(): String = when (this) {
     TrackSort.ALBUM_ASCENDING -> "Album"
     TrackSort.YEAR_DESCENDING -> "Year"
     TrackSort.RECENTLY_ADDED -> "Recent"
+}
+
+/** "saved 12 min ago", kept current while it shows. */
+@Composable
+private fun savedAgo(savedAtMs: Long): String {
+    val now by produceState(currentTimeMillis(), savedAtMs) {
+        while (true) {
+            kotlinx.coroutines.delay(60_000)
+            value = currentTimeMillis()
+        }
+    }
+    return spotifyLibrarySavedAgo(now - savedAtMs)
 }

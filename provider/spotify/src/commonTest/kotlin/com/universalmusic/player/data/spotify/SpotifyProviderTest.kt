@@ -36,6 +36,17 @@ import kotlin.test.assertTrue
 
 class SpotifyProviderTest {
     @Test
+    fun aRefusedPlaylistReadCarriesItsHttpStatus() = runTest {
+        val provider = provider(TokenStoreFake(AuthTokens("access"))) {
+            respond("""{"error":{"status":404,"message":"Resource not found"}}""", HttpStatusCode.NotFound)
+        }
+
+        val failure = assertFailsWith<SpotifyHttpException> { provider.getPlaylistTracks("editorial") }
+
+        assertEquals(404, failure.status)
+    }
+
+    @Test
     fun volumeRespects429RetryAfterAndSliderLevel() = runTest {
         var now = 1000L
         val levels = mutableListOf<String?>()
@@ -301,9 +312,11 @@ class SpotifyProviderTest {
             }
         }
 
-        val result = loadSpotifyLibrary(provider)
+        val library = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), provider, clock = { 1_000L })
+        val result = library.refresh("me")
 
-        assertEquals("Saved song", result.tracks.getOrThrow().single().title)
+        assertEquals("Saved song", library.liked.value.single().title)
+        assertTrue(result.liked.isSuccess)
         assertTrue(result.playlists.isFailure)
     }
 
@@ -317,10 +330,32 @@ class SpotifyProviderTest {
             }
         }
 
-        val result = loadSpotifyLibrary(provider)
+        val library = SpotifyLibraryRepository(MemorySpotifyLibraryStore(), provider, clock = { 1_000L })
+        val result = library.refresh("me")
 
-        assertTrue(result.tracks.isFailure)
-        assertEquals("Saved playlist", result.playlists.getOrThrow().single().title)
+        assertTrue(result.liked.isFailure)
+        assertEquals("Saved playlist", library.playlists.value.single().title)
+    }
+
+    @Test
+    fun likedSongsCarryAddedAtAndPlaylistsTheirSnapshot() = runTest {
+        val provider = provider(TokenStoreFake(AuthTokens("access"))) { request ->
+            if (request.url.encodedPath.endsWith("/me/tracks")) {
+                respondJson("""{"items":[{"added_at":"2026-11-10T08:00:00Z","track":{"id":"song","name":"Saved song"}},{"added_at":"2026-11-09T08:00:00Z","track":null}],"total":2,"next":null}""")
+            } else {
+                respondJson("""{"items":[{"id":"list","name":"Mix","snapshot_id":"snap-7","items":{"total":4}}],"total":1,"next":null}""")
+            }
+        }
+
+        val page = provider.likedSongsPage(0)
+        val heads = provider.libraryPlaylistHeads()
+
+        assertEquals(listOf("song" to "2026-11-10T08:00:00Z", null to "2026-11-09T08:00:00Z"), page.entries.map { it.spotifyTrackId to it.addedAt })
+        assertEquals("Saved song", page.entries.first().track?.title)
+        assertEquals(null, page.entries.last().track)
+        assertEquals(2 to false, page.total to page.hasMore)
+        assertEquals("snap-7", heads.single().snapshotId)
+        assertEquals(4, heads.single().playlist.trackCount)
     }
 
     @Test
@@ -863,7 +898,7 @@ class SpotifyProviderTest {
             respondJson("""{"id":"user"}""")
         }
 
-        provider.updateConfig(
+        val signedOut = provider.updateConfig(
             AppConfig(
                 spotifyClientId = "saved-client-id",
                 spotifyRedirectUri = "http://127.0.0.1:43821/callback",
@@ -873,6 +908,25 @@ class SpotifyProviderTest {
 
         assertEquals(saved, store.value)
         assertTrue(provider.isAuthenticated())
+        // The account's saved library is kept with the session: only a sign-out clears it.
+        assertEquals(false, signedOut)
+    }
+
+    @Test
+    fun aNewClientIdFromSettingsSignsOut() = runTest {
+        val store = TokenStoreFake(AuthTokens("saved-access", refreshToken = "saved-refresh"))
+        val provider = provider(store) { respond("", HttpStatusCode.Unauthorized) }
+
+        val signedOut = provider.updateConfig(
+            AppConfig(spotifyClientId = "new-client-id", spotifyRedirectUri = "http://127.0.0.1:43821/callback"),
+        )
+
+        assertEquals(true, signedOut)
+        assertEquals(null, store.value)
+        val unchanged = provider.updateConfig(
+            AppConfig(spotifyClientId = "new-client-id", spotifyRedirectUri = "http://127.0.0.1:43821/callback"),
+        )
+        assertEquals(false, unchanged)
     }
 
     @Test

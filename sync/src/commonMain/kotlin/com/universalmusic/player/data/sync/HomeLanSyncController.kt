@@ -51,6 +51,9 @@ interface HomeLanSyncController {
     /** Copies every pending vault file and cached audio file. */
     suspend fun confirmAllVaultTransfers(): Result<String>
     suspend fun dismissAllVaultTransfers(): Result<String>
+    /** Offers a skipped copy again: now when the last sync planned it, otherwise at the next sync. */
+    suspend fun unskipCopy(kind: SkippedCopyKind, subject: String, direction: VaultCopyDirection): Result<String> =
+        Result.failure(UnsupportedOperationException("Un-skip is unavailable"))
     suspend fun startHubIfNeeded()
     suspend fun stopHub()
     suspend fun tombstoneVaultPath(relPath: String): Result<String>

@@ -131,6 +131,7 @@ internal fun SongsLedgerBar(
         localScanning = state.localState == ProviderState.LOADING,
         spotifyConnected = state.spotifyConnected,
         spotifyLoading = state.spotifyLoading,
+        spotifySavedAtMs = state.spotifySavedAtMs,
         onRefreshSpotify = onRefreshSpotify,
         sortLabel = state.songSort.shortLabel(),
         sortMenuOpen = sortMenuOpen,

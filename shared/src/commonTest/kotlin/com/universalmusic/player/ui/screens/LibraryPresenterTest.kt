@@ -117,6 +117,24 @@ class LibraryPresenterTest {
         assertEquals(emptyList(), presenter.state.value.spotifyPlaylists)
     }
 
+    @Test
+    fun aSavedSpotifyLibraryShownOfflineKeepsItsTallyWithItsAge() = runTest {
+        val savedAt = MutableStateFlow<Long?>(null)
+        val presenter = libraryPresenter(
+            spotifyTracks = MutableStateFlow(listOf(track("Zed", "Ada", provider = ProviderId.SPOTIFY, canonicalId = "spotify:zed"))),
+            spotifySavedAtMs = savedAt,
+        )
+        advanceUntilIdle()
+        assertEquals(false, presenter.state.value.spotifyConnected)
+
+        savedAt.value = 1_000L
+        advanceUntilIdle()
+
+        assertEquals(1_000L, presenter.state.value.spotifySavedAtMs)
+        assertTrue(presenter.state.value.spotifyConnected)
+        assertEquals(listOf("spotify:zed"), presenter.state.value.queueSongs.map { it.canonicalId })
+    }
+
     private fun TestScope.libraryPresenter(
         settings: MutableStateFlow<AppSettings> = MutableStateFlow(AppSettings()),
         localTracks: MutableStateFlow<List<Track>> = MutableStateFlow(emptyList()),
@@ -124,6 +142,7 @@ class LibraryPresenterTest {
         spotifyTracks: MutableStateFlow<List<Track>> = MutableStateFlow(emptyList()),
         spotifyPlaylists: MutableStateFlow<List<Playlist>> = MutableStateFlow(emptyList()),
         favorites: MutableStateFlow<Set<String>> = MutableStateFlow(emptySet()),
+        spotifySavedAtMs: MutableStateFlow<Long?> = MutableStateFlow(null),
         updateSettings: suspend ((AppSettings) -> AppSettings) -> Unit = { transform ->
             settings.value = transform(settings.value)
         },
@@ -146,6 +165,7 @@ class LibraryPresenterTest {
             spotifyState = MutableStateFlow(ProviderState.UNAVAILABLE),
             downloads = MutableStateFlow<Map<String, DownloadItemState>>(emptyMap()),
             scope = scope,
+            spotifySavedAtMs = spotifySavedAtMs,
         )
     }
 }

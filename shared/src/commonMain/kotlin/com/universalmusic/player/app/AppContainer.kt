@@ -8,6 +8,8 @@ import com.universalmusic.player.data.loudness.LoudnessSubject
 import com.universalmusic.player.data.sync.LoudnessSyncDocument
 import com.universalmusic.player.data.sync.LoudnessSyncPort
 import com.universalmusic.player.platform.createLoudnessStore
+import com.universalmusic.player.platform.createSpotifyLibraryStore
+import com.universalmusic.player.platform.createHomeSyncSkipStore
 import kotlinx.coroutines.async
 import com.universalmusic.player.data.backup.BackupRestoreCounts
 import com.universalmusic.player.data.backup.KainosBackupFile
@@ -58,7 +60,8 @@ import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
 import com.universalmusic.player.data.spotify.LastGoodDiscoverWeekly
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
-import com.universalmusic.player.data.spotify.loadSpotifyLibrary
+import com.universalmusic.player.data.spotify.SpotifyLibraryRefresh
+import com.universalmusic.player.data.spotify.SpotifyLibraryRepository
 import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
 import com.universalmusic.player.data.spotify.resolveDiscoverWeeklyCandidate
 import com.universalmusic.player.data.spotify.SpotifyProvider
@@ -344,6 +347,8 @@ class AppContainer(
         retryListeningInProcess = { foreground.isVisible || player.nowPlaying.value.isPlaying },
         isAppForeground = { foreground.isVisible },
         onForegroundListeningCompleted = foregroundHandoff::onExchangeCompleted,
+        skipStore = createHomeSyncSkipStore(),
+        lastLocalScanAtMs = { lastLocalScanAtMs },
     )
     init { startupMark("providers_end") }
     /** What the Echo gateway is playing; null on platforms with no source. Polls only while collected. */
@@ -351,10 +356,17 @@ class AppContainer(
     val resolver = DefaultSourceResolver()
     private val _ready = MutableStateFlow(false)
     val ready = _ready.asStateFlow()
-    private val _spotifyTracks = MutableStateFlow<List<Track>>(emptyList())
-    val spotifyTracks = _spotifyTracks.asStateFlow()
-    private val _spotifyPlaylists = MutableStateFlow<List<Playlist>>(emptyList())
-    val spotifyPlaylists = _spotifyPlaylists.asStateFlow()
+    /** Liked Songs and playlists, saved on this device and refreshed from the Web API when it allows. */
+    private val spotifyLibrary = SpotifyLibraryRepository(createSpotifyLibraryStore(), spotify, ::currentTimeMillis)
+    val spotifyTracks: StateFlow<List<Track>> = spotifyLibrary.liked
+    val spotifyPlaylists: StateFlow<List<Playlist>> = spotifyLibrary.playlists
+    private val _spotifyLibrarySavedAtMs = MutableStateFlow<Long?>(null)
+
+    /**
+     * When Spotify last confirmed the Spotify library being shown, while the latest refresh could
+     * not (offline or rate-limited); null once a refresh succeeds. The Library shows it quietly.
+     */
+    val spotifyLibrarySavedAtMs = _spotifyLibrarySavedAtMs.asStateFlow()
     private val _spotifyDiscoverWeekly = MutableStateFlow<Playlist?>(null)
     val spotifyDiscoverWeekly = _spotifyDiscoverWeekly.asStateFlow()
     private val lastGoodDiscoverWeekly = LastGoodDiscoverWeekly(discoverWeeklySnapshotFile(), ::currentTimeMillis)
@@ -591,6 +603,7 @@ class AppContainer(
             startupMark("library_load_begin")
             AppFailures.reporting { library.load(spotify.currentUserId()) }
             startupMark("library_load_end")
+            AppFailures.reporting { hydrateSpotifyLibrary() }
             AppFailures.reporting { kainosPlaylists.load() }
             AppFailures.reporting { listeningHistory.load() }
             if (!hubOnly) {
@@ -608,7 +621,7 @@ class AppContainer(
                 foregroundHandoff.onForeground()
                 homeLanSync.onAppForeground()
             }
-            if (spotify.isAuthenticated()) refreshSpotifyLibrary()
+            if (spotify.isAuthenticated()) refreshSpotifyLibrary(userAsked = false)
         }
         scope.launch {
             _ready.first { it }
@@ -678,10 +691,11 @@ class AppContainer(
             spotifyClientId = settings.spotifyClientId?.takeIf { it.isNotBlank() } ?: defaults.spotifyClientId,
             youtubeDataApiKey = settings.youtubeDataApiKey?.takeIf { it.isNotBlank() } ?: defaults.youtubeDataApiKey,
         )
-        if (next.spotifyClientId != config.spotifyClientId) clearSpotifyLibrary()
         config = next
         youtube.updateConfig(next)
-        spotify.updateConfig(next, clearSessionOnChange)
+        // The saved library goes with the session. A launch keeps both, even though its saved
+        // Client ID differs from the built-in default it starts from.
+        if (spotify.updateConfig(next, clearSessionOnChange)) clearSpotifyLibrary()
     }
 
     suspend fun disconnectSpotify() {
@@ -692,11 +706,22 @@ class AppContainer(
         library.setSpotifyAccountId(null)
     }
 
-    private fun clearSpotifyLibrary() {
-        _spotifyTracks.value = emptyList()
-        _spotifyPlaylists.value = emptyList()
+    private suspend fun clearSpotifyLibrary() {
         _spotifyDiscoverWeekly.value = null
         _spotifyLibraryError.value = null
+        _spotifyLibrarySavedAtMs.value = null
+        AppFailures.reporting { spotifyLibrary.clear() }
+    }
+
+    /**
+     * Shows the Spotify library saved for this account before any network call. The account is the
+     * signed-in one, or offline the one the hearts were last scoped to; with no Spotify session
+     * nothing is shown.
+     */
+    private suspend fun hydrateSpotifyLibrary() {
+        if (tokens.read(ProviderId.SPOTIFY) == null) return
+        val account = spotify.currentUserId() ?: library.currentSpotifyAccountId ?: return
+        if (spotifyLibrary.hydrate(account)) _spotifyLibrarySavedAtMs.value = spotifyLibrary.confirmedAtMs
     }
 
     suspend fun clearMetadataArtworkCache(): MetadataCacheStats {
@@ -757,41 +782,76 @@ class AppContainer(
     suspend fun youTubeMatchOverride(canonicalId: String): String? =
         heartedAudio.matchOverride(canonicalId)
 
-    suspend fun refreshSpotifyLibrary() = libraryMutex.withLock {
-        _spotifyLibraryLoading.value = true
-        _spotifyLibraryError.value = null
-        try {
-            val result = loadSpotifyLibrary(spotify)
-            spotify.currentUserId()?.let { library.setSpotifyAccountId(it) }
-            if (spotify.isAuthenticated() || spotify.state.value == ProviderState.RATE_LIMITED) {
-                result.tracks.onSuccess { _spotifyTracks.value = it }
-                result.playlists.onSuccess { playlists ->
-                    _spotifyPlaylists.value = playlists
-                    _spotifyDiscoverWeekly.value = resolveDiscoverWeekly(playlists)
+    /** The Library's refresh: shows progress even over the saved library. */
+    suspend fun refreshSpotifyLibrary() = refreshSpotifyLibrary(userAsked = true)
+
+    /**
+     * Refreshes the saved Spotify library: only new Liked Songs and changed playlists are read, then
+     * the songs of changed playlists in the background, after this returns. A failure while a saved library is shown
+     * keeps it, with its age instead of an error; Spotify's Retry-After is waited out.
+     */
+    private suspend fun refreshSpotifyLibrary(userAsked: Boolean) {
+        val playlistsRefreshed = libraryMutex.withLock {
+            var refreshed = false
+            _spotifyLibraryLoading.value = userAsked || !spotifyLibrary.hasLibrary
+            _spotifyLibraryError.value = null
+            try {
+                val account = spotify.currentUserId()
+                account?.let { library.setSpotifyAccountId(it) }
+                if (spotify.isAuthenticated() || spotify.state.value == ProviderState.RATE_LIMITED) {
+                    val result = spotifyLibrary.refresh(account)
+                    if (result.playlists.isSuccess) {
+                        refreshed = true
+                        _spotifyDiscoverWeekly.value = resolveDiscoverWeekly(spotifyLibrary.playlists.value)
+                    }
+                    reportSpotifyRefresh(result)
                 }
-                val failedSections = buildList {
-                    if (result.tracks.isFailure) add("liked songs")
-                    if (result.playlists.isFailure) add("playlists")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (spotifyLibrary.hasLibrary) {
+                    _spotifyLibrarySavedAtMs.value = spotifyLibrary.confirmedAtMs
+                } else {
+                    _spotifyLibraryError.value = spotifyLibraryFailureMessage(
+                        sections = listOf("library"),
+                        failureText = failure.message.orEmpty(),
+                        wholeLibrary = true,
+                    )
                 }
-                if (failedSections.isNotEmpty()) {
-                    val failureText = listOf(result.tracks, result.playlists)
-                        .mapNotNull { it.exceptionOrNull()?.message }
-                        .joinToString(" ")
-                    _spotifyLibraryError.value = spotifyLibraryFailureMessage(failedSections, failureText)
-                }
+            } finally {
+                _spotifyLibraryLoading.value = false
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            val message = failure.message.orEmpty()
-            _spotifyLibraryError.value = spotifyLibraryFailureMessage(
-                sections = listOf("library"),
-                failureText = message,
-                wholeLibrary = true,
-            )
-        } finally {
-            _spotifyLibraryLoading.value = false
+            refreshed
         }
+        if (!playlistsRefreshed) return
+        // In the background: a first pass reads every playlist, and Settings' connect, Android's
+        // sign-in callback and pull-to-refresh must not wait for it.
+        scope.launch {
+            runCatching { spotifyLibrary.syncPlaylistSongs() }
+                .onFailure { if (it is CancellationException) throw it }
+                .logged("Spotify", "playlist songs refresh failed")
+        }
+    }
+
+    /** A section that failed but has a saved copy shows that copy's age; one with nothing to show is an error. */
+    private fun reportSpotifyRefresh(result: SpotifyLibraryRefresh) {
+        if (result.succeeded) {
+            _spotifyLibrarySavedAtMs.value = null
+            return
+        }
+        val unsaved = buildList {
+            if (result.liked.isFailure && spotifyTracks.value.isEmpty()) add("liked songs" to result.liked)
+            if (result.playlists.isFailure && spotifyPlaylists.value.isEmpty()) add("playlists" to result.playlists)
+        }
+        _spotifyLibrarySavedAtMs.value = spotifyLibrary.confirmedAtMs.takeIf { spotifyLibrary.hasLibrary }
+        if (unsaved.isEmpty()) return
+        val failureText = unsaved.mapNotNull { it.second.exceptionOrNull()?.message }.joinToString(" ")
+        val failedSections = unsaved.map { it.first }
+        _spotifyLibraryError.value = spotifyLibraryFailureMessage(
+            sections = failedSections,
+            failureText = failureText,
+            wholeLibrary = failedSections.size == 2,
+        )
     }
 
     private fun spotifyLibraryFailureMessage(
@@ -843,8 +903,15 @@ class AppContainer(
         if (cached?.source?.providerEntityId == id && cached.tracks.isNotEmpty()) {
             return cached.tracks
         }
+        val saved = savedSpotifyPlaylistSongs(id)
+        if (saved != null && saved.current) return saved.tracks
         val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
-        webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let {
+            AppFailures.reporting { spotifyLibrary.rememberPlaylistSongs(id, it) }
+            return it
+        }
+        // Offline or rate-limited: an older copy of the playlist beats no playlist.
+        saved?.let { return it.tracks }
         val revision = lastGoodDiscoverWeekly.revision
         val accountId = spotify.currentUserId()
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
@@ -862,6 +929,14 @@ class AppContainer(
         return webTracks.getOrThrow()
     }
 
+    /** Saved songs of a library playlist, when there are any to show. */
+    private suspend fun savedSpotifyPlaylistSongs(playlistId: String) =
+        runCatching { spotifyLibrary.savedPlaylistSongs(playlistId) }
+            .onFailure { if (it is CancellationException) throw it }
+            .logged("Spotify", "saved playlist read failed")
+            .getOrNull()
+            ?.takeIf { it.tracks.isNotEmpty() }
+
     /**
      * One page of a Spotify or YouTube playlist opened from Search; [cursor] is null for the first page.
      * Spotify playlists the Web API refuses (its own editorial and algorithmic lists) fall back to
@@ -871,11 +946,18 @@ class AppContainer(
         when (source.provider) {
             ProviderId.YOUTUBE_MUSIC -> youtube.getPlaylistTracksPage(source.providerEntityId, cursor)
             ProviderId.SPOTIFY -> {
+                // A library playlist opens from its saved songs; a changed one reads Spotify first.
+                val saved = if (cursor == null) savedSpotifyPlaylistSongs(source.providerEntityId) else null
+                if (saved != null && saved.current) {
+                    return PlaylistTracksPage(saved.tracks, next = null, total = saved.tracks.size)
+                }
                 val web = runCatching { spotify.getPlaylistTracksPage(source.providerEntityId, cursor) }
                     .onFailure { if (it is CancellationException) throw it }
                     .logged("Spotify", "playlist page load failed")
                 val page = web.getOrNull()
-                if (cursor != null || (page != null && page.tracks.isNotEmpty())) {
+                if (page == null && saved != null) {
+                    PlaylistTracksPage(saved.tracks, next = null, total = saved.tracks.size)
+                } else if (cursor != null || (page != null && page.tracks.isNotEmpty())) {
                     web.getOrThrow()
                 } else {
                     val whole = runCatching { fetchLibrespotDiscoverWeekly(source.providerEntityId) }
@@ -940,11 +1022,16 @@ class AppContainer(
         }
     }
 
+    /** When a local library scan last finished; Home sync skips its rescan while this is recent. */
+    @kotlin.concurrent.Volatile
+    private var lastLocalScanAtMs: Long? = null
+
     suspend fun refreshLocalLibraryAndAwait() {
         loudnessJob?.cancel()
         _localLibraryMessage.value = null
         runCatching { local.refresh() }
             .onSuccess {
+                lastLocalScanAtMs = currentTimeMillis()
                 local.lastScanStats?.let { stats ->
                     _localLibraryMessage.value =
                         "Library updated · ${stats.trackCount} tracks · ${stats.probed} read · " +

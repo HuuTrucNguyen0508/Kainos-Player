@@ -61,6 +61,7 @@ private const val AUTH_URL = "https://accounts.spotify.com/authorize"
 private const val TOKEN_URL = "https://accounts.spotify.com/api/token"
 private const val API = "https://api.spotify.com/v1"
 private const val PLAYLIST_PAGE_SIZE = 50
+private const val LIKED_PAGE_SIZE = 50
 private const val CONNECT_PLAYBACK_TIMEOUT_MS = 20_000L
 private const val OBSERVE_RATE_LIMIT_DEFAULT_MS = 30_000L
 /** A start waits out a 429 at most this long once; a longer Retry-After pauses playback instead. */
@@ -87,7 +88,7 @@ class SpotifyProvider(
     private val requireExplicitPlaybackDevice: Boolean = false,
     private val selectedPlaybackDeviceId: () -> String? = { null },
     private val startConnectClient: suspend () -> Boolean = { ensureSpotifyConnectClientAvailable() },
-) : AuthenticatingProvider {
+) : AuthenticatingProvider, SpotifyLibraryRemote {
     override val providerId: ProviderId = ProviderId.SPOTIFY
 
     private val _state = MutableStateFlow(ProviderState.AUTH_REQUIRED)
@@ -439,24 +440,43 @@ class SpotifyProvider(
     }
 
     override suspend fun getLibraryTracks(): List<Track> {
-        val token = accessToken()
         val result = mutableListOf<Track>()
         var offset = 0
         do {
-            val response = http.get("$API/me/tracks") {
-                bearerAuth(token)
-                parameter("limit", 50)
-                parameter("offset", offset)
-            }.successBody<SpotifyPaging<SpotifySavedTrack>>("Spotify saved tracks")
-            result += response.items.mapNotNull { it.track?.toDomainOrNull(premium) }
-            offset += response.items.size
-        } while (response.next != null && response.items.isNotEmpty())
+            val page = likedSongsPage(offset)
+            result += page.entries.mapNotNull { it.track }
+            offset += page.entries.size
+        } while (page.hasMore)
         return result
     }
 
-    override suspend fun getUserPlaylists(): List<Playlist> {
+    /** Up to 50 Liked Songs from [offset], newest first, including ones Spotify cannot show. */
+    override suspend fun likedSongsPage(offset: Int): LikedSongsPage {
+        val response = http.get("$API/me/tracks") {
+            bearerAuth(accessToken())
+            parameter("limit", LIKED_PAGE_SIZE)
+            parameter("offset", offset)
+        }.successBody<SpotifyPaging<SpotifySavedTrack>>("Spotify saved tracks")
+        return LikedSongsPage(
+            entries = response.items.map { saved ->
+                val track = saved.track
+                LikedSongsEntry(
+                    spotifyTrackId = track?.id?.takeIf { it.isNotBlank() },
+                    addedAt = saved.added_at,
+                    track = track?.toDomainOrNull(premium),
+                )
+            },
+            total = response.total,
+            hasMore = response.next != null && response.items.isNotEmpty(),
+        )
+    }
+
+    override suspend fun getUserPlaylists(): List<Playlist> = libraryPlaylistHeads().map { it.playlist }
+
+    /** Every playlist in the user's library with its snapshot_id, without songs. */
+    override suspend fun libraryPlaylistHeads(): List<SpotifyPlaylistHead> {
         val token = accessToken()
-        val result = mutableListOf<Playlist>()
+        val result = mutableListOf<SpotifyPlaylistHead>()
         var offset = 0
         do {
             val response = http.get("$API/me/playlists") {
@@ -466,11 +486,14 @@ class SpotifyProvider(
             }.successBody<SpotifyPaging<SpotifyPlaylist>>("Spotify playlists")
             result += response.items.mapNotNull { playlist ->
                 playlist.takeIf { it.id.isNotBlank() && it.name.isNotBlank() }?.toDomainOrNull(premium)
+                    ?.let { SpotifyPlaylistHead(it, playlist.snapshot_id) }
             }
             offset += response.items.size
         } while (response.next != null && response.items.isNotEmpty())
         return result
     }
+
+    override suspend fun playlistSongs(playlistId: String): List<Track> = getPlaylistTracks(playlistId)
 
     override suspend fun getCapabilities(): ProviderCapabilities = ProviderCapabilities(
         search = true,
@@ -967,7 +990,11 @@ class SpotifyProvider(
         response.requireSuccess("Spotify Connect seek")
     }
 
-    suspend fun updateConfig(next: AppConfig, clearSessionOnChange: Boolean = true) {
+    /**
+     * Applies [next]. A new Client ID or redirect signs out unless [clearSessionOnChange] is false
+     * (a launch reading its saved settings keeps the saved session). Returns true when it signed out.
+     */
+    suspend fun updateConfig(next: AppConfig, clearSessionOnChange: Boolean = true): Boolean {
         val credentialsChanged = config.spotifyClientId != next.spotifyClientId ||
             config.spotifyRedirectUri != next.spotifyRedirectUri
         if (credentialsChanged) {
@@ -975,9 +1002,11 @@ class SpotifyProvider(
             authGeneration++
             observeCooldownUntilMs = 0
         }
-        if (credentialsChanged && clearSessionOnChange) logout()
+        val signsOut = credentialsChanged && clearSessionOnChange
+        if (signsOut) logout()
         config = next
         restore()
+        return signsOut
     }
 
     private suspend fun accessToken(): String = mutex.withLock {
@@ -1136,8 +1165,11 @@ private suspend inline fun <reified T> HttpResponse.successBody(operation: Strin
  * Spotify answered but will not give this app [operation]: development-mode Client IDs are refused
  * some catalogue endpoints. Callers show that plainly instead of a generic failure.
  */
-class SpotifyRefusedException(val operation: String, val status: Int) :
-    IllegalStateException("Spotify does not share $operation with this app (HTTP $status).")
+class SpotifyRefusedException(val operation: String, status: Int) :
+    SpotifyHttpException(status, "Spotify does not share $operation with this app (HTTP $status).")
+
+/** Spotify answered with HTTP error [status] (a rate limit is [ProviderRateLimitedException] instead). */
+open class SpotifyHttpException(val status: Int, message: String) : IllegalStateException(message)
 
 /** Like [successBody], but a 403 becomes [SpotifyRefusedException]. */
 private suspend inline fun <reified T> HttpResponse.refusableBody(operation: String): T {
@@ -1161,7 +1193,7 @@ private suspend fun HttpResponse.errorMessage(operation: String): Nothing {
         }
         throw ProviderRateLimitedException(message, retryAfterMsOrNull())
     }
-    error("$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
+    throw SpotifyHttpException(status.value, "$operation failed (${status.value})${detail?.let { ": $it" }.orEmpty()}")
 }
 
 /** Retry-After in ms (delta-seconds form); null when absent or not numeric. */

@@ -38,6 +38,8 @@ internal data class LibraryUiState(
     val spotifyConnected: Boolean,
     val spotifyLoading: Boolean,
     val spotifyError: String?,
+    /** When Spotify last confirmed the saved Spotify songs shown, while a refresh could not; else null. */
+    val spotifySavedAtMs: Long? = null,
     val downloads: Map<String, DownloadItemState>,
     val searchIndex: LibrarySearchIndex = LibrarySearchIndex(queueSongs, albums, artists),
 )
@@ -73,6 +75,7 @@ internal fun deriveLibraryUiState(
     homePins: List<PersistedHomePin>,
     spotifyLoading: Boolean,
     spotifyError: String?,
+    spotifySavedAtMs: Long? = null,
     spotifyState: ProviderState,
     downloads: Map<String, DownloadItemState>,
     query: String,
@@ -124,9 +127,12 @@ internal fun deriveLibraryUiState(
         cachedCount = if (readyOffline) libraryCachedCount(queueSongs.mapNotNull(offlineTrack)) else 0,
         spotifyCount = librarySpotifyCount(queueSongs),
         localState = localState,
-        spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED,
+        // A saved library shown offline still gets its tally, with its age.
+        spotifyConnected = spotifyState == ProviderState.AVAILABLE || spotifyState == ProviderState.RATE_LIMITED ||
+            spotifySavedAtMs != null,
         spotifyLoading = spotifyLoading,
         spotifyError = spotifyError,
+        spotifySavedAtMs = spotifySavedAtMs,
         downloads = downloads,
     ).withQuery(query)
 }

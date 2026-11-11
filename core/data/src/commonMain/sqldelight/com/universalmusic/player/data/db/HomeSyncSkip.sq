@@ -1,0 +1,27 @@
+-- Copies the user skipped in Settings → Home sync (lane L2c), so the next Sync now does not offer
+-- them again. A skip holds for one peer, one file (vault path or hearted owner), one direction and
+-- one version of the file: file_identity is the size and content hash (vault) or the size and cache
+-- file token (offline copy). A changed file has a new identity, so it is offered again.
+CREATE TABLE home_sync_skip (
+    peer_device_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    file_identity TEXT NOT NULL,
+    label TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    skipped_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (peer_device_id, kind, subject, direction)
+);
+
+selectForPeer:
+SELECT * FROM home_sync_skip WHERE peer_device_id = ? ORDER BY skipped_at_ms DESC;
+
+upsert:
+INSERT OR REPLACE INTO home_sync_skip (
+    peer_device_id, kind, subject, direction, file_identity, label, size_bytes, skipped_at_ms
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteOne:
+DELETE FROM home_sync_skip WHERE peer_device_id = ? AND kind = ? AND subject = ? AND direction = ?;
