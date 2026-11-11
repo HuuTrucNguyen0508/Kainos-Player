@@ -27,6 +27,7 @@ data class StoredLocalTrack(
     val isrc: String? = null,
     val fileModifiedEpochMs: Long? = null,
     val contentKey: String? = null,
+    val previousAlbumIds: List<String> = emptyList(),
 )
 
 fun LocalTrack.toStored() = StoredLocalTrack(
@@ -49,6 +50,7 @@ fun LocalTrack.toStored() = StoredLocalTrack(
     isrc = isrc,
     fileModifiedEpochMs = fileModifiedEpochMs,
     contentKey = contentKey,
+    previousAlbumIds = previousAlbumIds,
 )
 
 fun StoredLocalTrack.toLocalTrackOrNull(): LocalTrack? {
@@ -81,5 +83,6 @@ fun StoredLocalTrack.toLocalTrackOrNull(): LocalTrack? {
         isrc = isrc,
         fileModifiedEpochMs = fileModifiedEpochMs,
         contentKey = contentKey,
+        previousAlbumIds = previousAlbumIds,
     )
 }

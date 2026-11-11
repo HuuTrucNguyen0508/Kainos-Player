@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.map
 import kotlin.coroutines.EmptyCoroutineContext
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.SettingsStore
+import com.universalmusic.player.data.spotify.LastGoodDiscoverWeekly
 import com.universalmusic.player.data.spotify.findDiscoverWeekly
 import com.universalmusic.player.data.spotify.loadSpotifyLibrary
 import com.universalmusic.player.data.spotify.parseSpotifyPlaylistId
@@ -69,6 +70,7 @@ import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.Playlist
 import com.universalmusic.player.domain.model.PlaylistTracksPage
 import com.universalmusic.player.domain.model.ProviderEntityRef
+import com.universalmusic.player.platform.discoverWeeklySnapshotFile
 import com.universalmusic.player.platform.fetchLibrespotDiscoverWeekly
 import com.universalmusic.player.platform.requiresExplicitSpotifyDevice
 import com.universalmusic.player.platform.SpotifyPlaybackController
@@ -155,6 +157,11 @@ enum class UiRequest {
 class AppContainer(
     httpClient: io.ktor.client.HttpClient? = null,
     private val startupMark: (String) -> Unit = {},
+    /**
+     * `--hub-only`: serve Home sync and nothing else. No media-key/MPRIS player, no restored
+     * queue a media key could start invisibly, no hearted-audio downloads racing the GUI's.
+     */
+    private val hubOnly: Boolean = false,
 ) {
     val failures = AppFailures.open
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + AppFailures.handler)
@@ -182,7 +189,7 @@ class AppContainer(
     private var currentPlayingCanonicalId: () -> String? = { null }
     private fun protectedCacheOwners(): Set<String> =
         setOfNotNull(currentPlayingCanonicalId())
-    val library = LibraryRepository(
+    val library: LibraryRepository = LibraryRepository(
         scope = scope,
         store = userLibraryStore,
         metadataCache = metadataCache,
@@ -206,6 +213,7 @@ class AppContainer(
         embeddedArtwork = createLocalEmbeddedArtworkExtractor(),
         contentKeyReader = createLocalContentKeyReader(),
         tagReader = createLocalTagReader(),
+        onAlbumsRekeyed = library::remapLocalAlbumPins,
     )
     /** Measured loudness of local and hearted-cache files, for levelling files without ReplayGain tags. */
     private val loudness = LoudnessRepository(createLoudnessStore())
@@ -341,6 +349,7 @@ class AppContainer(
     val spotifyPlaylists = _spotifyPlaylists.asStateFlow()
     private val _spotifyDiscoverWeekly = MutableStateFlow<Playlist?>(null)
     val spotifyDiscoverWeekly = _spotifyDiscoverWeekly.asStateFlow()
+    private val lastGoodDiscoverWeekly = LastGoodDiscoverWeekly(discoverWeeklySnapshotFile(), ::currentTimeMillis)
     private val _spotifyLibraryError = MutableStateFlow<String?>(null)
     val spotifyLibraryError = _spotifyLibraryError.asStateFlow()
     private val _spotifyLibraryLoading = MutableStateFlow(false)
@@ -478,12 +487,14 @@ class AppContainer(
     }
 
     init {
-        monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
-        startupMark("mpris_begin")
-        bindPlatformMediaControls(player, scope) { track ->
-            library.toggleFavorite(track).also { player.syncFavorite(track.canonicalId, it) }
+        if (!hubOnly) {
+            monitorDownloadConnectivity(scope, heartedAudio::notifyNetworkChanged)
+            startupMark("mpris_begin")
+            bindPlatformMediaControls(player, scope) { track ->
+                library.toggleFavorite(track).also { player.syncFavorite(track.canonicalId, it) }
+            }
+            startupMark("mpris_end")
         }
-        startupMark("mpris_end")
         // The Now Playing / media-session heart follows the library, including hearts that
         // arrive from Home sync while the same track keeps playing.
         scope.launch {
@@ -510,15 +521,23 @@ class AppContainer(
         }
         // Same for tags: a SAF file played before the background pass reached it.
         scope.launch {
-            player.nowPlaying
-                .map { it.track }
-                .distinctUntilChangedBy { it?.canonicalId }
+            player.nowPlaying.map { it.track }.distinctUntilChangedBy { it?.canonicalId }
                 .collectLatest { track ->
-                    if (track == null || !local.needsTags(track)) return@collectLatest
+                    if (track == null) return@collectLatest
                     val tagged = runCatching { local.resolveTags(track) }
                         .getOrElse { if (it is CancellationException) throw it else null }
                         ?: return@collectLatest
                     player.updateCurrentTrackTags(tagged)
+                }
+        }
+        scope.launch {
+            combine(
+                player.nowPlaying.map { it.track?.canonicalId }.distinctUntilChanged(),
+                local.libraryTracks,
+            ) { id, tracks -> tracks.firstOrNull { it.canonicalId == id } }
+                .distinctUntilChanged()
+                .collect { track ->
+                    if (track != null && !local.needsTags(track)) player.updateCurrentTrackTags(track)
                 }
         }
         scope.launch {
@@ -535,18 +554,24 @@ class AppContainer(
                 player.setVolume(loaded.playbackVolume)
                 applyProviderSettings(loaded, clearSessionOnChange = false)
             }
+            lastGoodDiscoverWeekly.fallback(spotify.currentUserId())?.let {
+                _spotifyDiscoverWeekly.compareAndSet(null, it)
+            }
             startupMark("library_load_begin")
             AppFailures.reporting { library.load(spotify.currentUserId()) }
             startupMark("library_load_end")
             AppFailures.reporting { kainosPlaylists.load() }
             AppFailures.reporting { listeningHistory.load() }
-            val favorites = library.favoriteIds.value
-            val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
-            heartedAudio.enqueueMissing(hearted)
+            if (!hubOnly) {
+                val favorites = library.favoriteIds.value
+                val hearted = library.savedTracks.value.filter { it.canonicalId in favorites }
+                heartedAudio.enqueueMissing(hearted)
+            }
             AppFailures.reporting { local.hydrateFromCache() }
             refreshLocalLibrary()
             // Restore listening session paused; never auto-start audio after process death.
-            AppFailures.reporting { player.initializePersistence() }
+            // The GUI owns the session: a hub never restores or records it.
+            if (!hubOnly) AppFailures.reporting { player.initializePersistence() }
             _ready.value = true
             foreground.onReady {
                 foregroundHandoff.onForeground()
@@ -629,6 +654,7 @@ class AppContainer(
     }
 
     suspend fun disconnectSpotify() {
+        lastGoodDiscoverWeekly.clear()
         spotify.logout()
         updateSettings { it.copy(spotifyPlaybackDeviceId = null, spotifyPlaybackDeviceName = null) }
         clearSpotifyLibrary()
@@ -748,16 +774,24 @@ class AppContainer(
     }
 
     /**
-     * Resolve Discover Weekly via desktop librespot (algorithmic ids) first, then a
-     * user-library playlist named Discover Weekly. Never use Web API search copies.
+     * Resolve Discover Weekly via librespot (algorithmic ids) first, then the last list that
+     * loaded (so a failed refresh keeps the shelf), then a user-library playlist named Discover
+     * Weekly. Never use Web API search copies.
      */
     private suspend fun resolveDiscoverWeekly(playlists: List<Playlist>): Playlist? {
+        val revision = lastGoodDiscoverWeekly.revision
+        val accountId = spotify.currentUserId()
         val configuredId = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
         val candidateId = resolveDiscoverWeeklyCandidate(playlists, configuredId)
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(candidateId) }
             .logged("Spotify", "Discover Weekly lookup failed").getOrNull()
-        if (fromLibrespot != null) return fromLibrespot
-        return findDiscoverWeekly(playlists)
+        if (revision != lastGoodDiscoverWeekly.revision || accountId != spotify.currentUserId()) return null
+        if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
+            val remembered = lastGoodDiscoverWeekly.remember(fromLibrespot, accountId, revision)
+            return remembered.takeIf { revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId() }
+        }
+        val fallback = lastGoodDiscoverWeekly.fallback(accountId) ?: fromLibrespot ?: findDiscoverWeekly(playlists)
+        return fallback.takeIf { revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId() }
     }
 
     /** Load full track list for a Spotify playlist and return playable tracks. */
@@ -770,12 +804,17 @@ class AppContainer(
         }
         val webTracks = runCatching { spotify.getPlaylistTracks(id) }.logged("Spotify", "playlist load failed")
         webTracks.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val revision = lastGoodDiscoverWeekly.revision
+        val accountId = spotify.currentUserId()
         val fromLibrespot = runCatching { fetchLibrespotDiscoverWeekly(id) }
             .logged("Spotify", "playlist load through librespot failed").getOrNull()
         if (fromLibrespot != null && fromLibrespot.tracks.isNotEmpty()) {
             val configured = parseSpotifyPlaylistId(_settings.value.spotifyDiscoverWeeklyPlaylistId.orEmpty())
-            if (cached?.source?.providerEntityId == id || configured == id) {
-                _spotifyDiscoverWeekly.value = fromLibrespot
+            if ((cached?.source?.providerEntityId == id || configured == id) &&
+                revision == lastGoodDiscoverWeekly.revision && accountId == spotify.currentUserId()
+            ) {
+                val remembered = lastGoodDiscoverWeekly.remember(fromLibrespot, accountId, revision)
+                if (revision == lastGoodDiscoverWeekly.revision) _spotifyDiscoverWeekly.value = remembered
             }
             return fromLibrespot.tracks
         }
@@ -1150,9 +1189,13 @@ private fun playbackDispatcher(): CoroutineDispatcher =
 
 lateinit var appContainer: AppContainer
 
-fun ensureAppContainer(httpClient: io.ktor.client.HttpClient? = null, startupMark: (String) -> Unit = {}): AppContainer {
+fun ensureAppContainer(
+    httpClient: io.ktor.client.HttpClient? = null,
+    hubOnly: Boolean = false,
+    startupMark: (String) -> Unit = {},
+): AppContainer {
     if (!::appContainer.isInitialized) {
-        appContainer = AppContainer(httpClient, startupMark)
+        appContainer = AppContainer(httpClient, startupMark, hubOnly)
     }
     return appContainer
 }

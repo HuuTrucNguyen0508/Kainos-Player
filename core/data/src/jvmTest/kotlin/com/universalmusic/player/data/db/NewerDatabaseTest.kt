@@ -6,7 +6,10 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Properties
 import kotlin.test.Test
+import com.universalmusic.player.domain.failure.AppFailures
+import com.universalmusic.player.domain.failure.shown
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class NewerDatabaseTest {
@@ -25,6 +28,14 @@ class NewerDatabaseTest {
         val failure = runCatching { DbUserLibraryStore(storage).read() }.exceptionOrNull()
 
         assertTrue(failure?.message.orEmpty().contains("newer"), "got $failure")
+        AppFailures.dismiss()
+        AppFailures.report(failure!!)
+        assertEquals(
+            "This database was written by a newer Kainos build; run that build or restore a backup.",
+            AppFailures.open.value.shown?.message,
+            "Restarting cannot fix it, so the notice must not say so",
+        )
+        AppFailures.dismiss()
         assertContentEquals(before, MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)))
     }
 }

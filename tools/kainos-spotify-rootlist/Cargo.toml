@@ -10,4 +10,4 @@ librespot-protocol = { version = "=0.8.0" }
 protobuf = "3.7.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

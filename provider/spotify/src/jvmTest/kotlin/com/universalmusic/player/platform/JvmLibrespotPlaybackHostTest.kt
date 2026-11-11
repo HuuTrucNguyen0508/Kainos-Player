@@ -20,9 +20,13 @@ class JvmLibrespotPlaybackHostTest {
     fun firstPlayAfterReceiverCrashRestartsWithCachedCredentials() = runBlocking {
         fixture(cached = true) { host, runtime, _ ->
             assertNotNull(host.ensureDeviceReady())
+            val first = host.receiverGeneration
+            assertNotNull(host.ensureDeviceReady())
+            assertEquals(first, host.receiverGeneration, "a healthy receiver keeps its generation")
             runtime.child.isAlive = false
             assertNotNull(host.ensureDeviceReady())
             assertEquals(2, runtime.starts.size)
+            assertTrue(host.receiverGeneration > first, "a restarted receiver must be found again")
         }
     }
 
@@ -108,6 +112,9 @@ class JvmLibrespotPlaybackHostTest {
             val pregainIndex = args.indexOf("--normalisation-pregain")
             assertTrue(pregainIndex >= 0)
             assertEquals("3", args.getOrNull(pregainIndex + 1))
+            assertFalse("--disable-audio-cache" in args)
+            assertEquals("2G", args.getOrNull(args.indexOf("--cache-size-limit") + 1))
+            assertEquals("off", args.getOrNull(args.indexOf("--autoplay") + 1))
             host.shutdown()
             assertFalse(runtime.child.isAlive)
             assertEquals(SpotifyWebPlaybackState.Stopped, host.state.value)

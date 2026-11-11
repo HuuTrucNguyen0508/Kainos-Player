@@ -54,6 +54,9 @@ internal class JvmLibrespotPlaybackHost(
     override val state: StateFlow<SpotifyWebPlaybackState> = _state.asStateFlow()
     override val requiresStreamingScope: Boolean = false
     @Volatile private var process: LibrespotProcess? = null
+    /** Each librespot process registers afresh with Connect, so cached Connect targets end with it. */
+    @Volatile override var receiverGeneration: Long = 0L
+        private set
     @Volatile private var eventBridge: LibrespotEventBridge? = null
     private val playerEvents = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
     override val receiverEvents: SpotifyReceiverEvents = object : SpotifyReceiverEvents {
@@ -139,8 +142,11 @@ internal class JvmLibrespotPlaybackHost(
                 listOf(
                     "--name", KAINOS_SPOTIFY_DEVICE_NAME,
                     "--system-cache", paths.systemCache.toString(),
+                    // Encrypted audio files, so a replayed track starts from disk instead of the network.
                     "--cache", paths.audioCache.toString(),
-                    "--disable-audio-cache",
+                    "--cache-size-limit", AUDIO_CACHE_SIZE_LIMIT,
+                    // Kainos owns the queue; librespot must not follow a track with its own radio.
+                    "--autoplay", "off",
                     "--disable-discovery",
                     "--device-type", "computer",
                     "--bitrate", "320",
@@ -167,6 +173,7 @@ internal class JvmLibrespotPlaybackHost(
                 return null
             }
         process = started
+        receiverGeneration++
         wait(startupDelayMillis)
         if (!started.isAlive) {
             bridge.close()
@@ -232,6 +239,8 @@ internal class JvmLibrespotPlaybackHost(
     private companion object {
         /** Spotify client "Loud" preset. */
         const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = "3"
+        /** librespot evicts the least recently used files above this. */
+        const val AUDIO_CACHE_SIZE_LIMIT = "2G"
         val DIRECTORY_PERMISSIONS = setOf(
             PosixFilePermission.OWNER_READ,
             PosixFilePermission.OWNER_WRITE,

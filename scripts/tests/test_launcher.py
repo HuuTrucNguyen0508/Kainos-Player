@@ -102,6 +102,18 @@ class LauncherTest(unittest.TestCase):
         self.assertTrue((root / 'app-launched').exists())
         self.assertTrue((root / 'logs/desktop-run-latest.log').is_file())
 
+    def test_hub_runs_never_move_the_gui_latest_log(self):
+        root, result = self.run_launcher()
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        gui_log = (root / 'logs/desktop-run-latest.log').resolve()
+        time.sleep(1.1)  # log names carry the second
+        env = {**os.environ, 'JAVA_HOME': str(root / 'fake-jdk'), 'ROOT_MARKER': str(root)}
+        subprocess.run(['bash', str(root / 'scripts/kainos-player'), '--hub-only'], capture_output=True, env=env, timeout=5, check=True)
+        self.assertEqual(gui_log, (root / 'logs/desktop-run-latest.log').resolve())
+        hub_log = (root / 'logs/hub-run-latest.log').resolve()
+        self.assertTrue(hub_log.name.startswith('hub-run-'), hub_log.name)
+        self.assertIn('--hub-only', (root / 'java-args').read_text().splitlines())
+
     def test_legacy_package_fallback_and_rebuild(self):
         for rebuild in ("0", "1"):
             with self.subTest(rebuild=rebuild):

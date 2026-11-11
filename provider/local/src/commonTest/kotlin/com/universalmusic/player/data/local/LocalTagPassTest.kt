@@ -6,6 +6,7 @@ import com.universalmusic.player.data.sync.toLocalFileHeartExport
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.inAlbumOrder
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.launch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -109,7 +110,7 @@ class LocalTagPassTest {
         assertEquals("RuLe", tagged.title)
         assertEquals(rule.canonicalId, tagged.canonicalId)
         assertFalse(provider.needsTags(tagged))
-        assertNull(provider.resolveTags(tagged), "already read")
+        assertEquals(tagged, provider.resolveTags(tagged), "cached tags must reach Now Playing without reopening")
 
         assertNull(provider.resolveTags(locked))
         assertTrue(provider.needsTags(locked), "a failed open is not remembered as read")
@@ -162,6 +163,72 @@ class LocalTagPassTest {
         val tracks = provider.refresh()
         assertEquals(1, tracks.map { it.album?.canonicalId }.distinct().size)
         assertEquals(listOf("a", "b", "c"), tracks.inAlbumOrder().map { it.title.removePrefix("Song ") })
+    }
+
+    @Test fun albumPinsFollowTagsAcrossPersistenceAndARescan() = runTest {
+        val library = com.universalmusic.player.data.library.LibraryRepository()
+        val cache = MemoryScanCache()
+        val provider = LocalMusicProvider(
+            LocalTrackSource { listOf(safRow("rule", "Ado - RuLe.flac")) },
+            cache, { "k" }, tagReader = FakeTagReader("RuLe" to LocalTags(album = "Kyogen", albumArtist = "Ado")),
+            onAlbumsRekeyed = library::remapLocalAlbumPins,
+        )
+        val before = provider.refresh().single().album!!
+        library.pinHome(com.universalmusic.player.data.library.HomePinKind.ALBUM, before.canonicalId, before.title)
+        provider.enrichTags()
+        provider.refresh()
+        val restoredRows = cache.read("k")!!.map { it.toStored().toLocalTrackOrNull()!! }
+        val restarted = LocalMusicProvider(LocalTrackSource { emptyList() }, onAlbumsRekeyed = library::remapLocalAlbumPins)
+        library.unpinHome(library.homePins.value.single().id)
+        library.pinHome(com.universalmusic.player.data.library.HomePinKind.ALBUM, before.canonicalId, before.title)
+        restarted.applyCachedTracks(restoredRows)
+        val pin = library.homePins.value.single()
+        assertTrue(provider.libraryTracks.value.any { it.album?.canonicalId == pin.targetId }, "pin must still resolve after tags")
+    }
+
+    @Test fun aGuessedAlbumPinSplitsIntoTaggedAlbumsAndKeepsItsPosition() = runTest {
+        val library = com.universalmusic.player.data.library.LibraryRepository()
+        val provider = LocalMusicProvider(
+            LocalTrackSource { listOf(safRow("a", "Ado - RuLe.flac"), safRow("b", "Ado - Solitude.flac")) },
+            tagReader = FakeTagReader("RuLe" to LocalTags(album = "One"), "Solitude" to LocalTags(album = "Two")),
+            onAlbumsRekeyed = library::remapLocalAlbumPins,
+        )
+        val old = provider.refresh().first().album!!
+        val pin = library.pinHome(com.universalmusic.player.data.library.HomePinKind.ALBUM, old.canonicalId, old.title)!!
+        provider.resolveTags(provider.libraryTracks.value.first())
+        assertEquals(provider.libraryTracks.value.map { it.album!!.canonicalId }.toSet(), library.homePins.value.map { it.targetId }.toSet())
+        provider.enrichTags()
+        assertEquals(setOf("One", "Two"), library.homePins.value.map { it.title }.toSet())
+        assertEquals(pin.id, library.homePins.value.first().id)
+        assertEquals(provider.libraryTracks.value.map { it.album!!.canonicalId }.toSet(), library.homePins.value.map { it.targetId }.toSet())
+        provider.refresh()
+        assertEquals(2, library.homePins.value.size)
+    }
+
+    @Test fun tagsReadByTheBackgroundPassAreReturnedToFirstPlay() = runTest {
+        val provider = LocalMusicProvider(
+            LocalTrackSource { listOf(safRow("rule", "Ado - RuLe.flac")) },
+            tagReader = FakeTagReader("RuLe" to LocalTags(title = "Tagged title")),
+        )
+        val original = provider.refresh().single()
+        provider.enrichTags()
+        assertEquals("Tagged title", provider.resolveTags(original)?.title)
+    }
+
+    @Test fun aCancelledReaderCannotPublishItsLastBatch() = runTest {
+        val provider = LocalMusicProvider(
+            LocalTrackSource { listOf(safRow("rule", "Ado - RuLe.flac")) },
+            tagReader = object : LocalTagReader {
+                override suspend fun read(location: String): LocalTags {
+                    kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!.cancel()
+                    return LocalTags(title = "Cancelled tags")
+                }
+            },
+        )
+        val original = provider.refresh().single()
+        val job = launch { provider.enrichTags() }
+        job.join()
+        assertEquals(original, provider.libraryTracks.value.single())
     }
 
     private data class Identities(val canonicalId: String, val portableId: String?, val exported: String?, val basename: String?)

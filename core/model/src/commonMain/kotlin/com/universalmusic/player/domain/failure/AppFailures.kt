@@ -15,12 +15,21 @@ enum class StorageArea { SETTINGS, TOKENS, LIBRARY, PLAYLISTS, LISTENING, HISTOR
 /** Thrown at the storage boundary, so the app scope can tell saved-data failures from every other bug. */
 class StorageFailure(val area: StorageArea, cause: Throwable) : Exception(cause.message, cause)
 
+/** The database's schema is newer than this build reads. A restart cannot fix it; only a newer build or a backup can. */
+class DatabaseFromNewerBuild(val found: Long, val supported: Long) :
+    IllegalStateException("kainos.db is from a newer build (version $found, this build reads up to $supported)")
+
 sealed interface AppFailure {
     val message: String
 
     data class Storage(val area: StorageArea) : AppFailure {
         override val message get() =
             "Some saved data could not be loaded or saved. Restart the app to retry. Your database has been kept."
+    }
+
+    data object NewerDatabase : AppFailure {
+        override val message get() =
+            "This database was written by a newer Kainos build; run that build or restore a backup."
     }
 
     /** Reports an event, not a condition: no later success can disprove it, so it leaves on its own. */
@@ -30,7 +39,7 @@ sealed interface AppFailure {
 }
 
 val Set<AppFailure>.shown: AppFailure?
-    get() = firstOrNull { it is AppFailure.Storage } ?: firstOrNull()
+    get() = firstOrNull { it is AppFailure.NewerDatabase } ?: firstOrNull { it is AppFailure.Storage } ?: firstOrNull()
 
 object AppFailures {
     private val mutableOpen = MutableStateFlow<Set<AppFailure>>(emptySet())
@@ -41,7 +50,11 @@ object AppFailures {
     fun report(cause: Throwable) {
         if (cause is CancellationException) return
         PlaybackTrace.failure("Failure", "reported to the user", cause)
-        val failure = if (cause is StorageFailure) AppFailure.Storage(cause.area) else AppFailure.Unexpected
+        val failure = when {
+            generateSequence(cause) { it.cause }.any { it is DatabaseFromNewerBuild } -> AppFailure.NewerDatabase
+            cause is StorageFailure -> AppFailure.Storage(cause.area)
+            else -> AppFailure.Unexpected
+        }
         mutableOpen.update { it + failure }
     }
 
