@@ -11,6 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export JAVA_HOME="${JAVA_HOME:-$HOME/.jdks/temurin-17}"
 export PATH="$JAVA_HOME/bin:$PATH"
+# Hyprland does not reparent windows; without this AWT keeps its first size and
+# the rest of a tiled window stays black.
+export _JAVA_AWT_WM_NONREPARENTING="${_JAVA_AWT_WM_NONREPARENTING:-1}"
 
 if [[ -z "${KAINOS_LIBRESPOT:-}" && -x "$ROOT/tools/librespot-runtime/bin/librespot" ]]; then
   export KAINOS_LIBRESPOT="$ROOT/tools/librespot-runtime/bin/librespot"
