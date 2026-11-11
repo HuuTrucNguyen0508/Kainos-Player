@@ -69,6 +69,66 @@ class SpotifyStartPathTest {
     private fun HttpRequestData.line() = "${method.value} ${url.encodedPath}"
 
     @Test
+    fun aReceiverRebuiltWhileFastPlayIsInFlightIsFoundAgain() = runTest {
+        val host = NamedReceiver()
+        val requests = mutableListOf<String>()
+        var plays = 0
+        val provider = provider(host) { request ->
+            requests += request.line()
+            if (request.url.encodedPath == "/v1/me/player/play" && ++plays == 2) host.receiverGeneration++
+            if (request.url.encodedPath == "/v1/me/player/devices") json(devices) else respond("", HttpStatusCode.NoContent)
+        }
+        provider.startConnectPlayback("first")
+        requests.clear()
+        provider.startConnectPlayback("second")
+        assertEquals(listOf("PUT /v1/me/player/play", "GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+    }
+
+    @Test
+    fun logoutDropsTheKnownReceiverAndCooldown() = runTest {
+        val requests = mutableListOf<String>()
+        var limited = false
+        val provider = provider(NamedReceiver()) { request ->
+            requests += request.line()
+            when {
+                limited -> rateLimited("120")
+                request.url.encodedPath == "/v1/me/player/devices" -> json(devices)
+                else -> respond("", HttpStatusCode.NoContent)
+            }
+        }
+        provider.startConnectPlayback("first")
+        limited = true
+        assertFailsWith<ProviderRateLimitedException> { provider.startConnectPlayback("second") }
+        provider.logout()
+        limited = false
+        requests.clear()
+        provider.observeConnectPlayback()
+        assertEquals(listOf("GET /v1/me/player"), requests, "old account cooldown must be cleared")
+        requests.clear()
+        provider.startConnectPlayback("third")
+        assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
+    }
+
+    @Test
+    fun anOldAccountsLateRateLimitDoesNotThrottleTheNewSession() = runTest {
+        lateinit var provider: SpotifyProvider
+        var late = true
+        val requests = mutableListOf<String>()
+        provider = provider(NamedReceiver()) { request ->
+            requests += request.line()
+            if (late) {
+                late = false
+                provider.logout()
+                rateLimited("120")
+            } else respond("", HttpStatusCode.NoContent)
+        }
+        assertFailsWith<Exception> { provider.startConnectPlayback("song") }
+        requests.clear()
+        provider.observeConnectPlayback()
+        assertEquals(listOf("GET /v1/me/player"), requests)
+    }
+
+    @Test
     fun laterTracksOnTheSameReceiverCostOnePlayCall() = runTest {
         val requests = mutableListOf<String>()
         val provider = provider(NamedReceiver()) { request ->

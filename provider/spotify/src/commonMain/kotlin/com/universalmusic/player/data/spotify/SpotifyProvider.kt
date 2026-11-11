@@ -264,6 +264,8 @@ class SpotifyProvider(
             tokens.clear(ProviderId.SPOTIFY)
         }
         authMutex.withLock { pendingLogin = null }
+        observeCooldownUntilMs = 0
+        knownReceiverDeviceId = null
         premium = false
         userId = null
         activePlaybackDeviceId = null
@@ -542,6 +544,10 @@ class SpotifyProvider(
             return false
         }
         val response = sendPlay(token, deviceId, spotifyTrackId, positionMs)
+        if (generation != webPlayback.receiverGeneration) {
+            knownReceiverDeviceId = null
+            return false
+        }
         if (response.status == HttpStatusCode.TooManyRequests) response.requireSuccess("Spotify Connect playback")
         if (!response.status.isSuccess()) {
             // 404 once the device is gone; a 5xx while Spotify lost it. The full path finds it again.
@@ -570,8 +576,10 @@ class SpotifyProvider(
      * longer one comes back as is, so the caller fails with [ProviderRateLimitedException].
      */
     private suspend fun sendStartRequest(token: String, send: suspend (token: String) -> HttpResponse): HttpResponse {
+        val generation = authGeneration
         var current = token
         var response = send(current)
+        check(generation == authGeneration) { "Spotify session changed during start" }
         if (response.status == HttpStatusCode.Unauthorized) {
             PlaybackTrace.log("Spotify", "Web API answered 401 while starting; refreshing the token once")
             current = refreshRejectedToken(current)
@@ -582,8 +590,10 @@ class SpotifyProvider(
             if (waitMs != null && waitMs <= START_RATE_LIMIT_MAX_WAIT_MS) {
                 PlaybackTrace.log("Spotify", "Web API answered 429 while starting; retrying once after $waitMs ms")
                 delay(waitMs)
+                check(generation == authGeneration) { "Spotify session changed during start" }
                 response = send(current)
             }
+            check(generation == authGeneration) { "Spotify session changed during start" }
             if (response.status == HttpStatusCode.TooManyRequests) {
                 // Observers and volume would hit the same limit; hold them until it lifts.
                 val cooldownMs = response.retryAfterMsOrNull() ?: OBSERVE_RATE_LIMIT_DEFAULT_MS
