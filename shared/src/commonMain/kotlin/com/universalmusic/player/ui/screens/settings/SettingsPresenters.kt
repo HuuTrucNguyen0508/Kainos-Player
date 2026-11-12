@@ -418,9 +418,19 @@ internal class SettingsSyncPresenter(
         val offered = copies.map { controller.unskipCopy(it.kind, it.subject, it.direction).getOrThrow() }
         offered.singleOrNull() ?: "Un-skipped ${copies.size} copies"
     }
-    fun resolve(path: String, keepLocal: Boolean) = run {
-        (if (keepLocal) controller.resolveConflictKeepLocal(path)
-        else controller.resolveConflictKeepRemote(path)).getOrThrow()
+    /** Keeps this device's copy ([keepLocal]) or the other device's for each conflicting path, one after another. */
+    fun resolve(paths: Set<String>, keepLocal: Boolean) = run {
+        val failures = paths.mapNotNull { path ->
+            (if (keepLocal) controller.resolveConflictKeepLocal(path) else controller.resolveConflictKeepRemote(path))
+                .exceptionOrNull()?.let { "$path: ${it.message ?: it}" }
+        }
+        val side = if (keepLocal) "local" else "remote"
+        when {
+            failures.isEmpty() && paths.size == 1 -> "Kept $side ${paths.single()}"
+            failures.isEmpty() -> "Kept $side for ${paths.size} files"
+            failures.size == paths.size && paths.size == 1 -> error(failures.single())
+            else -> "Kept $side for ${paths.size - failures.size} of ${paths.size}; failed ${failures.first()}"
+        }
     }
     fun removeVaultFile(path: String) = run { controller.tombstoneVaultPath(path.trim()).getOrThrow() }
 

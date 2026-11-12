@@ -32,8 +32,8 @@ class SelectableCopiesTest {
         onNodeWithText("Download a.flac").performClick()
         onNodeWithText("Download c.flac").performClick()
         onNodeWithText("2 of 3 selected").assertExists()
-        onNodeWithText("Skip 2").assertExists()
-        onNodeWithText("Transfer 2").performClick()
+        onNodeWithText("Skip (2)").assertExists()
+        onNodeWithText("Transfer (2)").performClick()
 
         assertEquals(listOf(setOf("a.flac", "c.flac")), transferred)
         onNodeWithText("Transfer all").assertExists()
@@ -52,7 +52,7 @@ class SelectableCopiesTest {
         onNodeWithText("Skip all").performClick()
         onNodeWithText("Select all").performClick()
         onNodeWithText("3 of 3 selected").assertExists()
-        onNodeWithText("Skip 3").performClick()
+        onNodeWithText("Skip (3)").performClick()
 
         val all = setOf("a.flac", "b.flac", "c.flac")
         assertEquals(listOf(all, all), acted)

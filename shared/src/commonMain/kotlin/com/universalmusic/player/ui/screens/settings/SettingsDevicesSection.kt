@@ -284,23 +284,18 @@ internal fun SettingsDevicesSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
-        syncStatus.pendingConflicts.take(5).forEach { conflict ->
-            Text(conflict.relPath, style = MaterialTheme.typography.bodySmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    enabled = !syncBusy,
-                    onClick = {
-                        syncPresenter.resolve(conflict.relPath, true)
-                    },
-                ) { Text("Keep local") }
-                OutlinedButton(
-                    enabled = !syncBusy,
-                    onClick = {
-                        syncPresenter.resolve(conflict.relPath, false)
-                    },
-                ) { Text("Keep remote") }
-            }
-        }
+        SelectableCopies(
+            rows = syncStatus.pendingConflicts.map { conflict ->
+                CopyRow(conflict.relPath, "${conflict.relPath} (here ${formatCopySize(conflict.local.sizeBytes)}, " +
+                    "other device ${formatCopySize(conflict.remote.sizeBytes)})", 0L)
+            },
+            enabled = !syncBusy,
+            shownAtFirst = 5,
+            actions = listOf(
+                CopyAction("Keep local", allLabel = "Keep all local") { paths: Set<String> -> syncPresenter.resolve(paths, keepLocal = true) },
+                CopyAction("Keep remote", allLabel = "Keep all remote") { paths: Set<String> -> syncPresenter.resolve(paths, keepLocal = false) },
+            ),
+        )
     }
     syncStatus.lastDetail?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -347,11 +342,16 @@ private fun SkippedCopies(
 internal class CopyRow<K>(val key: K, val label: String, val sizeBytes: Long)
 
 /** A button under a [SelectableCopies] list; it acts on the ticked rows, or on every row when none is ticked. */
-internal class CopyAction<K>(val verb: String, val primary: Boolean = false, val run: (Set<K>) -> Unit)
+internal class CopyAction<K>(
+    val verb: String,
+    val allLabel: String = "$verb all",
+    val primary: Boolean = false,
+    val run: (Set<K>) -> Unit,
+)
 
 /**
  * A list of copies with a checkbox per row and a Select all box. The [actions] read "Transfer all"
- * until rows are ticked, then "Transfer 3", so one tap handles any number of files.
+ * until rows are ticked, then "Transfer (3)", so one tap handles any number of files.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -395,9 +395,9 @@ internal fun <K> SelectableCopies(
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         actions.forEach { action ->
             val label = when {
-                selected.isNotEmpty() -> "${action.verb} ${selected.size}"
+                selected.isNotEmpty() -> "${action.verb} (${selected.size})"
                 rows.size == 1 -> action.verb
-                else -> "${action.verb} all"
+                else -> action.allLabel
             }
             val onClick = {
                 action.run(selected.ifEmpty { keys })

@@ -49,6 +49,22 @@ class SettingsSyncPresenterTest {
     }
 
     @Test
+    fun resolvingSeveralConflictsKeepsTheSameSideForEachAndNamesAFailure() = runTest {
+        val service = FakeSyncController(hub, peer)
+        val presenter = SettingsSyncPresenter(service, backgroundScope)
+        presenter.resolve(setOf("a.flac", "b.flac"), keepLocal = false)
+        runCurrent()
+        assertEquals(listOf("remote:a.flac", "remote:b.flac"), service.resolved)
+        assertEquals("Kept remote for 2 files", presenter.state.value.notice)
+
+        service.failingPath = "d.flac"
+        presenter.resolve(setOf("c.flac", "d.flac"), keepLocal = true)
+        runCurrent()
+        assertEquals("local:c.flac", service.resolved.last())
+        assertEquals("Kept local for 1 of 2; failed d.flac: Local file missing", presenter.state.value.notice)
+    }
+
+    @Test
     fun confirmingToFailedOnCancelEndsTheSession() = runTest {
         val service = FakeSyncController(hub, peer)
         val presenter = SettingsSyncPresenter(service, backgroundScope)
@@ -192,7 +208,12 @@ class SettingsSyncPresenterTest {
         override suspend fun startHubIfNeeded() = Unit
         override suspend fun stopHub() = Unit
         override suspend fun tombstoneVaultPath(relPath: String) = Result.success("Removed")
-        override suspend fun resolveConflictKeepLocal(relPath: String) = Result.success("Kept local")
-        override suspend fun resolveConflictKeepRemote(relPath: String) = Result.success("Kept remote")
+        val resolved = mutableListOf<String>()
+        var failingPath: String? = null
+        override suspend fun resolveConflictKeepLocal(relPath: String) = keep("local", relPath)
+        override suspend fun resolveConflictKeepRemote(relPath: String) = keep("remote", relPath)
+        private fun keep(side: String, relPath: String): Result<String> =
+            if (relPath == failingPath) Result.failure(IllegalStateException("Local file missing"))
+            else Result.success("Kept $side").also { resolved += "$side:$relPath" }
     }
 }
