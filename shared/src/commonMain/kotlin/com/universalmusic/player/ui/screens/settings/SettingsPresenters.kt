@@ -33,7 +33,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeoutOrNull
 import com.universalmusic.player.data.sync.HomeLanSyncStatus
-import com.universalmusic.player.data.sync.VaultCopyDirection
+import com.universalmusic.player.data.sync.PendingCopyKey
+import com.universalmusic.player.data.sync.SkippedCopy
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.provider.AuthSession
@@ -409,19 +410,13 @@ internal class SettingsSyncPresenter(
         "Identity reset. Pair your devices again."
     }
     fun syncNow() = run { controller.syncNow().getOrThrow() }
-    fun transfer(path: String, direction: VaultCopyDirection, confirm: Boolean) = run {
-        (if (confirm) controller.confirmVaultTransfer(path, direction)
-        else controller.dismissVaultTransfer(path, direction)).getOrThrow()
+    /** Copies ([confirm]) or skips the pending copies [only] names, or every pending one when null. */
+    fun transferCopies(only: Set<PendingCopyKey>?, confirm: Boolean) = run {
+        (if (confirm) controller.confirmVaultTransfers(only) else controller.dismissVaultTransfers(only)).getOrThrow()
     }
-    fun transferCachedAudio(ownerCanonicalId: String, direction: VaultCopyDirection, confirm: Boolean) = run {
-        (if (confirm) controller.confirmCachedAudioTransfer(ownerCanonicalId, direction)
-        else controller.dismissCachedAudioTransfer(ownerCanonicalId, direction)).getOrThrow()
-    }
-    fun transferAll(confirm: Boolean) = run {
-        (if (confirm) controller.confirmAllVaultTransfers() else controller.dismissAllVaultTransfers()).getOrThrow()
-    }
-    fun unskip(copy: com.universalmusic.player.data.sync.SkippedCopy) = run {
-        controller.unskipCopy(copy.kind, copy.subject, copy.direction).getOrThrow()
+    fun unskip(copies: List<SkippedCopy>) = run {
+        val offered = copies.map { controller.unskipCopy(it.kind, it.subject, it.direction).getOrThrow() }
+        offered.singleOrNull() ?: "Un-skipped ${copies.size} copies"
     }
     fun resolve(path: String, keepLocal: Boolean) = run {
         (if (keepLocal) controller.resolveConflictKeepLocal(path)

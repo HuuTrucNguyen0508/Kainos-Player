@@ -632,95 +632,6 @@ class HomeLanSyncService(
             },
         )
 
-    override suspend fun confirmVaultTransfer(
-        relPath: String,
-        direction: VaultCopyDirection,
-    ): Result<String> = mutex.withLock {
-        val target = syncTarget()
-            ?: return Result.failure(IllegalStateException("Not paired"))
-        val path = relPath.normalizeVaultRelPath()
-        val transfer = _status.value.pendingTransfers.firstOrNull {
-            it.relPath == path && it.direction == direction
-        } ?: return Result.failure(IllegalStateException("No pending transfer for $path"))
-        runCatching {
-            require(vaultStore.isConfigured()) { "Vault not configured" }
-            withVaultSyncForeground("Vault transfer") {
-                clientFactory(target).use { client ->
-                    executeVaultTransfer(vaultStore, client, transfer, onProgress = ::reportVaultProgress)
-                }
-            }
-            refreshLocalLibrary()
-            rematchLocalHearts()
-            _status.update {
-                it.copy(
-                    pendingTransfers = it.pendingTransfers.filterNot { t ->
-                        t.relPath == path && t.direction == direction
-                    },
-                    vaultProgress = null,
-                    bytesTransferred = 0,
-                    bytesTotal = 0,
-                    lastDetail = "Transferred $path",
-                )
-            }
-            "Transferred $path"
-        }.onFailure { err ->
-            val message = err.message ?: err.toString()
-            _status.update { it.copy(lastError = message, vaultProgress = null) }
-        }
-    }
-
-    override suspend fun dismissVaultTransfer(
-        relPath: String,
-        direction: VaultCopyDirection,
-    ): Result<String> = mutex.withLock {
-        val path = relPath.normalizeVaultRelPath()
-        val skipped = _status.value.pendingTransfers.filter { it.relPath == path && it.direction == direction }
-        rememberSkips(skipped, emptyList())
-        Result.success("Skipped $path")
-    }
-
-    override suspend fun confirmCachedAudioTransfer(
-        ownerCanonicalId: String,
-        direction: VaultCopyDirection,
-    ): Result<String> = mutex.withLock {
-        val target = syncTarget()
-            ?: return Result.failure(IllegalStateException("Not paired"))
-        val copies = cachedAudio
-            ?: return Result.failure(IllegalStateException("Cached audio sync is unavailable"))
-        val transfer = _status.value.pendingCachedAudio.firstOrNull {
-            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
-        } ?: return Result.failure(IllegalStateException("No pending cached audio for $ownerCanonicalId"))
-        runCatching {
-            val detail = withVaultSyncForeground("Cached audio transfer") {
-                clientFactory(target).use { client -> copyCachedAudio(copies, client, transfer, ::reportVaultProgress) }
-            }
-            _status.update {
-                it.copy(
-                    pendingCachedAudio = it.pendingCachedAudio - transfer,
-                    vaultProgress = null,
-                    bytesTransferred = 0,
-                    bytesTotal = 0,
-                    lastDetail = detail,
-                )
-            }
-            detail
-        }.onFailure { err ->
-            val message = err.message ?: err.toString()
-            _status.update { it.copy(lastError = message, vaultProgress = null) }
-        }
-    }
-
-    override suspend fun dismissCachedAudioTransfer(
-        ownerCanonicalId: String,
-        direction: VaultCopyDirection,
-    ): Result<String> = mutex.withLock {
-        val skipped = _status.value.pendingCachedAudio.filter {
-            it.offer.ownerCanonicalId == ownerCanonicalId && it.direction == direction
-        }
-        rememberSkips(emptyList(), skipped)
-        Result.success("Skipped ${skipped.firstOrNull()?.offer?.title?.ifBlank { null } ?: ownerCanonicalId}")
-    }
-
     private suspend fun copyCachedAudio(
         copies: com.universalmusic.player.data.cache.CachedAudioCopies,
         client: HomeLanSyncClient,
@@ -732,15 +643,16 @@ class HomeLanSyncService(
     }
 
     /**
-     * Copies every pending vault and cached-audio transfer over one client. A failed file stays pending
-     * and the batch moves on, but [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the
-     * hub is likely gone) instead of waiting out a timeout per remaining file.
+     * Copies the pending vault and cached-audio transfers [only] names (every one when null) over one
+     * client. A failed file stays pending and the batch moves on, but
+     * [VAULT_BATCH_MAX_CONSECUTIVE_FAILURES] failures in a row stop it (the hub is likely gone) instead
+     * of waiting out a timeout per remaining file.
      */
-    override suspend fun confirmAllVaultTransfers(): Result<String> = mutex.withLock {
+    override suspend fun confirmVaultTransfers(only: Set<PendingCopyKey>?): Result<String> = mutex.withLock {
         val target = syncTarget()
             ?: return Result.failure(IllegalStateException("Not paired"))
-        val vaultBatch = _status.value.pendingTransfers
-        val audioBatch = _status.value.pendingCachedAudio
+        val vaultBatch = _status.value.pendingTransfers.filter { only == null || it.key in only }
+        val audioBatch = _status.value.pendingCachedAudio.filter { only == null || it.key in only }
         val batchSize = vaultBatch.size + audioBatch.size
         if (batchSize == 0) return Result.success("No pending transfers")
         class Item(val name: String, val copy: suspend (HomeLanSyncClient, suspend (String, Long, Long) -> Unit) -> Unit,
@@ -812,11 +724,12 @@ class HomeLanSyncService(
         }
     }
 
-    override suspend fun dismissAllVaultTransfers(): Result<String> = mutex.withLock {
-        val vault = _status.value.pendingTransfers
-        val audio = _status.value.pendingCachedAudio
+    override suspend fun dismissVaultTransfers(only: Set<PendingCopyKey>?): Result<String> = mutex.withLock {
+        val vault = _status.value.pendingTransfers.filter { only == null || it.key in only }
+        val audio = _status.value.pendingCachedAudio.filter { only == null || it.key in only }
         rememberSkips(vault, audio)
-        Result.success("Skipped ${vault.size + audio.size} transfers")
+        val count = vault.size + audio.size
+        Result.success("Skipped $count ${if (count == 1) "transfer" else "transfers"}")
     }
 
     override suspend fun unskipCopy(

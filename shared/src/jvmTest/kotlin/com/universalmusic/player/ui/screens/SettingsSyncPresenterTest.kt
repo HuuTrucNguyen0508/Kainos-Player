@@ -9,7 +9,7 @@ import com.universalmusic.player.data.sync.HubPairingSession
 import com.universalmusic.player.data.sync.PairedPeer
 import com.universalmusic.player.data.sync.PairingAttempt
 import com.universalmusic.player.data.sync.PairingCode
-import com.universalmusic.player.data.sync.VaultCopyDirection
+import com.universalmusic.player.data.sync.PendingCopyKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
@@ -187,12 +187,8 @@ class SettingsSyncPresenterTest {
         override suspend fun removeDevice(deviceId: String) = Unit
         override suspend fun resetIdentity() = Unit
         override suspend fun syncNow() = Result.success("Synced")
-        override suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection) = Result.success("Transferred")
-        override suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection) = Result.success("Skipped")
-        override suspend fun confirmCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection) = Result.success("Copied")
-        override suspend fun dismissCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection) = Result.success("Skipped")
-        override suspend fun confirmAllVaultTransfers() = Result.success("Transferred all")
-        override suspend fun dismissAllVaultTransfers() = Result.success("Skipped all")
+        override suspend fun confirmVaultTransfers(only: Set<PendingCopyKey>?) = Result.success("Transferred")
+        override suspend fun dismissVaultTransfers(only: Set<PendingCopyKey>?) = Result.success("Skipped")
         override suspend fun startHubIfNeeded() = Unit
         override suspend fun stopHub() = Unit
         override suspend fun tombstoneVaultPath(relPath: String) = Result.success("Removed")

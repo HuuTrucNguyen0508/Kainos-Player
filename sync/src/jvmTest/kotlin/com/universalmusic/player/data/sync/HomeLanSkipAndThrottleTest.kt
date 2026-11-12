@@ -90,7 +90,7 @@ class HomeLanSkipAndThrottleTest {
         first.syncNow().getOrThrow()
         assertEquals(listOf("a.flac", "b.flac"), first.pending())
 
-        first.dismissVaultTransfer("a.flac", VaultCopyDirection.TO_LOCAL).getOrThrow()
+        first.dismissVaultTransfers(setOf(PendingCopyKey.Vault("a.flac", VaultCopyDirection.TO_LOCAL))).getOrThrow()
         assertEquals(listOf("b.flac"), first.pending())
         assertEquals(listOf("a.flac"), first.skipped())
 
@@ -113,7 +113,7 @@ class HomeLanSkipAndThrottleTest {
     fun skipAllHoldsUntilTheFileChanges() = runTest {
         val first = service(this)
         first.syncNow().getOrThrow()
-        first.dismissAllVaultTransfers().getOrThrow()
+        first.dismissVaultTransfers().getOrThrow()
 
         val restarted = service(this)
         restarted.syncNow().getOrThrow()
@@ -132,7 +132,7 @@ class HomeLanSkipAndThrottleTest {
     fun anUnskipWithoutAPlannedCopyWaitsForTheNextSync() = runTest {
         val first = service(this)
         first.syncNow().getOrThrow()
-        first.dismissVaultTransfer("b.flac", VaultCopyDirection.TO_LOCAL).getOrThrow()
+        first.dismissVaultTransfers(setOf(PendingCopyKey.Vault("b.flac", VaultCopyDirection.TO_LOCAL))).getOrThrow()
 
         val restarted = service(this)
         val result = restarted.unskipCopy(SkippedCopyKind.VAULT, "b.flac", VaultCopyDirection.TO_LOCAL).getOrThrow()

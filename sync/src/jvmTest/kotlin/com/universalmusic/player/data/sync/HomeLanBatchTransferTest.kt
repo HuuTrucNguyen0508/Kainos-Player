@@ -70,7 +70,7 @@ class HomeLanBatchTransferTest {
             FakeVaultClient(remoteBytes, remoteIndex(names))
         }
 
-        val result = service.confirmAllVaultTransfers()
+        val result = service.confirmVaultTransfers()
 
         assertEquals("Transferred 3 of 3", result.getOrThrow())
         assertTrue(service.status.value.pendingTransfers.isEmpty())
@@ -86,7 +86,7 @@ class HomeLanBatchTransferTest {
             FakeVaultClient(remoteBytes, remoteIndex(names), emptyChunks = true)
         }
 
-        val result = service.confirmAllVaultTransfers()
+        val result = service.confirmVaultTransfers()
 
         assertEquals("Transferred 0 of 5, 3 failed, 2 not tried", result.getOrThrow())
         assertEquals(names.sorted(), service.status.value.pendingTransfers.map { it.relPath }.sorted())
@@ -100,8 +100,37 @@ class HomeLanBatchTransferTest {
             FakeVaultClient(remoteBytes, remoteIndex(names))
         }
 
-        assertEquals("Skipped 2 transfers", service.dismissAllVaultTransfers().getOrThrow())
+        assertEquals("Skipped 2 transfers", service.dismissVaultTransfers().getOrThrow())
         assertTrue(service.status.value.pendingTransfers.isEmpty())
         names.forEach { assertTrue(Files.notExists(root.resolve(it))) }
+    }
+
+    @Test
+    fun transferSelectedCopiesOnlyThoseAndLeavesTheRestPending() = runTest {
+        val names = listOf("a.flac", "b.flac", "c.flac")
+        val (service, root, _) = serviceWithPending(this, names) {
+            FakeVaultClient(remoteBytes, remoteIndex(names))
+        }
+        val chosen = service.status.value.pendingTransfers.filter { it.relPath != "b.flac" }.map { it.key }.toSet()
+
+        assertEquals("Transferred 2 of 2", service.confirmVaultTransfers(chosen).getOrThrow())
+
+        assertEquals(listOf("b.flac"), service.status.value.pendingTransfers.map { it.relPath })
+        assertContentEquals(remoteBytes, Files.readAllBytes(root.resolve("a.flac")))
+        assertContentEquals(remoteBytes, Files.readAllBytes(root.resolve("c.flac")))
+        assertTrue(Files.notExists(root.resolve("b.flac")))
+    }
+
+    @Test
+    fun skipSelectedSkipsOnlyThose() = runTest {
+        val names = listOf("a.flac", "b.flac", "c.flac")
+        val (service, _, _) = serviceWithPending(this, names) {
+            FakeVaultClient(remoteBytes, remoteIndex(names))
+        }
+        val chosen = service.status.value.pendingTransfers.filter { it.relPath == "c.flac" }.map { it.key }.toSet()
+
+        assertEquals("Skipped 1 transfer", service.dismissVaultTransfers(chosen).getOrThrow())
+
+        assertEquals(listOf("a.flac", "b.flac"), service.status.value.pendingTransfers.map { it.relPath }.sorted())
     }
 }

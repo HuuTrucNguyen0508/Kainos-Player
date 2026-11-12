@@ -4,10 +4,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +29,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.state.ToggleableState
+import com.universalmusic.player.data.sync.PendingCopyKey
+import com.universalmusic.player.data.sync.SkippedCopy
+import com.universalmusic.player.data.sync.key
 import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.ui.PlatformBackHandler
 
@@ -243,17 +252,9 @@ internal fun SettingsDevicesSection(
             )
         }
     }
-    // Vault files and offline copies share one list and one Transfer all / Skip all.
-    val pendingRows = syncStatus.pendingTransfers.map { transfer ->
-        PendingCopyRow(transfer.label, transfer.sizeBytes,
-            confirm = { syncPresenter.transfer(transfer.relPath, transfer.direction, true) },
-            skip = { syncPresenter.transfer(transfer.relPath, transfer.direction, false) })
-    } + syncStatus.pendingCachedAudio.map { transfer ->
-        val owner = transfer.offer.ownerCanonicalId
-        PendingCopyRow(transfer.label, transfer.offer.sizeBytes,
-            confirm = { syncPresenter.transferCachedAudio(owner, transfer.direction, true) },
-            skip = { syncPresenter.transferCachedAudio(owner, transfer.direction, false) })
-    }
+    // Vault files and offline copies share one list; Transfer and Skip act on the ticked rows, or on all.
+    val pendingRows = syncStatus.pendingTransfers.map { CopyRow(it.key, it.label, it.sizeBytes) } +
+        syncStatus.pendingCachedAudio.map { CopyRow(it.key, it.label, it.offer.sizeBytes) }
     if (pendingRows.isNotEmpty()) {
         val pendingCount = pendingRows.size
         val pendingMiB = pendingRows.sumOf { it.sizeBytes } / (1024 * 1024)
@@ -264,35 +265,15 @@ internal fun SettingsDevicesSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
         )
-        if (pendingCount > 1) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = !syncBusy,
-                    onClick = { syncPresenter.transferAll(true) },
-                ) { Text("Transfer all") }
-                OutlinedButton(
-                    enabled = !syncBusy,
-                    onClick = { syncPresenter.transferAll(false) },
-                ) { Text("Skip all") }
-            }
-        }
-        pendingRows.take(8).forEach { row ->
-            Text(
-                row.label + if (row.sizeBytes > 0) " (${row.sizeBytes / 1024} KiB)" else "",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !syncBusy, onClick = row.confirm) { Text("Transfer") }
-                OutlinedButton(enabled = !syncBusy, onClick = row.skip) { Text("Skip") }
-            }
-        }
-        if (pendingCount > 8) {
-            Text(
-                "${pendingCount - 8} more not shown",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        SelectableCopies(
+            rows = pendingRows,
+            enabled = !syncBusy,
+            shownAtFirst = 8,
+            actions = listOf(
+                CopyAction("Transfer", primary = true) { keys: Set<PendingCopyKey> -> syncPresenter.transferCopies(keys, confirm = true) },
+                CopyAction("Skip") { keys: Set<PendingCopyKey> -> syncPresenter.transferCopies(keys, confirm = false) },
+            ),
+        )
     }
     if (syncStatus.skippedCopies.isNotEmpty()) {
         SkippedCopies(syncStatus.skippedCopies, enabled = !syncBusy, onUnskip = syncPresenter::unskip)
@@ -333,12 +314,12 @@ internal fun SettingsDevicesSection(
 
 }
 
-/** Skipped copies stay folded away; each can be offered again. */
+/** Skipped copies stay folded away; any of them can be offered again. */
 @Composable
 private fun SkippedCopies(
-    copies: List<com.universalmusic.player.data.sync.SkippedCopy>,
+    copies: List<SkippedCopy>,
     enabled: Boolean,
-    onUnskip: (com.universalmusic.player.data.sync.SkippedCopy) -> Unit,
+    onUnskip: (List<SkippedCopy>) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -355,23 +336,106 @@ private fun SkippedCopies(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    copies.take(20).forEach { copy ->
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    SelectableCopies(
+        rows = copies.map { CopyRow(it, it.label, it.sizeBytes) },
+        enabled = enabled,
+        shownAtFirst = 20,
+        actions = listOf(CopyAction("Un-skip") { picked: Set<SkippedCopy> -> onUnskip(picked.toList()) }),
+    )
+}
+
+internal class CopyRow<K>(val key: K, val label: String, val sizeBytes: Long)
+
+/** A button under a [SelectableCopies] list; it acts on the ticked rows, or on every row when none is ticked. */
+internal class CopyAction<K>(val verb: String, val primary: Boolean = false, val run: (Set<K>) -> Unit)
+
+/**
+ * A list of copies with a checkbox per row and a Select all box. The [actions] read "Transfer all"
+ * until rows are ticked, then "Transfer 3", so one tap handles any number of files.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun <K> SelectableCopies(
+    rows: List<CopyRow<K>>,
+    enabled: Boolean,
+    shownAtFirst: Int,
+    actions: List<CopyAction<K>>,
+) {
+    var ticked by remember { mutableStateOf(emptySet<K>()) }
+    var showAll by remember { mutableStateOf(false) }
+    val keys = rows.mapTo(LinkedHashSet()) { it.key }
+    // Rows leave the list as copies finish or other screens skip them; a gone row is no longer ticked.
+    val selected = ticked intersect keys
+    if (rows.size > 1) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).toggleable(
+                value = selected.size == keys.size,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = { ticked = if (selected.size == keys.size) emptySet() else keys },
+            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TriStateCheckbox(
+                state = when (selected.size) {
+                    0 -> ToggleableState.Off
+                    keys.size -> ToggleableState.On
+                    else -> ToggleableState.Indeterminate
+                },
+                onClick = null,
+                enabled = enabled,
+            )
             Text(
-                copy.label + if (copy.sizeBytes > 0) " (${copy.sizeBytes / 1024} KiB)" else "",
+                if (selected.isEmpty()) "Select all" else "${selected.size} of ${keys.size} selected",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        actions.forEach { action ->
+            val label = when {
+                selected.isNotEmpty() -> "${action.verb} ${selected.size}"
+                rows.size == 1 -> action.verb
+                else -> "${action.verb} all"
+            }
+            val onClick = {
+                action.run(selected.ifEmpty { keys })
+                ticked = emptySet()
+            }
+            if (action.primary) Button(enabled = enabled, onClick = onClick) { Text(label) }
+            else OutlinedButton(enabled = enabled, onClick = onClick) { Text(label) }
+        }
+    }
+    val shown = if (showAll) rows else rows.take(shownAtFirst)
+    shown.forEach { row ->
+        val checked = row.key in selected
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = { on -> ticked = if (on) selected + row.key else selected - row.key },
+            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)
+            Text(
+                row.label + if (row.sizeBytes > 0) " (${formatCopySize(row.sizeBytes)})" else "",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(enabled = enabled, onClick = { onUnskip(copy) }) { Text("Un-skip") }
         }
     }
-    if (copies.size > 20) {
-        Text(
-            "${copies.size - 20} more not shown",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    if (rows.size > shownAtFirst) {
+        TextButton(onClick = { showAll = !showAll }) {
+            Text(if (showAll) "Show fewer" else "Show ${rows.size - shownAtFirst} more")
+        }
     }
 }
 
-private class PendingCopyRow(val label: String, val sizeBytes: Long, val confirm: () -> Unit, val skip: () -> Unit)
+private fun formatCopySize(bytes: Long): String = when {
+    bytes >= 1024L * 1024 -> "${(bytes * 10 / (1024 * 1024)) / 10.0} MiB"
+    else -> "${bytes / 1024} KiB"
+}

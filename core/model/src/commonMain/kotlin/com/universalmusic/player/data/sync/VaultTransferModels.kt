@@ -23,3 +23,12 @@ data class PendingVaultTransfer(
             VaultCopyDirection.TO_REMOTE -> "Upload $relPath"
         }
 }
+
+/** Names one pending copy for Transfer or Skip: a vault file or a hearted track's offline copy. */
+sealed interface PendingCopyKey {
+    data class Vault(val relPath: String, val direction: VaultCopyDirection) : PendingCopyKey
+    data class CachedAudio(val ownerCanonicalId: String, val direction: VaultCopyDirection) : PendingCopyKey
+}
+
+val PendingVaultTransfer.key: PendingCopyKey get() = PendingCopyKey.Vault(relPath, direction)
+val PendingCachedAudioTransfer.key: PendingCopyKey get() = PendingCopyKey.CachedAudio(offer.ownerCanonicalId, direction)

@@ -44,13 +44,10 @@ interface HomeLanSyncController {
     /** Creates a new key for this device and forgets every pairing, so each side pairs again. */
     suspend fun resetIdentity()
     suspend fun syncNow(): Result<String>
-    suspend fun confirmVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
-    suspend fun dismissVaultTransfer(relPath: String, direction: VaultCopyDirection): Result<String>
-    suspend fun confirmCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection): Result<String>
-    suspend fun dismissCachedAudioTransfer(ownerCanonicalId: String, direction: VaultCopyDirection): Result<String>
-    /** Copies every pending vault file and cached audio file. */
-    suspend fun confirmAllVaultTransfers(): Result<String>
-    suspend fun dismissAllVaultTransfers(): Result<String>
+    /** Copies the pending vault and cached audio files [only] names, or every pending one when null. */
+    suspend fun confirmVaultTransfers(only: Set<PendingCopyKey>? = null): Result<String>
+    /** Skips the pending copies [only] names, or every pending one when null, until the file changes. */
+    suspend fun dismissVaultTransfers(only: Set<PendingCopyKey>? = null): Result<String>
     /** Offers a skipped copy again: now when the last sync planned it, otherwise at the next sync. */
     suspend fun unskipCopy(kind: SkippedCopyKind, subject: String, direction: VaultCopyDirection): Result<String> =
         Result.failure(UnsupportedOperationException("Un-skip is unavailable"))
