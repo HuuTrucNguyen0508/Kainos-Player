@@ -34,10 +34,25 @@ class KainosForwardingPlayer internal constructor(
 
     internal fun expectTransitionMedia(url: String) {
         transitionTargetUri = Uri.parse(url)
+        releaseTransitionGuardIfArrived()
     }
 
-    private fun retainedItemIsStale(): Boolean = retainedForTransition &&
-        (transitionTargetUri == null || exo.currentMediaItem?.localConfiguration?.uri != transitionTargetUri)
+    /**
+     * The guard ends when the target item arrives. Left on, a later gapless crossing moves Exo
+     * to a successor whose URI is not the target, and every Play is routed back to the session,
+     * which already thinks it is playing, so Exo stays paused (phone trace 2026-11-13).
+     */
+    private fun releaseTransitionGuardIfArrived() {
+        val target = transitionTargetUri ?: return
+        if (retainedForTransition && exo.currentMediaItem?.localConfiguration?.uri == target) {
+            retainedForTransition = false
+        }
+    }
+
+    private fun retainedItemIsStale(): Boolean {
+        releaseTransitionGuardIfArrived()
+        return retainedForTransition
+    }
 
     @Volatile private var spotifyActive = false
     @Volatile private var overlayPlaying = false
@@ -88,6 +103,7 @@ class KainosForwardingPlayer internal constructor(
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            releaseTransitionGuardIfArrived()
             if (spotifyActive) return
             listeners.forEach { it.onMediaItemTransition(mediaItem, reason) }
         }
