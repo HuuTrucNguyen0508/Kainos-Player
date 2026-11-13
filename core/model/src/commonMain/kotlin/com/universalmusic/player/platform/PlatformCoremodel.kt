@@ -36,6 +36,8 @@ data class SpotifyPlaybackController(
     val receiverEvents: SpotifyReceiverEvents? = null,
     val setVolume: suspend (Float) -> Unit = {},
     val resumeAt: suspend (positionMs: Long) -> Unit = { resume() },
+    /** See [com.universalmusic.player.domain.playback.PlaybackEngine.queueNextSpotify]. */
+    val queueNext: (trackId: String?) -> Unit = {},
 )
 
 /** Events from the receiver owned by this app, rather than Spotify's delayed Connect snapshot. */

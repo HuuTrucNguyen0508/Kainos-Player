@@ -274,6 +274,8 @@ class AndroidPlaybackEngine internal constructor(
         launchMediaCommand(::syncSuccessor)
     }
 
+    override fun queueNextSpotify(trackId: String?) = spotify.queueNext(trackId)
+
     private fun syncSuccessor(player: Player) {
         if (activeBackend != ActiveBackend.MEDIA3) return
         successor.sync(

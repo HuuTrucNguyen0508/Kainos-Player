@@ -108,6 +108,11 @@ interface SpotifyWebPlaybackHost {
     suspend fun pause(): Boolean = false
     suspend fun resume(): Boolean = false
     suspend fun seek(positionMs: Long): Boolean = false
+    /**
+     * Queues [trackId] on the in-process receiver after the track [playTrack] started, so it is
+     * opened before the boundary and plays without a new load; null clears. Never blocks.
+     */
+    fun queueNextTrack(trackId: String?) = Unit
     suspend fun shutdown()
 }
 
