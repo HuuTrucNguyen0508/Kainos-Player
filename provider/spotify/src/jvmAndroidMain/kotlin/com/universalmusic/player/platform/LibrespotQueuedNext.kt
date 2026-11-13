@@ -28,9 +28,14 @@ internal enum class LibrespotAdoptStep {
 /** How close to its end the current track must be for a start to wait for librespot's own advance. */
 internal const val LIBRESPOT_ADVANCE_WAIT_MS = 3_000L
 
+/** librespot opens the queued track this long before the current one ends (its INSTANT_PRELOAD). */
+internal const val LIBRESPOT_PRELOAD_LEAD_MS = 20_000L
+
 /**
  * [trackId] was queued ([queued]) or librespot already advanced into it ([advancedTo]). A track
- * that is merely current, without either, is a replay and loads from the start.
+ * that is merely current, without either, is a replay and loads from the start. While the AP
+ * connection is down ([connectionDown]) a skip only helps once librespot has opened the queued
+ * track, which needs that connection for its audio key; before that a rebuilt receiver loads it.
  */
 internal fun librespotAdoptStep(
     trackId: String,
@@ -42,14 +47,19 @@ internal fun librespotAdoptStep(
     positionMs: Long,
     durationMs: Long?,
     waited: Boolean,
-): LibrespotAdoptStep = when {
-    trackId != queued && trackId != advancedTo -> LibrespotAdoptStep.LOAD
-    current == trackId -> LibrespotAdoptStep.TAKE_CURRENT
-    receiverNext != trackId -> LibrespotAdoptStep.LOAD
-    // A paused track never ends by itself; the start pauses it first (stopForTransition).
-    !waited && playing && durationMs != null && durationMs > 0 && durationMs - positionMs <= LIBRESPOT_ADVANCE_WAIT_MS ->
-        LibrespotAdoptStep.WAIT_FOR_ADVANCE
-    else -> LibrespotAdoptStep.SKIP_TO_QUEUED
+    connectionDown: Boolean = false,
+): LibrespotAdoptStep {
+    val remainingMs = durationMs?.takeIf { it > 0 }?.let { it - positionMs }
+    return when {
+        trackId != queued && trackId != advancedTo -> LibrespotAdoptStep.LOAD
+        current == trackId -> LibrespotAdoptStep.TAKE_CURRENT
+        receiverNext != trackId -> LibrespotAdoptStep.LOAD
+        // A paused track never ends by itself; the start pauses it first (stopForTransition).
+        !waited && playing && remainingMs != null && remainingMs <= LIBRESPOT_ADVANCE_WAIT_MS ->
+            LibrespotAdoptStep.WAIT_FOR_ADVANCE
+        connectionDown && (remainingMs == null || remainingMs > LIBRESPOT_PRELOAD_LEAD_MS) -> LibrespotAdoptStep.LOAD
+        else -> LibrespotAdoptStep.SKIP_TO_QUEUED
+    }
 }
 
 /** Android's default network for traces: transports joined by '+', or `none`, then whether it is validated. */

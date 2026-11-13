@@ -272,40 +272,41 @@ internal class AndroidLibrespotPlaybackHost(
         }
         if (!worth) return false
         val started = System.nanoTime()
-        var how: String? = null
-        val ran = runDirect("adopt $trackId", onFailure = "loading it") { how = adopt(receiver, trackId) }
-        val outcome = how
-        if (!ran || outcome == null) {
-            if (ran) PlaybackTrace.log("Librespot", "adopt failed: the receiver did not take $trackId; loading")
-            return false
-        }
-        PlaybackTrace.log("Librespot", "adopted $outcome to $trackId in ${elapsedMs(started)} ms; no load")
+        var how = ""
+        if (!runDirect("adopt of $trackId", onFailure = "loading it") { how = adopt(receiver, trackId) }) return false
+        PlaybackTrace.log("Librespot", "adopted $how to $trackId in ${elapsedMs(started)} ms; no load")
         syncQueuedNextLater()
         return true
     }
 
-    /** Blocking, under [directCommands]. How the receiver reached [trackId], or null to load it. */
-    private fun adopt(receiver: Player, trackId: String): String? {
+    /** Blocking, under [directCommands]. How the receiver reached [trackId]; throws why it did not. */
+    private fun adopt(receiver: Player, trackId: String): String {
         var waited = false
         var skipped = false
         while (true) {
             // Our fields first: librespot's event thread moves them on together with its own state.
             val (queued, advancedTo) = synchronized(queueLock) { queuedId.takeIf { queuedOn === receiver } to awaitingAdoption }
             val state = receiver.stateWrapper.state
+            val current = receiver.currentTrackId()
+            val receiverNext = runCatching { receiver.tracks(false).next.firstOrNull()?.uri }.getOrNull()
+                ?.removePrefix(TRACK_URI_PREFIX)
             val step = librespotAdoptStep(
                 trackId = trackId,
-                current = receiver.currentTrackId(),
+                current = current,
                 queued = queued,
                 advancedTo = advancedTo,
-                receiverNext = runCatching { receiver.tracks(false).next.firstOrNull()?.uri }.getOrNull()
-                    ?.removePrefix(TRACK_URI_PREFIX),
+                receiverNext = receiverNext,
                 playing = state.isPlaying && !state.isPaused,
                 positionMs = receiver.time().toLong(),
                 durationMs = state.duration,
                 waited = waited,
+                connectionDown = session?.reconnecting() == true,
             )
             when (step) {
-                LibrespotAdoptStep.LOAD -> return null
+                LibrespotAdoptStep.LOAD -> error(
+                    "the receiver is on $current with $receiverNext next" +
+                        if (session?.reconnecting() == true) " and its connection to Spotify is down" else "",
+                )
                 LibrespotAdoptStep.WAIT_FOR_ADVANCE -> {
                     val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(LIBRESPOT_ADVANCE_WAIT_MS)
                     while (receiver.currentTrackId() != trackId && System.nanoTime() < deadline) Thread.sleep(ADVANCE_POLL_MS)
@@ -314,7 +315,7 @@ internal class AndroidLibrespotPlaybackHost(
                 LibrespotAdoptStep.SKIP_TO_QUEUED -> {
                     receiver.next()
                     skipped = true
-                    if (receiver.currentTrackId() != trackId) return null
+                    check(receiver.currentTrackId() == trackId) { "the skip landed on ${receiver.currentTrackId()}" }
                 }
                 LibrespotAdoptStep.TAKE_CURRENT -> {
                     synchronized(queueLock) {
@@ -326,7 +327,9 @@ internal class AndroidLibrespotPlaybackHost(
                     }
                     val state = receiver.stateWrapper.state
                     if (state.isPaused || !state.isPlaying) receiver.play()
-                    if (receiver.currentTrackId() != trackId || !receiver.stateWrapper.state.isPlaying) return null
+                    check(receiver.currentTrackId() == trackId && receiver.stateWrapper.state.isPlaying) {
+                        "the receiver did not play it (on ${receiver.currentTrackId()})"
+                    }
                     // A self-advance sends no resume event, and earlier ones were held. Named explicitly:
                     // librespot's own track-change event, which moves receiverTrackId, may still be queued.
                     val kind = if (receiver.stateWrapper.state.isBuffering) SpotifyReceiverEvent.Kind.BUFFERING
@@ -344,7 +347,7 @@ internal class AndroidLibrespotPlaybackHost(
      * adopted track consumed it.
      */
     override fun queueNextTrack(trackId: String?) {
-        wantedNext = trackId
+        wantedNext = trackId?.removePrefix(TRACK_URI_PREFIX)
         syncQueuedNextLater()
     }
 
@@ -360,6 +363,15 @@ internal class AndroidLibrespotPlaybackHost(
         // A receiver that never loaded a track has no queue to add to.
         val current = receiver.currentTrackId() ?: return
         if (receiver !== player) return
+        val unwanted = selfAdvancedTrack(receiver)?.takeIf { it != wantedNext }
+        if (unwanted != null && synchronized(queueLock) { deferredPause?.isActive == true }) {
+            synchronized(queueLock) {
+                deferredPause?.cancel()
+                deferredPause = null
+            }
+            PlaybackTrace.log("Librespot", "Kainos moved on from $unwanted, which librespot advanced into; pausing it")
+            receiver.pause()
+        }
         val queued = synchronized(queueLock) { queuedId.takeIf { queuedOn === receiver } }
         val edit = planLibrespotQueue(queued, wantedNext, current) ?: return
         edit.remove?.let { removed ->
@@ -422,28 +434,36 @@ internal class AndroidLibrespotPlaybackHost(
     /**
      * Kainos pauses the receiver when a track ends and again before every start. Once librespot has
      * moved into the queued next track by itself, that pause would cut into it moments before
-     * Kainos adopts it, so it waits [DEFERRED_PAUSE_MS] and applies only if Kainos never did.
+     * Kainos adopts it, so it waits [DEFERRED_PAUSE_MS] and applies only if Kainos never did. Only
+     * while Kainos still wants that track next; [syncQueuedNext] pauses it once Kainos moves on.
      */
     private fun deferPauseOfAdvance(receiver: Player): Boolean {
-        val advanced = awaitingAdoption ?: return false
-        if (receiver.currentTrackId() != advanced) return false
-        return synchronized(queueLock) { deferPauseLocked(receiver, advanced) }
-    }
-
-    private fun deferPauseLocked(receiver: Player, advanced: String): Boolean {
-        if (awaitingAdoption != advanced) return false
-        if (deferredPause?.isActive == true) return true
-        PlaybackTrace.log("Librespot", "holding a pause: librespot already plays $advanced, the queued next track")
-        deferredPause = recoveryScope.launch {
-            delay(DEFERRED_PAUSE_MS)
-            runDirect("deferred pause") {
-                if (awaitingAdoption == advanced && receiver.currentTrackId() == advanced) {
-                    PlaybackTrace.log("Librespot", "Kainos did not start $advanced within $DEFERRED_PAUSE_MS ms; pausing it")
-                    receiver.pause()
+        val advanced = selfAdvancedTrack(receiver)?.takeIf { it == wantedNext } ?: return false
+        synchronized(queueLock) {
+            if (deferredPause?.isActive == true) return true
+            PlaybackTrace.log("Librespot", "holding a pause: librespot already plays $advanced, the queued next track")
+            deferredPause = recoveryScope.launch {
+                delay(DEFERRED_PAUSE_MS)
+                runDirect("deferred pause") {
+                    if (selfAdvancedTrack(receiver) == advanced) {
+                        PlaybackTrace.log("Librespot", "Kainos did not start $advanced within $DEFERRED_PAUSE_MS ms; pausing it")
+                        receiver.pause()
+                    }
                 }
             }
         }
         return true
+    }
+
+    /**
+     * The queued track [receiver] moved into and Kainos has not adopted; null otherwise. Matches the
+     * queued id too, because librespot's own track-change event can arrive after the advance.
+     */
+    private fun selfAdvancedTrack(receiver: Player): String? {
+        val current = receiver.currentTrackId() ?: return null
+        return current.takeIf {
+            synchronized(queueLock) { awaitingAdoption == current || (queuedOn === receiver && queuedId == current) }
+        }
     }
 
     override suspend fun resume() = onReceiver("resume") { it.play() }

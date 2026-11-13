@@ -34,7 +34,8 @@ class LibrespotQueuedNextTest {
         positionMs: Long = 60_000,
         durationMs: Long? = 200_000,
         waited: Boolean = false,
-    ) = librespotAdoptStep(trackId, current, queued, advancedTo, receiverNext, playing, positionMs, durationMs, waited)
+        connectionDown: Boolean = false,
+    ) = librespotAdoptStep(trackId, current, queued, advancedTo, receiverNext, playing, positionMs, durationMs, waited, connectionDown)
 
     @Test fun takesATrackLibrespotAlreadyAdvancedInto() {
         assertEquals(LibrespotAdoptStep.TAKE_CURRENT, step(current = "b", queued = null, advancedTo = "b", receiverNext = null))
@@ -57,6 +58,13 @@ class LibrespotQueuedNextTest {
         assertEquals(LibrespotAdoptStep.LOAD, step(queued = "c", receiverNext = "c"))
         // The receiver dropped its queue (another device, a reset): our record is stale.
         assertEquals(LibrespotAdoptStep.LOAD, step(receiverNext = null))
+    }
+
+    @Test fun withTheConnectionDownOnlyAnOpenedQueuedTrackIsWorthASkip() {
+        assertEquals(LibrespotAdoptStep.LOAD, step(positionMs = 60_000, connectionDown = true))
+        assertEquals(LibrespotAdoptStep.LOAD, step(durationMs = null, connectionDown = true))
+        assertEquals(LibrespotAdoptStep.SKIP_TO_QUEUED, step(positionMs = 185_000, playing = false, connectionDown = true))
+        assertEquals(LibrespotAdoptStep.TAKE_CURRENT, step(current = "b", connectionDown = true))
     }
 
     @Test fun replayingTheCurrentTrackLoadsItFromTheStart() =
