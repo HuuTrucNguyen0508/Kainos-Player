@@ -536,7 +536,7 @@ class AndroidPlaybackEngine internal constructor(
         ticker?.cancel()
         // The receiver may roll into a track Kainos never queued; silence it unless the next one started.
         enqueueSpotifyCommand("Spotify Connect stop") {
-            if (activePlayGeneration == generation) spotify.pause()
+            if (activePlayGeneration == generation) spotify.pauseForTransition()
         }
     }
 
@@ -604,7 +604,7 @@ class AndroidPlaybackEngine internal constructor(
     override fun stopForTransition() {
         if (activeBackend == ActiveBackend.SPOTIFY) {
             ticker?.cancel()
-            enqueueSpotifyCommand("Spotify Connect transition", spotify.pause)
+            enqueueSpotifyCommand("Spotify Connect transition", spotify.pauseForTransition)
             publishState(EngineState(status = EngineStatus.BUFFERING))
             return
         }

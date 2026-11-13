@@ -42,6 +42,7 @@ class AndroidPlaybackEngineSpotifyAdvanceTest {
     private val spotify = SpotifyPlaybackController(
         play = { trackId -> onStart[trackId.removePrefix("spotify:track:")].orEmpty().forEach { receiver.emit(it) } },
         pause = { pauses += "pause" },
+        pauseForTransition = { pauses += "transition" },
         resume = {},
         seekTo = {},
         receiverEvents = object : SpotifyReceiverEvents {
@@ -129,5 +130,18 @@ class AndroidPlaybackEngineSpotifyAdvanceTest {
         assertEquals(listOf(EngineStatus.BUFFERING, EngineStatus.PLAYING),
             history.filter { it.playGeneration == 2L }.map { it.status }.distinct())
         assertEquals(true, engine.state.value.positionMs in 450L..2_000L)
+        // Only Kainos's own boundary pauses may be held by the receiver; none of them was a listener pause.
+        assertEquals(listOf("transition", "transition"), pauses.toList())
+    }
+
+    @Test fun aListenersPauseIsNeverSentAsATransitionPause() {
+        onStart["a"] = listOf(SpotifyReceiverEvent(Kind.PLAYING, "a", 0))
+        drive { engine.play(spotify("a"), null, 1) }.getOrThrow()
+        awaitState("PLAYING a") { it.status == EngineStatus.PLAYING }
+
+        engine.pause()
+        settle()
+
+        assertEquals(listOf("pause"), pauses.toList())
     }
 }

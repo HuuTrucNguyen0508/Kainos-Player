@@ -106,6 +106,8 @@ interface SpotifyWebPlaybackHost {
     suspend fun playTrack(trackId: String): Boolean = false
     /** Transport for the track [playTrack] started. False falls back to the Web API. */
     suspend fun pause(): Boolean = false
+    /** Kainos's own pause at a track boundary; see [SpotifyPlaybackController.pauseForTransition]. */
+    suspend fun pauseForTransition(): Boolean = pause()
     suspend fun resume(): Boolean = false
     suspend fun seek(positionMs: Long): Boolean = false
     /**

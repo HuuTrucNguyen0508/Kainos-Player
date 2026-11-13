@@ -425,14 +425,24 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
+    /** The listener, audio focus or a stop: never held, and it drops a held transition pause. */
     override suspend fun pause(): Boolean {
+        val receiver = mutex.withLock { player } ?: return false
+        synchronized(queueLock) {
+            deferredPause?.cancel()
+            deferredPause = null
+        }
+        return runDirect("pause") { receiver.pause() }
+    }
+
+    override suspend fun pauseForTransition(): Boolean {
         val receiver = mutex.withLock { player } ?: return false
         if (deferPauseOfAdvance(receiver)) return true
         return runDirect("pause") { receiver.pause() }
     }
 
     /**
-     * Kainos pauses the receiver when a track ends and again before every start. Once librespot has
+     * Kainos pauses the receiver when a track ends and again before every start ([pauseForTransition]). Once librespot has
      * moved into the queued next track by itself, that pause would cut into it moments before
      * Kainos adopts it, so it waits [DEFERRED_PAUSE_MS] and applies only if Kainos never did. Only
      * while Kainos still wants that track next; [syncQueuedNext] pauses it once Kainos moves on.
