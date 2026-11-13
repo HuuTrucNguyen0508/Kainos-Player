@@ -2,6 +2,7 @@ package com.universalmusic.player.platform
 
 import android.content.Context
 import android.os.Looper
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.core.app.ApplicationProvider
@@ -116,6 +117,22 @@ class AndroidPlaybackEngineTransitionTest {
         forwarding.playWhenReady = true
         assertEquals(false, exo.playWhenReady)
         playUrl("third", 3)
+        assertTrue(exo.playWhenReady)
+    }
+
+    @Test fun playResumesAfterAGaplessCrossingIntoTheNextItem() {
+        // Phone trace 2026-11-13: after a pause on a track reached gaplessly, every Play was
+        // routed back to the session and Exo stayed paused with no sound.
+        playUrl("first", 1)
+        transition()
+        playUrl("second", 2)
+        exo.addMediaItem(MediaItem.fromUri("content://media/third.flac"))
+        exo.seekTo(1, 0)
+        idleMain()
+        assertEquals("content://media/third.flac", retainedItem())
+        forwarding.pause()
+        assertEquals(false, exo.playWhenReady)
+        forwarding.play()
         assertTrue(exo.playWhenReady)
     }
 
