@@ -36,6 +36,14 @@ data class SpotifyPlaybackController(
     val receiverEvents: SpotifyReceiverEvents? = null,
     val setVolume: suspend (Float) -> Unit = {},
     val resumeAt: suspend (positionMs: Long) -> Unit = { resume() },
+    /** See [com.universalmusic.player.domain.playback.PlaybackEngine.queueNextSpotify]. */
+    val queueNext: (trackId: String?) -> Unit = {},
+    /**
+     * The pause Kainos itself sends when a track ends or before the next one starts. Unlike [pause]
+     * (the listener, audio focus, a stop), the receiver may hold it briefly while it already plays
+     * the queued next track.
+     */
+    val pauseForTransition: suspend () -> Unit = pause,
 )
 
 /** Events from the receiver owned by this app, rather than Spotify's delayed Connect snapshot. */

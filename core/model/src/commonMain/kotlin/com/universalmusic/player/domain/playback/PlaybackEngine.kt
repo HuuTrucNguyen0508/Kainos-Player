@@ -43,6 +43,13 @@ interface PlaybackEngine {
     /** Replace or cancel the single local successor. Generation identifies its owning track. */
     fun prepareNext(next: PreparedPlayback?) = Unit
 
+    /**
+     * Spotify track [trackId] plays after the current Spotify track, so an in-process receiver can
+     * queue it and open it before the boundary; null clears. Replaces any earlier call. Best
+     * effort: it never starts a receiver and never fails playback.
+     */
+    fun queueNextSpotify(trackId: String?) = Unit
+
     fun pause()
     fun resume()
     fun seekTo(positionMs: Long)

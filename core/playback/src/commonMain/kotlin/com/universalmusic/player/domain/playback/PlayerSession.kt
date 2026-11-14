@@ -913,8 +913,9 @@ class PlayerSession(
         ledger.record(change)
     }
 
-    private fun beginTransition() {
-        prefetcher.invalidate()
+    /** [keepSpotifyNext]: a start keeps the receiver's queued successor, which it may adopt. */
+    private fun beginTransition(keepSpotifyNext: Boolean = false) {
+        prefetcher.invalidate(keepSpotifyNext)
         turn.begin()
         startupTarget = null
         pausedSeekTargetMs = null
@@ -926,7 +927,7 @@ class PlayerSession(
         val resumeAt = if (applyResumePosition) pendingResumePositionMs else null
         pendingResumePositionMs = null
         val ready = prefetcher.take(item)
-        beginTransition()
+        beginTransition(keepSpotifyNext = true)
         val target = StartupTarget(resumeAt)
         startupTarget = target
         val generation = turn.generation

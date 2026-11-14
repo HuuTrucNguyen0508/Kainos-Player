@@ -397,6 +397,8 @@ class AppContainer(
             receiverEvents = spotifyWebPlayback.receiverEvents,
             setVolume = spotify::setConnectVolume,
             resumeAt = spotify::resumeConnectPlayback,
+            queueNext = spotifyWebPlayback::queueNextTrack,
+            pauseForTransition = spotify::pauseConnectPlaybackForTransition,
         ), loudness = loudness),
         resolver = resolver,
         scope = scope,

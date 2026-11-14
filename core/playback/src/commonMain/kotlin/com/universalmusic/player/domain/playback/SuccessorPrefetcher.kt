@@ -2,6 +2,7 @@ package com.universalmusic.player.domain.playback
 
 import com.universalmusic.player.domain.model.PlaybackHandle
 import com.universalmusic.player.domain.model.PlaybackPreferences
+import com.universalmusic.player.domain.model.PlaybackSource
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.QueueItem
 import com.universalmusic.player.domain.model.ResolvedPlayback
@@ -21,7 +22,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Gets the next queue entry ready before it is needed: a local file handed to the engine for a
- * gapless join, or one short-lived YouTube result. Session thread only.
+ * gapless join, one short-lived YouTube result, or, while Spotify plays, the next Spotify track
+ * queued on the receiver so it opens before the boundary. Session thread only.
  */
 internal class SuccessorPrefetcher(
     private val engine: PlaybackEngine,
@@ -50,6 +52,9 @@ internal class SuccessorPrefetcher(
     private var seamlessNext: Pair<PrefetchTarget, ResolvedPlayback>? = null
     private var prefetched: Prefetched? = null
     private var prefetchedStartGeneration: Long? = null
+    private var queueNextJob: Job? = null
+    /** The Spotify track last handed to [PlaybackEngine.queueNextSpotify]; null when none is queued. */
+    private var queuedSpotifyNext: String? = null
 
     // Presentation metadata cannot change which audio we resolve.
     private fun resolutionTrack(track: Track): Track = track.copy(durationMs = null, artwork = null)
@@ -87,7 +92,10 @@ internal class SuccessorPrefetcher(
         return ready
     }
 
-    fun invalidate() {
+    fun invalidate(keepSpotifyNext: Boolean) {
+        queueNextJob?.cancel()
+        queueNextJob = null
+        if (!keepSpotifyNext) sendQueuedSpotifyNext(null)
         seamlessNext = null
         engine.prepareNext(null)
         job?.cancel()
@@ -107,7 +115,7 @@ internal class SuccessorPrefetcher(
         return true
     }
 
-    /** One short-lived YouTube result only; no Spotify traffic and no persisted URLs. */
+    /** Replans the next entry's preparation. Resolved URLs are never persisted. */
     fun schedule(generation: Long) {
         job?.cancel()
         prefetched = null
@@ -115,7 +123,9 @@ internal class SuccessorPrefetcher(
         engine.prepareNext(null)
         val target = nextTarget()
         this.target = target
-        val next = target?.let { key -> queue.queue.value.items.firstOrNull { it.id == key.itemId } } ?: return
+        val next = target?.let { key -> queue.queue.value.items.firstOrNull { it.id == key.itemId } }
+        queueSpotifySuccessor(next, target, generation)
+        next ?: return
         val preferences = currentPreferences.value
         // A hearted YouTube track whose audio is cached gains its LOCAL file source only here.
         if (engine.supportsGapless && preferences.gapless && !heldAtTrackEnd() && turn.completionArmed &&
@@ -165,6 +175,50 @@ internal class SuccessorPrefetcher(
             }
         }
     }
+
+    /**
+     * Phone traces of 2026-11 put almost every failed Spotify start and stall on mobile data in the
+     * first seconds of a new song: each load needed the AP connection at the boundary. A queued next
+     * track is opened by the receiver about 20 s before the end and played without a load, so it is
+     * queued as soon as it is known. A start leaves it queued (see [invalidate]), because the
+     * receiver may already be playing it, and reschedules once the start lands.
+     */
+    private fun queueSpotifySuccessor(next: QueueItem?, target: PrefetchTarget?, generation: Long) {
+        queueNextJob?.cancel()
+        queueNextJob = null
+        if (!turn.completionArmed) return
+        val currentTrackId = nowPlaying.value.resolved?.source?.spotifyTrackId()
+        if (next == null || currentTrackId == null || heldAtTrackEnd() ||
+            next.track.sources.none { it.provider == ProviderId.SPOTIFY }) {
+            sendQueuedSpotifyNext(null)
+            return
+        }
+        val current = queue.queue.value.current
+        queueNextJob = scope.launch(sessionContext) {
+            val trackId = try {
+                withContext(sources.workContext) {
+                    sources.resolve(sources.prepareTrack(next.track), currentPreferences.value).source.spotifyTrackId()
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                trace("Spotify successor not queued: ${error.message}")
+                null
+            }
+            if (generation != turn.generation || nextTarget() != target) return@launch
+            // Repeat One and duplicate entries: the receiver must not queue the track it plays.
+            val playing = trackId == currentTrackId || current?.track?.sources.orEmpty().any { it.spotifyTrackId() == trackId }
+            sendQueuedSpotifyNext(trackId.takeUnless { playing })
+        }
+    }
+
+    private fun sendQueuedSpotifyNext(trackId: String?) {
+        if (trackId == queuedSpotifyNext) return
+        queuedSpotifyNext = trackId
+        engine.queueNextSpotify(trackId)
+    }
+
+    private fun PlaybackSource.spotifyTrackId(): String? =
+        (handle as? PlaybackHandle.ProviderPlayback)?.takeIf { it.provider == ProviderId.SPOTIFY }?.trackId
 
     private fun hasLocalAudio(track: Track): Boolean =
         runCatching { sources.prepareTrack(track) }.getOrNull()?.sources.orEmpty().any { it.provider == ProviderId.LOCAL }
