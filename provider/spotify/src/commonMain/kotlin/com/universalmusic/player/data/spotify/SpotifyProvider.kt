@@ -951,6 +951,15 @@ class SpotifyProvider(
 
     suspend fun pauseConnectPlayback() {
         if (playingDirectly && webPlayback.pause()) return
+        pauseThroughWebApi()
+    }
+
+    suspend fun pauseConnectPlaybackForTransition() {
+        if (playingDirectly && webPlayback.pauseForTransition()) return
+        pauseThroughWebApi()
+    }
+
+    private suspend fun pauseThroughWebApi() {
         val response = http.put("$API/me/player/pause") {
             bearerAuth(accessToken())
             activePlaybackDeviceId?.let { parameter("device_id", it) }

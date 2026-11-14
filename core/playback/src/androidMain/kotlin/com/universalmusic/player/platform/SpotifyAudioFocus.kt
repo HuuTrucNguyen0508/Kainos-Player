@@ -29,7 +29,8 @@ internal class SpotifyAudioFocus(private val context: Context) {
             }
             if (event == SpotifyFocusPolicy.Change.LOSS) held = false
             val action = policy.change(event, playing)
-            PlaybackTrace.log("Engine", "Spotify audio focus $event -> $action")
+            val context = if (event == SpotifyFocusPolicy.Change.GAIN) "" else " (${audioContext()})"
+            PlaybackTrace.log("Engine", "Spotify audio focus $event -> $action$context")
             when (action) {
                 SpotifyFocusPolicy.Action.PAUSE -> { focusPause = true; AndroidMediaControls.pause() }
                 SpotifyFocusPolicy.Action.RESUME -> AndroidMediaControls.play()
@@ -45,6 +46,19 @@ internal class SpotifyAudioFocus(private val context: Context) {
             }
         }
     }
+    /**
+     * What else was making sound when focus went, for traces: Android names no package, but the
+     * mode tells a call from a ringtone and the active players' usages tell navigation, an
+     * assistant or a notification apart.
+     */
+    private fun audioContext(): String = runCatching {
+        val players = manager.activePlaybackConfigurations.joinToString(", ") { config ->
+            val attributes = config.audioAttributes
+            "${usageName(attributes.usage)}/${contentTypeName(attributes.contentType)}"
+        }.ifEmpty { "none" }
+        "mode=${modeName(manager.mode)} musicActive=${manager.isMusicActive} players=[$players]"
+    }.getOrElse { "audio state unavailable: $it" }
+
     /** A refusal must not fail the track: HyperOS can refuse a re-request, and nothing here can retry it. */
     fun play() {
         policy.activate()
@@ -72,4 +86,39 @@ internal class SpotifyAudioFocus(private val context: Context) {
         held = false
         if (registered) { context.unregisterReceiver(noisy); registered = false }
     }
+}
+
+private fun modeName(mode: Int): String = when (mode) {
+    AudioManager.MODE_NORMAL -> "normal"
+    AudioManager.MODE_RINGTONE -> "ringtone"
+    AudioManager.MODE_IN_CALL -> "in_call"
+    AudioManager.MODE_IN_COMMUNICATION -> "in_communication"
+    AudioManager.MODE_CALL_SCREENING -> "call_screening"
+    else -> "mode$mode"
+}
+
+private fun usageName(usage: Int): String = when (usage) {
+    AudioAttributes.USAGE_MEDIA -> "media"
+    AudioAttributes.USAGE_GAME -> "game"
+    AudioAttributes.USAGE_VOICE_COMMUNICATION -> "voice_call"
+    AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING -> "call_signalling"
+    AudioAttributes.USAGE_ALARM -> "alarm"
+    AudioAttributes.USAGE_NOTIFICATION -> "notification"
+    AudioAttributes.USAGE_NOTIFICATION_RINGTONE -> "ringtone"
+    AudioAttributes.USAGE_NOTIFICATION_EVENT -> "notification_event"
+    AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY -> "accessibility"
+    AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE -> "navigation"
+    AudioAttributes.USAGE_ASSISTANCE_SONIFICATION -> "sonification"
+    AudioAttributes.USAGE_ASSISTANT -> "assistant"
+    AudioAttributes.USAGE_UNKNOWN -> "unknown"
+    else -> "usage$usage"
+}
+
+private fun contentTypeName(contentType: Int): String = when (contentType) {
+    AudioAttributes.CONTENT_TYPE_MUSIC -> "music"
+    AudioAttributes.CONTENT_TYPE_SPEECH -> "speech"
+    AudioAttributes.CONTENT_TYPE_MOVIE -> "movie"
+    AudioAttributes.CONTENT_TYPE_SONIFICATION -> "sonification"
+    AudioAttributes.CONTENT_TYPE_UNKNOWN -> "unknown"
+    else -> "content$contentType"
 }
