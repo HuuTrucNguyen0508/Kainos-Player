@@ -520,7 +520,7 @@ class SpotifyProvider(
     }
 
     private suspend fun startConnectPlaybackLocked(spotifyTrackId: String, deadlineMs: Long, positionMs: Long = 0) {
-        if (positionMs <= 0 && !requireExplicitPlaybackDevice && startDirectPlayback(spotifyTrackId)) return
+        if (!requireExplicitPlaybackDevice && startDirectPlayback(spotifyTrackId, positionMs)) return
         directPlaybackGeneration = null
         val token = accessToken()
         ensureWithinConnectDeadline(deadlineMs)
@@ -676,10 +676,10 @@ class SpotifyProvider(
      * Every Connect start costs several sequential Web API calls plus Spotify's push back to the
      * receiver, which is slow on mobile data. An in-process receiver can load the track itself.
      */
-    private suspend fun startDirectPlayback(spotifyTrackId: String): Boolean {
+    private suspend fun startDirectPlayback(spotifyTrackId: String, positionMs: Long): Boolean {
         val generation = webPlayback.receiverGeneration
         // A receiver recovered mid-load is not the one that loaded the track.
-        if (!webPlayback.playTrack(spotifyTrackId) || generation != webPlayback.receiverGeneration) return false
+        if (!webPlayback.playTrack(spotifyTrackId, positionMs) || generation != webPlayback.receiverGeneration) return false
         playbackTrackId = spotifyTrackId
         activePlaybackDeviceId = null
         directPlaybackGeneration = generation
