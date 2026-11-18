@@ -94,7 +94,10 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile private var reloadOnResume = false
     /** The track a recovery has reloaded (or tried to) since Kainos last started one. */
     @Volatile private var recoveryTrack: String? = null
-    @Volatile private var kainosPausedAtMs = 0L
+    /** Pauses Kainos sent to [ownPauseReceiver] that librespot has not acknowledged yet. */
+    private val ownPauseLock = Any()
+    private var ownPauseReceiver: Player? = null
+    private var ownPausesPending = 0
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
     private val connectivity: ConnectivityManager? = androidContext.getSystemService(ConnectivityManager::class.java)
@@ -540,8 +543,9 @@ internal class AndroidLibrespotPlaybackHost(
         return runDirect("resume") { checkNotNull(receiver).play() }.also { wantsPlay = it }
     }
 
+    /** Also moves a recovery in progress, which loads at the clock's position, so a seek never cancels it. */
     override suspend fun seek(positionMs: Long): Boolean {
-        transportEpoch.incrementAndGet()
+        clock.moveTo(positionMs.coerceAtLeast(0))
         return onReceiver("seek") { it.seek(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
     }
 
@@ -733,6 +737,7 @@ internal class AndroidLibrespotPlaybackHost(
     private suspend fun reloadWithRetries(trackId: String, positionMs: Long, broken: Player, epoch: Long, reason: String): Boolean {
         var replacing: Player? = broken
         recoveryTrack = trackId
+        clock.anchor(positionMs, playing = false)
         while (recoveryAttempts < LIBRESPOT_RECOVERY_ATTEMPTS) {
             recoveryAttempts++
             PlaybackTrace.log(
@@ -740,9 +745,9 @@ internal class AndroidLibrespotPlaybackHost(
                 "recovering $trackId at $positionMs ms after $reason on ${network()} " +
                     "(attempt $recoveryAttempts/$LIBRESPOT_RECOVERY_ATTEMPTS)",
             )
-            when (reloadOnce(trackId, positionMs, replacing, epoch)) {
+            when (reloadOnce(trackId, replacing, epoch)) {
                 ReloadOutcome.RELOADED -> {
-                    PlaybackTrace.log("Librespot", "recovered $trackId at $positionMs ms on ${network()}")
+                    PlaybackTrace.log("Librespot", "recovered $trackId on ${network()}")
                     syncQueuedNextLater()
                     return true
                 }
@@ -772,7 +777,7 @@ internal class AndroidLibrespotPlaybackHost(
      * like playTrack's own rebuild: connecting to Spotify can take a while on a bad network, and
      * Kainos's commands that only need the turn must not wait for it.
      */
-    private suspend fun reloadOnce(trackId: String, positionMs: Long, replacing: Player?, epoch: Long): ReloadOutcome {
+    private suspend fun reloadOnce(trackId: String, replacing: Player?, epoch: Long): ReloadOutcome {
         directCommands.withLock {
             mutex.withLock {
                 if (transportEpoch.get() != epoch) return ReloadOutcome.SUPERSEDED
@@ -789,7 +794,8 @@ internal class AndroidLibrespotPlaybackHost(
                 if (transportEpoch.get() != epoch || player !== receiver) return@withContext ReloadOutcome.SUPERSEDED
                 loadingDirectly = true
                 try {
-                    load(receiver, TRACK_URI_PREFIX + trackId, positionMs)
+                    // A seek during the rebuild moved the clock; nothing else moves it while no receiver plays.
+                    load(receiver, TRACK_URI_PREFIX + trackId, clock.positionMs())
                     ReloadOutcome.RELOADED
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -821,19 +827,36 @@ internal class AndroidLibrespotPlaybackHost(
             }
         }
 
-    /** Every pause Kainos sends goes through here, so its own late acknowledgement is recognised. */
+    /**
+     * Every pause Kainos sends goes through here. librespot acknowledges a pause of a playing track
+     * once, on its own event thread, so that acknowledgement can land after a newer Play; counting
+     * the pauses sent to this receiver tells it apart from another client's pause.
+     */
     private fun pauseFromKainos(receiver: Player) {
-        kainosPausedAtMs = System.currentTimeMillis()
+        val state = runCatching { receiver.stateWrapper.state }.getOrNull()
+        if (state != null && state.isPlaying && !state.isPaused) {
+            synchronized(ownPauseLock) {
+                if (ownPauseReceiver !== receiver) {
+                    ownPauseReceiver = receiver
+                    ownPausesPending = 0
+                }
+                ownPausesPending++
+            }
+        }
         receiver.pause()
     }
 
-    /**
-     * A pause Kainos did not send (another Spotify client, an inactive session) is the listener's.
-     * librespot reports pauses on its own event thread, so the acknowledgement of a pause Kainos sent
-     * can land after a newer Play; one that close to Kainos's own pause is taken as that pause.
-     */
-    private fun pausedOutsideKainos() {
-        if (!wantsPlay || System.currentTimeMillis() - kainosPausedAtMs < OWN_PAUSE_ECHO_MS) return
+    /** A pause Kainos did not send (another Spotify client, an inactive session) is the listener's. */
+    private fun pausedOutsideKainos(receiver: Player, acknowledgement: Boolean) {
+        if (acknowledgement) {
+            synchronized(ownPauseLock) {
+                if (ownPauseReceiver === receiver && ownPausesPending > 0) {
+                    ownPausesPending--
+                    return
+                }
+            }
+        }
+        if (!wantsPlay) return
         transportEpoch.incrementAndGet()
         wantsPlay = false
     }
@@ -1010,7 +1033,7 @@ internal class AndroidLibrespotPlaybackHost(
         override fun onPlaybackPaused(player: Player, trackTime: Long) {
             trace("paused at $trackTime")
             // A dying stream does not send this; only a pause command does.
-            if (player.isCurrent()) pausedOutsideKainos()
+            if (player.isCurrent()) pausedOutsideKainos(player, acknowledgement = true)
             emit(player, SpotifyReceiverEvent.Kind.PAUSED, trackTime)
         }
 
@@ -1047,7 +1070,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onInactiveSession(player: Player, timeout: Boolean) {
             trace("inactiveSession timeout=$timeout")
-            if (player.isCurrent()) pausedOutsideKainos()
+            if (player.isCurrent()) pausedOutsideKainos(player, acknowledgement = false)
             emit(player, SpotifyReceiverEvent.Kind.PAUSED)
         }
 
@@ -1083,8 +1106,6 @@ internal class AndroidLibrespotPlaybackHost(
         private const val RECOVERY_NETWORK_WAIT_MS = 30_000L
         private const val RECOVERY_NETWORK_POLL_MS = 1_000L
         private const val RECOVERY_RETRY_MS = 3_000L
-        /** librespot acknowledges a pause on its event thread well within this. */
-        private const val OWN_PAUSE_ECHO_MS = 2_000L
         private const val AP_PING_GRACE_S = 30
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
