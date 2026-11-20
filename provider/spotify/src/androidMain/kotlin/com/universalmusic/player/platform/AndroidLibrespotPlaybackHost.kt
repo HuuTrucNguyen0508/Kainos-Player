@@ -916,9 +916,11 @@ internal class AndroidLibrespotPlaybackHost(
                 val createdSession = builder.create()
                 val sessionMs = elapsedMs(attemptStarted)
                 val idleReplaceScheduled = AtomicBoolean(false)
+                val keepalive = LibrespotKeepaliveProbe(createdSession).also { it.attach() }
                 createdSession.addReconnectionListener(object : Session.ReconnectionListener {
                     override fun onConnectionDropped() {
                         PlaybackTrace.log("Librespot", "AP connection dropped on ${network()}; librespot is reconnecting")
+                        keepalive.dropReport()?.let { PlaybackTrace.log("Librespot", it) }
                         // librespot calls this on every 10-s retry; one check per session is enough.
                         if (idleReplaceScheduled.compareAndSet(false, true)) {
                             recoveryScope.launch { replaceIdleReceiverWhileReconnecting(createdSession) }
@@ -942,8 +944,10 @@ internal class AndroidLibrespotPlaybackHost(
                             }
                         }
                     }
-                    override fun onConnectionEstablished() =
+                    override fun onConnectionEstablished() {
                         PlaybackTrace.log("Librespot", "AP connection re-established on ${network()}")
+                        keepalive.attach()
+                    }
                 })
                 // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
                 installLibrespotStaleTaskGuard(onAudioSinkDied = { audioSinkDied = true })
