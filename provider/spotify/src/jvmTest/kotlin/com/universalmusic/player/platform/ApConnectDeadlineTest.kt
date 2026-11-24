@@ -71,6 +71,7 @@ class ApConnectDeadlineTest {
         val release = CountDownLatch(1)
         val closing = CountDownLatch(1)
         val closeMayFinish = CountDownLatch(1)
+        val connected = CountDownLatch(1)
         var closedOn: Thread? = null
         val caller = Thread.currentThread()
         val waiting = async {
@@ -78,11 +79,12 @@ class ApConnectDeadlineTest {
                 closedOn = Thread.currentThread()
                 closing.countDown()
                 closeMayFinish.await(3, TimeUnit.SECONDS)
-            }) { release.await(); Connection("late") }
+            }) { release.await(); Connection("late").also { connected.countDown() } }
         }
         delay(50)
         release.countDown()
         // The connect answers while this event loop is busy, so its result is not delivered yet.
+        assertTrue(connected.await(2, TimeUnit.SECONDS))
         Thread.sleep(200)
         waiting.cancel()
         val started = System.nanoTime()
