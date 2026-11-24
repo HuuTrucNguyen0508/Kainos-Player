@@ -5,6 +5,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.Socket
 import xyz.gianlu.librespot.core.Session
 
 /**
@@ -21,7 +22,7 @@ internal class LibrespotKeepaliveProbe(private val session: Session) {
     /** Call after the session connects and after each librespot reconnect. */
     fun attach() {
         try {
-            val holder = connField.get(session) ?: return
+            val holder = LibrespotApSocket.connField.get(session) ?: return
             val input = inField.get(holder) as DataInputStream
             if (input is ProbedInput) return
             val log = ApTrafficLog(SystemClock::elapsedRealtime)
@@ -50,14 +51,8 @@ internal class LibrespotKeepaliveProbe(private val session: Session) {
     private companion object {
         @Volatile var unavailableLogged = false
 
-        val connField by lazy { Session::class.java.getDeclaredField("conn").apply { isAccessible = true } }
-        val inField by lazy { holderField("in") }
-        val outField by lazy { holderField("out") }
-
-        fun holderField(name: String) =
-            Class.forName("xyz.gianlu.librespot.core.Session\$ConnectionHolder")
-                .getDeclaredField(name)
-                .apply { isAccessible = true }
+        val inField by lazy { LibrespotApSocket.holderField("in") }
+        val outField by lazy { LibrespotApSocket.holderField("out") }
 
         fun deviceState(): String {
             val power = runCatching {
@@ -68,5 +63,40 @@ internal class LibrespotKeepaliveProbe(private val session: Session) {
             val saver = if (power.isPowerSaveMode) "battery saver on" else "battery saver off"
             return "$screen, $doze, $saver"
         }
+    }
+}
+
+/**
+ * The socket of librespot's AP connection, from its private `Session.conn` holder, and librespot's
+ * private `Session.reconnect` (librespot 0.2.0 names).
+ */
+internal object LibrespotApSocket {
+    val connField by lazy { Session::class.java.getDeclaredField("conn").apply { isAccessible = true } }
+    private val socketField by lazy { holderField("socket") }
+    private val reconnectMethod by lazy { Session::class.java.getDeclaredMethod("reconnect").apply { isAccessible = true } }
+
+    fun holderField(name: String) =
+        Class.forName("xyz.gianlu.librespot.core.Session\$ConnectionHolder")
+            .getDeclaredField(name)
+            .apply { isAccessible = true }
+
+    /** Null when the fields moved or the session holds no connection. */
+    fun of(session: Session): Socket? = runCatching {
+        connField.get(session)?.let { socketField.get(it) as Socket }
+    }.getOrNull()
+
+    /**
+     * Replaces the AP connection on the calling thread, the way librespot's own scheduler does: it
+     * stops the packet reader, closes the old socket and connects again (about 0.4 s on the PC).
+     * Closing the socket alone makes the packet reader reconnect on its own thread, which librespot
+     * interrupts first, so that attempt fails and the next waits 10 s. Falls back to that when the
+     * method moved.
+     */
+    fun reconnect(session: Session, socket: Socket) {
+        runCatching { reconnectMethod.invoke(session) }
+            .onFailure {
+                PlaybackTrace.log("Librespot", "AP reconnect unavailable, closing the socket instead: $it")
+                runCatching { socket.close() }
+            }
     }
 }

@@ -1,6 +1,7 @@
 package com.universalmusic.player.platform
 
 import android.net.ConnectivityManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import com.spotify.Authentication
 import com.spotify.connectstate.Connect
@@ -101,8 +102,14 @@ internal class AndroidLibrespotPlaybackHost(
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
     private val connectivity: ConnectivityManager? = androidContext.getSystemService(ConnectivityManager::class.java)
-    private val networkWatch = DefaultNetworkWatch(connectivity, recoveryScope, ::onNetworkSwitched)
-    private fun network() = connectivity.defaultNetwork()
+    private val networkWatch = DefaultNetworkWatch(connectivity, recoveryScope, ::onNetworkSwitched) {
+        checkApAddress("the network's addresses changed")
+    }
+    private val radioWatch = CellularRadioWatch(androidContext.getSystemService(TelephonyManager::class.java)) { from, to ->
+        PlaybackTrace.log("Librespot", "mobile radio changed from $from to $to")
+        checkApAddress("the radio changed from $from to $to")
+    }
+    private fun network() = connectivity.defaultNetwork(radioWatch.label)
 
     /**
      * Kainos's next Spotify track and what this receiver has queued. librespot opens a queued track
@@ -225,6 +232,7 @@ internal class AndroidLibrespotPlaybackHost(
                 session = createdSession
                 player = createdPlayer
                 networkWatch.start()
+                radioWatch.start()
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
                 Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_ANDROID_DEVICE_NAME")
                 namedDevice()
@@ -584,6 +592,7 @@ internal class AndroidLibrespotPlaybackHost(
         haltFilter.reset()
         stalledSinceMs = null
         networkWatch.stop()
+        radioWatch.stop()
         rebuildBeforeLoad = false
         synchronized(queueLock) {
             queuedOn = null
@@ -631,6 +640,38 @@ internal class AndroidLibrespotPlaybackHost(
         }
         PlaybackTrace.log("Librespot", "default network changed to ${network()}; rebuilding the idle receiver")
         replaceReceiverLocked()
+    }
+
+    /**
+     * A handover, such as 5G to 4G, can take away the address the AP connection was opened from
+     * while Android keeps the same network. Nothing reaches that socket again, and librespot would
+     * only notice when Spotify's next ping (every 2 minutes) fails to arrive, so reconnect now from
+     * the address the phone has now.
+     */
+    private fun checkApAddress(reason: String) {
+        val watched = session ?: return
+        // Network and radio changes arrive in bursts; the first reconnect leaves the rest nothing to do.
+        recoveryScope.launch { apAddressCheck.withLock {
+            if (watched.reconnecting()) return@launch
+            val socket = LibrespotApSocket.of(watched) ?: return@launch
+            val local = socket.localAddress
+            if (socket.isClosed || !socket.isConnected || local == null || local.isAnyLocalAddress) return@launch
+            if (addressStillOnDevice(local)) return@launch
+            if (session !== watched) return@launch
+            PlaybackTrace.log(
+                "Librespot",
+                "AP connection's address is gone after $reason on ${network()}; reconnecting now",
+            )
+            LibrespotApSocket.reconnect(watched, socket)
+        } }
+    }
+    private val apAddressCheck = Mutex()
+
+    /** For the drop trace: whether the dropped connection's own address had already left the phone. */
+    private fun apAddressState(dropped: Session): String {
+        val local = LibrespotApSocket.of(dropped)?.localAddress ?: return "address unknown"
+        if (local.isAnyLocalAddress) return "address unknown"
+        return if (addressStillOnDevice(local)) "address kept" else "address gone"
     }
 
     /**
@@ -919,7 +960,10 @@ internal class AndroidLibrespotPlaybackHost(
                 val keepalive = LibrespotKeepaliveProbe(createdSession).also { it.attach() }
                 createdSession.addReconnectionListener(object : Session.ReconnectionListener {
                     override fun onConnectionDropped() {
-                        PlaybackTrace.log("Librespot", "AP connection dropped on ${network()}; librespot is reconnecting")
+                        PlaybackTrace.log(
+                            "Librespot",
+                            "AP connection dropped on ${network()} (${apAddressState(createdSession)}); librespot is reconnecting",
+                        )
                         keepalive.dropReport()?.let { PlaybackTrace.log("Librespot", it) }
                         // librespot calls this on every 10-s retry; one check per session is enough.
                         if (idleReplaceScheduled.compareAndSet(false, true)) {
