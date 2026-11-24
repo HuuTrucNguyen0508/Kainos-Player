@@ -7,10 +7,12 @@ import com.spotify.Authentication
 import com.spotify.connectstate.Connect
 import com.universalmusic.player.platform.librespot.LibrespotOAuth
 import java.io.File
+import java.net.InetAddress
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -666,11 +668,14 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
-    /** For the drop trace: whether the dropped connection's own address had already left the phone. */
-    private fun apAddressState(dropped: Session): String {
-        val local = LibrespotApSocket.of(dropped)?.localAddress ?: return "address unknown"
-        if (local.isAnyLocalAddress) return "address unknown"
-        return if (addressStillOnDevice(local)) "address kept" else "address gone"
+    /**
+     * For the drop trace: whether the dropped connection's own address, as recorded when it
+     * connected (a closed socket no longer reports it), had already left the phone.
+     */
+    private fun apAddressState(local: InetAddress?): String = when {
+        local == null || local.isAnyLocalAddress -> "address unknown"
+        addressStillOnDevice(local) -> "address kept"
+        else -> "address gone"
     }
 
     /**
@@ -958,11 +963,12 @@ internal class AndroidLibrespotPlaybackHost(
                 val sessionMs = elapsedMs(attemptStarted)
                 val idleReplaceScheduled = AtomicBoolean(false)
                 val keepalive = LibrespotKeepaliveProbe(createdSession).also { it.attach() }
+                val apAddress = AtomicReference(LibrespotApSocket.of(createdSession)?.localAddress)
                 createdSession.addReconnectionListener(object : Session.ReconnectionListener {
                     override fun onConnectionDropped() {
                         PlaybackTrace.log(
                             "Librespot",
-                            "AP connection dropped on ${network()} (${apAddressState(createdSession)}); librespot is reconnecting",
+                            "AP connection dropped on ${network()} (${apAddressState(apAddress.get())}); librespot is reconnecting",
                         )
                         keepalive.dropReport()?.let { PlaybackTrace.log("Librespot", it) }
                         // librespot calls this on every 10-s retry; one check per session is enough.
@@ -991,6 +997,7 @@ internal class AndroidLibrespotPlaybackHost(
                     override fun onConnectionEstablished() {
                         PlaybackTrace.log("Librespot", "AP connection re-established on ${network()}")
                         keepalive.attach()
+                        apAddress.set(LibrespotApSocket.of(createdSession)?.localAddress)
                     }
                 })
                 // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
