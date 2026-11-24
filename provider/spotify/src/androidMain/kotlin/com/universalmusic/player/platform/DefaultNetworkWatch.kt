@@ -1,6 +1,7 @@
 package com.universalmusic.player.platform
 
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -10,12 +11,14 @@ import kotlinx.coroutines.launch
 /**
  * Reports when Android's default network has settled on a different network than the one seen at
  * [start]: Wi-Fi to mobile data and back, or a loss followed by a new network. Sockets opened on
- * the old network are dead or about to be, so long-lived connections should be replaced.
+ * the old network are dead or about to be, so long-lived connections should be replaced. Also
+ * reports [onLinkChanged] whenever the default network's addresses or routes change in place.
  */
 internal class DefaultNetworkWatch(
     private val connectivity: ConnectivityManager?,
     private val scope: CoroutineScope,
     private val onSwitched: suspend () -> Unit,
+    private val onLinkChanged: () -> Unit,
 ) {
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var settling: Job? = null
@@ -28,6 +31,7 @@ internal class DefaultNetworkWatch(
         val watch = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = changed()
             override fun onLost(network: Network) = changed()
+            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = onLinkChanged()
         }
         runCatching { connectivity.registerDefaultNetworkCallback(watch) }
             .onSuccess { callback = watch }

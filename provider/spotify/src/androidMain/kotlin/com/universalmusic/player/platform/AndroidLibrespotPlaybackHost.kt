@@ -1,14 +1,18 @@
 package com.universalmusic.player.platform
 
 import android.net.ConnectivityManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import com.spotify.Authentication
 import com.spotify.connectstate.Connect
 import com.universalmusic.player.platform.librespot.LibrespotOAuth
 import java.io.File
+import java.net.InetAddress
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -53,7 +57,10 @@ internal class AndroidLibrespotPlaybackHost(
         if (hasCachedCredentials()) SpotifyReceiverSetup.READY else SpotifyReceiverSetup.NEEDS_SIGN_IN
 
     private val receiverFlow = MutableSharedFlow<SpotifyReceiverEvent>(extraBufferCapacity = 64)
-    private val haltFilter = SpotifyHaltFilter(recoveryScope) { receiverFlow.tryEmit(it) }
+    private val haltFilter = SpotifyHaltFilter(recoveryScope) { event ->
+        receiverFlow.tryEmit(event)
+        watchPlayback(event)
+    }
     override val receiverEvents = object : SpotifyReceiverEvents {
         override val events = receiverFlow
         override val isAvailable get() = player != null
@@ -70,11 +77,41 @@ internal class AndroidLibrespotPlaybackHost(
     @Volatile private var audioSinkDied = false
     /** playTrack reports a failed load itself, so its PANIC must not fail the track first. */
     @Volatile private var loadingDirectly = false
+
+    /**
+     * Kainos asked this receiver to play [kainosTrackId] and has not paused it since: only then may
+     * a stream that broke under it be reloaded. Every Kainos command moves [transportEpoch], so a
+     * recovery decided before one never loads after it.
+     */
+    @Volatile private var wantsPlay = false
+    @Volatile private var kainosTrackId: String? = null
+    private val transportEpoch = AtomicLong()
+    private val clock = LibrespotPositionClock(System::currentTimeMillis)
+    /** When the current stall was reported; null while the track is not stalled. */
+    @Volatile private var stalledSinceMs: Long? = null
+    /** One recovery check at a time; a later one waits and then judges the receiver afresh. */
+    private val recoveryTurn = Mutex()
+    /** Reloads of [kainosTrackId]; a new track or the listener's own Play starts again at 0. */
+    @Volatile private var recoveryAttempts = 0
+    /** Recovery gave up on a receiver that may still hold the track but cannot play it. */
+    @Volatile private var reloadOnResume = false
+    /** The track a recovery has reloaded (or tried to) since Kainos last started one. */
+    @Volatile private var recoveryTrack: String? = null
+    /** Pauses Kainos sent to [ownPauseReceiver] that librespot has not acknowledged yet. */
+    private val ownPauseLock = Any()
+    private var ownPauseReceiver: Player? = null
+    private var ownPausesPending = 0
     private val credentialsDir = File(filesDir, "librespot")
     private val credentialsFile = File(credentialsDir, "credentials.json")
     private val connectivity: ConnectivityManager? = androidContext.getSystemService(ConnectivityManager::class.java)
-    private val networkWatch = DefaultNetworkWatch(connectivity, recoveryScope, ::onNetworkSwitched)
-    private fun network() = connectivity.defaultNetwork()
+    private val networkWatch = DefaultNetworkWatch(connectivity, recoveryScope, ::onNetworkSwitched) {
+        checkApAddress("the network's addresses changed")
+    }
+    private val radioWatch = CellularRadioWatch(androidContext.getSystemService(TelephonyManager::class.java)) { from, to ->
+        PlaybackTrace.log("Librespot", "mobile radio changed from $from to $to")
+        checkApAddress("the radio changed from $from to $to")
+    }
+    private fun network() = connectivity.defaultNetwork(radioWatch.label)
 
     /**
      * Kainos's next Spotify track and what this receiver has queued. librespot opens a queued track
@@ -197,6 +234,7 @@ internal class AndroidLibrespotPlaybackHost(
                 session = createdSession
                 player = createdPlayer
                 networkWatch.start()
+                radioWatch.start()
                 _state.value = SpotifyWebPlaybackState.ConnectingSpotify
                 Log.i(TAG, "session ready device=$KAINOS_SPOTIFY_ANDROID_DEVICE_NAME")
                 namedDevice()
@@ -241,23 +279,39 @@ internal class AndroidLibrespotPlaybackHost(
      * failed load rebuilds the receiver and retries once. A receiver whose audio thread died is
      * rebuilt before it loads. The generation stays the same: the rebuilt receiver loads this track.
      */
-    override suspend fun playTrack(trackId: String): Boolean {
+    override suspend fun playTrack(trackId: String, positionMs: Long): Boolean {
         val uri = "spotify:track:$trackId"
-        PlaybackTrace.log("Librespot", "playTrack $trackId on ${network()}")
+        val at = if (positionMs > 0) " at $positionMs ms" else ""
+        PlaybackTrace.log("Librespot", "playTrack $trackId$at on ${network()}")
+        beginTransport(wantsPlay = false)
+        if (kainosTrackId != trackId) recoveryAttempts = 0
+        kainosTrackId = trackId
+        reloadOnResume = false
+        recoveryTrack = null
+        clock.anchor(positionMs, playing = false)
         loadingDirectly = true
         try {
             // Before any rebuild: a queued track that is already open has its audio key.
-            if (adoptQueued(trackId)) return true
+            if (positionMs <= 0 && adoptQueued(trackId)) {
+                wantsPlay = true
+                return true
+            }
             val receiver = receiverForLoad(replacing = null) ?: return false
-            val loaded = runDirect("load $uri", onFailure = "rebuilding the receiver") { load(receiver, uri) } ||
+            val loaded = runDirect("load $uri$at", onFailure = "rebuilding the receiver") { load(receiver, uri, positionMs) } ||
                 receiverForLoad(replacing = receiver)?.let { rebuilt ->
-                    runDirect("load $uri on a rebuilt receiver") { load(rebuilt, uri) }
+                    runDirect("load $uri$at on a rebuilt receiver") { load(rebuilt, uri, positionMs) }
                 } == true
             if (loaded) syncQueuedNextLater()
+            wantsPlay = loaded
             return loaded
         } finally {
             loadingDirectly = false
         }
+    }
+
+    private fun beginTransport(wantsPlay: Boolean) {
+        transportEpoch.incrementAndGet()
+        this.wantsPlay = wantsPlay
     }
 
     /**
@@ -370,7 +424,7 @@ internal class AndroidLibrespotPlaybackHost(
                 deferredPause = null
             }
             PlaybackTrace.log("Librespot", "Kainos moved on from $unwanted, which librespot advanced into; pausing it")
-            receiver.pause()
+            pauseFromKainos(receiver)
         }
         val queued = synchronized(queueLock) { queuedId.takeIf { queuedOn === receiver } }
         val edit = planLibrespotQueue(queued, wantedNext, current) ?: return
@@ -410,7 +464,7 @@ internal class AndroidLibrespotPlaybackHost(
         player
     }
 
-    private fun load(receiver: Player, uri: String) {
+    private fun load(receiver: Player, uri: String, positionMs: Long = 0) {
         if (receiver !== registeredReceiver) {
             receiver.ready().get(RECEIVER_READY_TIMEOUT_S, TimeUnit.SECONDS)
             registeredReceiver = receiver
@@ -418,6 +472,8 @@ internal class AndroidLibrespotPlaybackHost(
         // Synchronous: resolves the one-track context and starts loading its audio. On failure
         // librespot logs it, enters its PANIC state and leaves the previous track current.
         receiver.load(uri, true, false)
+        // librespot holds a seek made while the track opens and starts decoding there.
+        if (positionMs > 0) receiver.seek(positionMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         synchronized(queueLock) { if (queuedOn === receiver) queuedId = null }
         // A failed reload of the same track keeps its URI current, but a PANIC always stops playing.
         check(receiver.currentPlayable()?.toSpotifyUri() == uri && receiver.stateWrapper.state.isPlaying) {
@@ -427,18 +483,20 @@ internal class AndroidLibrespotPlaybackHost(
 
     /** The listener, audio focus or a stop: never held, and it drops a held transition pause. */
     override suspend fun pause(): Boolean {
+        beginTransport(wantsPlay = false)
         val receiver = mutex.withLock { player } ?: return false
         synchronized(queueLock) {
             deferredPause?.cancel()
             deferredPause = null
         }
-        return runDirect("pause") { receiver.pause() }
+        return runDirect("pause") { pauseFromKainos(receiver) }
     }
 
     override suspend fun pauseForTransition(): Boolean {
+        beginTransport(wantsPlay = false)
         val receiver = mutex.withLock { player } ?: return false
         if (deferPauseOfAdvance(receiver)) return true
-        return runDirect("pause") { receiver.pause() }
+        return runDirect("pause") { pauseFromKainos(receiver) }
     }
 
     /**
@@ -457,7 +515,7 @@ internal class AndroidLibrespotPlaybackHost(
                 runDirect("deferred pause") {
                     if (selfAdvancedTrack(receiver) == advanced) {
                         PlaybackTrace.log("Librespot", "Kainos did not start $advanced within $DEFERRED_PAUSE_MS ms; pausing it")
-                        receiver.pause()
+                        pauseFromKainos(receiver)
                     }
                 }
             }
@@ -476,10 +534,30 @@ internal class AndroidLibrespotPlaybackHost(
         }
     }
 
-    override suspend fun resume() = onReceiver("resume") { it.play() }
+    /**
+     * The listener's Play. A receiver that lost the track, whose connection is down, or that sat
+     * through a network change cannot just continue, so the track loads again where it stopped.
+     */
+    override suspend fun resume(): Boolean {
+        beginTransport(wantsPlay = false)
+        recoveryAttempts = 0
+        val receiver = mutex.withLock { player }
+        val trackId = kainosTrackId
+        val stale = receiver == null || reloadOnResume || rebuildBeforeLoad || session?.reconnecting() == true ||
+            runCatching { receiver.currentTrackId() }.getOrNull() != trackId
+        if (receiver == null && trackId == null) return false
+        if (trackId != null && stale) {
+            PlaybackTrace.log("Librespot", "resume reloads $trackId: the receiver cannot continue it")
+            return playTrack(trackId, clock.positionMs())
+        }
+        return runDirect("resume") { checkNotNull(receiver).play() }.also { wantsPlay = it }
+    }
 
-    override suspend fun seek(positionMs: Long) =
-        onReceiver("seek") { it.seek(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
+    /** Also moves a recovery in progress, which loads at the clock's position, so a seek never cancels it. */
+    override suspend fun seek(positionMs: Long): Boolean {
+        clock.moveTo(positionMs.coerceAtLeast(0))
+        return onReceiver("seek") { it.seek(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
+    }
 
     private suspend fun onReceiver(action: String, command: (Player) -> Unit): Boolean {
         val receiver = mutex.withLock { player } ?: return false
@@ -506,13 +584,17 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     override suspend fun shutdown() = mutex.withLock {
+        beginTransport(wantsPlay = false)
+        kainosTrackId = null
         shutdownLocked()
         _state.value = SpotifyWebPlaybackState.Stopped
     }
 
     private fun shutdownLocked() {
         haltFilter.reset()
+        stalledSinceMs = null
         networkWatch.stop()
+        radioWatch.stop()
         rebuildBeforeLoad = false
         synchronized(queueLock) {
             queuedOn = null
@@ -537,6 +619,8 @@ internal class AndroidLibrespotPlaybackHost(
 
     /** The new receiver has a new device id and holds no track; the engine sees the old one pause. */
     private suspend fun replaceReceiverLocked() {
+        // Also cancels a recovery reload in flight: the engine is told this receiver paused.
+        beginTransport(wantsPlay = false)
         receiverGeneration++
         receiverEvent(SpotifyReceiverEvent.Kind.PAUSED)
         shutdownLocked()
@@ -561,6 +645,40 @@ internal class AndroidLibrespotPlaybackHost(
     }
 
     /**
+     * A handover, such as 5G to 4G, can take away the address the AP connection was opened from
+     * while Android keeps the same network. Nothing reaches that socket again, and librespot would
+     * only notice when Spotify's next ping (every 2 minutes) fails to arrive. Closing the socket
+     * makes librespot's packet reader fail now and run librespot's own reconnect, which stays the
+     * only one: its first attempt is interrupted by librespot itself, so the AP is back on the
+     * 10-s retry, still well before the ping.
+     */
+    private fun checkApAddress(reason: String) {
+        val watched = session ?: return
+        recoveryScope.launch {
+            val socket = LibrespotApSocket.of(watched) ?: return@launch
+            val local = socket.localAddress
+            if (socket.isClosed || !socket.isConnected || local == null || local.isAnyLocalAddress) return@launch
+            if (addressStillOnDevice(local)) return@launch
+            if (session !== watched) return@launch
+            PlaybackTrace.log(
+                "Librespot",
+                "AP connection's address is gone after $reason on ${network()}; closing it so librespot reconnects",
+            )
+            runCatching { socket.close() }
+        }
+    }
+
+    /**
+     * For the drop trace: whether the dropped connection's own address, as recorded when it
+     * connected (a closed socket no longer reports it), had already left the phone.
+     */
+    private fun apAddressState(local: InetAddress?): String = when {
+        local == null || local.isAnyLocalAddress -> "address unknown"
+        addressStillOnDevice(local) -> "address kept"
+        else -> "address gone"
+    }
+
+    /**
      * librespot retries a dropped AP connection every 10 s, and a receiver that holds no track
      * gains nothing by waiting for it, so it is replaced as soon as a validated network is up. A
      * receiver that holds a track keeps streaming its audio over HTTPS and is replaced before its
@@ -576,6 +694,229 @@ internal class AndroidLibrespotPlaybackHost(
             PlaybackTrace.log("Librespot", "AP connection still down on $network; replacing the idle receiver")
             replaceReceiverLocked()
         }
+    }
+
+    /** Follows the receiver's reported state: where its track is, and since when it has stalled. */
+    private fun watchPlayback(event: SpotifyReceiverEvent) {
+        if (event.trackId != kainosTrackId) return
+        val position = event.positionMs
+        when (event.kind) {
+            SpotifyReceiverEvent.Kind.SEEKED, SpotifyReceiverEvent.Kind.POSITION_CORRECTION ->
+                position?.let(clock::moveTo)
+            SpotifyReceiverEvent.Kind.BUFFERING -> {
+                position?.let { clock.anchor(it, playing = false) } ?: clock.stop()
+                if (stalledSinceMs == null) {
+                    stalledSinceMs = System.currentTimeMillis()
+                    scheduleRecoveryCheck(
+                        "a stall of ${LIBRESPOT_STALL_RECOVERY_MS / 1_000} s",
+                        LIBRESPOT_STALL_RECOVERY_MS,
+                    )
+                }
+            }
+            else -> {
+                stalledSinceMs = null
+                val playing = event.kind == SpotifyReceiverEvent.Kind.PLAYING
+                position?.let { clock.anchor(it, playing) } ?: clock.stop()
+            }
+        }
+    }
+
+    private fun scheduleRecoveryCheck(reason: String, afterMs: Long) {
+        val expected = player ?: return
+        recoveryScope.launch {
+            delay(afterMs)
+            recoverIfBroken(reason, expected)
+        }
+    }
+
+    /**
+     * Reloads Kainos's track where it stopped when the stream under it broke: a VPN switch closes
+     * the AP connection and the audio stream together, and librespot then ends the song early or
+     * stalls on it for good. [force] reloads a receiver that has to be replaced anyway. Checks run
+     * one at a time, each judging the receiver afresh, so a later one never skips an earlier one's
+     * work. Returns whether it reloaded or left the track paused.
+     */
+    private suspend fun recoverIfBroken(reason: String, expected: Player, force: Boolean = false): Boolean =
+        recoveryTurn.withLock {
+            val waitingSince = System.currentTimeMillis()
+            while (player === expected) {
+                val epoch = transportEpoch.get()
+                val trackId = kainosTrackId
+                val state = runCatching { expected.stateWrapper.state }.getOrNull() ?: return@withLock false
+                val step = librespotRecovery(
+                    wanted = wantsPlay,
+                    trackId = trackId,
+                    receiverTrack = runCatching { expected.currentTrackId() }.getOrNull(),
+                    playing = state.isPlaying && !state.isPaused,
+                    stalledForMs = stalledSinceMs?.let { System.currentTimeMillis() - it },
+                    positionMs = clock.positionMs(),
+                    durationMs = state.duration.takeIf { it > 0 },
+                    networkValidated = network().validated,
+                    attempts = recoveryAttempts,
+                    force = force,
+                )
+                when (step) {
+                    LibrespotRecovery.None -> return@withLock false
+                    LibrespotRecovery.GiveUp ->
+                        return@withLock giveUpRecovery(checkNotNull(trackId), epoch, "$LIBRESPOT_RECOVERY_ATTEMPTS reloads failed")
+                    LibrespotRecovery.WaitForNetwork -> {
+                        if (System.currentTimeMillis() - waitingSince >= RECOVERY_NETWORK_WAIT_MS) {
+                            return@withLock giveUpRecovery(
+                                checkNotNull(trackId), epoch, "no validated network within ${RECOVERY_NETWORK_WAIT_MS / 1_000} s",
+                            )
+                        }
+                        delay(RECOVERY_NETWORK_POLL_MS)
+                    }
+                    is LibrespotRecovery.Reload ->
+                        return@withLock reloadWithRetries(checkNotNull(trackId), step.positionMs, expected, epoch, reason)
+                }
+            }
+            false
+        }
+
+    /**
+     * Up to [LIBRESPOT_RECOVERY_ATTEMPTS] reloads of [trackId], each on a fresh receiver. A receiver
+     * that could not be built counts as a failed attempt; the track and position do not depend on
+     * one. Any Kainos command since [epoch] ends it, since the listener has moved on.
+     */
+    private suspend fun reloadWithRetries(trackId: String, positionMs: Long, broken: Player, epoch: Long, reason: String): Boolean {
+        var replacing: Player? = broken
+        recoveryTrack = trackId
+        clock.anchor(positionMs, playing = false)
+        while (recoveryAttempts < LIBRESPOT_RECOVERY_ATTEMPTS) {
+            recoveryAttempts++
+            PlaybackTrace.log(
+                "Librespot",
+                "recovering $trackId at $positionMs ms after $reason on ${network()} " +
+                    "(attempt $recoveryAttempts/$LIBRESPOT_RECOVERY_ATTEMPTS)",
+            )
+            when (reloadOnce(trackId, replacing, epoch)) {
+                ReloadOutcome.RELOADED -> {
+                    PlaybackTrace.log("Librespot", "recovered $trackId on ${network()}")
+                    syncQueuedNextLater()
+                    return true
+                }
+                ReloadOutcome.SUPERSEDED -> return false
+                ReloadOutcome.FAILED -> Unit
+            }
+            replacing = player
+            val retryAt = System.currentTimeMillis() + RECOVERY_RETRY_MS
+            val networkBy = retryAt + RECOVERY_NETWORK_WAIT_MS
+            while (System.currentTimeMillis() < retryAt || !network().validated) {
+                if (transportEpoch.get() != epoch) return false
+                if (System.currentTimeMillis() >= networkBy) {
+                    return giveUpRecovery(trackId, epoch, "no validated network within ${RECOVERY_NETWORK_WAIT_MS / 1_000} s")
+                }
+                delay(RECOVERY_NETWORK_POLL_MS)
+            }
+        }
+        return giveUpRecovery(trackId, epoch, "$LIBRESPOT_RECOVERY_ATTEMPTS reloads failed")
+    }
+
+    private enum class ReloadOutcome { RELOADED, SUPERSEDED, FAILED }
+
+    /**
+     * Closes the broken receiver and loads into a fresh one. Closing and loading each take the
+     * transport turn ([directCommands]) and check [epoch] inside it, so a track Kainos started or
+     * paused since then is never closed or overwritten. The build in between only holds [mutex],
+     * like playTrack's own rebuild: connecting to Spotify can take a while on a bad network, and
+     * Kainos's commands that only need the turn must not wait for it.
+     */
+    private suspend fun reloadOnce(trackId: String, replacing: Player?, epoch: Long): ReloadOutcome {
+        directCommands.withLock {
+            mutex.withLock {
+                if (transportEpoch.get() != epoch) return ReloadOutcome.SUPERSEDED
+                if (replacing != null && player === replacing) shutdownLocked()
+            }
+        }
+        val receiver = mutex.withLock {
+            if (transportEpoch.get() != epoch) return ReloadOutcome.SUPERSEDED
+            ensureStarted(interactive = false, oauthCredentials = null) ?: return ReloadOutcome.FAILED
+            player ?: return ReloadOutcome.FAILED
+        }
+        return directCommands.withLock {
+            withContext(Dispatchers.IO) {
+                if (transportEpoch.get() != epoch || player !== receiver) return@withContext ReloadOutcome.SUPERSEDED
+                loadingDirectly = true
+                try {
+                    // A seek during the rebuild moved the clock; nothing else moves it while no receiver plays.
+                    load(receiver, TRACK_URI_PREFIX + trackId, clock.positionMs())
+                    ReloadOutcome.RELOADED
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    PlaybackTrace.log("Librespot", "recovery load of $trackId failed: $failure")
+                    ReloadOutcome.FAILED
+                } finally {
+                    loadingDirectly = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Leaves the track paused where it stopped, so the listener's Play loads it again. Inside the
+     * transport turn and only while no Kainos command came since [epoch]. Returns whether it did.
+     */
+    private suspend fun giveUpRecovery(trackId: String, epoch: Long, why: String): Boolean =
+        directCommands.withLock {
+            withContext(Dispatchers.IO) {
+                if (transportEpoch.get() != epoch) return@withContext false
+                val position = clock.positionMs()
+                PlaybackTrace.log("Librespot", "not recovering $trackId: $why; paused at $position ms")
+                wantsPlay = false
+                reloadOnResume = true
+                runCatching { player?.let(::pauseFromKainos) }
+                haltFilter.accept(SpotifyReceiverEvent(SpotifyReceiverEvent.Kind.PAUSED, trackId, position))
+                true
+            }
+        }
+
+    /**
+     * Every pause Kainos sends goes through here. librespot acknowledges a pause of a playing track
+     * once, on its own event thread, so that acknowledgement can land after a newer Play; counting
+     * the pauses sent to this receiver tells it apart from another client's pause.
+     */
+    private fun pauseFromKainos(receiver: Player) {
+        val state = runCatching { receiver.stateWrapper.state }.getOrNull()
+        // librespot acknowledges a pause whenever its state was not paused yet.
+        if (state != null && !state.isPaused) {
+            synchronized(ownPauseLock) {
+                if (ownPauseReceiver !== receiver) {
+                    ownPauseReceiver = receiver
+                    ownPausesPending = 0
+                }
+                ownPausesPending++
+            }
+        }
+        receiver.pause()
+    }
+
+    /** A pause Kainos did not send (another Spotify client, an inactive session) is the listener's. */
+    private fun pausedOutsideKainos(receiver: Player, acknowledgement: Boolean) {
+        if (acknowledgement) {
+            synchronized(ownPauseLock) {
+                if (ownPauseReceiver === receiver && ownPausesPending > 0) {
+                    ownPausesPending--
+                    return
+                }
+            }
+        }
+        if (!wantsPlay) return
+        transportEpoch.incrementAndGet()
+        wantsPlay = false
+    }
+
+    /**
+     * librespot reports a failed load on its event thread, after the load call returned. During a
+     * recovery of [kainosTrackId] that failure belongs to the recovery, which retries and finally
+     * pauses; reported as unavailable it would fail the queue entry and skip the song first.
+     */
+    private fun recoveryOwnsFailure(): Boolean {
+        val track = recoveryTrack ?: return false
+        if (track != kainosTrackId || track != receiverTrackId) return false
+        scheduleRecoveryCheck("a failed load during recovery", RECOVERY_SETTLE_MS)
+        return true
     }
 
     /**
@@ -621,26 +962,43 @@ internal class AndroidLibrespotPlaybackHost(
                 val createdSession = builder.create()
                 val sessionMs = elapsedMs(attemptStarted)
                 val idleReplaceScheduled = AtomicBoolean(false)
+                val keepalive = LibrespotKeepaliveProbe(createdSession).also { it.attach() }
+                val apAddress = AtomicReference(LibrespotApSocket.of(createdSession)?.localAddress)
                 createdSession.addReconnectionListener(object : Session.ReconnectionListener {
                     override fun onConnectionDropped() {
-                        PlaybackTrace.log("Librespot", "AP connection dropped on ${network()}; librespot is reconnecting")
+                        PlaybackTrace.log(
+                            "Librespot",
+                            "AP connection dropped on ${network()} (${apAddressState(apAddress.get())}); librespot is reconnecting",
+                        )
+                        keepalive.dropReport()?.let { PlaybackTrace.log("Librespot", it) }
                         // librespot calls this on every 10-s retry; one check per session is enough.
                         if (idleReplaceScheduled.compareAndSet(false, true)) {
                             recoveryScope.launch { replaceIdleReceiverWhileReconnecting(createdSession) }
                         }
+                        // A VPN switch closes the song's audio stream along with the AP connection.
+                        if (session === createdSession) scheduleRecoveryCheck("the AP connection dropped", RECOVERY_SETTLE_MS)
                         installLibrespotReconnectGuard(Thread.currentThread()) { error ->
                             Log.w(TAG, "interrupted AP reconnect; recreating receiver", error)
                             recoveryScope.launch {
-                                mutex.withLock {
-                                    // A shutdown or a replacement wins over recovery of the old session.
-                                    if (session !== createdSession) return@withLock
-                                    replaceReceiverLocked()
+                                // A shutdown or a replacement wins over recovery of the old session.
+                                val playing = mutex.withLock {
+                                    if (session !== createdSession) return@launch
+                                    player.takeIf { wantsPlay && kainosTrackId != null }
+                                }
+                                val handled = playing != null &&
+                                    recoverIfBroken("its AP reconnect was interrupted", playing, force = true)
+                                // Recovery replaced the session or left the track paused; otherwise replace it here.
+                                if (!handled) mutex.withLock {
+                                    if (session === createdSession) replaceReceiverLocked()
                                 }
                             }
                         }
                     }
-                    override fun onConnectionEstablished() =
+                    override fun onConnectionEstablished() {
                         PlaybackTrace.log("Librespot", "AP connection re-established on ${network()}")
+                        keepalive.attach()
+                        apAddress.set(LibrespotApSocket.of(createdSession)?.localAddress)
+                    }
                 })
                 // Autoplay is off and Kainos loads each track itself, so librespot's own follow-up tasks can fail.
                 installLibrespotStaleTaskGuard(onAudioSinkDied = { audioSinkDied = true })
@@ -699,6 +1057,7 @@ internal class AndroidLibrespotPlaybackHost(
             trace("trackChanged ${id.toSpotifyUri()} userInitiated=$userInitiated")
             if (!player.isCurrent()) return
             haltFilter.reset()
+            stalledSinceMs = null
             val trackId = id.toSpotifyUri().removePrefix(TRACK_URI_PREFIX)
             receiverTrackId = trackId
             lastHalted = null
@@ -722,10 +1081,14 @@ internal class AndroidLibrespotPlaybackHost(
         override fun onPlaybackEnded(player: Player) {
             trace("playbackEnded")
             emit(player, SpotifyReceiverEvent.Kind.END_OF_TRACK)
+            // A stream that died ends its song where it stopped; a real end is too near the end to reload.
+            if (player.isCurrent()) scheduleRecoveryCheck("playback ended early", RECOVERY_SETTLE_MS)
         }
 
         override fun onPlaybackPaused(player: Player, trackTime: Long) {
             trace("paused at $trackTime")
+            // A dying stream does not send this; only a pause command does.
+            if (player.isCurrent()) pausedOutsideKainos(player, acknowledgement = true)
             emit(player, SpotifyReceiverEvent.Kind.PAUSED, trackTime)
         }
 
@@ -736,6 +1099,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onPlaybackFailed(player: Player, e: Exception) {
             trace("playbackFailed: $e")
+            if (player.isCurrent() && recoveryOwnsFailure()) return
             emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
         }
 
@@ -761,6 +1125,7 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onInactiveSession(player: Player, timeout: Boolean) {
             trace("inactiveSession timeout=$timeout")
+            if (player.isCurrent()) pausedOutsideKainos(player, acknowledgement = false)
             emit(player, SpotifyReceiverEvent.Kind.PAUSED)
         }
 
@@ -768,7 +1133,8 @@ internal class AndroidLibrespotPlaybackHost(
 
         override fun onPanicState(player: Player) {
             trace("PANIC state")
-            if (!loadingDirectly) emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
+            if (loadingDirectly || (player.isCurrent() && recoveryOwnsFailure())) return
+            emit(player, SpotifyReceiverEvent.Kind.UNAVAILABLE)
         }
 
         override fun onStartedLoading(player: Player) = trace("startedLoading")
@@ -789,6 +1155,12 @@ internal class AndroidLibrespotPlaybackHost(
         /** Covers Kainos resolving the next entry between the end of one track and its start. */
         private const val DEFERRED_PAUSE_MS = 3_000L
         private const val IDLE_RECONNECT_REPLACE_DELAY_MS = 2_000L
+        /** Lets librespot's own events about a broken stream land before judging it. */
+        private const val RECOVERY_SETTLE_MS = 2_000L
+        /** A VPN coming up can leave the network unvalidated for a few seconds. */
+        private const val RECOVERY_NETWORK_WAIT_MS = 30_000L
+        private const val RECOVERY_NETWORK_POLL_MS = 1_000L
+        private const val RECOVERY_RETRY_MS = 3_000L
         private const val AP_PING_GRACE_S = 30
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f

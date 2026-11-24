@@ -62,7 +62,10 @@ internal fun librespotAdoptStep(
     }
 }
 
-/** Android's default network for traces: transports joined by '+', or `none`, then whether it is validated. */
+/**
+ * Android's default network for traces: transports joined by '+', or `none`, then the mobile radio
+ * ([cellularRadioLabel]) when the network uses mobile data, then whether it is validated.
+ */
 internal fun spotifyNetworkLabel(
     present: Boolean,
     vpn: Boolean = false,
@@ -70,10 +73,12 @@ internal fun spotifyNetworkLabel(
     cellular: Boolean = false,
     ethernet: Boolean = false,
     validated: Boolean = false,
+    radio: String? = null,
 ): String {
     if (!present) return "none"
     val transports = listOfNotNull(
         "vpn".takeIf { vpn }, "wifi".takeIf { wifi }, "cellular".takeIf { cellular }, "ethernet".takeIf { ethernet },
     ).ifEmpty { listOf("other") }
-    return transports.joinToString("+") + if (validated) " validated" else " unvalidated"
+    val radioPart = radio?.takeIf { cellular }?.let { " $it" }.orEmpty()
+    return transports.joinToString("+") + radioPart + if (validated) " validated" else " unvalidated"
 }

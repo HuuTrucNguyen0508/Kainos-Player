@@ -7,8 +7,11 @@ internal data class DefaultNetwork(val label: String, val validated: Boolean) {
     override fun toString() = label
 }
 
-/** Android's default network as the receiver sees it, for traces and recovery decisions. */
-internal fun ConnectivityManager?.defaultNetwork(): DefaultNetwork {
+/**
+ * Android's default network as the receiver sees it, for traces and recovery decisions, with the
+ * mobile [radio] when it uses mobile data.
+ */
+internal fun ConnectivityManager?.defaultNetwork(radio: String? = null): DefaultNetwork {
     val capabilities = runCatching { this?.activeNetwork?.let(::getNetworkCapabilities) }.getOrNull()
         ?: return DefaultNetwork(spotifyNetworkLabel(present = false), validated = false)
     val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
@@ -20,6 +23,7 @@ internal fun ConnectivityManager?.defaultNetwork(): DefaultNetwork {
             cellular = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
             ethernet = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
             validated = validated,
+            radio = radio,
         ),
         validated,
     )

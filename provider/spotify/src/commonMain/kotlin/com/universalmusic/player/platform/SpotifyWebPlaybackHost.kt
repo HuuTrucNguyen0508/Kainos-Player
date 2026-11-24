@@ -100,10 +100,10 @@ interface SpotifyWebPlaybackHost {
     suspend fun prepareAuthentication(): SpotifyWebPlaybackDevice? = ensureDeviceReady()
     suspend fun setVolume(volume: Float): Boolean = false
     /**
-     * Starts [trackId] on an in-process receiver directly, skipping the Web API round trips
-     * through Spotify's servers. False when this host cannot, so the caller uses Connect.
+     * Starts [trackId] at [positionMs] on an in-process receiver directly, skipping the Web API
+     * round trips through Spotify's servers. False when this host cannot, so the caller uses Connect.
      */
-    suspend fun playTrack(trackId: String): Boolean = false
+    suspend fun playTrack(trackId: String, positionMs: Long = 0): Boolean = false
     /** Transport for the track [playTrack] started. False falls back to the Web API. */
     suspend fun pause(): Boolean = false
     /** Kainos's own pause at a track boundary; see [SpotifyPlaybackController.pauseForTransition]. */

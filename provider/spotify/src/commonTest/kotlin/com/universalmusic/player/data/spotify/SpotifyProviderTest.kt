@@ -86,8 +86,8 @@ class SpotifyProviderTest {
         override var receiverGeneration: Long = 0L
         override suspend fun ensureDeviceReady() = SpotifyWebPlaybackDevice(deviceName = "Kainos Player")
         override suspend fun shutdown() = Unit
-        override suspend fun playTrack(trackId: String): Boolean {
-            calls += "load $trackId"
+        override suspend fun playTrack(trackId: String, positionMs: Long): Boolean {
+            calls += "load $trackId" + if (positionMs > 0) " at $positionMs" else ""
             onLoad()
             return loads
         }
@@ -146,9 +146,28 @@ class SpotifyProviderTest {
         assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
     }
 
+    /**
+     * Through Connect, Spotify first restored its own stale copy of the song on the new receiver
+     * and the play at the position opened it a second time; that copy stalled for 3 minutes
+     * (phone trace of 2026-11-18 10:08).
+     */
     @Test
-    fun resumeAfterReceiverRecoveryRestartsAtThePausedPositionThroughConnect() = runTest {
+    fun resumeAfterReceiverRecoveryReloadsAtThePausedPositionWithoutHttp() = runTest {
         val host = DirectReceiverFake()
+        val provider = provider(TokenStoreFake(AuthTokens("access")), host) { error("No HTTP expected: ${it.url}") }
+
+        provider.startConnectPlayback("song")
+        host.receiverGeneration++
+        provider.resumeConnectPlayback(42_000)
+        provider.pauseConnectPlayback()
+
+        assertEquals(listOf("load song", "load song at 42000", "pause"), host.calls)
+    }
+
+    @Test
+    fun resumeAfterReceiverRecoveryFallsBackToConnectWhenTheReloadFails() = runTest {
+        var loads = 0
+        val host = DirectReceiverFake(loads = true, onLoad = { if (++loads > 1) receiverGeneration++ })
         val bodies = mutableListOf<String>()
         val requests = mutableListOf<String>()
         val handler = connectHandler(requests)
@@ -163,7 +182,7 @@ class SpotifyProviderTest {
         host.receiverGeneration++
         provider.resumeConnectPlayback(42_000)
 
-        assertEquals(listOf("load song"), host.calls)
+        assertEquals(listOf("load song", "load song at 42000"), host.calls)
         assertEquals(listOf("GET /v1/me/player/devices", "PUT /v1/me/player", "PUT /v1/me/player/play"), requests)
         assertTrue(bodies.single().contains("42000"))
     }
