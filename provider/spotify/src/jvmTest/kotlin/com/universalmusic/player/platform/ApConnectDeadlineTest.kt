@@ -67,6 +67,33 @@ class ApConnectDeadlineTest {
     }
 
     @Test
+    fun aConnectThatAnswersJustAsTheCallerIsCancelledIsClosedOffTheCaller() = runBlocking {
+        val release = CountDownLatch(1)
+        val closing = CountDownLatch(1)
+        val closeMayFinish = CountDownLatch(1)
+        var closedOn: Thread? = null
+        val caller = Thread.currentThread()
+        val waiting = async {
+            connectWithin(10_000, "test-connect", {
+                closedOn = Thread.currentThread()
+                closing.countDown()
+                closeMayFinish.await(3, TimeUnit.SECONDS)
+            }) { release.await(); Connection("late") }
+        }
+        delay(50)
+        release.countDown()
+        // The connect answers while this event loop is busy, so its result is not delivered yet.
+        Thread.sleep(200)
+        waiting.cancel()
+        val started = System.nanoTime()
+        waiting.join()
+        assertTrue((System.nanoTime() - started) / 1_000_000 < 1_000, "the caller waited for the close")
+        assertTrue(closing.await(2, TimeUnit.SECONDS))
+        assertTrue(closedOn !== caller)
+        closeMayFinish.countDown()
+    }
+
+    @Test
     fun aConnectFailureReachesTheCallerUnchanged() = runBlocking {
         class Rejected : Exception("Spotify rejected the credentials")
         assertFailsWith<Rejected> {

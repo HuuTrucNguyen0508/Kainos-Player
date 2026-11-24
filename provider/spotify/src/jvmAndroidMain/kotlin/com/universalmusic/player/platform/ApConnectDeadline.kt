@@ -39,9 +39,12 @@ internal suspend fun <T : Any> connectWithin(
         answered = true
         return value
     } finally {
-        // Whichever side loses this race owns a value that nobody will use.
+        // Whichever side loses this race owns a value that nobody will use. Closing it can wait on
+        // the network, so it never runs here, where the caller may hold the receiver lock.
         if (!answered && !attempt.cancel(false)) {
-            runCatching { attempt.getNow(null) }.getOrNull()?.let { runCatching { discardLate(it) } }
+            runCatching { attempt.getNow(null) }.getOrNull()?.let { late ->
+                thread(name = "$threadName-discard", isDaemon = true) { runCatching { discardLate(late) } }
+            }
         }
     }
 }

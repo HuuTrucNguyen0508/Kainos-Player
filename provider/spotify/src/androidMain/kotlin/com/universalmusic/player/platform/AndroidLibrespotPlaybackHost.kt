@@ -240,6 +240,8 @@ internal class AndroidLibrespotPlaybackHost(
                 namedDevice()
             } catch (cancelled: CancellationException) {
                 Log.w(TAG, "session start cancelled")
+                // The AP connect is no longer waited for, so nothing is starting any more.
+                if (session == null) _state.value = SpotifyWebPlaybackState.Stopped
                 throw cancelled
             } catch (failure: SpotifyAuthenticationException) {
                 Log.e(TAG, "auth rejected: ${failure.message}")
