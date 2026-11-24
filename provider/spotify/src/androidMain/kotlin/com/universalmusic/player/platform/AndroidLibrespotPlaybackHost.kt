@@ -933,7 +933,7 @@ internal class AndroidLibrespotPlaybackHost(
     private fun hasCachedCredentials(): Boolean =
         credentialsFile.isFile && credentialsFile.length() > 0L
 
-    private fun createSessionWithRetry(
+    private suspend fun createSessionWithRetry(
         conf: Session.Configuration,
         oauthCredentials: Authentication.LoginCredentials?,
         playerConf: PlayerConfiguration,
@@ -941,7 +941,7 @@ internal class AndroidLibrespotPlaybackHost(
         var lastFailure: Throwable? = null
         repeat(CONNECT_ATTEMPTS) { attempt ->
             if (attempt > 0) {
-                Thread.sleep(RETRY_DELAY_MS * attempt)
+                delay(RETRY_DELAY_MS * attempt)
             }
             val attemptStarted = System.nanoTime()
             try {
@@ -959,7 +959,14 @@ internal class AndroidLibrespotPlaybackHost(
                         return null
                     }
                 }
-                val createdSession = builder.create()
+                val createdSession = connectWithin(
+                    deadlineMs = AP_CONNECT_DEADLINE_MS,
+                    threadName = "kainos-ap-connect",
+                    discardLate = { late ->
+                        PlaybackTrace.log("Librespot", "closing an AP connection that answered after its attempt was given up")
+                        late.close()
+                    },
+                ) { builder.create() }
                 val sessionMs = elapsedMs(attemptStarted)
                 val idleReplaceScheduled = AtomicBoolean(false)
                 val keepalive = LibrespotKeepaliveProbe(createdSession).also { it.attach() }
@@ -1162,6 +1169,8 @@ internal class AndroidLibrespotPlaybackHost(
         private const val RECOVERY_NETWORK_POLL_MS = 1_000L
         private const val RECOVERY_RETRY_MS = 3_000L
         private const val AP_PING_GRACE_S = 30
+        /** Phone traces to 2026-11-24: 290 connects, 99% within 11.7 s, slowest 21 s. */
+        private const val AP_CONNECT_DEADLINE_MS = 15_000L
         /** Spotify client "Loud" preset. */
         private const val SPOTIFY_LOUD_NORMALISATION_PREGAIN_DB = 3f
         /** librespot-java Connect volume scale; 65536 is unity / max. */
