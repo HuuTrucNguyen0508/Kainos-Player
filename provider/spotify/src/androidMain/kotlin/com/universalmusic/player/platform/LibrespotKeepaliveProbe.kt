@@ -67,13 +67,12 @@ internal class LibrespotKeepaliveProbe(private val session: Session) {
 }
 
 /**
- * The socket of librespot's AP connection, from its private `Session.conn` holder, and librespot's
- * private `Session.reconnect` (librespot 0.2.0 names).
+ * The socket of librespot's AP connection, from its private `Session.conn` holder (librespot 0.2.0
+ * field names). Closing it makes librespot's packet reader fail and reconnect.
  */
 internal object LibrespotApSocket {
     val connField by lazy { Session::class.java.getDeclaredField("conn").apply { isAccessible = true } }
     private val socketField by lazy { holderField("socket") }
-    private val reconnectMethod by lazy { Session::class.java.getDeclaredMethod("reconnect").apply { isAccessible = true } }
 
     fun holderField(name: String) =
         Class.forName("xyz.gianlu.librespot.core.Session\$ConnectionHolder")
@@ -84,19 +83,4 @@ internal object LibrespotApSocket {
     fun of(session: Session): Socket? = runCatching {
         connField.get(session)?.let { socketField.get(it) as Socket }
     }.getOrNull()
-
-    /**
-     * Replaces the AP connection on the calling thread, the way librespot's own scheduler does: it
-     * stops the packet reader, closes the old socket and connects again (about 0.4 s on the PC).
-     * Closing the socket alone makes the packet reader reconnect on its own thread, which librespot
-     * interrupts first, so that attempt fails and the next waits 10 s. Falls back to that when the
-     * method moved.
-     */
-    fun reconnect(session: Session, socket: Socket) {
-        runCatching { reconnectMethod.invoke(session) }
-            .onFailure {
-                PlaybackTrace.log("Librespot", "AP reconnect unavailable, closing the socket instead: $it")
-                runCatching { socket.close() }
-            }
-    }
 }

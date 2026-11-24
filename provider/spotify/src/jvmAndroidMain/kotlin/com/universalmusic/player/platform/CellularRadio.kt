@@ -26,13 +26,15 @@ internal fun cellularRadioLabel(networkType: Int, overrideType: Int): String = w
 /**
  * Whether [address] is still assigned to this device. A socket bound to an address the device has
  * lost can never receive again, however long it waits. Binding a throwaway UDP socket to it fails
- * with [BindException] exactly then; any other failure says nothing, so it counts as present.
+ * with EADDRNOTAVAIL exactly then; any other failure says nothing, so it counts as present.
  */
 internal fun addressStillOnDevice(address: InetAddress): Boolean = try {
     DatagramSocket(InetSocketAddress(address, 0)).close()
     true
-} catch (_: BindException) {
-    false
+} catch (failure: BindException) {
+    // Android: "bind failed: EADDRNOTAVAIL (Cannot assign requested address)"; desktop JVM: the text only.
+    val message = failure.message.orEmpty()
+    !(message.contains("EADDRNOTAVAIL") || message.contains("Cannot assign requested address"))
 } catch (_: Exception) {
     true
 }

@@ -645,14 +645,14 @@ internal class AndroidLibrespotPlaybackHost(
     /**
      * A handover, such as 5G to 4G, can take away the address the AP connection was opened from
      * while Android keeps the same network. Nothing reaches that socket again, and librespot would
-     * only notice when Spotify's next ping (every 2 minutes) fails to arrive, so reconnect now from
-     * the address the phone has now.
+     * only notice when Spotify's next ping (every 2 minutes) fails to arrive. Closing the socket
+     * makes librespot's packet reader fail now and run librespot's own reconnect, which stays the
+     * only one: its first attempt is interrupted by librespot itself, so the AP is back on the
+     * 10-s retry, still well before the ping.
      */
     private fun checkApAddress(reason: String) {
         val watched = session ?: return
-        // Network and radio changes arrive in bursts; the first reconnect leaves the rest nothing to do.
-        recoveryScope.launch { apAddressCheck.withLock {
-            if (watched.reconnecting()) return@launch
+        recoveryScope.launch {
             val socket = LibrespotApSocket.of(watched) ?: return@launch
             val local = socket.localAddress
             if (socket.isClosed || !socket.isConnected || local == null || local.isAnyLocalAddress) return@launch
@@ -660,12 +660,11 @@ internal class AndroidLibrespotPlaybackHost(
             if (session !== watched) return@launch
             PlaybackTrace.log(
                 "Librespot",
-                "AP connection's address is gone after $reason on ${network()}; reconnecting now",
+                "AP connection's address is gone after $reason on ${network()}; closing it so librespot reconnects",
             )
-            LibrespotApSocket.reconnect(watched, socket)
-        } }
+            runCatching { socket.close() }
+        }
     }
-    private val apAddressCheck = Mutex()
 
     /** For the drop trace: whether the dropped connection's own address had already left the phone. */
     private fun apAddressState(dropped: Session): String {
@@ -875,7 +874,8 @@ internal class AndroidLibrespotPlaybackHost(
      */
     private fun pauseFromKainos(receiver: Player) {
         val state = runCatching { receiver.stateWrapper.state }.getOrNull()
-        if (state != null && state.isPlaying && !state.isPaused) {
+        // librespot acknowledges a pause whenever its state was not paused yet.
+        if (state != null && !state.isPaused) {
             synchronized(ownPauseLock) {
                 if (ownPauseReceiver !== receiver) {
                     ownPauseReceiver = receiver
