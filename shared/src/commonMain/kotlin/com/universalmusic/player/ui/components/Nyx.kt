@@ -15,10 +15,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -37,8 +40,10 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,26 +52,28 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.universalmusic.player.ui.theme.LocalDesktopWallpaper
 import com.universalmusic.player.ui.theme.LocalNyxSpacing
 import com.universalmusic.player.ui.theme.LocalSkinTokens
 import com.universalmusic.player.ui.theme.NyxLightTokens
 import com.universalmusic.player.ui.theme.Skin
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-/** Loads the desktop Nyx nebula bitmap at its exact 1:1 pixels; returns null on Android or if missing. */
+/** Desktop sky art has one source pixel per cell. Android uses the grid alone. */
 @Composable
-internal expect fun rememberNyxWallpaperBitmap(path: String?): ImageBitmap?
+internal expect fun rememberNyxSkyBitmap(windowSize: IntSize, cellPx: Int): ImageBitmap?
 
 @Composable
 fun isNyx(): Boolean = LocalSkinTokens.current.skin == Skin.NYX
 
-/**
- * Builds a tiled [ShaderBrush] for the 1-device-pixel screen-door grid: black on the left edge
- * (`x == 0`) and bottom edge (`y == cellPx - 1`) of every cell, transparent inside.
- */
+private val LocalNyxGridBrush = staticCompositionLocalOf<ShaderBrush?> { null }
+
 @Composable
-fun rememberNyxGridBrush(cellPx: Int = LocalNyxSpacing.current.cellPx.roundToInt().coerceAtLeast(2)): ShaderBrush =
+internal fun rememberNyxGridBrush(): ShaderBrush =
+    LocalNyxGridBrush.current ?: rememberNyxGridBrush(LocalNyxSpacing.current.cellPx.roundToInt())
+
+@Composable
+private fun rememberNyxGridBrush(cellPx: Int): ShaderBrush =
     remember(cellPx) {
         val bitmap = ImageBitmap(cellPx, cellPx)
         val drawSize = Size(cellPx.toFloat(), cellPx.toFloat())
@@ -77,35 +84,48 @@ fun rememberNyxGridBrush(cellPx: Int = LocalNyxSpacing.current.cellPx.roundToInt
         ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated))
     }
 
-/**
- * Nyx's ground: pure black void with the treated nebula drawn 1:1 from window top-left with
- * [FilterQuality.None] (never scaled, so the baked-in 5 px grid never smears). On Android or when
- * the wallpaper file is missing, draws the flat `#000000` void with the 1 px grid.
- */
 @Composable
 fun NyxGround(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val path = LocalDesktopWallpaper.current
-    val bitmap = rememberNyxWallpaperBitmap(path)
-    val gridBrush = rememberNyxGridBrush()
-    Box(modifier) {
-        Canvas(Modifier.matchParentSize()) {
-            drawRect(NyxLightTokens.gridLine)
-            if (bitmap != null) {
-                val src = IntSize(bitmap.width, bitmap.height)
-                drawImage(
-                    image = bitmap,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = src,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = src,
-                    filterQuality = FilterQuality.None,
-                )
-            } else {
-                drawRect(gridBrush)
-            }
-        }
-        content()
+    val cellPx = LocalNyxSpacing.current.cellPx.roundToInt()
+    val gridBrush = rememberNyxGridBrush(cellPx)
+    var windowSize by remember { mutableStateOf(IntSize.Zero) }
+    val bitmap = rememberNyxSkyBitmap(windowSize, cellPx)
+
+    Box(modifier.onSizeChanged { windowSize = it }) {
+        Canvas(
+            Modifier.matchParentSize().clipToBounds().drawWithCache {
+                val cells = IntSize(ceil(size.width / cellPx).toInt(), ceil(size.height / cellPx).toInt())
+                val sky = bitmap?.takeIf { cells.width > 0 && cells.height > 0 }?.coverNyxCells(cells)
+                onDrawBehind {
+                    if (sky == null) {
+                        drawRect(NyxLightTokens.gridLine)
+                    } else {
+                        drawImage(
+                            image = sky,
+                            dstSize = IntSize(cells.width * cellPx, cells.height * cellPx),
+                            filterQuality = FilterQuality.None,
+                        )
+                        drawRect(gridBrush)
+                    }
+                }
+            },
+        ) {}
+        CompositionLocalProvider(LocalNyxGridBrush provides gridBrush, content = content)
     }
+}
+
+/** Resample only on resize or asset change, so the final nearest-neighbour draw is always ×cellPx. */
+private fun ImageBitmap.coverNyxCells(cells: IntSize): ImageBitmap {
+    val source = IntSize(width, height)
+    if (cells == source) return this
+    val cover = maxOf(cells.width.toDouble() / width, cells.height.toDouble() / height)
+    val scaled = IntSize(maxOf(cells.width, (width * cover).roundToInt()), maxOf(cells.height, (height * cover).roundToInt()))
+    val origin = IntOffset((cells.width - scaled.width) / 2, (cells.height - scaled.height) / 2)
+    val bitmap = ImageBitmap(cells.width, cells.height)
+    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, ComposeCanvas(bitmap), Size(cells.width.toFloat(), cells.height.toFloat())) {
+        drawImage(this@coverNyxCells, srcSize = source, dstOffset = origin, dstSize = scaled, filterQuality = FilterQuality.None)
+    }
+    return bitmap
 }
 
 /** A Nyx slab panel (`slab` 82% or `slabOver` 92%) over the sky, with an optional 1 px top light. */
@@ -235,36 +255,49 @@ fun NyxCutTitle(
     maxLines: Int = 1,
 ) {
     val cellPx = LocalNyxSpacing.current.cellPx.roundToInt().coerceAtLeast(2)
-    val gridBrush = rememberNyxGridBrush(cellPx)
+    val gridBrush = rememberNyxGridBrush()
     var originInRoot by remember { mutableStateOf(Offset.Zero) }
     val plusPaint = remember { Paint().apply { blendMode = BlendMode.Plus } }
 
     Box(
         modifier
             .onGloballyPositioned { originInRoot = it.positionInRoot() }
-            .drawWithContent {
-                val rect = Rect(Offset.Zero, size)
-                drawContext.canvas.saveLayer(rect, plusPaint)
-                drawContent()
-                drawRect(
-                    brush = Brush.linearGradient(
-                        listOf(NyxLightTokens.displayStart, NyxLightTokens.displayEnd),
-                        start = Offset(0f, 0f),
-                        end = Offset(size.width * 0.18f, size.height),
-                    ),
-                    blendMode = BlendMode.SrcIn,
+            .drawWithCache {
+                val gradient = Brush.linearGradient(
+                    listOf(NyxLightTokens.displayStart, NyxLightTokens.displayEnd),
+                    start = Offset.Zero,
+                    end = Offset(size.width * 0.18f, size.height),
                 )
-                val ox = -(originInRoot.x.roundToInt().mod(cellPx)).toFloat()
-                val oy = -(originInRoot.y.roundToInt().mod(cellPx)).toFloat()
-                translate(ox, oy) {
-                    drawRect(
-                        brush = gridBrush,
-                        topLeft = Offset(-ox, -oy),
-                        size = size,
-                        blendMode = BlendMode.DstOut,
-                    )
+                // Keep full shade throughout the glyph box, with a soft edge in the surrounding sky.
+                val shade = Brush.radialGradient(
+                    0f to NyxLightTokens.displayShade,
+                    0.87f to NyxLightTokens.displayShade,
+                    1f to Color.Transparent,
+                    center = Offset.Zero,
+                    radius = 1f,
+                )
+                val rect = Rect(Offset.Zero, size)
+                onDrawWithContent {
+                    translate(center.x, center.y) {
+                        scale(size.width * 0.82f, size.height * 0.82f, Offset.Zero) {
+                            drawRect(shade, topLeft = Offset(-1f, -1f), size = Size(2f, 2f))
+                        }
+                    }
+                    drawContext.canvas.saveLayer(rect, plusPaint)
+                    drawContent()
+                    drawRect(gradient, blendMode = BlendMode.SrcIn)
+                    val ox = -(originInRoot.x.roundToInt().mod(cellPx)).toFloat()
+                    val oy = -(originInRoot.y.roundToInt().mod(cellPx)).toFloat()
+                    translate(ox, oy) {
+                        drawRect(
+                            brush = gridBrush,
+                            topLeft = Offset(-ox, -oy),
+                            size = size,
+                            blendMode = BlendMode.DstOut,
+                        )
+                    }
+                    drawContext.canvas.restore()
                 }
-                drawContext.canvas.restore()
             },
     ) {
         Text(

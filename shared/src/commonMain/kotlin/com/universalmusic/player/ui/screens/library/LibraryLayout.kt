@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
+import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.components.nyxWash
 import com.universalmusic.player.ui.theme.LocalNyxSpacing
@@ -37,6 +38,9 @@ import com.universalmusic.player.ui.theme.LocalSkinTokens
 
 /** At this width Library's title, search and filters share one line, and the tabs share theirs with the count. */
 internal val LibraryCompactHeaderMinWidth: Dp = 1500.dp
+
+/** Nyx needs room for all five tabs, the search field and three filters on one line. */
+internal val LibraryNyxToolbarMinWidth: Dp = 1200.dp
 
 /** At this width Songs stands as its own pane beside the other four tabs. */
 internal val LibrarySplitMinWidth: Dp = 2000.dp
@@ -87,6 +91,7 @@ internal fun LibraryTabStrip(
     if (isNyx()) {
         val spacing = LocalNyxSpacing.current
         val shape = RoundedCornerShape(LocalSkinTokens.current.rounding.extraSmall)
+        val tabMinHeight = if (platformLabel() == "Android") 48.dp else 35.dp
         Row(
             modifier.selectableGroup(),
             horizontalArrangement = Arrangement.spacedBy(spacing.xs),
@@ -96,7 +101,7 @@ internal fun LibraryTabStrip(
                 val on = item == selected
                 Box(
                     Modifier
-                        .heightIn(min = maxOf(spacing.cell * 7, 35.dp))
+                        .heightIn(min = maxOf(spacing.cell * 7, tabMinHeight))
                         .then(if (on) Modifier.nyxWash(shape, full = true) else Modifier.clip(shape))
                         .selectable(on, onClick = { onSelect(item) }, role = Role.Tab)
                         .padding(horizontal = spacing.md, vertical = spacing.xs),

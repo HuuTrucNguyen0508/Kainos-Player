@@ -408,7 +408,7 @@ internal fun LibraryScreen(
                     if (showSpotifyError) {
                         LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
                     }
-                    if (width >= 960.dp) {
+                    if (width >= LibraryNyxToolbarMinWidth) {
                         Row(
                             Modifier
                                 .fillMaxWidth()

@@ -89,7 +89,7 @@ fun SeekTrack(
         }
     }
     val nyxSpacing = LocalNyxSpacing.current
-    val nyxGrid = rememberNyxGridBrush()
+    val nyxGrid = if (tokens.seek == SeekStyle.CELLS) rememberNyxGridBrush() else null
     val alpha = if (enabled) 1f else .38f
     val known = durationMs != null || kind == SeekKind.Level
     val f = fraction.coerceIn(0f, 1f)
@@ -142,7 +142,7 @@ fun SeekTrack(
                         )
                     }
                     translate(0f, top) {
-                        drawRect(nyxGrid, Offset.Zero, Size(barWidth, barHeight))
+                        drawRect(requireNotNull(nyxGrid), Offset.Zero, Size(barWidth, barHeight))
                     }
                     if (scrubbing && known) {
                         val edgeX = (litCells * cell).coerceIn(1f, barWidth - 2f)

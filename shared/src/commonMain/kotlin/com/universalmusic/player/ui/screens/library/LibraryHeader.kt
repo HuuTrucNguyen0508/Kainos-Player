@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.ProviderState
+import com.universalmusic.player.platform.platformLabel
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.NyxCutTitle
 import com.universalmusic.player.ui.components.isNyx
@@ -118,6 +119,7 @@ internal fun NyxLibrarySkyHeader(
     val tokens = LocalSkinTokens.current
     val islandShape = RoundedCornerShape(tokens.rounding.normal)
     val bandHeight = if (compact) spacing.cell * 20 else spacing.cell * 30
+    val statsMinHeight = if (platformLabel() == "Android") 48.dp else 35.dp
     Box(
         Modifier
             .fillMaxWidth()
@@ -137,7 +139,7 @@ internal fun NyxLibrarySkyHeader(
             Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = spacing.lg, bottom = spacing.lg)
-                .height(maxOf(spacing.cell * 7, 35.dp))
+                .height(maxOf(spacing.cell * 7, statsMinHeight))
                 .clip(islandShape)
                 .background(NyxLightTokens.slabOver)
                 .border(1.dp, NyxLightTokens.hair, islandShape)
