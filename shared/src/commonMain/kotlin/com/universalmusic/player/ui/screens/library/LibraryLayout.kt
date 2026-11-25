@@ -1,25 +1,39 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
+import com.universalmusic.player.ui.components.isNyx
+import com.universalmusic.player.ui.components.nyxWash
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 
 /** At this width Library's title, search and filters share one line, and the tabs share theirs with the count. */
 internal val LibraryCompactHeaderMinWidth: Dp = 1500.dp
@@ -70,6 +84,36 @@ internal fun LibraryTabStrip(
     onSelect: (LibraryTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (isNyx()) {
+        val spacing = LocalNyxSpacing.current
+        val shape = RoundedCornerShape(LocalSkinTokens.current.rounding.extraSmall)
+        Row(
+            modifier.selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            tabs.forEach { item ->
+                val on = item == selected
+                Box(
+                    Modifier
+                        .heightIn(min = maxOf(spacing.cell * 7, 35.dp))
+                        .then(if (on) Modifier.nyxWash(shape, full = true) else Modifier.clip(shape))
+                        .selectable(on, onClick = { onSelect(item) }, role = Role.Tab)
+                        .padding(horizontal = spacing.md, vertical = spacing.xs),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        item.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
+                        color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        return
+    }
     val ink = MaterialTheme.colorScheme.onSurface
     Row(modifier.selectableGroup()) {
         tabs.forEach { item ->

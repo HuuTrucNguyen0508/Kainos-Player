@@ -1,6 +1,8 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,7 +36,9 @@ import com.universalmusic.player.app.AppContainer
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.ui.components.DisplayHero
 import com.universalmusic.player.ui.components.Slip
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.theme.Accents
+import com.universalmusic.player.ui.theme.NyxLightTokens
 
 @Composable
 internal fun HomeScreen(
@@ -210,6 +215,67 @@ internal fun HomeContent(
                 if (index > 0 || continueListening.isNotEmpty()) Spacer(Modifier.height(20.dp))
                 HistoryShelf(shelf, columns, onPlayTracks, trackActions = trackActions)
             }
+        }
+
+        if (isNyx()) {
+            Column(Modifier.fillMaxSize()) {
+                if (ui.empty) {
+                    if (ui.ready) {
+                        Box(Modifier.fillMaxSize().background(NyxLightTokens.slab)) {
+                            Column(
+                                Modifier
+                                    .widthIn(max = layout.maxWidth)
+                                    .fillMaxWidth()
+                                    .align(Alignment.TopCenter)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(start = layout.sidePad, end = layout.sidePad, bottom = 24.dp),
+                            ) {
+                                FirstRun(ui.sources, act, Modifier.padding(top = firstRunTop))
+                            }
+                        }
+                    }
+                    return@Column
+                }
+                Box(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier
+                            .widthIn(max = layout.maxWidth)
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .padding(horizontal = layout.sidePad, vertical = 20.dp),
+                    ) {
+                        DisplayHero(
+                            title = "Home",
+                            eyebrow = homeEyebrow(ui.favorites.count, ui.localTrackCount),
+                            ghost = ui.favorites.count.takeIf { it > 0 }?.toString(),
+                            accent = Accents.home,
+                        )
+                    }
+                }
+                HorizontalDivider(color = NyxLightTokens.hair)
+                Box(Modifier.weight(1f).fillMaxWidth().background(NyxLightTokens.slab)) {
+                    Column(
+                        Modifier
+                            .widthIn(max = layout.maxWidth)
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .verticalScroll(rememberScrollState())
+                            .padding(start = layout.sidePad, end = layout.sidePad, bottom = 24.dp),
+                    ) {
+                        if (layout.end == null) {
+                            startSection()
+                            Spacer(Modifier.height(20.dp))
+                            historySection()
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(HomeSpreadGutter)) {
+                                Column(Modifier.weight(HomeStartWeight)) { startSection() }
+                                Column(Modifier.weight(1f).padding(top = 16.dp)) { historySection() }
+                            }
+                        }
+                    }
+                }
+            }
+            return@BoxWithConstraints
         }
 
         Column(

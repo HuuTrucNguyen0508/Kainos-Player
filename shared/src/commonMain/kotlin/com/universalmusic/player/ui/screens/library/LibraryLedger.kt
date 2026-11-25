@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.universalmusic.player.ui.theme.LocalSkinTokens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
@@ -54,19 +56,22 @@ import com.universalmusic.player.data.library.requiresNetworkToPlay
 import com.universalmusic.player.domain.model.ProviderId
 import com.universalmusic.player.domain.model.Track
 import com.universalmusic.player.domain.model.TrackSort
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.theme.LocalSignal
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import com.universalmusic.player.ui.theme.SpotifyGreen
 
 /** The sticky band at the top of a Library list: its [content], then a rule. */
 @Composable
 internal fun LibraryLedgerSurface(content: @Composable ColumnScope.() -> Unit) {
+    val nyx = isNyx()
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        color = if (nyx) NyxLightTokens.slabOver else MaterialTheme.colorScheme.surfaceContainerLowest,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
             content()
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            HorizontalDivider(color = if (nyx) NyxLightTokens.hair else MaterialTheme.colorScheme.outline)
         }
     }
 }
@@ -215,15 +220,22 @@ internal fun LibraryLedgerBar(
                     }
                 }
             }
+            val nyx = isNyx()
+            val nyxActionShape = RoundedCornerShape(LocalSkinTokens.current.rounding.normal)
             Spacer(Modifier.width(4.dp))
             if (onShuffle != null) {
-                FilledTonalIconButton(onClick = onShuffle, modifier = Modifier.size(36.dp)) {
+                FilledTonalIconButton(
+                    onClick = onShuffle,
+                    shape = if (nyx) nyxActionShape else androidx.compose.material3.IconButtonDefaults.filledShape,
+                    modifier = Modifier.size(36.dp),
+                ) {
                     Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(18.dp))
                 }
                 Spacer(Modifier.width(6.dp))
             }
             FilledTonalButton(
                 onClick = onPlay,
+                shape = if (nyx) nyxActionShape else androidx.compose.material3.ButtonDefaults.filledTonalShape,
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 modifier = Modifier.height(36.dp),
             ) {

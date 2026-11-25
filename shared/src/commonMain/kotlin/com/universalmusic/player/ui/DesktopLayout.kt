@@ -167,8 +167,13 @@ fun DesktopResizeHandle(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val frost = LocalSkinTokens.current.skin == Skin.FROST
-    val thickness = if (frost) 10.dp else 6.dp
-    val idle = if (frost) Color.Transparent else MaterialTheme.colorScheme.outlineVariant
+    val nyx = LocalSkinTokens.current.skin == Skin.NYX
+    val thickness = if (frost) 10.dp else if (nyx) 1.dp else 6.dp
+    val idle = when {
+        frost -> Color.Transparent
+        nyx -> com.universalmusic.player.ui.theme.NyxLightTokens.hair
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
     val active = if (frost) LocalKainosPalette.current.rule else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     Box(
         modifier

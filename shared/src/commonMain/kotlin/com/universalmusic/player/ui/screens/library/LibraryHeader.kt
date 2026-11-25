@@ -1,6 +1,9 @@
 package com.universalmusic.player.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -23,16 +27,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -41,6 +49,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +57,12 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.domain.model.ProviderState
 import com.universalmusic.player.domain.model.Track
+import com.universalmusic.player.ui.components.NyxCutTitle
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.reportsTextInputFocus
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
+import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import kotlin.math.roundToInt
 
 /** The part of Library's chrome that folds away on the way down the list and comes back at its top. */
@@ -85,6 +99,83 @@ internal fun LibraryCollapsingHeader(
                     IntOffset(0, if (chromeHeightPx == 0) 0 else heightOffset.roundToInt())
                 },
             content = content,
+        )
+    }
+}
+
+/** Nyx's open-sky Library header band: grid-cut title over the unblurred nebula and a dark stats island. */
+@Composable
+internal fun NyxLibrarySkyHeader(
+    compact: Boolean,
+    localCount: Int,
+    favoritesCount: Int,
+    albumCount: Int,
+    folderCount: Int,
+    localState: ProviderState,
+    onRefreshLocal: () -> Unit,
+) {
+    val spacing = LocalNyxSpacing.current
+    val tokens = LocalSkinTokens.current
+    val islandShape = RoundedCornerShape(tokens.rounding.normal)
+    val bandHeight = if (compact) spacing.cell * 20 else spacing.cell * 30
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(bandHeight)
+            .drawBehind {
+                drawLine(NyxLightTokens.hair, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1f)
+            },
+    ) {
+        NyxCutTitle(
+            text = "Library",
+            style = if (compact) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displayLarge,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = if (compact) spacing.lg else spacing.xxl, bottom = spacing.lg),
+        )
+        Row(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = spacing.lg, bottom = spacing.lg)
+                .height(maxOf(spacing.cell * 7, 35.dp))
+                .clip(islandShape)
+                .background(NyxLightTokens.slabOver)
+                .border(1.dp, NyxLightTokens.hair, islandShape)
+                .padding(start = spacing.md, end = spacing.xs),
+            horizontalArrangement = Arrangement.spacedBy(spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!compact) {
+                NyxStatPair(localCount.toString(), if (localCount == 1) "local song" else "local songs")
+                NyxStatPair(favoritesCount.toString(), "hearted")
+                NyxStatPair(albumCount.toString(), if (albumCount == 1) "album" else "albums")
+                if (folderCount > 0) {
+                    NyxStatPair(folderCount.toString(), if (folderCount == 1) "folder" else "folders")
+                }
+            } else {
+                NyxStatPair(localCount.toString(), "songs")
+            }
+            LibraryRefreshButton(localState, onRefreshLocal)
+        }
+    }
+}
+
+@Composable
+private fun NyxStatPair(value: String, label: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            value,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
         )
     }
 }
@@ -168,9 +259,28 @@ internal fun LibrarySearchField(
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    val nyx = isNyx()
+    val nyxShape = RoundedCornerShape(LocalSkinTokens.current.rounding.normal)
     OutlinedTextField(
         value = queryField,
         onValueChange = onQueryField,
+        shape = if (nyx) nyxShape else OutlinedTextFieldDefaults.shape,
+        colors = if (nyx) {
+            OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = NyxLightTokens.inputBase,
+                unfocusedContainerColor = NyxLightTokens.inputBase,
+                focusedBorderColor = NyxLightTokens.highlight,
+                unfocusedBorderColor = NyxLightTokens.inputRing,
+                focusedLeadingIconColor = NyxLightTokens.highlight,
+                unfocusedLeadingIconColor = NyxLightTokens.highlight,
+                focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            )
+        } else {
+            OutlinedTextFieldDefaults.colors()
+        },
         modifier = modifier
             .focusRequester(searchFocusRequester)
             .onFocusChanged { onSearchFocusChanged(it.isFocused) }
