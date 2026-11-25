@@ -27,3 +27,4 @@ private val androidNyxFamily = FontFamily(
 
 internal actual fun nyxFontFamily(): FontFamily = androidNyxFamily
 internal actual fun nyxCellPx(density: Density): Float = (3f * density.density).roundToInt().coerceAtLeast(3).toFloat()
+internal actual val nyxTypeScale: Float = 1f

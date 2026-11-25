@@ -67,4 +67,5 @@ private val nyxFamily by lazy {
 }
 
 internal actual fun nyxFontFamily(): FontFamily = nyxFamily
-internal actual fun nyxCellPx(density: Density): Float = 5f
+internal actual fun nyxCellPx(density: Density): Float = 6f
+internal actual val nyxTypeScale: Float = 1.2f

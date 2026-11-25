@@ -71,6 +71,9 @@ internal expect fun nyxFontFamily(): FontFamily
 /** Physical pixels per grid cell for Nyx (5 px on desktop, 3 dp snapped to whole px on Android). */
 internal expect fun nyxCellPx(density: Density): Float
 
+/** Desktop Nyx is drawn 1.2x the design (6 px cells, type to match); Android keeps the design size. */
+internal expect val nyxTypeScale: Float
+
 fun skinTokens(skin: Skin, cell: Dp = 5.dp): SkinTokens {
     if (skin == Skin.FROST) return frostTokens()
     if (skin == Skin.NYX) return nyxTokens(cell)
@@ -159,16 +162,16 @@ private fun nyxTokens(cell: Dp = 5.dp): SkinTokens {
     val rubik = nyxFontFamily()
     fun displayStyle(size: Float) = TextStyle(
         fontFamily = rubik,
-        fontSize = size.sp,
-        lineHeight = size.sp,
+        fontSize = (size * nyxTypeScale).sp,
+        lineHeight = (size * nyxTypeScale).sp,
         fontWeight = FontWeight.ExtraBold,
         letterSpacing = (-0.015).em,
         fontFeatureSettings = "tnum",
     )
     fun uiStyle(size: Float, weight: FontWeight = FontWeight.Normal, tabular: Boolean = false) = TextStyle(
         fontFamily = rubik,
-        fontSize = size.sp,
-        lineHeight = (size * 1.3f).sp,
+        fontSize = (size * nyxTypeScale).sp,
+        lineHeight = (size * nyxTypeScale * 1.3f).sp,
         fontWeight = weight,
         fontFeatureSettings = if (tabular) "tnum" else null,
     )

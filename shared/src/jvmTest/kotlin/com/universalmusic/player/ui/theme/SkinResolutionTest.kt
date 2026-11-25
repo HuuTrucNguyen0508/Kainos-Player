@@ -88,11 +88,14 @@ class SkinResolutionTest {
         assertEquals(SeekStyle.CELLS, tokens.seek)
         assertEquals(GroundStyle.SKY, tokens.ground)
         assertEquals(nyxFontFamily(), tokens.display)
-        assertEquals(80f, tokens.typography.displayLarge.fontSize.value)
-        assertEquals(22f, tokens.typography.headlineSmall.fontSize.value)
-        assertEquals(14f, tokens.typography.titleSmall.fontSize.value)
-        assertEquals(13.5f, tokens.typography.bodyMedium.fontSize.value)
-        assertEquals(11.5f, tokens.typography.labelSmall.fontSize.value)
+        // Desktop draws the design 1.2x (6 px cells); the type scales with the cell.
+        assertEquals(1.2f, nyxTypeScale)
+        assertEquals(6f, nyxCellPx(androidx.compose.ui.unit.Density(1f)))
+        assertEquals(80f * 1.2f, tokens.typography.displayLarge.fontSize.value, 0.001f)
+        assertEquals(22f * 1.2f, tokens.typography.headlineSmall.fontSize.value, 0.001f)
+        assertEquals(14f * 1.2f, tokens.typography.titleSmall.fontSize.value, 0.001f)
+        assertEquals(13.5f * 1.2f, tokens.typography.bodyMedium.fontSize.value, 0.001f)
+        assertEquals(11.5f * 1.2f, tokens.typography.labelSmall.fontSize.value, 0.001f)
 
         val scheme = nyxPalette().scheme
         for (ground in listOf(
