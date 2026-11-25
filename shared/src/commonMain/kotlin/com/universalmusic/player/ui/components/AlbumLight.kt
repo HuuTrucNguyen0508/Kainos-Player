@@ -101,8 +101,9 @@ fun rememberArtworkTint(artworkUrl: String?): Color? {
  */
 @Composable
 fun rememberAlbumLight(artworkUrl: String?): State<Color> {
-    // Frost has no colour of its own: the cover stays in colour, but nothing around it is tinted.
-    if (LocalSkinTokens.current.skin == Skin.FROST) return remember { mutableStateOf(Color.Transparent) }
+    // Frost and Nyx do not tint around covers with sampled album light.
+    val skin = LocalSkinTokens.current.skin
+    if (skin == Skin.FROST || skin == Skin.NYX) return remember { mutableStateOf(Color.Transparent) }
     val scheme = MaterialTheme.colorScheme
     val tint = rememberArtworkTint(artworkUrl)
     val dark = LocalKainosPalette.current.isDark
@@ -149,6 +150,36 @@ fun AlbumLightCover(light: Color, modifier: Modifier = Modifier, content: @Compo
     if (tokens.skin == Skin.FROST) {
         // Frost sets the cover straight on the glass, as the shell's Media page does.
         Box(modifier) { content() }
+    } else if (tokens.skin == Skin.NYX) {
+        val shape = RoundedCornerShape(tokens.rounding.normal)
+        Box(
+            modifier
+                .drawBehind {
+                    val liftCenter = Offset(size.width * 0.5f, size.height * 0.92f)
+                    val liftRadius = max(size.width, size.height) * 0.70f
+                    drawRect(
+                        Brush.radialGradient(
+                            0f to com.universalmusic.player.ui.theme.NyxLightTokens.underGlow.copy(alpha = 0.32f),
+                            1f to Color.Transparent,
+                            center = liftCenter,
+                            radius = liftRadius,
+                        ),
+                        topLeft = Offset(-size.width * 0.08f, size.height * 0.25f),
+                        size = Size(size.width * 1.16f, size.height * 0.92f),
+                    )
+                }
+                .clip(shape)
+                .then(
+                    Modifier.drawWithContent {
+                        drawContent()
+                        drawRoundRect(
+                            color = com.universalmusic.player.ui.theme.NyxLightTokens.inputRing,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1f),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(tokens.rounding.normal.toPx()),
+                        )
+                    },
+                ),
+        ) { content() }
     } else if (tokens.skin == Skin.FOLIO) {
         Box(
             modifier.drawWithContent {

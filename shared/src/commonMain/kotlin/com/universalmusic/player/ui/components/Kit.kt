@@ -14,10 +14,19 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.semantics.Role
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Check
@@ -70,12 +79,13 @@ import com.universalmusic.player.ui.theme.Skin
 import com.universalmusic.player.ui.theme.contrastingColor
 import com.universalmusic.player.ui.theme.frostGlass
 
-/** Folio's dotted almanac paper, or Caelestia's plain background. Frost's wallpaper is drawn once by [FrostGround]. */
+/** Folio's dotted almanac paper, or Caelestia's plain background. Frost and Nyx draw their ground once at window root. */
 @Composable
 fun Modifier.skinGround(): Modifier {
     val palette = LocalKainosPalette.current
-    if (LocalSkinTokens.current.ground == GroundStyle.WALLPAPER) return this
-    if (LocalSkinTokens.current.ground == GroundStyle.PLAIN) return background(palette.ground)
+    val ground = LocalSkinTokens.current.ground
+    if (ground == GroundStyle.WALLPAPER || ground == GroundStyle.SKY) return this
+    if (ground == GroundStyle.PLAIN) return background(palette.ground)
     val dot = lerp(palette.ground, palette.rule, if (palette.isDark) .8f else 1f)
     return drawWithCache {
         val spacing = 16.dp.toPx()
@@ -277,6 +287,25 @@ fun Slip(
         }
         return
     }
+    if (tokens.skin == Skin.NYX) {
+        val card = RoundedCornerShape(tokens.rounding.normal)
+        val clickable = if (onClick != null) Modifier.clip(card).clickable(onClick = onClick) else Modifier
+        Box(
+            modifier
+                .clip(card)
+                .then(clickable)
+                .drawBehind {
+                    drawRect(NyxLightTokens.slabOver)
+                    drawLine(NyxLightTokens.topLight, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1f)
+                }
+                .border(1.dp, NyxLightTokens.hair, card),
+        ) {
+            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                content()
+            }
+        }
+        return
+    }
     if (onClick != null) {
         Surface(onClick = onClick, modifier = modifier, shape = shape, color = color, border = border, shadowElevation = if (folio) 1.dp else 0.dp, content = content)
     } else {
@@ -332,8 +361,10 @@ fun LedgerRow(
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val folio = tokens.skin == Skin.FOLIO
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(if (folio) 0.dp else tokens.rounding.normal)
+    val nyx = tokens.skin == Skin.NYX
+    val shape = RoundedCornerShape(if (folio) 0.dp else tokens.rounding.normal)
     val fill = when {
+        nyx -> Color.Transparent
         highlighted -> if (folio) palette.sheet else MaterialTheme.colorScheme.secondaryContainer
         header && !folio -> MaterialTheme.colorScheme.surfaceContainer
         else -> Color.Transparent
@@ -342,8 +373,10 @@ fun LedgerRow(
     Row(
         modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(fill)
+            .then(
+                if (nyx && highlighted) Modifier.nyxWash(shape, full = false)
+                else Modifier.clip(shape).background(fill),
+            )
             .then(
                 when {
                     onClick != null && onLongClick != null -> Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)
@@ -352,10 +385,16 @@ fun LedgerRow(
                 },
             )
             .then(
-                if (folio) Modifier.drawBehind {
-                    drawLine(line, Offset(0f, size.height - .5f), Offset(size.width, size.height - .5f), 1.dp.toPx())
-                    if (highlighted) drawLine(palette.scheme.primary, Offset(1f, 0f), Offset(1f, size.height), 2.dp.toPx())
-                } else Modifier,
+                when {
+                    folio -> Modifier.drawBehind {
+                        drawLine(line, Offset(0f, size.height - .5f), Offset(size.width, size.height - .5f), 1.dp.toPx())
+                        if (highlighted) drawLine(palette.scheme.primary, Offset(1f, 0f), Offset(1f, size.height), 2.dp.toPx())
+                    }
+                    nyx && header -> Modifier.drawBehind {
+                        drawLine(NyxLightTokens.hair, Offset(0f, size.height - .5f), Offset(size.width, size.height - .5f), 1f)
+                    }
+                    else -> Modifier
+                },
             )
             .padding(horizontal = 8.dp, vertical = if (header) 6.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -398,6 +437,60 @@ fun KainosChip(
     val folio = tokens.skin == Skin.FOLIO
     val scheme = MaterialTheme.colorScheme
     val frost = tokens.skin == Skin.FROST
+    if (tokens.skin == Skin.NYX) {
+        val spacing = LocalNyxSpacing.current
+        val chipShape = RoundedCornerShape(tokens.rounding.extraSmall)
+        val contentAlpha = if (enabled) 1f else 0.45f
+        val textColor = (if (selected) scheme.onSurface else scheme.onSurfaceVariant).copy(alpha = contentAlpha)
+        Box(
+            modifier
+                .minimumInteractiveComponentSize()
+                .heightIn(min = spacing.cell * 7)
+                .then(
+                    if (selected) Modifier.nyxWash(chipShape, full = true)
+                    else Modifier
+                        .clip(chipShape)
+                        .background(NyxLightTokens.buttonSubtle)
+                        .border(1.dp, NyxLightTokens.hair, chipShape),
+                )
+                .toggleable(value = selected, enabled = enabled, role = Role.Checkbox, onValueChange = { onClick() })
+                .padding(horizontal = spacing.md, vertical = spacing.xs),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+            ) {
+                when {
+                    selected -> Icon(
+                        Icons.Default.Check,
+                        null,
+                        Modifier.size(16.dp),
+                        tint = NyxLightTokens.highlight.copy(alpha = contentAlpha),
+                    )
+                    leadingIcon != null -> Icon(
+                        leadingIcon,
+                        null,
+                        Modifier.size(16.dp),
+                        tint = (accent?.let { palette.accent(it, AccentUse.Mark) } ?: scheme.onSurfaceVariant).copy(alpha = contentAlpha),
+                    )
+                    accent != null -> Box(
+                        Modifier
+                            .size(spacing.xs)
+                            .background(palette.accent(accent, AccentUse.Mark).copy(alpha = contentAlpha)),
+                    )
+                }
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                    color = textColor,
+                    maxLines = 1,
+                )
+            }
+        }
+        return
+    }
     // Folio and Frost mark "on" by inverting ink and ground.
     val selectedFill = if (folio) scheme.onBackground else if (frost) scheme.primary else scheme.secondaryContainer
     val selectedInk = if (folio) scheme.background else if (frost) scheme.onPrimary else scheme.onSecondaryContainer
@@ -440,15 +533,19 @@ fun PlaceholderArt(seed: String, modifier: Modifier = Modifier) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val frost = tokens.skin == Skin.FROST
+    val nyx = tokens.skin == Skin.NYX
     // Frost draws the shell's neutral cover plate for missing art, never a hue.
     val plate = frostGlass(palette.isDark)
     val hue = if (frost) plate.coverPlateTop else palette.accents.forKey(seed)
-    val deep = if (frost) plate.coverPlateBottom else lerp(hue, palette.scheme.onBackground.takeIf { !palette.isDark } ?: Color.Black, .35f)
+    val deep = if (frost) plate.coverPlateBottom else lerp(hue, palette.scheme.onBackground.takeIf { !palette.isDark } ?: Color.Black, if (nyx) .65f else .35f)
     val ink = if (frost) contrastingColor(Color.White, lerp(hue, deep, .5f), Color.White, 3.0)
+        else if (nyx) MaterialTheme.colorScheme.onSurface
         else contrastingColor(palette.ground, deep, palette.ground, 3.0)
     val initial = seed.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
     BoxWithConstraints(
-        modifier.background(if (frost) Brush.verticalGradient(listOf(hue, deep)) else Brush.linearGradient(listOf(hue, deep))),
+        modifier
+            .background(if (frost) Brush.verticalGradient(listOf(hue, deep)) else Brush.linearGradient(listOf(hue, deep)))
+            .then(if (nyx) Modifier.nyxScreenDoorOverlay() else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         if (frost) {
@@ -510,6 +607,28 @@ fun PlayButton(
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
     val folio = tokens.skin == Skin.FOLIO
+    if (tokens.skin == Skin.NYX) {
+        val spacing = LocalNyxSpacing.current
+        val shape = RoundedCornerShape(tokens.rounding.normal)
+        val width = maxOf(spacing.cell * 12, 60.dp)
+        val height = maxOf(spacing.cell * 10, 50.dp)
+        val alpha = if (enabled) 1f else 0.38f
+        Box(
+            modifier
+                .size(width, height)
+                .nyxGlowButton(shape)
+                .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = if (playing) "Pause" else "Play",
+                tint = scheme.onSurface.copy(alpha = alpha),
+                modifier = Modifier.size(30.dp),
+            )
+        }
+        return
+    }
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -545,6 +664,34 @@ fun AccentToggle(
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val frost = tokens.skin == Skin.FROST
+    if (tokens.skin == Skin.NYX) {
+        val spacing = LocalNyxSpacing.current
+        val boxShape = RoundedCornerShape(tokens.rounding.extraSmall)
+        val alpha = if (enabled) 1f else 0.38f
+        androidx.compose.material3.IconToggleButton(
+            checked = checked,
+            onCheckedChange = { onClick() },
+            enabled = enabled,
+            shape = boxShape,
+            modifier = modifier,
+            colors = androidx.compose.material3.IconButtonDefaults.iconToggleButtonColors(
+                containerColor = Color.Transparent,
+                checkedContainerColor = Color.Transparent,
+                checkedContentColor = NyxLightTokens.highlight.copy(alpha = alpha),
+                contentColor = NyxLightTokens.soft.copy(alpha = alpha),
+            ),
+        ) {
+            Box(
+                Modifier
+                    .size(maxOf(spacing.cell * 7, 35.dp))
+                    .then(if (checked) Modifier.nyxWash(boxShape, full = true) else Modifier.clip(boxShape)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = contentDescription)
+            }
+        }
+        return
+    }
     // Frost has no hue: "on" inverts ink and ground, as the shell marks its active workspace.
     val container = if (frost) MaterialTheme.colorScheme.primary else palette.accentContainer(slot)
     val shape = if (checked && tokens.skin == Skin.CAELESTIA) {
@@ -584,6 +731,34 @@ fun DisplayHero(
     val tokens = LocalSkinTokens.current
     val typography = MaterialTheme.typography
     val frost = tokens.skin == Skin.FROST
+    if (tokens.skin == Skin.NYX) {
+        val spacing = LocalNyxSpacing.current
+        val pillShape = RoundedCornerShape(tokens.rounding.normal)
+        Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+            NyxCutTitle(
+                text = title,
+                style = typography.displayLarge,
+            )
+            eyebrow?.let {
+                Box(
+                    Modifier
+                        .clip(pillShape)
+                        .background(NyxLightTokens.slabOver)
+                        .border(1.dp, NyxLightTokens.hair, pillShape)
+                        .padding(horizontal = spacing.md, vertical = spacing.xs),
+                ) {
+                    Text(
+                        it,
+                        style = typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        return
+    }
     Column(modifier.fillMaxWidth()) {
         eyebrow?.let {
             Text(

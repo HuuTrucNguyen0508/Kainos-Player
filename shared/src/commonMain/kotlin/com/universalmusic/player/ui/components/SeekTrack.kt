@@ -22,12 +22,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontStyle
@@ -36,9 +41,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.universalmusic.player.ui.theme.LocalKainosPalette
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
 import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import com.universalmusic.player.ui.theme.SeekStyle
 import kotlin.math.PI
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** What the track measures: playback time draws ticks and waves, a level (volume) stays plain. */
@@ -80,6 +88,8 @@ fun SeekTrack(
             }
         }
     }
+    val nyxSpacing = LocalNyxSpacing.current
+    val nyxGrid = rememberNyxGridBrush()
     val alpha = if (enabled) 1f else .38f
     val known = durationMs != null || kind == SeekKind.Level
     val f = fraction.coerceIn(0f, 1f)
@@ -90,10 +100,56 @@ fun SeekTrack(
             SeekStyle.RULED -> 36.dp
             SeekStyle.WAVY -> 40.dp
             SeekStyle.LINE -> 40.dp
+            SeekStyle.CELLS -> 32.dp
         }
     }
     Canvas(modifier.fillMaxWidth().height(height)) {
         when (tokens.seek) {
+            SeekStyle.CELLS -> {
+                // Nyx cell meter: 2 cells tall (1 cell in compact bar), snapped to whole cells
+                // under the 1 px black screen-door grid so a value never shows a cut cell.
+                val cell = nyxSpacing.cellPx
+                val barHeight = if (kind == SeekKind.Compact) cell else cell * 2f
+                val totalCells = (size.width / cell).toInt().coerceAtLeast(1)
+                val barWidth = totalCells * cell
+                val top = ((size.height - barHeight) / 2f).roundToInt().toFloat()
+                val litCells = if (known) (f * totalCells).toInt().coerceIn(0, totalCells) else 0
+                val radius = CornerRadius(2f, 2f)
+                val clip = Path().apply {
+                    addRoundRect(RoundRect(Rect(Offset(0f, top), Size(barWidth, barHeight)), radius))
+                }
+                clipPath(clip) {
+                    drawRect(NyxLightTokens.meterTrack, Offset(0f, top), Size(barWidth, barHeight))
+                    if (litCells > 0) {
+                        val litWidth = litCells * cell
+                        val endColor = if (kind == SeekKind.Level && f > 0.9f) {
+                            NyxLightTokens.meterWarn
+                        } else {
+                            NyxLightTokens.meterEnd
+                        }
+                        val fillAlpha = if (enabled || kind == SeekKind.Level) 1f else 0.55f
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                listOf(
+                                    NyxLightTokens.meterStart.copy(alpha = fillAlpha),
+                                    endColor.copy(alpha = fillAlpha),
+                                ),
+                                startX = 0f,
+                                endX = litWidth,
+                            ),
+                            topLeft = Offset(0f, top),
+                            size = Size(litWidth, barHeight),
+                        )
+                    }
+                    translate(0f, top) {
+                        drawRect(nyxGrid, Offset.Zero, Size(barWidth, barHeight))
+                    }
+                    if (scrubbing && known) {
+                        val edgeX = (litCells * cell).coerceIn(1f, barWidth - 2f)
+                        drawRect(NyxLightTokens.highlight, Offset(edgeX - 1f, top), Size(2f, barHeight))
+                    }
+                }
+            }
             SeekStyle.RULED -> {
                 val baseY = if (kind == SeekKind.Progress) 12.dp.toPx() else size.height / 2
                 drawLine(palette.rule, Offset(0f, baseY), Offset(size.width, baseY), 1.dp.toPx())
