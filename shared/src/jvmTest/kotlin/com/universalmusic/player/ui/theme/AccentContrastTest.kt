@@ -12,7 +12,7 @@ class AccentContrastTest {
     @Test fun semanticAccentsMeetContrastOnTheirActualContainers() {
         val palettes = FolioTint.entries.flatMap { tint -> listOf(false, true).map { dark ->
             "$tint/$dark" to folioPalette(tint, dark)
-        } } + ("caelestia" to assertNotNull(parseCaelestiaScheme(schemeFixture())).palette)
+        } } + ("caelestia" to assertNotNull(parseCaelestiaScheme(schemeFixture())).palette) + ("nyx" to nyxPalette())
         for ((name, palette) in palettes) {
             val scheme = palette.scheme
             val backgrounds = listOf(palette.ground, palette.sheet, palette.tile, scheme.surface, scheme.surfaceVariant,

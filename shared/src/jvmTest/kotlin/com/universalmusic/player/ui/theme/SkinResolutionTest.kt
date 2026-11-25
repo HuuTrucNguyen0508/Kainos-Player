@@ -19,12 +19,137 @@ class SkinResolutionTest {
     }
 
     @Test fun desktopDefaultFollowsDesktopEnvWhileExplicitChoicesAndAndroidIgnoreIt() {
-        for (desktopEnv in listOf(null, Skin.FOLIO, Skin.CAELESTIA)) {
+        for (desktopEnv in listOf(null, Skin.FOLIO, Skin.CAELESTIA, Skin.FROST, Skin.NYX)) {
             assertEquals(desktopEnv ?: Skin.CAELESTIA, resolveSkin(SkinChoice.PLATFORM_DEFAULT, "Linux", desktopEnv))
             assertEquals(Skin.FOLIO, resolveSkin(SkinChoice.FOLIO, "Linux", desktopEnv))
             assertEquals(Skin.CAELESTIA, resolveSkin(SkinChoice.CAELESTIA, "Linux", desktopEnv))
+            assertEquals(Skin.FROST, resolveSkin(SkinChoice.FROST, "Linux", desktopEnv))
+            assertEquals(Skin.NYX, resolveSkin(SkinChoice.NYX, "Linux", desktopEnv))
             assertEquals(Skin.FOLIO, resolveSkin(SkinChoice.PLATFORM_DEFAULT, "Android", desktopEnv))
+            assertEquals(Skin.NYX, resolveSkin(SkinChoice.NYX, "Android", desktopEnv))
         }
+    }
+
+    @Test fun nyxIsDarkOnlyAndFallsBackToFrostLightWhenDesktopIsLight() {
+        val darkShell = CaelestiaScheme(isDark = true, palette = folioPalette(FolioTint.CATPPUCCIN, true))
+        val lightShell = CaelestiaScheme(isDark = false, palette = folioPalette(FolioTint.CATPPUCCIN, false))
+        val settings = AppSettings()
+
+        // Desktop Nyx in dark mode -> Nyx skin + Nyx palette.
+        val darkDesktop = resolveTheme(settings, systemDark = false, scheme = darkShell, platform = "Linux", desktopEnv = Skin.NYX)
+        assertEquals(Skin.NYX, darkDesktop.skin)
+        assertPaletteEquals(nyxPalette(), darkDesktop.palette)
+        assertTrue(darkDesktop.followsCaelestia)
+
+        // Desktop Nyx in light mode (via light desktop scheme) -> Frost Light.
+        val lightDesktop = resolveTheme(settings, systemDark = true, scheme = lightShell, platform = "Linux", desktopEnv = Skin.NYX)
+        assertEquals(Skin.FROST, lightDesktop.skin)
+        assertPaletteEquals(frostPalette(false), lightDesktop.palette)
+        assertTrue(lightDesktop.followsCaelestia)
+
+        // Desktop Nyx when not following shell scheme and user sets Light -> Frost Light.
+        val lightLocal = resolveTheme(
+            settings.copy(followCaelestiaScheme = false, themeMode = ThemeMode.LIGHT),
+            systemDark = true,
+            scheme = darkShell,
+            platform = "Linux",
+            desktopEnv = Skin.NYX,
+        )
+        assertEquals(Skin.FROST, lightLocal.skin)
+        assertPaletteEquals(frostPalette(false), lightLocal.palette)
+        assertFalse(lightLocal.followsCaelestia)
+
+        // Explicit SkinChoice.NYX stays Nyx dark regardless of desktop or app light mode.
+        val explicitLinux = resolveTheme(
+            settings.copy(skin = SkinChoice.NYX, themeMode = ThemeMode.LIGHT),
+            systemDark = false,
+            scheme = lightShell,
+            platform = "Linux",
+            desktopEnv = Skin.FOLIO,
+        )
+        assertEquals(Skin.NYX, explicitLinux.skin)
+        assertPaletteEquals(nyxPalette(), explicitLinux.palette)
+        assertFalse(explicitLinux.followsCaelestia)
+
+        val explicitAndroid = resolveTheme(
+            settings.copy(skin = SkinChoice.NYX, themeMode = ThemeMode.LIGHT),
+            systemDark = false,
+            scheme = null,
+            platform = "Android",
+        )
+        assertEquals(Skin.NYX, explicitAndroid.skin)
+        assertPaletteEquals(nyxPalette(), explicitAndroid.palette)
+        assertFalse(explicitAndroid.followsCaelestia)
+    }
+
+    @Test fun nyxTokensAndPaletteContrastMeetDesignSpec() {
+        val tokens = skinTokens(Skin.NYX)
+        assertEquals(Skin.NYX, tokens.skin)
+        assertEquals(SeekStyle.CELLS, tokens.seek)
+        assertEquals(GroundStyle.SKY, tokens.ground)
+        assertEquals(nyxFontFamily(), tokens.display)
+        assertEquals(80f, tokens.typography.displayLarge.fontSize.value)
+        assertEquals(22f, tokens.typography.headlineSmall.fontSize.value)
+        assertEquals(14f, tokens.typography.titleSmall.fontSize.value)
+        assertEquals(13.5f, tokens.typography.bodyMedium.fontSize.value)
+        assertEquals(11.5f, tokens.typography.labelSmall.fontSize.value)
+
+        val scheme = nyxPalette().scheme
+        for (ground in listOf(
+            scheme.background,
+            scheme.surface,
+            scheme.surfaceContainerLow,
+            scheme.surfaceContainer,
+            scheme.surfaceContainerHigh,
+            scheme.surfaceContainerHighest,
+        )) {
+            assertTrue(contrastRatio(scheme.onSurface, ground) >= 4.5, "onSurface on $ground")
+            assertTrue(contrastRatio(scheme.onSurfaceVariant, ground) >= 4.5, "onSurfaceVariant on $ground")
+        }
+        assertTrue(contrastRatio(scheme.onPrimary, scheme.primary) >= 4.5)
+        assertTrue(contrastRatio(scheme.onPrimaryContainer, scheme.primaryContainer) >= 4.5)
+        assertTrue(contrastRatio(scheme.onSecondary, scheme.secondary) >= 4.5)
+        assertTrue(contrastRatio(scheme.onSecondaryContainer, scheme.secondaryContainer) >= 4.5)
+        assertTrue(contrastRatio(scheme.onTertiary, scheme.tertiary) >= 4.5)
+        assertTrue(contrastRatio(scheme.onTertiaryContainer, scheme.tertiaryContainer) >= 4.5)
+        assertTrue(contrastRatio(scheme.onError, scheme.error) >= 4.5)
+        assertTrue(contrastRatio(scheme.onErrorContainer, scheme.errorContainer) >= 4.5)
+        assertTrue(contrastRatio(scheme.inverseOnSurface, scheme.inverseSurface) >= 4.5)
+        assertTrue(contrastRatio(scheme.inversePrimary, scheme.inverseSurface) >= 4.5)
+        assertTrue(contrastRatio(scheme.outline, scheme.surfaceContainerHighest) >= 3.0)
+    }
+
+    @Test fun nyxRubikRendersDistinctWeightsOnDesktop() {
+        fun inkPixels(weight: androidx.compose.ui.text.font.FontWeight): Int {
+            val scene = androidx.compose.ui.ImageComposeScene(width = 320, height = 100, density = androidx.compose.ui.unit.Density(1f)) {
+                androidx.compose.material3.Text(
+                    "Library",
+                    style = androidx.compose.ui.text.TextStyle(
+                        fontFamily = nyxFontFamily(),
+                        fontSize = androidx.compose.ui.unit.TextUnit(56f, androidx.compose.ui.unit.TextUnitType.Sp),
+                        fontWeight = weight,
+                        color = androidx.compose.ui.graphics.Color.White,
+                    ),
+                )
+            }
+            return try {
+                scene.render(0).use { image ->
+                    val png = image.encodeToData()!!.use { data ->
+                        javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(data.bytes))
+                    }
+                    val pixels = png.getRGB(0, 0, png.width, png.height, null, 0, png.width)
+                    pixels.count { ((it ushr 16) and 0xFF) > 128 }
+                }
+            } finally {
+                scene.close()
+            }
+        }
+        val regular = inkPixels(androidx.compose.ui.text.font.FontWeight.Normal)
+        val medium = inkPixels(androidx.compose.ui.text.font.FontWeight.Medium)
+        val extraBold = inkPixels(androidx.compose.ui.text.font.FontWeight.ExtraBold)
+        assertTrue(regular > 200, "Rubik 400 rendered $regular ink pixels")
+        assertTrue(medium > regular, "Rubik 500 ($medium) should be heavier than 400 ($regular)")
+        assertTrue(extraBold > medium, "Rubik 800 ($extraBold) should be heavier than 500 ($medium)")
     }
 
     @Test fun frostIsGreyGlassThatOnlyTakesLightOrDarkFromTheDesktop() {
