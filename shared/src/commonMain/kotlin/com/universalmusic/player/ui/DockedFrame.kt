@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import com.universalmusic.player.ui.components.FrostSheet
 import com.universalmusic.player.ui.components.GlassDensity
 import com.universalmusic.player.ui.components.SkinPane
+import com.universalmusic.player.ui.components.isNyx
+import com.universalmusic.player.ui.theme.NyxLightTokens
 
 /**
  * The desktop frame: rail, then the player on whichever [dock] edge, wrapped around the content.
@@ -209,7 +211,7 @@ internal fun SheetOrPlain(frost: Boolean, modifier: Modifier, content: @Composab
     if (frost) FrostSheet(modifier, GlassDensity.Tall, content = content) else Box(modifier, content = content)
 }
 
-/** The gap between two Frost sheets, or the hairline between two plain panes. */
+/** The gap between two Frost sheets, or the hairline between two plain or Nyx panes. */
 @Composable
 internal fun PaneSeam(frost: Boolean) {
     if (frost) {
@@ -219,7 +221,7 @@ internal fun PaneSeam(frost: Boolean) {
             Modifier
                 .fillMaxHeight()
                 .width(1.dp)
-                .background(MaterialTheme.colorScheme.outlineVariant),
+                .background(if (isNyx()) NyxLightTokens.hair else MaterialTheme.colorScheme.outlineVariant),
         )
     }
 }

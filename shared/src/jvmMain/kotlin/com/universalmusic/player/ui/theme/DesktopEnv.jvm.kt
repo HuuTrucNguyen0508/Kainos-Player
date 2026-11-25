@@ -19,7 +19,8 @@ actual fun watchDesktopLook(scope: CoroutineScope): StateFlow<DesktopLook> {
     // "" stands for no wallpaper: the watcher keeps its last value when parse returns null.
     val wallpaper = StateFileWatcher(wallpaperPathFile(), scope) { text -> text?.trim().orEmpty() }.state
     val frostManifest = frostStylePath()
-    return combine(env, wallpaper) { skin, wall -> desktopLook(skin, wall?.ifEmpty { null }, frostManifest) }
+    val nyxManifest = nyxStylePath()
+    return combine(env, wallpaper) { skin, wall -> desktopLook(skin, wall?.ifEmpty { null }, frostManifest, nyxManifest) }
         .flowOn(Dispatchers.IO)
         .stateIn(scope, SharingStarted.Eagerly, DesktopLook(env.value))
 }
@@ -27,9 +28,20 @@ actual fun watchDesktopLook(scope: CoroutineScope): StateFlow<DesktopLook> {
 internal fun parseDesktopEnv(text: String?): Skin =
     if (text?.trim() == "folio") Skin.FOLIO else Skin.CAELESTIA
 
-/** The shell picks its style from the wallpaper, so Frost wins whenever its manifest claims that file. */
-internal fun desktopLook(env: Skin?, wallpaper: String?, frostManifest: Path): DesktopLook =
-    DesktopLook(if (wallpaper != null && styleClaims(frostManifest, wallpaper)) Skin.FROST else env, wallpaper)
+/** The shell picks its style from the wallpaper, so Nyx or Frost wins whenever its manifest claims that file. */
+internal fun desktopLook(
+    env: Skin?,
+    wallpaper: String?,
+    frostManifest: Path,
+    nyxManifest: Path? = null,
+): DesktopLook {
+    val skin = when {
+        wallpaper != null && nyxManifest != null && styleClaims(nyxManifest, wallpaper) -> Skin.NYX
+        wallpaper != null && styleClaims(frostManifest, wallpaper) -> Skin.FROST
+        else -> env
+    }
+    return DesktopLook(skin, wallpaper)
+}
 
 internal fun styleClaims(manifest: Path, wallpaper: String): Boolean = try {
     val root = Json.parseToJsonElement(Files.readString(manifest)) as? JsonObject
@@ -46,9 +58,21 @@ internal fun wallpaperPathFile(): Path = caelestiaStatePath("KAINOS_WALLPAPER_PA
 internal fun frostStylePath(
     environment: (String) -> String? = System::getenv,
     home: String = System.getProperty("user.home"),
-): Path = environment("KAINOS_FROST_STYLE_FILE")?.takeIf { it.isNotBlank() }?.let(Path::of)
+): Path = styleManifestPath("KAINOS_FROST_STYLE_FILE", "frost", environment, home)
+
+internal fun nyxStylePath(
+    environment: (String) -> String? = System::getenv,
+    home: String = System.getProperty("user.home"),
+): Path = styleManifestPath("KAINOS_NYX_STYLE_FILE", "nyx", environment, home)
+
+private fun styleManifestPath(
+    overrideVariable: String,
+    styleId: String,
+    environment: (String) -> String?,
+    home: String,
+): Path = environment(overrideVariable)?.takeIf { it.isNotBlank() }?.let(Path::of)
     ?: (environment("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }?.let(Path::of) ?: Path.of(home, ".config"))
-        .resolve("quickshell/caelestia/modules/styles/frost/style.json")
+        .resolve("quickshell/caelestia/modules/styles/$styleId/style.json")
 
 internal fun caelestiaStatePath(
     overrideVariable: String,

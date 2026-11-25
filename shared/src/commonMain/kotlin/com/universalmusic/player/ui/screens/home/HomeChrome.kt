@@ -48,6 +48,7 @@ import com.universalmusic.player.ui.components.Slip
 import com.universalmusic.player.ui.components.SourceKind
 import com.universalmusic.player.ui.components.SourceMark
 import com.universalmusic.player.ui.components.albumLightStrip
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.components.rememberAlbumLight
 import com.universalmusic.player.ui.theme.AccentSlot
 import com.universalmusic.player.ui.theme.AccentUse
@@ -67,14 +68,16 @@ internal fun FavoritesHero(
     val palette = LocalKainosPalette.current
     val light by rememberAlbumLight(favorites.covers.firstOrNull()?.url)
     val mosaic = if (stacked) 112.dp else 176.dp
+    val nyx = isNyx()
+    val buttonShape = if (nyx) RoundedCornerShape(LocalSkinTokens.current.rounding.normal) else androidx.compose.material3.ButtonDefaults.shape
     val actions: @Composable () -> Unit = {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onPlay, enabled = favorites.count > 0) {
+            Button(onClick = onPlay, enabled = favorites.count > 0, shape = buttonShape) {
                 Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Play favorites", maxLines = 1)
             }
-            FilledTonalButton(onClick = onShuffle, enabled = favorites.count > 0) {
+            FilledTonalButton(onClick = onShuffle, enabled = favorites.count > 0, shape = buttonShape) {
                 Icon(Icons.Default.Shuffle, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Shuffle", maxLines = 1)

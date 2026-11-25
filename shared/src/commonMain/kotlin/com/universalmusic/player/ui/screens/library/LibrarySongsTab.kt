@@ -19,6 +19,7 @@ import com.universalmusic.player.domain.model.TrackSort
 import com.universalmusic.player.ui.components.EmptyState
 import com.universalmusic.player.ui.components.LocalTrackTable
 import com.universalmusic.player.ui.components.TrackTableHeader
+import com.universalmusic.player.ui.components.isNyx
 
 @Composable
 internal fun ColumnScope.LibrarySongsTab(
@@ -35,7 +36,10 @@ internal fun ColumnScope.LibrarySongsTab(
     trackAvailability: (Track) -> TrackAvailabilityInfo,
     /** False when the count, Sort and Play all sit in Library's header instead of atop the list. */
     barInList: Boolean = true,
+    /** Currently playing track id, highlighted in Nyx's song list. */
+    playingTrackId: String? = null,
 ) {
+    val nyx = isNyx()
     val songs = state.songs
     val queueSongs = state.queueSongs
     if (songs.isEmpty()) {
@@ -80,6 +84,7 @@ internal fun ColumnScope.LibrarySongsTab(
                     track = track,
                     actions = trackActions,
                     compact = true,
+                    highlighted = nyx && playingTrackId != null && track.canonicalId == playingTrackId,
                     availability = remember(track, state.downloads) {
                         trackAvailability(track)
                     },

@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,8 +79,13 @@ fun KainosTabBar(
     modifier: Modifier = Modifier,
 ) {
     val folio = LocalSkinTokens.current.skin == Skin.FOLIO
+    val nyx = LocalSkinTokens.current.skin == Skin.NYX
     val palette = LocalKainosPalette.current
-    val container = if (folio) palette.sheet else MaterialTheme.colorScheme.surfaceContainer
+    val container = when {
+        nyx -> Color.Transparent
+        folio -> palette.sheet
+        else -> MaterialTheme.colorScheme.surfaceContainer
+    }
     Slip(modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp)) {
         Row(
             Modifier.fillMaxWidth().background(container).padding(vertical = 8.dp).selectableGroup(),
@@ -102,19 +111,27 @@ fun KainosRail(
 ) {
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
-    // Frost's rail sits inside its own glass sheet.
+    val nyx = tokens.skin == Skin.NYX
+    val spacing = LocalNyxSpacing.current
+    // Frost's rail sits inside its own glass sheet; Nyx sits on the 82% slab over the sky.
     val container = when (tokens.skin) {
         Skin.FOLIO -> palette.ground
         Skin.FROST -> Color.Transparent
         Skin.CAELESTIA -> MaterialTheme.colorScheme.surfaceContainer
+        Skin.NYX -> NyxLightTokens.slab
     }
     Column(
-        modifier.fillMaxHeight().width(88.dp).background(container).padding(vertical = 16.dp).selectableGroup(),
+        modifier
+            .fillMaxHeight()
+            .width(if (nyx) spacing.cell * 16 else 88.dp)
+            .background(container)
+            .padding(vertical = if (nyx) spacing.md else 16.dp)
+            .selectableGroup(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(if (nyx) spacing.xs else 10.dp),
     ) {
         RailMark()
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (nyx) spacing.md else 8.dp))
         AppDestination.entries.filter { it != AppDestination.Settings }.forEach { item ->
             TabItem(item, item == selected) { onSelect(item) }
         }
@@ -129,25 +146,30 @@ fun KainosRail(
 private fun RailMark() {
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(tokens.rounding.large)
     val frost = tokens.skin == Skin.FROST
+    val nyx = tokens.skin == Skin.NYX
+    val spacing = LocalNyxSpacing.current
+    val shape = RoundedCornerShape(if (nyx) tokens.rounding.normal else tokens.rounding.large)
     Box(
         Modifier
-            .size(44.dp)
+            .size(if (nyx) spacing.cell * 8 else 44.dp)
             .clip(shape)
             .then(
-                if (frost) {
-                    Modifier.background(scheme.onSurface.copy(alpha = .08f)).border(1.dp, LocalKainosPalette.current.hair, shape)
-                } else {
-                    Modifier.background(scheme.primaryContainer)
+                when {
+                    nyx -> Modifier.background(NyxLightTokens.washFullBase).border(1.dp, NyxLightTokens.buttonRing, shape)
+                    frost -> Modifier.background(scheme.onSurface.copy(alpha = .08f)).border(1.dp, LocalKainosPalette.current.hair, shape)
+                    else -> Modifier.background(scheme.primaryContainer)
                 },
             ),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             "K",
-            style = MaterialTheme.typography.titleLarge.copy(fontFamily = tokens.display, fontWeight = FontWeight.Medium),
-            color = if (frost) scheme.onSurface else scheme.onPrimaryContainer,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontFamily = tokens.display,
+                fontWeight = if (nyx) FontWeight.ExtraBold else FontWeight.Medium,
+            ),
+            color = if (frost || nyx) scheme.onSurface else scheme.onPrimaryContainer,
         )
     }
 }
@@ -157,6 +179,35 @@ private fun TabItem(item: AppDestination, active: Boolean, onClick: () -> Unit) 
     val palette = LocalKainosPalette.current
     val tokens = LocalSkinTokens.current
     val scheme = MaterialTheme.colorScheme
+    if (tokens.skin == Skin.NYX) {
+        val spacing = LocalNyxSpacing.current
+        val shape = RoundedCornerShape(tokens.rounding.normal)
+        Column(
+            Modifier
+                .widthIn(min = maxOf(spacing.cell * 12, 48.dp))
+                .heightIn(min = maxOf(spacing.cell * 11, 48.dp))
+                .then(if (active) Modifier.nyxWash(shape, full = true) else Modifier.clip(shape))
+                .selectable(active, onClick = onClick, role = Role.Tab)
+                .padding(horizontal = spacing.xs, vertical = spacing.xs),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+        ) {
+            Icon(
+                item.icon,
+                contentDescription = null,
+                tint = if (active) NyxLightTokens.highlight else scheme.onSurfaceVariant,
+                modifier = Modifier.size(21.dp),
+            )
+            Text(
+                item.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (active) scheme.onSurface else scheme.onSurfaceVariant,
+                fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+            )
+        }
+        return
+    }
     val folio = tokens.skin == Skin.FOLIO
     // Frost has no hue: the active tab inverts to an ink pill, as the shell marks its workspace.
     val frost = tokens.skin == Skin.FROST

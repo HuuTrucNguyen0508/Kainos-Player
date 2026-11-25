@@ -8,15 +8,17 @@ import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.universalmusic.player.data.settings.SkinChoice
 import com.universalmusic.player.platform.platformLabel
 
-enum class Skin { FOLIO, CAELESTIA, FROST }
-enum class SeekStyle { RULED, WAVY, LINE }
-enum class GroundStyle { DOTTED_PAPER, PLAIN, WALLPAPER }
+enum class Skin { FOLIO, CAELESTIA, FROST, NYX }
+enum class SeekStyle { RULED, WAVY, LINE, CELLS }
+enum class GroundStyle { DOTTED_PAPER, PLAIN, WALLPAPER, SKY }
 
 data class Rounding(
     val extraSmall: Dp, val small: Dp, val normal: Dp, val large: Dp,
@@ -54,6 +56,7 @@ fun resolveSkin(
     SkinChoice.FOLIO -> Skin.FOLIO
     SkinChoice.CAELESTIA -> Skin.CAELESTIA
     SkinChoice.FROST -> Skin.FROST
+    SkinChoice.NYX -> Skin.NYX
     SkinChoice.PLATFORM_DEFAULT -> if (platform == "Android") Skin.FOLIO else desktopEnv ?: Skin.CAELESTIA
 }
 
@@ -63,9 +66,17 @@ internal expect fun folioBodyFontFamily(): FontFamily
 /** Frost's Fira Sans, and its ExtraLight cut for large figures (the shell's clock and track title). */
 internal expect fun frostFontFamily(): FontFamily
 internal expect fun frostThinFontFamily(): FontFamily
+/** Nyx's Rubik (variable font 300–900: 400/500 UI, 800 grid-cut display). */
+internal expect fun nyxFontFamily(): FontFamily
+/** Physical pixels per grid cell for Nyx (5 px on desktop, 3 dp snapped to whole px on Android). */
+internal expect fun nyxCellPx(density: Density): Float
 
-fun skinTokens(skin: Skin): SkinTokens {
+/** Desktop Nyx is drawn 1.2x the design (6 px cells, type to match); Android keeps the design size. */
+internal expect val nyxTypeScale: Float
+
+fun skinTokens(skin: Skin, cell: Dp = 5.dp): SkinTokens {
     if (skin == Skin.FROST) return frostTokens()
+    if (skin == Skin.NYX) return nyxTokens(cell)
     val folio = skin == Skin.FOLIO
     val display = if (folio) folioDisplayFontFamily() else caelestiaFontFamily()
     val body = if (folio) folioBodyFontFamily() else display
@@ -140,4 +151,78 @@ private fun frostTokens(): SkinTokens {
         medium = RoundedCornerShape(rounding.normal), large = RoundedCornerShape(rounding.large),
         extraLarge = RoundedCornerShape(rounding.extraLarge),
     ), rounding, motion, SeekStyle.LINE, GroundStyle.WALLPAPER)
+}
+
+/**
+ * Nyx follows the shell's Nyx style (`styles/nyx`) and T3 Code's Nyx Plus theme: Rubik across all
+ * roles (800 ExtraBold for grid-cut display titles, 500 Medium for headlines/titles/labels, 400 for
+ * body), whole-cell radii with no capsules, quick standard motion, cell meters and the nebula sky.
+ */
+private fun nyxTokens(cell: Dp = 5.dp): SkinTokens {
+    val rubik = nyxFontFamily()
+    fun displayStyle(size: Float) = TextStyle(
+        fontFamily = rubik,
+        fontSize = (size * nyxTypeScale).sp,
+        lineHeight = (size * nyxTypeScale).sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = (-0.015).em,
+        fontFeatureSettings = "tnum",
+    )
+    fun uiStyle(size: Float, weight: FontWeight = FontWeight.Normal, tabular: Boolean = false) = TextStyle(
+        fontFamily = rubik,
+        fontSize = (size * nyxTypeScale).sp,
+        lineHeight = (size * nyxTypeScale * 1.3f).sp,
+        fontWeight = weight,
+        fontFeatureSettings = if (tabular) "tnum" else null,
+    )
+    val typography = Typography(
+        displayLarge = displayStyle(80f),
+        displayMedium = displayStyle(52f),
+        displaySmall = displayStyle(40f),
+        headlineLarge = uiStyle(30f, FontWeight.Medium),
+        headlineMedium = uiStyle(26f, FontWeight.Medium),
+        headlineSmall = uiStyle(22f, FontWeight.Medium),
+        titleLarge = uiStyle(20f, FontWeight.Medium),
+        titleMedium = uiStyle(16f, FontWeight.Medium),
+        titleSmall = uiStyle(14f, FontWeight.Medium),
+        bodyLarge = uiStyle(15f),
+        bodyMedium = uiStyle(13.5f),
+        bodySmall = uiStyle(12.5f),
+        labelLarge = uiStyle(13.5f, FontWeight.Medium, tabular = true),
+        labelMedium = uiStyle(12.5f, FontWeight.Medium, tabular = true),
+        labelSmall = uiStyle(11.5f, FontWeight.Normal, tabular = true),
+    )
+    // Whole-cell radii (1, 1, 2, 3, 3, 4, 4, 4 cells). Nyx has no capsules: full is 1 cell.
+    val rounding = Rounding(
+        extraSmall = cell,
+        small = cell,
+        normal = cell * 2,
+        large = cell * 3,
+        largeIncreased = cell * 3,
+        extraLarge = cell * 4,
+        extraLargeIncreased = cell * 4,
+        extraExtraLarge = cell * 4,
+        full = RoundedCornerShape(cell),
+    )
+    val standard = CubicBezierEasing(.2f, 0f, 0f, 1f)
+    val motion = Motion(
+        MotionSpec(200, standard), MotionSpec(260, standard), MotionSpec(160, standard),
+        MotionSpec(140, standard), MotionSpec(220, standard),
+    )
+    return SkinTokens(
+        skin = Skin.NYX,
+        typography = typography,
+        display = rubik,
+        shapes = Shapes(
+            extraSmall = RoundedCornerShape(rounding.extraSmall),
+            small = RoundedCornerShape(rounding.small),
+            medium = RoundedCornerShape(rounding.normal),
+            large = RoundedCornerShape(rounding.large),
+            extraLarge = RoundedCornerShape(rounding.extraLarge),
+        ),
+        rounding = rounding,
+        motion = motion,
+        seek = SeekStyle.CELLS,
+        ground = GroundStyle.SKY,
+    )
 }

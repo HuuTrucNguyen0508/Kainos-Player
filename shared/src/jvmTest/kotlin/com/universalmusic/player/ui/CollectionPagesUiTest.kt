@@ -382,6 +382,7 @@ class CollectionPagesUiTest {
     }
 
     @Test fun frostAlbumPageRendersAndReturnsToItsAlbumList() = skinAlbum(com.universalmusic.player.ui.theme.Skin.FROST, 560)
+    @Test fun nyxAlbumPageRendersAndReturnsToItsAlbumList() = skinAlbum(com.universalmusic.player.ui.theme.Skin.NYX, 1100)
     @Test fun caelestiaAlbumPageRendersAndReturnsToItsAlbumList() = skinAlbum(com.universalmusic.player.ui.theme.Skin.CAELESTIA, 1100)
 
     private fun skinAlbum(skin: com.universalmusic.player.ui.theme.Skin, width: Int) = runDesktopComposeUiTest(width = width, height = 900) {

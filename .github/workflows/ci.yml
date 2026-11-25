@@ -25,6 +25,10 @@ jobs:
       - name: Install ffmpeg and mpv for real-engine and Echo gateway tests
         run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv
 
+      # The desktop Nyx skin uses the system's Rubik; install the same OFL file the Android app bundles
+      - name: Install Rubik for the Nyx skin's font test
+        run: sudo install -Dm644 shared/src/androidMain/res/font/rubik.ttf "/usr/share/fonts/truetype/rubik/Rubik[wght].ttf"
+
       - name: All JVM tests, database migrations, desktop packaging, Android builds and lint
         env:
           KAINOS_GAPLESS_STRESS: "1"

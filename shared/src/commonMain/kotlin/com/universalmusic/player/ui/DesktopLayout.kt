@@ -20,12 +20,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import com.universalmusic.player.data.settings.NowPlayingDock
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.ui.theme.LocalSkinTokens
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import com.universalmusic.player.ui.theme.Skin
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -167,14 +170,23 @@ fun DesktopResizeHandle(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val frost = LocalSkinTokens.current.skin == Skin.FROST
+    val nyx = LocalSkinTokens.current.skin == Skin.NYX
     val thickness = if (frost) 10.dp else 6.dp
-    val idle = if (frost) Color.Transparent else MaterialTheme.colorScheme.outlineVariant
+    val idle = if (frost || nyx) Color.Transparent else MaterialTheme.colorScheme.outlineVariant
     val active = if (frost) LocalKainosPalette.current.rule else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     Box(
         modifier
             .then(if (vertical) Modifier.height(thickness).fillMaxWidth() else Modifier.width(thickness).fillMaxHeight())
             .hoverable(interaction)
             .background(if (hovered) active else idle)
+            .then(if (nyx) Modifier.drawBehind {
+                val hair = NyxLightTokens.hair
+                if (vertical) {
+                    drawRect(hair, size = Size(size.width, 1f))
+                } else {
+                    drawRect(hair, size = Size(1f, size.height))
+                }
+            } else Modifier)
             .pointerInput(vertical) {
                 if (vertical) {
                     detectVerticalDragGestures { _, dragAmount -> onDrag(with(density) { dragAmount.toDp() }) }

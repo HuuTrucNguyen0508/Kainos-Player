@@ -10,8 +10,12 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.isSpecified
 import com.universalmusic.player.ui.components.FrostGround
+import com.universalmusic.player.ui.components.NyxGround
+import com.universalmusic.player.ui.components.NyxPane
 import com.universalmusic.player.ui.components.SkinPane
 import com.universalmusic.player.ui.components.isFrost
+import com.universalmusic.player.ui.components.isNyx
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
 import kotlin.random.Random
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
@@ -158,6 +162,8 @@ private fun AppScaffold(
     val wide = layoutBand.isWide
     val ultraWide = layoutBand == DesktopLayoutBand.UltraWide
     val frost = isFrost()
+    val nyx = isNyx()
+    val nyxSpacing = LocalNyxSpacing.current
     val dock = resolveDockEdge(dockSetting, portrait)
     val dockDrag = remember { DockDragState() }
 
@@ -447,10 +453,10 @@ private fun AppScaffold(
         light = carriedLight,
         carry = if (!desktop) null else { { DockCarryBody(currentTrack) } },
         queueWidth = if (desktop && queueColumnOpen) DesktopQueueColumnWidth + (if (frost) 10.dp else 1.dp) else 0.dp,
-        railInset = if (desktop) 88.dp + (if (frost) 10.dp else 1.dp) else 0.dp,
+        railInset = if (desktop) (if (nyx) nyxSpacing.cell * 16 + 1.dp else 88.dp + (if (frost) 10.dp else 1.dp)) else 0.dp,
         frameInset = if (frost) 10.dp else 0.dp,
     ) {
-    FrostOrPlainGround(frost) {
+    SkinGroundHost(frost, nyx) {
     Scaffold(
         modifier = Modifier.skinGround(),
         containerColor = Color.Transparent,
@@ -593,7 +599,14 @@ private fun AppScaffold(
             },
         ) {
             // Main content: tabs stay composed across resize and dock moves so Library scroll survives.
+            val nyxContentNeedsSlab = nyx && (
+                (showQueue && (!desktop || queueInContent)) ||
+                    (showNowPlaying && !desktop) ||
+                    currentPages.isNotEmpty() ||
+                    (destination != AppDestination.Library && destination != AppDestination.Home)
+                )
             SheetOrPlain(frost, Modifier.weight(1f).fillMaxSize()) {
+                val mainBody: @Composable () -> Unit = {
                 when {
                     showQueue && (!desktop || queueInContent) -> QueueScreen(container, dense = desktop) { showQueue = false }
                     showNowPlaying && !desktop -> NowPlayingScreen(
@@ -646,10 +659,17 @@ private fun AppScaffold(
                                 onShuffleOffline = { shuffleTracks(it, offlineOnly = true) },
                                 onInnerBack = { screenBack = it },
                                 onOpenCollection = ::openCollection,
+                                playingTrackId = currentTrack?.canonicalId,
                             )
                             AppDestination.Settings -> SettingsScreen(container, settingsTarget)
                         }
                     }
+                }
+                }
+                if (nyxContentNeedsSlab) {
+                    NyxPane(Modifier.fillMaxSize(), over = false) { mainBody() }
+                } else {
+                    mainBody()
                 }
                 // Overlays the list instead of pushing it, so rapid row actions never shift rows.
                 TrackActionNoticeBar(trackActions, Modifier.align(Alignment.BottomCenter))
@@ -688,10 +708,14 @@ private fun DockEdge.closesToward(): ImageVector = when (this) {
     DockEdge.BOTTOM -> Icons.Default.KeyboardArrowDown
 }
 
-/** Frost draws the desktop wallpaper under the whole window; other skins keep their own ground. */
+/** Frost and Nyx draw their wallpaper/sky ground under the whole window; other skins keep their own ground. */
 @Composable
-private fun FrostOrPlainGround(frost: Boolean, content: @Composable () -> Unit) {
-    if (frost) FrostGround(Modifier.fillMaxSize(), content) else content()
+private fun SkinGroundHost(frost: Boolean, nyx: Boolean, content: @Composable () -> Unit) {
+    when {
+        frost -> FrostGround(Modifier.fillMaxSize(), content)
+        nyx -> NyxGround(Modifier.fillMaxSize(), content)
+        else -> content()
+    }
 }
 
 @Composable

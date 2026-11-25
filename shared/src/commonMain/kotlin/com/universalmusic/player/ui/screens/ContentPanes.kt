@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.universalmusic.player.ui.components.isFrost
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 
 /** The seam between two panes of a split screen: a hairline with 8dp of air on each side. */
@@ -19,7 +20,7 @@ internal val ContentPaneSeamWidth: Dp = 17.dp
 /** The line between two panes of one screen: a quiet hairline inside the one content sheet. */
 @Composable
 internal fun ContentPaneSeam() {
-    val line = if (isFrost()) LocalKainosPalette.current.hair else MaterialTheme.colorScheme.outlineVariant
+    val line = if (isFrost() || isNyx()) LocalKainosPalette.current.hair else MaterialTheme.colorScheme.outlineVariant
     Box(
         Modifier
             .width(ContentPaneSeamWidth)

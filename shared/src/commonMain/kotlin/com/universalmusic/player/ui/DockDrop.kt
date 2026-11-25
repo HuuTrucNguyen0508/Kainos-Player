@@ -430,6 +430,7 @@ private fun CarryCard(light: Color, content: @Composable () -> Unit) {
     }
     when (tokens.skin) {
         Skin.FROST -> SkinPane(density = GlassDensity.Dense, content = body)
+        Skin.NYX -> SkinPane(density = GlassDensity.Dense, content = body)
         Skin.FOLIO -> Surface(
             shape = shape,
             color = MaterialTheme.colorScheme.surfaceContainerLow,

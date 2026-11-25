@@ -55,18 +55,20 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                     SkinChoice.FOLIO -> "Folio"
                     SkinChoice.CAELESTIA -> "Caelestia"
                     SkinChoice.FROST -> "Frost"
+                    SkinChoice.NYX -> "Nyx"
                 },
                 accent = when (skin) {
                     SkinChoice.PLATFORM_DEFAULT -> AccentSlot.Gray
                     SkinChoice.FOLIO -> AccentSlot.Orange
                     SkinChoice.CAELESTIA -> AccentSlot.Purple
                     SkinChoice.FROST -> AccentSlot.Gray
+                    SkinChoice.NYX -> AccentSlot.Purple
                 },
             )
         }
     }
     Text(
-        if (desktop) "Match desktop follows your Folio, Caelestia or Frost desktop as it changes. Frost is grey glass over your wallpaper."
+        if (desktop) "Match desktop follows your Folio, Caelestia, Frost or Nyx desktop as it changes. Frost is grey glass over your wallpaper; Nyx is dark only and switches to Frost Light in light mode."
         else "Platform default uses Folio. Choose a skin to change the style.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -81,6 +83,7 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    val nyxExplicit = settings.skin == SkinChoice.NYX
     SectionRule("Light or dark")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         ThemeMode.entries.forEach { mode ->
@@ -88,12 +91,13 @@ internal fun SettingsAppearanceSection(presenter: SettingsPreferencesPresenter) 
                 selected = settings.themeMode == mode,
                 onClick = { presenter.change { it.copy(themeMode = mode) } },
                 label = mode.name.lowercase().replaceFirstChar { it.uppercase() },
-                enabled = !following,
+                enabled = !following && !nyxExplicit,
             )
         }
     }
-    if (following) {
-        Text("The desktop decides light or dark", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    when {
+        nyxExplicit -> Text("Nyx is dark only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        following -> Text("The desktop decides light or dark", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     SectionRule("Tint") {
         Text("same set as the launcher", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

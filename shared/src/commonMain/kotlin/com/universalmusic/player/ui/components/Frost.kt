@@ -171,17 +171,17 @@ fun FrostLift(
     }
 }
 
-/** A side pane, queue column or player band: a Frost sheet, or the skin's plain low container. */
+/** A side pane, queue column or player band: a Frost sheet, a Nyx slab, or the skin's plain low container. */
 @Composable
 fun SkinPane(
     modifier: Modifier = Modifier,
     density: GlassDensity = GlassDensity.Tall,
     content: @Composable () -> Unit,
 ) {
-    if (isFrost()) {
-        FrostSheet(modifier, density) { content() }
-    } else {
-        Surface(
+    when {
+        isFrost() -> FrostSheet(modifier, density) { content() }
+        isNyx() -> NyxPane(modifier, over = true) { content() }
+        else -> Surface(
             modifier,
             color = MaterialTheme.colorScheme.surfaceContainerLow,
             tonalElevation = 0.dp,

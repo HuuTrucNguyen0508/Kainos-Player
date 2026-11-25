@@ -64,12 +64,17 @@ internal fun NowPlayingProgress(
             modifier = Modifier.fillMaxWidth(),
         )
     }
-    val timeStyle = MaterialTheme.typography.titleSmall.copy(fontFamily = LocalSkinTokens.current.display)
+    val nyx = LocalSkinTokens.current.skin == com.universalmusic.player.ui.theme.Skin.NYX
+    val timeStyle = if (nyx) {
+        MaterialTheme.typography.labelSmall
+    } else {
+        MaterialTheme.typography.titleSmall.copy(fontFamily = LocalSkinTokens.current.display)
+    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
             formatTime(displayedPositionMs(scrubPosition, knownDurationMs, now.positionMs)),
             style = timeStyle,
-            color = scheme.onSurface,
+            color = if (nyx) scheme.onSurfaceVariant else scheme.onSurface,
         )
         Text(
             knownDurationMs?.let(::formatTime) ?: "Length shown once playing",

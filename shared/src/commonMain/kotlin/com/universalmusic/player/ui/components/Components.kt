@@ -35,15 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Precision
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
 import com.universalmusic.player.platform.isNetworkAvailable
 import com.universalmusic.player.ui.theme.LocalKainosPalette
 import com.universalmusic.player.data.cache.TrackAvailability
@@ -79,18 +83,45 @@ fun ArtworkImage(
     // Failed Coil loads used to leave a blank area; letter tile is only for null Artwork.
     // Treat load errors like missing art so Now Playing never shows an empty square.
     var loadFailed by remember(artwork?.url) { mutableStateOf(false) }
+    val nyx = isNyx()
     if (artwork != null && !loadFailed) {
         val context = LocalPlatformContext.current
-        val model = if (precision == null) artwork.url else remember(artwork.url, context, precision) {
-            ImageRequest.Builder(context).data(artwork.url).precision(precision).build()
+        if (nyx) {
+            val cellPx = LocalNyxSpacing.current.cellPx
+            var laidOut by remember { mutableStateOf(IntSize.Zero) }
+            val defaultCells = if (precision == Precision.EXACT) 68 else 8
+            val cols = if (laidOut.width > 0) (laidOut.width / cellPx).toInt().coerceAtLeast(4) else defaultCells
+            val rows = if (laidOut.height > 0) (laidOut.height / cellPx).toInt().coerceAtLeast(4) else defaultCells
+            val model = remember(artwork.url, context, cols, rows) {
+                ImageRequest.Builder(context)
+                    .data(artwork.url)
+                    .size(cols, rows)
+                    .precision(Precision.EXACT)
+                    .build()
+            }
+            AsyncImage(
+                model = model,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.None,
+                modifier = modifier
+                    .onSizeChanged { laidOut = it }
+                    .clip(shape)
+                    .nyxScreenDoorOverlay(),
+                onError = { loadFailed = true },
+            )
+        } else {
+            val model = if (precision == null) artwork.url else remember(artwork.url, context, precision) {
+                ImageRequest.Builder(context).data(artwork.url).precision(precision).build()
+            }
+            AsyncImage(
+                model = model,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = modifier.clip(shape),
+                onError = { loadFailed = true },
+            )
         }
-        AsyncImage(
-            model = model,
-            contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
-            modifier = modifier.clip(shape),
-            onError = { loadFailed = true },
-        )
     } else {
         PlaceholderArt(seed, modifier.clip(shape))
     }
@@ -164,12 +195,16 @@ fun TrackRow(
 ) {
     val artSize = if (compact) 40.dp else 48.dp
     val folio = LocalSkinTokens.current.skin == Skin.FOLIO
+    val nyx = isNyx()
     val status = availability?.status?.takeIf { it != TrackAvailability.AVAILABLE_LOCALLY && it != TrackAvailability.STREAMABLE }
     val needsNetwork = availability == null && track.requiresNetworkToPlay() &&
         remember(track.canonicalId) { !isNetworkAvailable() }
     val source = (track.playableSources().firstOrNull() ?: track.sources.firstOrNull())?.provider
     val table = LocalTrackTable.current
     LedgerRow(modifier = modifier, onClick = onClick, highlighted = highlighted, onLongClick = onLongClick) {
+        if (nyx && highlighted) {
+            NyxPlayingEqualizer()
+        }
         TrackCover(track, if (table != null) TrackTableCoverSize else artSize, folio, source)
         if (table != null) {
             Text(
@@ -180,7 +215,20 @@ fun TrackRow(
                 modifier = Modifier.width(table.titleWidth),
             )
             MutedCell(track.artistLine, Modifier.width(table.artistWidth))
-            table.albumWidth?.let { MutedCell(track.albumName.orEmpty(), Modifier.width(it)) }
+            table.albumWidth?.let {
+                if (nyx && highlighted) {
+                    Text(
+                        track.albumName.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(it),
+                    )
+                } else {
+                    MutedCell(track.albumName.orEmpty(), Modifier.width(it))
+                }
+            }
             Spacer(Modifier.weight(1f))
             Column(Modifier.width(TrackTableAvailabilityWidth)) {
                 TrackAvailabilityLines(availability, status, needsNetwork)

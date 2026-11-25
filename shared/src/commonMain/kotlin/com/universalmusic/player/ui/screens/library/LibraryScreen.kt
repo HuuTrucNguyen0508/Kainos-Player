@@ -4,6 +4,7 @@ import com.universalmusic.player.ui.components.KainosChip
 import com.universalmusic.player.ui.theme.Accents
 import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -16,13 +17,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.CompositionLocalProvider
 import com.universalmusic.player.ui.components.LocalTrackTable
+import com.universalmusic.player.ui.components.isNyx
 import com.universalmusic.player.ui.components.namesAlbums
 import com.universalmusic.player.ui.components.trackTableColumns
+import com.universalmusic.player.ui.theme.LocalNyxSpacing
+import com.universalmusic.player.ui.theme.NyxLightTokens
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -84,6 +89,8 @@ internal fun LibraryScreen(
     onInnerBack: ((() -> Unit)?) -> Unit = {},
     /** Opens an album, artist or Kainos playlist page over Library; back returns here, scroll kept. */
     onOpenCollection: (CollectionRef) -> Unit = {},
+    /** Currently playing track id, highlighted in Nyx's song list. */
+    playingTrackId: String? = null,
 ) {
     var tabName by rememberSaveable { mutableStateOf(LibraryTab.Songs.name) }
     val tab = remember(tabName) {
@@ -241,6 +248,7 @@ internal fun LibraryScreen(
                 onRefreshSpotify = refreshSpotify,
                 trackAvailability = presenter::trackAvailability,
                 barInList = barInList,
+                playingTrackId = playingTrackId,
             )
         }
     }
@@ -350,6 +358,9 @@ internal fun LibraryScreen(
         )
     }
     val showAlbums = remember(state.queueSongs) { state.queueSongs.namesAlbums() }
+    val nyx = isNyx()
+    val nyxSpacing = LocalNyxSpacing.current
+    val dividerColor = if (nyx) NyxLightTokens.hair else MaterialTheme.colorScheme.outline
 
     // One measurement for the whole screen: rows read the table from LocalTrackTable instead of measuring themselves.
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -361,9 +372,19 @@ internal fun LibraryScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .then(if (layout.compactHeader) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)),
+                .then(if (layout.compactHeader || nyx) Modifier else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)),
         ) {
-            if (layout.compactHeader) {
+            if (nyx) {
+                NyxLibrarySkyHeader(
+                    compact = width < 720.dp,
+                    localCount = state.localCount,
+                    favoritesCount = state.favorites.size,
+                    albumCount = state.albums.size,
+                    folderCount = state.folders.size,
+                    localState = state.localState,
+                    onRefreshLocal = presenter::refreshLocal,
+                )
+            } else if (layout.compactHeader) {
                 LibraryCompactLine(state.localState, presenter::refreshLocal, searchField, filters)
                 if (showSpotifyError) LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
             } else LibraryCollapsingHeader(
@@ -377,80 +398,135 @@ internal fun LibraryScreen(
                     LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
                 }
             }
-            if (!layout.compactHeader) {
-                // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
-                // the header can fully hide; without this the Favorites chip is unreachable.
-                // Three chips overflow a 360dp phone; scroll them sideways rather than wrap and push the list down.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) { filters() }
-                val tabs = @Composable {
-                    LibraryTab.entries.forEach { item ->
-                        Tab(
-                            selected = tab == item,
-                            onClick = { selectTab(item) },
-                            text = { Text(item.name, maxLines = 1) },
-                        )
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .then(if (nyx) Modifier.background(NyxLightTokens.slab) else Modifier),
+            ) {
+                if (nyx) {
+                    if (showSpotifyError) {
+                        LibrarySpotifyError(state.spotifyError!!) { dismissSpotifyError = true }
                     }
-                }
-                // Five labels do not fit a phone's width at equal shares; let them scroll there instead of wrap.
-                if (width < 520.dp) {
-                    PrimaryScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 8.dp, tabs = tabs)
-                } else {
-                    TabRow(selectedTabIndex = tab.ordinal, tabs = tabs)
-                }
-            }
-            if (layout.split) {
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(
-                        Modifier
-                            .weight(LibrarySongsShare)
-                            .fillMaxHeight()
-                            .onAnyPress { touchTab(LibraryTab.Songs) },
-                    ) {
-                        songsBar(Modifier.height(LibraryTabLineHeight))
-                        CompositionLocalProvider(LocalTrackTable provides songsTable) {
-                            songsTab(this, false)
+                    if (width >= LibraryNyxToolbarMinWidth) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = nyxSpacing.lg, vertical = nyxSpacing.sm),
+                            horizontalArrangement = Arrangement.spacedBy(nyxSpacing.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (!layout.split) {
+                                LibraryTabStrip(LibraryTab.entries, tab, ::selectTab)
+                                Spacer(Modifier.weight(1f))
+                            }
+                            searchField(Modifier.width(if (width >= LibraryCompactHeaderMinWidth) 340.dp else 260.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(nyxSpacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) { filters() }
+                            if (layout.split) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    } else {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = nyxSpacing.md, vertical = nyxSpacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(nyxSpacing.sm),
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(nyxSpacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                LibraryTabStrip(LibraryTab.entries, tab, ::selectTab)
+                            }
+                            searchField(Modifier.fillMaxWidth())
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(nyxSpacing.xs),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) { filters() }
                         }
                     }
-                    ContentPaneSeam()
-                    Column(
-                        Modifier
-                            .weight(1f - LibrarySongsShare)
-                            .fillMaxHeight()
-                            .onAnyPress { touchTab(otherTab) },
-                    ) {
-                        LibraryTabStrip(LibraryTab.entries - LibraryTab.Songs, otherTab, ::selectTab, Modifier.height(LibraryTabLineHeight))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        CompositionLocalProvider(LocalTrackTable provides otherTable) {
-                            otherTabContent(this, otherTab)
-                        }
-                    }
-                }
-            } else {
-                if (layout.compactHeader) {
+                    HorizontalDivider(color = NyxLightTokens.hair)
+                } else if (!layout.compactHeader) {
+                    // Keep filters + tabs outside the collapsing chrome. On short lists (Favorites)
+                    // the header can fully hide; without this the Favorites chip is unreachable.
+                    // Three chips overflow a 360dp phone; scroll them sideways rather than wrap and push the list down.
                     Row(
-                        Modifier.fillMaxWidth().height(LibraryTabLineHeight).padding(start = 8.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        LibraryTabStrip(LibraryTab.entries, tab, ::selectTab, Modifier.fillMaxHeight())
-                        if (tab == LibraryTab.Songs) songsBar(Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                    ) { filters() }
+                    val tabs = @Composable {
+                        LibraryTab.entries.forEach { item ->
+                            Tab(
+                                selected = tab == item,
+                                onClick = { selectTab(item) },
+                                text = { Text(item.name, maxLines = 1) },
+                            )
+                        }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    // Five labels do not fit a phone's width at equal shares; let them scroll there instead of wrap.
+                    if (width < 520.dp) {
+                        PrimaryScrollableTabRow(selectedTabIndex = tab.ordinal, edgePadding = 8.dp, tabs = tabs)
+                    } else {
+                        TabRow(selectedTabIndex = tab.ordinal, tabs = tabs)
+                    }
                 }
-                if (tab == LibraryTab.Songs) {
-                    CompositionLocalProvider(LocalTrackTable provides songsTable) {
-                        songsTab(this, !layout.compactHeader)
+                if (layout.split) {
+                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                        Column(
+                            Modifier
+                                .weight(LibrarySongsShare)
+                                .fillMaxHeight()
+                                .onAnyPress { touchTab(LibraryTab.Songs) },
+                        ) {
+                            songsBar(Modifier.height(LibraryTabLineHeight))
+                            CompositionLocalProvider(LocalTrackTable provides songsTable) {
+                                songsTab(this, false)
+                            }
+                        }
+                        ContentPaneSeam()
+                        Column(
+                            Modifier
+                                .weight(1f - LibrarySongsShare)
+                                .fillMaxHeight()
+                                .onAnyPress { touchTab(otherTab) },
+                        ) {
+                            LibraryTabStrip(LibraryTab.entries - LibraryTab.Songs, otherTab, ::selectTab, Modifier.height(LibraryTabLineHeight))
+                            HorizontalDivider(color = dividerColor)
+                            CompositionLocalProvider(LocalTrackTable provides otherTable) {
+                                otherTabContent(this, otherTab)
+                            }
+                        }
                     }
                 } else {
-                    CompositionLocalProvider(LocalTrackTable provides otherTable) {
-                        otherTabContent(this, tab)
+                    if (layout.compactHeader && !nyx) {
+                        Row(
+                            Modifier.fillMaxWidth().height(LibraryTabLineHeight).padding(start = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            LibraryTabStrip(LibraryTab.entries, tab, ::selectTab, Modifier.fillMaxHeight())
+                            if (tab == LibraryTab.Songs) songsBar(Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                        }
+                        HorizontalDivider(color = dividerColor)
+                    }
+                    if (tab == LibraryTab.Songs) {
+                        CompositionLocalProvider(LocalTrackTable provides songsTable) {
+                            songsTab(this, !layout.compactHeader || nyx)
+                        }
+                    } else {
+                        CompositionLocalProvider(LocalTrackTable provides otherTable) {
+                            otherTabContent(this, tab)
+                        }
                     }
                 }
             }
