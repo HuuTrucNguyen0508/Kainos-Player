@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.platform.LocalDensity
 import com.universalmusic.player.data.settings.AppSettings
 import com.universalmusic.player.data.settings.FolioTint
 import com.universalmusic.player.data.settings.SkinChoice
@@ -42,6 +43,19 @@ fun resolveTheme(
         // Frost is grey glass whatever the scheme's colours; the desktop only decides light or dark.
         return ResolvedTheme(skin, frostPalette(if (following) scheme.isDark else dark), following)
     }
+    if (skin == Skin.NYX) {
+        // Nyx is dark only. When chosen explicitly it stays Nyx; when matching a Nyx desktop in
+        // light mode the player switches to Frost Light, matching the shell's light-mode pair.
+        if (settings.skin == SkinChoice.NYX) {
+            return ResolvedTheme(Skin.NYX, nyxPalette(), followsCaelestia = false)
+        }
+        val effectiveDark = if (following) scheme.isDark else dark
+        return if (effectiveDark) {
+            ResolvedTheme(Skin.NYX, nyxPalette(), following)
+        } else {
+            ResolvedTheme(Skin.FROST, frostPalette(false), following)
+        }
+    }
     return ResolvedTheme(skin, if (following) scheme.palette else folioPalette(settings.tint, dark), following)
 }
 
@@ -53,7 +67,9 @@ fun KainosTheme(settings: AppSettings, content: @Composable () -> Unit) {
     val desktopSource = remember(scope) { watchDesktopLook(scope) }
     val desktop by desktopSource.collectAsState()
     val resolved = resolveTheme(settings, isSystemInDarkTheme(), scheme, desktopEnv = desktop.skin)
-    val tokens = remember(resolved.skin) { skinTokens(resolved.skin) }
+    val density = LocalDensity.current
+    val spacing = remember(density) { nyxSpacing(density) }
+    val tokens = remember(resolved.skin, spacing.cell) { skinTokens(resolved.skin, spacing.cell) }
     CompositionLocalProvider(LocalDesktopWallpaper provides desktop.wallpaper) {
         KainosTheme(resolved.palette, tokens, resolved.followsCaelestia, content)
     }
@@ -66,10 +82,13 @@ fun KainosTheme(
     followsCaelestia: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val density = LocalDensity.current
+    val spacing = remember(density) { nyxSpacing(density) }
     CompositionLocalProvider(
         LocalKainosPalette provides palette,
         LocalSkinTokens provides tokens,
         LocalFollowingCaelestia provides followsCaelestia,
+        LocalNyxSpacing provides spacing,
     ) {
         MaterialTheme(colorScheme = palette.scheme, typography = tokens.typography, shapes = tokens.shapes, content = content)
     }

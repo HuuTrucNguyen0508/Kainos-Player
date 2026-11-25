@@ -17,7 +17,7 @@ enum class ThemeMode {
 }
 
 @Serializable
-enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA, FROST }
+enum class SkinChoice { PLATFORM_DEFAULT, FOLIO, CAELESTIA, FROST, NYX }
 
 /** Where the desktop Now Playing pane docks. AUTO is the right edge, or the bottom of a tall window. */
 @Serializable
